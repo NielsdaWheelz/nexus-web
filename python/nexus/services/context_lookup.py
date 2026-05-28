@@ -928,4 +928,3 @@ def _render_web_result(result_ref: Mapping[str, object]) -> str:
                 lines.append(f"<excerpt>{xml_escape(extra_snippet)}</excerpt>")
     lines.append("</web_search_result>")
     return "\n".join(lines)
-

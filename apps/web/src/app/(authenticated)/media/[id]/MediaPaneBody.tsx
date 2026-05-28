@@ -70,10 +70,7 @@ import {
 } from "@/lib/highlights/canonicalCursor";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
-import {
-  buildQuoteSelector,
-  getLocatorQuoteParts,
-} from "@/lib/highlights/quoteText";
+import { buildQuoteSelector } from "@/lib/highlights/quoteText";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -4456,125 +4453,6 @@ export default function MediaPaneBody({
     ],
   );
 
-  const handleAskAboutSource = useCallback(
-    (target: ReaderSourceTarget) => {
-      if (!media || target.media_id !== media.id) {
-        handleReaderSourceActivate(target);
-        return;
-      }
-      const locator = target.locator;
-      const exact =
-        target.snippet ||
-        ("exact" in locator && typeof locator.exact === "string"
-          ? locator.exact
-          : "") ||
-        "";
-      const trimmed = exact.trim();
-      if (!trimmed) {
-        handleReaderSourceActivate(target);
-        return;
-      }
-      const selector = buildQuoteSelector({
-        exact: trimmed,
-        ...getLocatorQuoteParts(locator),
-      });
-      attachContextsToChatDestination(
-        chatDetail?.kind === "library" ? "library-chat" : "doc-chat",
-        [
-          {
-            kind: "reader_selection",
-            client_context_id: createRandomId(),
-            media_id: media.id,
-            media_kind: media.kind,
-            media_title: media.title,
-            ...selector,
-            preview: trimmed.slice(0, 120),
-            locator,
-            source_version: target.source_version,
-            color: "yellow",
-          },
-        ],
-      );
-    },
-    [
-      attachContextsToChatDestination,
-      chatDetail?.kind,
-      handleReaderSourceActivate,
-      media,
-    ],
-  );
-
-  const handleSaveSourceQuote = useCallback(
-    async (target: ReaderSourceTarget) => {
-      if (!media || target.media_id !== media.id) return;
-      const locator = target.locator;
-      if (
-        (locator?.type === "epub_fragment_offsets" ||
-          locator?.type === "web_text_offsets") &&
-        typeof locator.fragment_id === "string" &&
-        typeof locator.start_offset === "number" &&
-        typeof locator.end_offset === "number" &&
-        locator.end_offset > locator.start_offset
-      ) {
-        const createdHighlight = await createHighlight(
-          locator.fragment_id,
-          locator.start_offset,
-          locator.end_offset,
-          "yellow",
-        );
-        setHighlights((prev) => upsertHighlightSorted(prev, createdHighlight));
-        focusHighlight(createdHighlight.id);
-        return;
-      }
-
-      if (
-        locator?.type === "pdf_page_geometry" &&
-        typeof locator.page_number === "number" &&
-        Array.isArray(locator.quads) &&
-        locator.quads.length > 0
-      ) {
-        const response = await apiFetch<{ data: PdfHighlightOut }>(
-          `/api/media/${media.id}/pdf-highlights`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              page_number: locator.page_number,
-              quads: locator.quads,
-              exact:
-                (typeof locator.exact === "string" && locator.exact) ||
-                target.snippet ||
-                "",
-              color: "yellow",
-            }),
-          },
-        );
-        const createdHighlight = response.data;
-        setPdfDocumentHighlights((current) => [
-          ...current.filter(
-            (highlight) => highlight.id !== createdHighlight.id,
-          ),
-          createdHighlight,
-        ]);
-        setPdfHighlightsPaneState((current) =>
-          current.activePage === createdHighlight.anchor.page_number
-            ? {
-                ...current,
-                highlights: [
-                  ...current.highlights.filter(
-                    (highlight) => highlight.id !== createdHighlight.id,
-                  ),
-                  createdHighlight,
-                ],
-                version: current.version + 1,
-              }
-            : current,
-        );
-        focusHighlight(createdHighlight.id);
-      }
-    },
-    [focusHighlight, media],
-  );
-
   useEffect(() => {
     if (!paneMobileChrome || !isMobileViewport) {
       return;
@@ -5388,8 +5266,6 @@ export default function MediaPaneBody({
                           : undefined
                       }
                       onReaderSourceActivate={handleReaderSourceActivate}
-                      onAskAboutSource={handleAskAboutSource}
-                      onSaveSourceQuote={handleSaveSourceQuote}
                     />
                   ) : (
                     <DocChatTab
@@ -5429,8 +5305,6 @@ export default function MediaPaneBody({
                           : undefined
                       }
                       onReaderSourceActivate={handleReaderSourceActivate}
-                      onAskAboutSource={handleAskAboutSource}
-                      onSaveSourceQuote={handleSaveSourceQuote}
                     />
                   ) : (
                     <LibraryChatTab
@@ -5564,8 +5438,6 @@ export default function MediaPaneBody({
               : undefined
           }
           onReaderSourceActivate={handleReaderSourceActivate}
-          onAskAboutSource={handleAskAboutSource}
-          onSaveSourceQuote={handleSaveSourceQuote}
         />
       ) : null}
 
@@ -5590,8 +5462,6 @@ export default function MediaPaneBody({
               : undefined
           }
           onReaderSourceActivate={handleReaderSourceActivate}
-          onAskAboutSource={handleAskAboutSource}
-          onSaveSourceQuote={handleSaveSourceQuote}
         />
       ) : null}
 

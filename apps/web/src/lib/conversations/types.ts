@@ -103,7 +103,28 @@ export interface MessageRetrieval {
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
   source_version?: string | null;
+  citation_ordinal?: number | null;
   created_at?: string;
+}
+
+export interface CitationIndexEntry {
+  n: number;
+  retrieval_id: string;
+  tool_call_id: string;
+}
+
+export type ConversationPinnedSourceKind = "media" | "library" | "reader_selection";
+
+export interface ConversationPinnedSource {
+  id: string;
+  ordinal: number;
+  kind: ConversationPinnedSourceKind;
+  target_id: string | null;
+  locator: RetrievalLocator | null;
+  source_version: string | null;
+  exact: string | null;
+  title: string;
+  created_at: string;
 }
 
 export type MessageRetrievalResultRef =
@@ -151,101 +172,7 @@ export type MessageEvidenceRetrievalStatus =
   | "excluded_by_scope"
   | "web_result";
 
-export type MessageClaimSupportStatus =
-  | "supported"
-  | "partially_supported"
-  | "contradicted"
-  | "not_enough_evidence"
-  | "out_of_scope"
-  | "not_source_grounded";
-
-export type MessageEvidenceVerifierStatus =
-  | "llm_verified"
-  | "parse_failed"
-  | "failed";
-
-export type MessageClaimKind = "answer" | "insufficient_evidence";
-
-export type MessageEvidenceRole =
-  | "supports"
-  | "contradicts"
-  | "context"
-  | "scope_boundary";
-
 export type MessageEvidenceLocator = RetrievalLocator;
-
-export interface MessageEvidenceSummary {
-  id: string;
-  message_id: string;
-  scope_ref: Record<string, unknown> | null;
-  retrieval_status: MessageEvidenceRetrievalStatus;
-  support_status: MessageClaimSupportStatus;
-  verifier_status: MessageEvidenceVerifierStatus;
-  claim_count: number;
-  supported_claim_count: number;
-  unsupported_claim_count: number;
-  not_enough_evidence_count: number;
-  prompt_assembly_id?: string | null;
-  verifier_run_id?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AssistantVerifierRun {
-  id: string;
-  message_id: string;
-  chat_run_id?: string | null;
-  prompt_assembly_id?: string | null;
-  verifier_name: string;
-  verifier_version: string;
-  verifier_status: MessageEvidenceVerifierStatus;
-  support_status: MessageClaimSupportStatus;
-  claim_count: number;
-  supported_claim_count: number;
-  unsupported_claim_count: number;
-  not_enough_evidence_count: number;
-  metadata: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface MessageClaim {
-  id: string;
-  message_id: string;
-  ordinal: number;
-  claim_text: string;
-  answer_start_offset?: number | null;
-  answer_end_offset?: number | null;
-  claim_kind: MessageClaimKind;
-  support_status: MessageClaimSupportStatus;
-  unsupported_reason?: string | null;
-  confidence?: number | null;
-  verifier_status: MessageEvidenceVerifierStatus;
-  created_at: string;
-}
-
-export interface MessageClaimEvidence {
-  id: string;
-  claim_id: string;
-  ordinal: number;
-  evidence_role: MessageEvidenceRole;
-  source_ref: ConversationSourceRef;
-  retrieval_id?: string | null;
-  evidence_span_id?: string | null;
-  context_ref?: RetrievalContextRef | null;
-  result_ref?: MessageRetrievalResultRef | null;
-  exact_snippet?: string | null;
-  snippet_prefix?: string | null;
-  snippet_suffix?: string | null;
-  locator?: MessageEvidenceLocator | null;
-  deep_link?: string | null;
-  citation_label?: string | null;
-  score?: number | null;
-  retrieval_status: MessageEvidenceRetrievalStatus;
-  selected: boolean;
-  included_in_prompt: boolean;
-  source_version?: string | null;
-  created_at: string;
-}
 
 type ConversationMemoryKind =
   | "goal"
@@ -355,24 +282,6 @@ export interface MessageSourceManifestDelta {
   status: ChatToolStatus;
 }
 
-export interface MessageCitationAudit {
-  id: string;
-  message_id: string;
-  chat_run_id?: string | null;
-  verifier_run_id?: string | null;
-  supported_claim_count: number;
-  supported_claims_with_valid_offsets_count: number;
-  supported_claims_with_citation_count: number;
-  missing_locator_count: number;
-  missing_source_version_count: number;
-  supported_claims_have_valid_offsets: boolean;
-  supported_claims_have_citation_placement: boolean;
-  claim_evidence_has_required_locators: boolean;
-  claim_evidence_has_source_versions: boolean;
-  details: Record<string, unknown>;
-  created_at: string;
-}
-
 export interface MessageRetrievalCandidateLedger {
   id: string;
   tool_call_id: string;
@@ -443,31 +352,6 @@ export interface MessageDocument {
     | ({
         type: "retrieval_result";
       } & MessageRetrieval)
-    | ({
-        type: "verification_summary";
-      } & MessageEvidenceSummary)
-    | ({
-        type: "citation_audit";
-      } & MessageCitationAudit)
-    | {
-        type: "claim";
-        claim_id: string;
-        message_id?: string;
-        ordinal: number;
-        claim_text: string;
-        answer_start_offset?: number | null;
-        answer_end_offset?: number | null;
-        claim_kind?: MessageClaimKind;
-        support_status: MessageClaimSupportStatus;
-        unsupported_reason?: string | null;
-        confidence?: number | null;
-        verifier_status: MessageEvidenceVerifierStatus;
-        created_at?: string;
-        evidence_ids?: string[];
-      }
-    | ({
-        type: "claim_evidence";
-      } & MessageClaimEvidence)
   >;
 }
 
@@ -482,6 +366,8 @@ export interface ConversationMessage {
   branch_anchor?: BranchAnchor | null;
   contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
+  retrievals?: MessageRetrieval[];
+  citation_index?: CitationIndexEntry[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   can_retry_response: boolean;

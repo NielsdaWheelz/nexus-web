@@ -703,8 +703,6 @@ def _gc_default_library_entry(db: Session, default_library_id: UUID, media_id: U
     )
 
 
-
-
 def _delete_storage_objects(
     storage_paths: list[str],
     storage_client: StorageClientBase | None,

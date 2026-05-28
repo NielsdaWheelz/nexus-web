@@ -23,7 +23,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
-    AssistantVerifierRunListResponse,
+    AddPinnedSourceRequest,
     MessageRerankLedgerListResponse,
     MessageRetrievalCandidateLedgerListResponse,
     RenameBranchRequest,
@@ -33,6 +33,7 @@ from nexus.schemas.conversation import (
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import conversation_branches as conversation_branches_service
 from nexus.services import conversations as conversations_service
+from nexus.services import pinned_sources as pinned_sources_service
 from nexus.services import shares as shares_service
 
 router = APIRouter(tags=["conversations"])
@@ -279,6 +280,53 @@ def set_conversation_shares(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.get("/conversations/{conversation_id}/pinned-sources")
+def list_conversation_pinned_sources(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    rows = pinned_sources_service.list_pinned_sources(
+        db=db, viewer_id=viewer.user_id, conversation_id=conversation_id
+    )
+    return {"data": [row.model_dump(mode="json") for row in rows]}
+
+
+@router.post("/conversations/{conversation_id}/pinned-sources", status_code=201)
+def add_conversation_pinned_source(
+    conversation_id: UUID,
+    body: AddPinnedSourceRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    row = pinned_sources_service.add_pinned_source(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+    return success_response(row.model_dump(mode="json"))
+
+
+@router.delete(
+    "/conversations/{conversation_id}/pinned-sources/{ordinal}",
+    status_code=204,
+)
+def remove_conversation_pinned_source(
+    conversation_id: UUID,
+    ordinal: int,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    pinned_sources_service.remove_pinned_source(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        ordinal=ordinal,
+    )
+    return Response(status_code=204)
+
+
 # =============================================================================
 # Message Endpoints
 # =============================================================================
@@ -312,20 +360,6 @@ def list_messages(
         "data": [m.model_dump(mode="json") for m in messages],
         "page": page.model_dump(mode="json"),
     }
-
-
-@router.get("/messages/{message_id}/verifier-runs", response_model=AssistantVerifierRunListResponse)
-def list_message_verifier_runs(
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.list_message_verifier_runs(
-        db=db,
-        viewer_id=viewer.user_id,
-        message_id=message_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
 
 
 @router.get(

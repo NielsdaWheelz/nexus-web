@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun
 from nexus.services.billing_entitlements import grant_entitlement_override
-from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
+from nexus.services.conversation_branches import persist_active_leaf
 from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import (
     create_searchable_media,
@@ -406,9 +406,7 @@ class TestChatRunCreate:
         assert second.json()["error"]["code"] in {
             "E_CONVERSATION_BUSY",
             "E_BRANCH_PATH_INVALID",
-        }, (
-            f"Expected E_CONVERSATION_BUSY or E_BRANCH_PATH_INVALID, got: {second.text}"
-        )
+        }, f"Expected E_CONVERSATION_BUSY or E_BRANCH_PATH_INVALID, got: {second.text}"
 
     def test_chat_run_resends_after_failed_leaf_with_explicit_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -912,13 +910,17 @@ class TestChatRunCreate:
         first = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id), content="First prompt"),
+            _create_run_payload(
+                model_id, conversation_id=str(conversation_id), content="First prompt"
+            ),
             "chat-run-mismatch",
         )
         second = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id), content="Different prompt"),
+            _create_run_payload(
+                model_id, conversation_id=str(conversation_id), content="Different prompt"
+            ),
             "chat-run-mismatch",
         )
 
@@ -1494,8 +1496,7 @@ class TestChatRunSingleton:
             idempotency_key="chat-run-singleton-creates-lazily",
         )
         assert response.status_code == 200, (
-            f"Expected first singleton send to succeed, got {response.status_code}: "
-            f"{response.text}"
+            f"Expected first singleton send to succeed, got {response.status_code}: {response.text}"
         )
         data = response.json()["data"]
         run_id = UUID(data["run"]["id"])
@@ -1633,7 +1634,9 @@ class TestChatRunSingleton:
                     ),
                     idempotency_key=f"chat-run-singleton-race-{idem_suffix}",
                 )
-            except Exception as exc:  # justify-ignore-error: surface race outcome to assertions below
+            except (
+                Exception
+            ) as exc:  # justify-ignore-error: surface race outcome to assertions below
                 with results_lock:
                     results.append({"error": str(exc)})
                 return
@@ -1684,20 +1687,28 @@ class TestChatRunSingleton:
                 "conversation_active_paths", "conversation_id", singleton_conv_id
             )
             with direct_db.session() as session:
-                run_ids = session.execute(
-                    text("SELECT id FROM chat_runs WHERE conversation_id = :id"),
-                    {"id": singleton_conv_id},
-                ).scalars().all()
+                run_ids = (
+                    session.execute(
+                        text("SELECT id FROM chat_runs WHERE conversation_id = :id"),
+                        {"id": singleton_conv_id},
+                    )
+                    .scalars()
+                    .all()
+                )
             direct_db.register_cleanup("chat_runs", "conversation_id", singleton_conv_id)
             for run_id in run_ids:
                 direct_db.register_cleanup("chat_run_events", "run_id", run_id)
                 with direct_db.session() as session:
-                    job_ids = session.execute(
-                        text(
-                            "SELECT id FROM background_jobs WHERE payload->>'run_id' = :run_id"
-                        ),
-                        {"run_id": str(run_id)},
-                    ).scalars().all()
+                    job_ids = (
+                        session.execute(
+                            text(
+                                "SELECT id FROM background_jobs WHERE payload->>'run_id' = :run_id"
+                            ),
+                            {"run_id": str(run_id)},
+                        )
+                        .scalars()
+                        .all()
+                    )
                 for job_id in job_ids:
                     direct_db.register_cleanup("background_jobs", "id", job_id)
             direct_db.register_cleanup("chat_singletons", "conversation_id", singleton_conv_id)
@@ -1816,8 +1827,7 @@ class TestChatRunSingleton:
         assert isinstance(job_payload, dict)
         hint = job_payload.get("reader_context")
         assert isinstance(hint, dict), (
-            f"Expected reader_context dict in chat_run job payload, got "
-            f"{job_payload!r}"
+            f"Expected reader_context dict in chat_run job payload, got {job_payload!r}"
         )
         assert hint.get("media_id") == str(media_id)
         assert hint.get("library_id") == str(library_id)

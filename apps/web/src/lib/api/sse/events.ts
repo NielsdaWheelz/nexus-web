@@ -9,14 +9,6 @@
  * 5. If JSON parse fails on a `data:` line: stream error.
  */
 
-import type {
-  MessageClaimEvidence,
-  MessageClaimKind,
-  MessageClaimSupportStatus,
-  MessageEvidenceRetrievalStatus,
-  MessageEvidenceRole,
-  MessageEvidenceVerifierStatus,
-} from "@/lib/conversations/types";
 import { isRecord } from "@/lib/validation";
 import {
   hasOnlyKeys,
@@ -25,10 +17,8 @@ import {
 } from "./guards";
 import {
   isCitationEventData,
-  isRetrievalContextRef,
   type CitationEventData,
 } from "./citations";
-import { isRetrievalLocator } from "./locators";
 
 /** Meta event: initial IDs and model info. */
 interface SSEMetaEvent {
@@ -129,27 +119,16 @@ export interface SSESourceManifestDeltaEvent {
   };
 }
 
-export interface SSEClaimEvent {
-  type: "claim";
+export interface SSECitationIndexEvent {
+  type: "citation_index";
   data: {
-    id?: string;
-    message_id?: string;
-    ordinal?: number;
-    claim_text: string;
-    answer_start_offset?: number | null;
-    answer_end_offset?: number | null;
-    claim_kind: MessageClaimKind;
-    support_status: MessageClaimSupportStatus;
-    unsupported_reason?: string | null;
-    confidence?: number | null;
-    verifier_status: MessageEvidenceVerifierStatus;
-    created_at?: string;
+    assistant_message_id: string;
+    entries: Array<{
+      n: number;
+      retrieval_id: string;
+      tool_call_id: string;
+    }>;
   };
-}
-
-export interface SSEClaimEvidenceEvent {
-  type: "claim_evidence";
-  data: MessageClaimEvidence;
 }
 
 export type SSEEvent =
@@ -159,8 +138,7 @@ export type SSEEvent =
   | SSEToolCallEvent
   | SSERetrievalResultEvent
   | SSESourceManifestDeltaEvent
-  | SSEClaimEvent
-  | SSEClaimEvidenceEvent;
+  | SSECitationIndexEvent;
 
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
@@ -328,255 +306,6 @@ function parseSourceManifestDeltaData(
   return data as SSESourceManifestDeltaEvent["data"];
 }
 
-function parseClaimData(data: unknown): SSEClaimEvent["data"] {
-  if (
-    !isRecord(data) ||
-    (data.id !== undefined && typeof data.id !== "string") ||
-    (data.message_id !== undefined && typeof data.message_id !== "string") ||
-    (data.ordinal !== undefined && !Number.isInteger(data.ordinal)) ||
-    typeof data.claim_text !== "string" ||
-    (data.answer_start_offset !== undefined &&
-      data.answer_start_offset !== null &&
-      !Number.isInteger(data.answer_start_offset)) ||
-    (data.answer_end_offset !== undefined &&
-      data.answer_end_offset !== null &&
-      !Number.isInteger(data.answer_end_offset)) ||
-    !isMessageClaimKind(data.claim_kind) ||
-    !isMessageClaimSupportStatus(data.support_status) ||
-    (data.unsupported_reason !== undefined &&
-      data.unsupported_reason !== null &&
-      typeof data.unsupported_reason !== "string") ||
-    (data.confidence !== undefined &&
-      data.confidence !== null &&
-      typeof data.confidence !== "number") ||
-    !isMessageEvidenceVerifierStatus(data.verifier_status) ||
-    (data.created_at !== undefined && typeof data.created_at !== "string")
-  ) {
-    throw new Error("Invalid SSE payload for claim");
-  }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the claim payload.
-  return data as SSEClaimEvent["data"];
-}
-
-function parseClaimEvidenceData(data: unknown): MessageClaimEvidence {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "id",
-      "claim_id",
-      "ordinal",
-      "evidence_role",
-      "source_ref",
-      "retrieval_id",
-      "evidence_span_id",
-      "context_ref",
-      "result_ref",
-      "exact_snippet",
-      "snippet_prefix",
-      "snippet_suffix",
-      "locator",
-      "deep_link",
-      "citation_label",
-      "score",
-      "retrieval_status",
-      "selected",
-      "included_in_prompt",
-      "source_version",
-      "created_at",
-    ]) ||
-    typeof data.id !== "string" ||
-    typeof data.claim_id !== "string" ||
-    !Number.isInteger(data.ordinal) ||
-    !isMessageEvidenceRole(data.evidence_role) ||
-    !isSourceRef(data.source_ref) ||
-    !isMessageEvidenceRetrievalStatus(data.retrieval_status) ||
-    typeof data.selected !== "boolean" ||
-    typeof data.included_in_prompt !== "boolean" ||
-    (data.retrieval_id !== undefined &&
-      data.retrieval_id !== null &&
-      typeof data.retrieval_id !== "string") ||
-    (data.evidence_span_id !== undefined &&
-      data.evidence_span_id !== null &&
-      typeof data.evidence_span_id !== "string") ||
-    !isOptionalRetrievalContextRef(data.context_ref) ||
-    !isOptionalRetrievalResultRef(data.result_ref) ||
-    !isOptionalString(data.exact_snippet) ||
-    !isOptionalString(data.snippet_prefix) ||
-    !isOptionalString(data.snippet_suffix) ||
-    (data.locator !== undefined &&
-      data.locator !== null &&
-      !isRetrievalLocator(data.locator)) ||
-    !isOptionalString(data.deep_link) ||
-    !isOptionalString(data.citation_label) ||
-    (data.score !== undefined &&
-      data.score !== null &&
-      typeof data.score !== "number") ||
-    !isOptionalString(data.source_version) ||
-    typeof data.created_at !== "string" ||
-    ((data.evidence_role === "supports" ||
-      data.evidence_role === "contradicts") &&
-      (data.locator === undefined ||
-        data.locator === null ||
-        typeof data.source_version !== "string" ||
-        !data.source_version.trim() ||
-        typeof data.exact_snippet !== "string" ||
-        !data.exact_snippet.trim()))
-  ) {
-    throw new Error("Invalid SSE payload for claim_evidence");
-  }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the claim_evidence payload; the `unknown` step is required
-  // because a Record<string, unknown> index signature is not directly
-  // assignable to the specific MessageClaimEvidence field types.
-  return data as unknown as MessageClaimEvidence;
-}
-
-function isOptionalRetrievalContextRef(value: unknown): boolean {
-  return value === undefined || value === null || isRetrievalContextRef(value);
-}
-
-function isOptionalRetrievalResultRef(value: unknown): boolean {
-  return value === undefined || value === null || isCitationEventData(value);
-}
-
-function isSourceRefLocation(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, [
-      "page",
-      "fragment_id",
-      "t_start_ms",
-      "start_offset",
-      "end_offset",
-    ]) &&
-    (value.page === undefined ||
-      value.page === null ||
-      (typeof value.page === "number" &&
-        Number.isInteger(value.page) &&
-        value.page >= 1)) &&
-    isOptionalString(value.fragment_id) &&
-    (value.t_start_ms === undefined ||
-      value.t_start_ms === null ||
-      (typeof value.t_start_ms === "number" &&
-        Number.isInteger(value.t_start_ms) &&
-        value.t_start_ms >= 0)) &&
-    (value.start_offset === undefined ||
-      value.start_offset === null ||
-      (typeof value.start_offset === "number" &&
-        Number.isInteger(value.start_offset) &&
-        value.start_offset >= 0)) &&
-    (value.end_offset === undefined ||
-      value.end_offset === null ||
-      (typeof value.end_offset === "number" &&
-        Number.isInteger(value.end_offset) &&
-        value.end_offset >= 0)) &&
-    !(
-      typeof value.start_offset === "number" &&
-      typeof value.end_offset === "number" &&
-      value.end_offset < value.start_offset
-    )
-  );
-}
-
-function isSourceRef(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, [
-      "type",
-      "id",
-      "label",
-      "conversation_id",
-      "message_id",
-      "message_context_id",
-      "message_seq",
-      "tool_call_id",
-      "retrieval_id",
-      "context_ref",
-      "result_ref",
-      "media_id",
-      "evidence_span_id",
-      "deep_link",
-      "location",
-      "source_version",
-    ]) &&
-    (value.type === "message" ||
-      value.type === "message_context" ||
-      value.type === "message_retrieval" ||
-      value.type === "app_context_ref" ||
-      value.type === "web_result") &&
-    typeof value.id === "string" &&
-    isOptionalString(value.label) &&
-    isOptionalString(value.conversation_id) &&
-    isOptionalString(value.message_id) &&
-    isOptionalString(value.message_context_id) &&
-    (value.message_seq === undefined ||
-      value.message_seq === null ||
-      (typeof value.message_seq === "number" &&
-        Number.isInteger(value.message_seq) &&
-        value.message_seq >= 1)) &&
-    isOptionalString(value.tool_call_id) &&
-    isOptionalString(value.retrieval_id) &&
-    isOptionalRetrievalContextRef(value.context_ref) &&
-    isOptionalRetrievalResultRef(value.result_ref) &&
-    isOptionalString(value.media_id) &&
-    isOptionalString(value.evidence_span_id) &&
-    isOptionalString(value.deep_link) &&
-    (value.location === undefined ||
-      value.location === null ||
-      isSourceRefLocation(value.location)) &&
-    isOptionalString(value.source_version)
-  );
-}
-
-function isMessageClaimKind(value: unknown): value is MessageClaimKind {
-  return value === "answer" || value === "insufficient_evidence";
-}
-
-function isMessageEvidenceRole(value: unknown): value is MessageEvidenceRole {
-  return (
-    value === "supports" ||
-    value === "contradicts" ||
-    value === "context" ||
-    value === "scope_boundary"
-  );
-}
-
-function isMessageEvidenceRetrievalStatus(
-  value: unknown,
-): value is MessageEvidenceRetrievalStatus {
-  return (
-    value === "attached_context" ||
-    value === "retrieved" ||
-    value === "selected" ||
-    value === "included_in_prompt" ||
-    value === "excluded_by_budget" ||
-    value === "excluded_by_scope" ||
-    value === "web_result"
-  );
-}
-
-function isMessageClaimSupportStatus(
-  value: unknown,
-): value is MessageClaimSupportStatus {
-  return (
-    value === "supported" ||
-    value === "partially_supported" ||
-    value === "contradicted" ||
-    value === "not_enough_evidence" ||
-    value === "out_of_scope" ||
-    value === "not_source_grounded"
-  );
-}
-
-function isMessageEvidenceVerifierStatus(
-  value: unknown,
-): value is MessageEvidenceVerifierStatus {
-  return (
-    value === "llm_verified" || value === "parse_failed" || value === "failed"
-  );
-}
-
 function isChatToolStatus(value: unknown): value is ChatToolStatus {
   return (
     value === "pending" ||
@@ -585,6 +314,25 @@ function isChatToolStatus(value: unknown): value is ChatToolStatus {
     value === "error" ||
     value === "cancelled"
   );
+}
+
+function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
+  if (
+    !isRecord(data) ||
+    typeof data.assistant_message_id !== "string" ||
+    !Array.isArray(data.entries) ||
+    !data.entries.every(
+      (entry) =>
+        isRecord(entry) &&
+        Number.isInteger(entry.n) &&
+        (entry.n as number) >= 1 &&
+        typeof entry.retrieval_id === "string" &&
+        typeof entry.tool_call_id === "string",
+    )
+  ) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
+  return data as SSECitationIndexEvent["data"];
 }
 
 export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
@@ -604,10 +352,8 @@ export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
         type: "source_manifest_delta",
         data: parseSourceManifestDeltaData(data),
       };
-    case "claim":
-      return { type: "claim", data: parseClaimData(data) };
-    case "claim_evidence":
-      return { type: "claim_evidence", data: parseClaimEvidenceData(data) };
+    case "citation_index":
+      return { type: "citation_index", data: parseCitationIndexData(data) };
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }

@@ -56,6 +56,7 @@ KEY_TEST_MODELS = {
     "deepseek": "deepseek-v4-flash",
 }
 
+
 def _enabled_providers() -> tuple[str, ...]:
     settings = get_settings()
     enabled: list[str] = []

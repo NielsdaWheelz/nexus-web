@@ -754,4 +754,3 @@ def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:
             "</context_lookup_result>",
         ]
     )
-

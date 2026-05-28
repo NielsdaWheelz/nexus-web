@@ -6,7 +6,7 @@ import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
 import SingletonChatRow from "@/components/chat/SingletonChatRow";
 import type { ContextItem } from "@/lib/api/sse/requests";
-import { useDocChatSingleton } from "@/lib/conversations/useDocChatSingleton";
+import { useConversationSingleton } from "@/lib/conversations/useConversationSingleton";
 import { useDocReferencingChats } from "@/lib/conversations/useDocReferencingChats";
 import styles from "./DocChatTab.module.css";
 
@@ -36,7 +36,7 @@ export default function DocChatTab({
   onRemovePendingContext,
   onOpenChat,
 }: DocChatTabProps) {
-  const { conversationId, messageCount } = useDocChatSingleton(mediaId);
+  const { conversationId, messageCount } = useConversationSingleton("media", mediaId);
   const { conversations } = useDocReferencingChats(mediaId);
   const attachedContexts =
     pendingContexts.length > 0 ? pendingContexts : undefined;

@@ -19,7 +19,6 @@ export interface ReaderCitationPreview {
   excerpt?: string;
   meta?: string[];
   copyText?: string;
-  saveable?: boolean;
 }
 
 const colorClass = {
@@ -38,8 +37,6 @@ export default function ReaderCitation({
   target,
   href,
   onActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
   ariaLabel,
 }: {
   index: number;
@@ -48,8 +45,6 @@ export default function ReaderCitation({
   target: ReaderSourceTarget | null;
   href?: string | null;
   onActivate: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
   ariaLabel?: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
@@ -129,32 +124,6 @@ export default function ReaderCitation({
               >
                 Open source
               </a>
-            ) : null}
-            {activationTarget && onAskAboutSource ? (
-              <button
-                type="button"
-                className={styles.previewAction}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onAskAboutSource(activationTarget);
-                  closePreview();
-                }}
-              >
-                Ask about this
-              </button>
-            ) : null}
-            {activationTarget && preview.saveable && onSaveSourceQuote ? (
-              <button
-                type="button"
-                className={styles.previewAction}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSaveSourceQuote(activationTarget);
-                  closePreview();
-                }}
-              >
-                Save quote
-              </button>
             ) : null}
             {copyText ? (
               <button

@@ -20,7 +20,6 @@ import {
 } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
-import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -29,19 +28,12 @@ import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import SecondaryRail, {
   SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
 } from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
-import { apiFetch } from "@/lib/api/client";
-import { createRandomId } from "@/lib/createRandomId";
-import {
-  buildQuoteSelector,
-  getLocatorQuoteParts,
-} from "@/lib/highlights/quoteText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
@@ -90,7 +82,6 @@ export default function ConversationNewPaneBody() {
   const isMobileViewport = useIsMobileViewport();
   const {
     attachedContexts,
-    setAttachedContexts,
     removeContext,
     clearContexts,
     stripAttachState,
@@ -141,93 +132,6 @@ export default function ConversationNewPaneBody() {
     [router],
   );
 
-  const handleAskAboutSource = useCallback(
-    (target: ReaderSourceTarget) => {
-      const exact = target.snippet?.trim();
-      if (!exact) {
-        handleReaderSourceActivate(target);
-        return;
-      }
-      const locator = target.locator;
-      const selector = buildQuoteSelector({
-        exact,
-        ...getLocatorQuoteParts(locator),
-      });
-      setAttachedContexts((current) =>
-        mergeContextItems(current, [
-          {
-            kind: "reader_selection",
-            client_context_id: createRandomId(),
-            media_id: target.media_id,
-            media_kind:
-              locator.type === "pdf_page_geometry"
-                ? "pdf"
-                : locator.type === "transcript_time_range"
-                  ? "transcript"
-                  : locator.type === "epub_fragment_offsets"
-                    ? "epub"
-                    : "web_article",
-            media_title: target.label ?? "Source",
-            ...selector,
-            preview: exact.slice(0, 120),
-            locator: target.locator,
-            source_version: target.source_version,
-            color: "yellow",
-          },
-        ]),
-      );
-    },
-    [handleReaderSourceActivate, setAttachedContexts],
-  );
-
-  const handleSaveSourceQuote = useCallback(
-    async (target: ReaderSourceTarget) => {
-      const locator = target.locator;
-      try {
-        if (
-          (locator.type === "epub_fragment_offsets" ||
-            locator.type === "web_text_offsets") &&
-          typeof locator.fragment_id === "string" &&
-          typeof locator.start_offset === "number" &&
-          typeof locator.end_offset === "number" &&
-          locator.end_offset > locator.start_offset
-        ) {
-          await apiFetch(`/api/fragments/${locator.fragment_id}/highlights`, {
-            method: "POST",
-            body: JSON.stringify({
-              start_offset: locator.start_offset,
-              end_offset: locator.end_offset,
-              color: "yellow",
-            }),
-          });
-          return;
-        }
-        if (
-          locator.type === "pdf_page_geometry" &&
-          typeof locator.page_number === "number" &&
-          Array.isArray(locator.quads) &&
-          locator.quads.length > 0
-        ) {
-          await apiFetch(`/api/media/${target.media_id}/pdf-highlights`, {
-            method: "POST",
-            body: JSON.stringify({
-              page_number: locator.page_number,
-              quads: locator.quads,
-              exact:
-                (typeof locator.exact === "string" && locator.exact) ||
-                target.snippet ||
-                "",
-              color: "yellow",
-            }),
-          });
-        }
-      } catch (err) {
-        setResolveError(toFeedback(err, { fallback: "Failed to save quote" }));
-      }
-    },
-    [],
-  );
-
   useEffect(() => {
     if (!paneRuntime) return;
     if (isMobileViewport) {
@@ -252,8 +156,6 @@ export default function ConversationNewPaneBody() {
             <ChatSurface
               messages={messages}
               onReaderSourceActivate={handleReaderSourceActivate}
-              onAskAboutSource={handleAskAboutSource}
-              onSaveSourceQuote={handleSaveSourceQuote}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               composer={

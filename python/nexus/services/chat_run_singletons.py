@@ -6,8 +6,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatSingleton
+from nexus.db.models import ChatSingleton, Library, Media
 from nexus.services.conversations import create_conversation, get_message_count
+from nexus.services.pinned_sources import auto_pin_singleton_target
 
 
 def get_singleton_conversation_for_media(
@@ -85,6 +86,19 @@ def resolve_singleton_conversation(
             target_id=target_id,
             conversation_id=conversation.id,
         )
+    )
+    if kind == "media":
+        media = db.get(Media, target_id)
+        title = media.title if media is not None else "Document"
+    else:
+        library = db.get(Library, target_id)
+        title = library.name if library is not None else "Library"
+    auto_pin_singleton_target(
+        db,
+        conversation_id=conversation.id,
+        kind=kind,
+        target_id=target_id,
+        title=title,
     )
     db.flush()
     return conversation.id

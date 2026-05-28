@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
+import PinnedSourcesTray from "@/components/chat/PinnedSourcesTray";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -34,8 +35,6 @@ interface ChatDetailSlideInProps {
   onBack: () => void;
   onOpenFullChat?: () => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }
 
 export default function ChatDetailSlideIn({
@@ -47,8 +46,6 @@ export default function ChatDetailSlideIn({
   onBack,
   onOpenFullChat,
   onReaderSourceActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
 }: ChatDetailSlideInProps) {
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -225,6 +222,8 @@ export default function ChatDetailSlideIn({
         </div>
       ) : null}
 
+      <PinnedSourcesTray conversationId={activeConversationId} />
+
       <ChatSurface
         messages={messages}
         scrollportRef={scrollportRef}
@@ -233,8 +232,6 @@ export default function ChatDetailSlideIn({
         onRetryAssistantResponse={handleRetryAssistantResponse}
         retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
         onReaderSourceActivate={onReaderSourceActivate}
-        onAskAboutSource={onAskAboutSource}
-        onSaveSourceQuote={onSaveSourceQuote}
         emptyState={
           loadingMessages ? (
             <FeedbackNotice severity="info" title="Loading chat history..." />

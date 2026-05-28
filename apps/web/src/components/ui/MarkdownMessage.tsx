@@ -31,18 +31,13 @@ const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
 const CITATION_HREF_PREFIX = "#nexus-reader-citation-";
 
+
 export interface ReaderCitationData {
   index: number;
   color: ReaderCitationColor;
   preview: ReaderCitationPreview;
   target: ReaderSourceTarget | null;
   href?: string | null;
-}
-
-export interface ReaderCitationRange {
-  start: number;
-  end: number;
-  citation: ReaderCitationData;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,40 +145,17 @@ function MarkdownLink({
 const baseComponents = { code: CodeBlock, pre: PreBlock, table: TableBlock, a: MarkdownLink };
 type MarkdownComponents = ComponentProps<typeof ReactMarkdown>["components"];
 
-function citationHref(index: number): string {
-  return `${CITATION_HREF_PREFIX}${index}`;
-}
-
 function citationIndexFromHref(href: string | undefined): number | null {
   if (!href?.startsWith(CITATION_HREF_PREFIX)) return null;
   const index = Number(href.slice(CITATION_HREF_PREFIX.length));
   return Number.isInteger(index) && index > 0 ? index : null;
 }
 
-function contentWithCitationMarkers(
-  content: string,
-  citationRanges: ReaderCitationRange[],
-): string {
-  const sortedRanges = [...citationRanges].sort((a, b) => a.end - b.end);
-  let cursor = 0;
-  let lastCitationEnd = 0;
-  let nextContent = "";
-
-  for (const range of sortedRanges) {
-    if (
-      range.start < lastCitationEnd ||
-      range.end <= range.start ||
-      range.end > content.length
-    ) {
-      continue;
-    }
-    nextContent += content.slice(cursor, range.end);
-    nextContent += `[${range.citation.index}](${citationHref(range.citation.index)})`;
-    cursor = range.end;
-    lastCitationEnd = range.end;
-  }
-
-  return nextContent + content.slice(cursor);
+function substituteCitationMarkers(content: string): string {
+  return content.replace(
+    /\[(\d+)\](?!\()/g,
+    (_match, digits) => `[${digits}](${CITATION_HREF_PREFIX}${digits})`,
+  );
 }
 
 function escapeModelCitationPlaceholders(content: string): string {
@@ -193,13 +165,9 @@ function escapeModelCitationPlaceholders(content: string): string {
 function createMarkdownComponents({
   citationByIndex,
   onActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
 }: {
   citationByIndex?: Map<number, ReaderCitationData>;
   onActivate?: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }): MarkdownComponents {
   if (!citationByIndex) return baseComponents;
   const citations = citationByIndex;
@@ -226,8 +194,6 @@ function createMarkdownComponents({
           target={citation.target}
           href={citation.href}
           onActivate={onActivate ?? (() => undefined)}
-          onAskAboutSource={onAskAboutSource}
-          onSaveSourceQuote={onSaveSourceQuote}
         />
       );
     }
@@ -242,36 +208,31 @@ function createMarkdownComponents({
 // Full render (completed messages)
 // ---------------------------------------------------------------------------
 
-function renderWithCitations(
-  content: string,
-  citationRanges: ReaderCitationRange[] | undefined,
-  onActivate: ((target: ReaderSourceTarget) => void) | undefined,
-  onAskAboutSource: ((target: ReaderSourceTarget) => void) | undefined,
-  onSaveSourceQuote: ((target: ReaderSourceTarget) => void) | undefined,
-): ReactNode {
-  if (citationRanges && citationRanges.length > 0) {
-    const citationByIndex = new Map(
-      citationRanges.map((range) => [range.citation.index, range.citation]),
-    );
-    return (
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={createMarkdownComponents({
-          citationByIndex,
-          onActivate,
-          onAskAboutSource,
-          onSaveSourceQuote,
-        })}
-      >
-        {escapeModelCitationPlaceholders(
-          contentWithCitationMarkers(content, citationRanges),
-        )}
-      </ReactMarkdown>
-    );
-  }
-
-  return (
+function MarkdownMessageInner({
+  content,
+  citations,
+  onCitationActivate,
+}: {
+  content: string;
+  citations?: ReaderCitationData[];
+  onCitationActivate?: (target: ReaderSourceTarget) => void;
+}) {
+  const citationByIndex =
+    citations && citations.length > 0
+      ? new Map(citations.map((c) => [c.index, c]))
+      : undefined;
+  const rendered = citationByIndex ? (
+    <ReactMarkdown
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      components={createMarkdownComponents({
+        citationByIndex,
+        onActivate: onCitationActivate,
+      })}
+    >
+      {escapeModelCitationPlaceholders(substituteCitationMarkers(content))}
+    </ReactMarkdown>
+  ) : (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
@@ -280,32 +241,7 @@ function renderWithCitations(
       {escapeModelCitationPlaceholders(content)}
     </ReactMarkdown>
   );
-}
-
-function MarkdownMessageInner({
-  content,
-  citationRanges,
-  onCitationActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
-}: {
-  content: string;
-  citationRanges?: ReaderCitationRange[];
-  onCitationActivate?: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
-}) {
-  return (
-    <div className={styles.markdown}>
-      {renderWithCitations(
-        content,
-        citationRanges,
-        onCitationActivate,
-        onAskAboutSource,
-        onSaveSourceQuote,
-      )}
-    </div>
-  );
+  return <div className={styles.markdown}>{rendered}</div>;
 }
 
 export const MarkdownMessage = memo(MarkdownMessageInner);

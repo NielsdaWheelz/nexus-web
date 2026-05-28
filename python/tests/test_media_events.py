@@ -40,9 +40,7 @@ def _parse_state_event(chunk: str) -> tuple[str, dict]:
     return fields["event"], json.loads(fields["data"])
 
 
-def _update_processing_status(
-    direct_db: DirectSessionManager, media_id: UUID, status: str
-) -> None:
+def _update_processing_status(direct_db: DirectSessionManager, media_id: UUID, status: str) -> None:
     with direct_db.session() as session:
         session.execute(
             text(

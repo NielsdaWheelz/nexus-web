@@ -9,7 +9,7 @@ import {
   fetchMediaLibraryMemberships,
   type LibraryTargetPickerItem,
 } from "@/lib/media/mediaLibraries";
-import { useLibraryChatSingleton } from "@/lib/conversations/useLibraryChatSingleton";
+import { useConversationSingleton } from "@/lib/conversations/useConversationSingleton";
 import styles from "./LibraryChatTab.module.css";
 
 interface LibraryChatTabProps {
@@ -97,7 +97,7 @@ function LibraryChatRow({
     attachedContexts?: ContextItem[],
   ) => void;
 }) {
-  const { conversationId, messageCount } = useLibraryChatSingleton(library.id);
+  const { conversationId, messageCount } = useConversationSingleton("library", library.id);
   return (
     <SingletonChatRow
       icon={Library}

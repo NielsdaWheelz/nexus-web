@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -20,6 +20,7 @@ from nexus.db.models import (
     ChatRun,
     Contributor,
     Conversation,
+    ConversationPinnedSource,
     Library,
     Media,
     Message,
@@ -76,7 +77,6 @@ from nexus.services.prompt_budget import (
     build_prompt_budget,
     make_prompt_block,
 )
-from nexus.services.retrieval_planner import RetrievalPlan, build_retrieval_plan
 
 ASSEMBLER_VERSION = "chat-context-memory-v1"
 CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
@@ -121,7 +121,6 @@ class ContextAssembly:
     history: tuple[Turn, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
-    retrieval_plan: RetrievalPlan
     lookup_results: tuple[ContextLookupResult, ...]
     tool_call_events: tuple[Mapping[str, object], ...]
     retrieval_result_events: tuple[Mapping[str, object], ...]
@@ -173,14 +172,7 @@ def assemble_chat_context(
         after_seq=after_seq,
         path_message_ids=path_message_ids,
     )
-    planner_history = _history_turns_from_units(history_units[-4:])
     attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
-    retrieval_plan = build_retrieval_plan(
-        user_content=user_message.content,
-        history=planner_history,
-        attached_context_refs=attached_context_ref_payloads,
-        memory_source_refs=memory_source_refs,
-    )
 
     lookup_results: list[ContextLookupResult] = []
     context_types = {_context_type_name(ref) for ref in attached_context_refs}
@@ -202,6 +194,22 @@ def assemble_chat_context(
                 "reader_context_hint",
                 reader_context_block,
                 {"hint": "reader_context"},
+            )
+        )
+
+    pinned_sources = list(conversation.pinned_sources)
+    if pinned_sources:
+        mandatory_blocks.append(
+            (
+                "pinned_sources",
+                make_prompt_block(
+                    block_id=f"pinned_sources:{conversation.id}",
+                    role="system",
+                    lane="attached_context",
+                    text=_render_pinned_sources_block(pinned_sources),
+                    source_version=f"pinned_sources:{conversation.id}:{len(pinned_sources)}",
+                ),
+                {"type": "pinned_sources", "id": str(conversation.id)},
             )
         )
 
@@ -419,7 +427,7 @@ def assemble_chat_context(
         unit_blocks = tuple(
             make_prompt_block(
                 block_id=f"history:{message_id}",
-                role=turn.role,
+                role=cast(Literal["system", "user", "assistant"], turn.role),
                 lane="recent_history",
                 text=turn.content,
                 source_refs=[{"type": "message", "id": str(message_id)}],
@@ -528,7 +536,6 @@ def assemble_chat_context(
         history=tuple(history),
         context_blocks=tuple(context_blocks),
         context_types=frozenset(context_types),
-        retrieval_plan=retrieval_plan,
         lookup_results=tuple(lookup_results),
         tool_call_events=tuple(tool_call_events),
         retrieval_result_events=tuple(retrieval_result_events),
@@ -775,8 +782,6 @@ def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
     return payload
 
 
-
-
 def load_message_context_refs(db: Session, user_message_id: UUID) -> list[ContextItem]:
     rows = (
         db.execute(
@@ -830,6 +835,23 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
         except (ValueError, ValidationError) as exc:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc
     return refs
+
+
+def _render_pinned_sources_block(pinned: Sequence[ConversationPinnedSource]) -> str:
+    lines = ["<pinned_sources>"]
+    for pin in pinned:
+        attrs = f'kind="{pin.kind}" title="{xml_escape(pin.title)}"'
+        if pin.target_id is not None:
+            attrs += f' target_id="{pin.target_id}"'
+        if pin.kind == "reader_selection":
+            lines.append(f"<pinned_source {attrs}>")
+            if pin.exact:
+                lines.append(f"<exact>{xml_escape(pin.exact)}</exact>")
+            lines.append("</pinned_source>")
+        else:
+            lines.append(f"<pinned_source {attrs} />")
+    lines.append("</pinned_sources>")
+    return "\n".join(lines)
 
 
 def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:

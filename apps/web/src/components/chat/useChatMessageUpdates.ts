@@ -15,8 +15,7 @@ import {
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
 import type {
-  SSEClaimEvent,
-  SSEClaimEvidenceEvent,
+  SSECitationIndexEvent,
   SSERetrievalResultEvent,
   SSESourceManifestDeltaEvent,
   SSEToolCallEvent,
@@ -320,9 +319,18 @@ export function useChatMessageUpdates({
             index >= 0
               ? existing.map((call, idx) => (idx === index ? nextCall : call))
               : [...existing, nextCall];
+          const existingRetrievals = m.retrievals ?? [];
+          const keyOf = (r: MessageRetrieval) =>
+            `${r.tool_call_id ?? ""}:${r.ordinal ?? ""}`;
+          const newKeys = new Set(retrievals.map(keyOf));
+          const mergedRetrievals = [
+            ...existingRetrievals.filter((r) => !newKeys.has(keyOf(r))),
+            ...retrievals,
+          ];
           return {
             ...m,
             tool_calls: toolCalls,
+            retrievals: mergedRetrievals,
             message_document: messageDocumentWithRetrievals(
               m,
               data,
@@ -330,6 +338,17 @@ export function useChatMessageUpdates({
             ),
           };
         }),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleCitationIndex = useCallback(
+    (assistantId: string, data: SSECitationIndexEvent["data"]) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, citation_index: data.entries } : m,
+        ),
       );
     },
     [setMessages],
@@ -343,101 +362,6 @@ export function useChatMessageUpdates({
           return {
             ...m,
             message_document: messageDocumentWithSourceManifest(m, data),
-          };
-        }),
-      );
-    },
-    [setMessages],
-  );
-
-  const handleClaim = useCallback(
-    (assistantId: string, data: SSEClaimEvent["data"]) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (
-            m.id !== assistantId ||
-            typeof data.claim_text !== "string" ||
-            !(
-              data.claim_kind === "answer" ||
-              data.claim_kind === "insufficient_evidence"
-            ) ||
-            !(
-              data.support_status === "supported" ||
-              data.support_status === "partially_supported" ||
-              data.support_status === "contradicted" ||
-              data.support_status === "not_enough_evidence" ||
-              data.support_status === "out_of_scope" ||
-              data.support_status === "not_source_grounded"
-            ) ||
-            !(
-              data.verifier_status === "llm_verified" ||
-              data.verifier_status === "parse_failed" ||
-              data.verifier_status === "failed"
-            )
-          ) {
-            return m;
-          }
-          const createdAt = data.created_at ?? new Date().toISOString();
-          const blocks = m.message_document?.blocks ?? [];
-          const ordinal =
-            data.ordinal ?? blocks.filter((block) => block.type === "claim").length;
-          const claimId = data.id ?? `${assistantId}-claim-${ordinal}`;
-          return {
-            ...m,
-            message_document: {
-              type: "message_document",
-              version: 1,
-              blocks: [
-                ...blocks.filter(
-                  (block) => block.type !== "claim" || block.claim_id !== claimId,
-                ),
-                {
-                  type: "claim",
-                  claim_id: claimId,
-                  message_id: data.message_id ?? assistantId,
-                  ordinal,
-                  claim_text: data.claim_text,
-                  answer_start_offset: data.answer_start_offset ?? null,
-                  answer_end_offset: data.answer_end_offset ?? null,
-                  claim_kind: data.claim_kind,
-                  support_status: data.support_status,
-                  unsupported_reason: data.unsupported_reason ?? null,
-                  confidence:
-                    typeof data.confidence === "number" ? data.confidence : null,
-                  verifier_status: data.verifier_status,
-                  created_at: createdAt,
-                },
-              ],
-            },
-          };
-        }),
-      );
-    },
-    [setMessages],
-  );
-
-  const handleClaimEvidence = useCallback(
-    (assistantId: string, evidence: SSEClaimEvidenceEvent["data"]) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const blocks = m.message_document?.blocks ?? [];
-          return {
-            ...m,
-            message_document: {
-              type: "message_document",
-              version: 1,
-              blocks: [
-                ...blocks.filter(
-                  (block) =>
-                    block.type !== "claim_evidence" || block.id !== evidence.id,
-                ),
-                {
-                  type: "claim_evidence",
-                  ...evidence,
-                },
-              ],
-            },
           };
         }),
       );
@@ -481,8 +405,7 @@ export function useChatMessageUpdates({
     handleToolCall,
     handleToolResult,
     handleSourceManifestDelta,
-    handleClaim,
-    handleClaimEvidence,
+    handleCitationIndex,
     handleDone,
   };
 }

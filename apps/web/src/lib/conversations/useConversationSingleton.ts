@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 
+export type ConversationSingletonKind = "media" | "library";
+
 interface ChatSingletonStateResponse {
   data: {
     conversation_id: string | null;
@@ -10,18 +12,21 @@ interface ChatSingletonStateResponse {
   };
 }
 
-interface DocChatSingleton {
+interface ConversationSingleton {
   conversationId: string | null;
   messageCount: number;
   isLoading: boolean;
 }
 
 /**
- * Read-only state of the viewer's doc-chat singleton for `mediaId`. Returns
- * `conversationId: null` until the first chat run lazily materializes the
- * singleton (§4.7, §7.2).
+ * Read-only state of the viewer's singleton conversation for (kind, targetId).
+ * Returns conversationId=null until the first chat run lazily materializes the
+ * singleton.
  */
-export function useDocChatSingleton(mediaId: string): DocChatSingleton {
+export function useConversationSingleton(
+  kind: ConversationSingletonKind,
+  targetId: string,
+): ConversationSingleton {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messageCount, setMessageCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,9 +34,7 @@ export function useDocChatSingleton(mediaId: string): DocChatSingleton {
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
-    apiFetch<ChatSingletonStateResponse>(
-      `/api/chat-singletons/media/${mediaId}`,
-    )
+    apiFetch<ChatSingletonStateResponse>(`/api/chat-singletons/${kind}/${targetId}`)
       .then((response) => {
         if (cancelled) return;
         setConversationId(response.data.conversation_id);
@@ -49,7 +52,7 @@ export function useDocChatSingleton(mediaId: string): DocChatSingleton {
     return () => {
       cancelled = true;
     };
-  }, [mediaId]);
+  }, [kind, targetId]);
 
   return { conversationId, messageCount, isLoading };
 }

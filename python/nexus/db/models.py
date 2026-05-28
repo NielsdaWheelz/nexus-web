@@ -3803,6 +3803,65 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    pinned_sources: Mapped[list["ConversationPinnedSource"]] = relationship(
+        "ConversationPinnedSource",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationPinnedSource.ordinal",
+    )
+
+
+class ConversationPinnedSource(Base):
+    """Persistent source scope pinned to a conversation."""
+
+    __tablename__ = "conversation_pinned_sources"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    locator_json: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exact: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "ordinal",
+            name="uix_pinned_sources_conversation_ordinal",
+        ),
+        CheckConstraint(
+            "kind IN ('media', 'library', 'reader_selection')",
+            name="ck_pinned_sources_kind",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_pinned_sources_ordinal_nonneg"),
+        CheckConstraint(
+            "(kind IN ('media', 'library') AND target_id IS NOT NULL)"
+            " OR (kind = 'reader_selection' AND target_id IS NULL"
+            " AND locator_json IS NOT NULL AND source_version IS NOT NULL"
+            " AND exact IS NOT NULL)",
+            name="ck_pinned_sources_kind_fields",
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation", back_populates="pinned_sources"
+    )
 
 
 class ConversationShare(Base):
@@ -4018,24 +4077,6 @@ class Message(Base):
         back_populates="message",
         cascade="all, delete-orphan",
         order_by="MessageContextItem.ordinal",
-    )
-    evidence_summary: Mapped["AssistantMessageEvidenceSummary | None"] = relationship(
-        "AssistantMessageEvidenceSummary",
-        back_populates="message",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
-    citation_audits: Mapped[list["AssistantMessageCitationAudit"]] = relationship(
-        "AssistantMessageCitationAudit",
-        back_populates="message",
-        cascade="all, delete-orphan",
-        order_by="AssistantMessageCitationAudit.created_at",
-    )
-    claims: Mapped[list["AssistantMessageClaim"]] = relationship(
-        "AssistantMessageClaim",
-        back_populates="message",
-        cascade="all, delete-orphan",
-        order_by="AssistantMessageClaim.ordinal",
     )
 
 
@@ -4429,6 +4470,7 @@ class MessageRetrieval(Base):
         server_default="false",
     )
     source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4439,6 +4481,10 @@ class MessageRetrieval(Base):
         CheckConstraint(
             "ordinal >= 0",
             name="ck_message_retrievals_ordinal_non_negative",
+        ),
+        CheckConstraint(
+            "citation_ordinal IS NULL OR citation_ordinal > 0",
+            name="ck_message_retrievals_citation_ordinal_positive",
         ),
         CheckConstraint(
             """
@@ -4827,489 +4873,6 @@ class MessageRerankLedger(Base):
     )
 
     tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
-
-
-class AssistantMessageVerifierRun(Base):
-    """Append-only verifier ledger for one assistant message verification pass."""
-
-    __tablename__ = "assistant_message_verifier_runs"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    chat_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id"),
-        nullable=True,
-    )
-    prompt_assembly_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_prompt_assemblies.id"),
-        nullable=True,
-    )
-    verifier_name: Mapped[str] = mapped_column(Text, nullable=False)
-    verifier_version: Mapped[str] = mapped_column(Text, nullable=False)
-    verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
-    support_status: Mapped[str] = mapped_column(Text, nullable=False)
-    claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    unsupported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    not_enough_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    metadata_: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(verifier_name) BETWEEN 1 AND 128",
-            name="ck_assistant_verifier_runs_name_length",
-        ),
-        CheckConstraint(
-            "char_length(verifier_version) BETWEEN 1 AND 128",
-            name="ck_assistant_verifier_runs_version_length",
-        ),
-        CheckConstraint(
-            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
-            name="ck_assistant_verifier_runs_status",
-        ),
-        CheckConstraint(
-            """
-            support_status IN (
-                'supported',
-                'partially_supported',
-                'contradicted',
-                'not_enough_evidence',
-                'out_of_scope',
-                'not_source_grounded'
-            )
-            """,
-            name="ck_assistant_verifier_runs_support_status",
-        ),
-        CheckConstraint(
-            """
-            claim_count >= 0
-            AND supported_claim_count >= 0
-            AND unsupported_claim_count >= 0
-            AND not_enough_evidence_count >= 0
-            """,
-            name="ck_assistant_verifier_runs_counts",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(metadata) = 'object'",
-            name="ck_assistant_verifier_runs_metadata_object",
-        ),
-        Index("idx_assistant_verifier_runs_message_created", "message_id", "created_at", "id"),
-        Index("idx_assistant_verifier_runs_chat_run", "chat_run_id"),
-    )
-
-    message: Mapped["Message"] = relationship("Message")
-    chat_run: Mapped["ChatRun | None"] = relationship("ChatRun")
-    prompt_assembly: Mapped["ChatPromptAssembly | None"] = relationship("ChatPromptAssembly")
-
-
-class AssistantMessageEvidenceSummary(Base):
-    """Final evidence status for one assistant message."""
-
-    __tablename__ = "assistant_message_evidence_summaries"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    scope_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    retrieval_status: Mapped[str] = mapped_column(Text, nullable=False)
-    support_status: Mapped[str] = mapped_column(Text, nullable=False)
-    verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
-    verifier_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("assistant_message_verifier_runs.id"),
-        nullable=True,
-    )
-    claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    unsupported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    not_enough_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    prompt_assembly_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_prompt_assemblies.id"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "scope_ref IS NULL OR scope_ref = 'null'::jsonb OR jsonb_typeof(scope_ref) = 'object'",
-            name="ck_assistant_evidence_summaries_scope_ref_object",
-        ),
-        CheckConstraint(
-            """
-            retrieval_status IN (
-                'attached_context',
-                'retrieved',
-                'selected',
-                'included_in_prompt',
-                'excluded_by_budget',
-                'excluded_by_scope',
-                'web_result'
-            )
-            """,
-            name="ck_assistant_evidence_summaries_retrieval_status",
-        ),
-        CheckConstraint(
-            """
-            support_status IN (
-                'supported',
-                'partially_supported',
-                'contradicted',
-                'not_enough_evidence',
-                'out_of_scope',
-                'not_source_grounded'
-            )
-            """,
-            name="ck_assistant_evidence_summaries_support_status",
-        ),
-        CheckConstraint(
-            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
-            name="ck_assistant_evidence_summaries_verifier_status",
-        ),
-        CheckConstraint(
-            """
-            claim_count >= 0
-            AND supported_claim_count >= 0
-            AND unsupported_claim_count >= 0
-            AND not_enough_evidence_count >= 0
-            """,
-            name="ck_assistant_evidence_summaries_counts",
-        ),
-        UniqueConstraint("message_id", name="uix_assistant_evidence_summaries_message"),
-    )
-
-    message: Mapped["Message"] = relationship("Message", back_populates="evidence_summary")
-    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
-        "AssistantMessageVerifierRun"
-    )
-
-
-class AssistantMessageCitationAudit(Base):
-    """Append-only citation audit ledger row for one assistant message."""
-
-    __tablename__ = "assistant_message_citation_audits"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    chat_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id"),
-        nullable=True,
-    )
-    verifier_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("assistant_message_verifier_runs.id"),
-        nullable=True,
-    )
-    supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    supported_claims_with_valid_offsets_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-    )
-    supported_claims_with_citation_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    missing_locator_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    missing_source_version_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    supported_claims_have_valid_offsets: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    supported_claims_have_citation_placement: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    claim_evidence_has_required_locators: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    claim_evidence_has_source_versions: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    details: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            """
-            supported_claim_count >= 0
-            AND supported_claims_with_valid_offsets_count >= 0
-            AND supported_claims_with_citation_count >= 0
-            AND missing_locator_count >= 0
-            AND missing_source_version_count >= 0
-            """,
-            name="ck_assistant_citation_audits_counts",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(details) = 'object'",
-            name="ck_assistant_citation_audits_details_object",
-        ),
-        Index("idx_assistant_citation_audits_message_created", "message_id", "created_at", "id"),
-        Index("idx_assistant_citation_audits_chat_run", "chat_run_id"),
-    )
-
-    message: Mapped["Message"] = relationship("Message", back_populates="citation_audits")
-    chat_run: Mapped["ChatRun | None"] = relationship("ChatRun")
-    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
-        "AssistantMessageVerifierRun"
-    )
-
-
-class AssistantMessageClaim(Base):
-    """One persisted claim from a completed assistant message."""
-
-    __tablename__ = "assistant_message_claims"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
-    answer_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    answer_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    claim_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    support_status: Mapped[str] = mapped_column(Text, nullable=False)
-    unsupported_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
-    verifier_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("assistant_message_verifier_runs.id"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("ordinal >= 0", name="ck_assistant_claims_ordinal"),
-        CheckConstraint(
-            "char_length(btrim(claim_text)) BETWEEN 1 AND 50000",
-            name="ck_assistant_claims_text_length",
-        ),
-        CheckConstraint(
-            """
-            (
-                answer_start_offset IS NULL
-                AND answer_end_offset IS NULL
-            )
-            OR (
-                answer_start_offset >= 0
-                AND answer_end_offset > answer_start_offset
-            )
-            """,
-            name="ck_assistant_claims_offsets",
-        ),
-        CheckConstraint(
-            "claim_kind IN ('answer', 'insufficient_evidence')",
-            name="ck_assistant_claims_kind",
-        ),
-        CheckConstraint(
-            """
-            support_status IN (
-                'supported',
-                'partially_supported',
-                'contradicted',
-                'not_enough_evidence',
-                'out_of_scope',
-                'not_source_grounded'
-            )
-            """,
-            name="ck_assistant_claims_support_status",
-        ),
-        CheckConstraint(
-            "unsupported_reason IS NULL OR char_length(btrim(unsupported_reason)) BETWEEN 1 AND 2000",
-            name="ck_assistant_claims_unsupported_reason",
-        ),
-        CheckConstraint(
-            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
-            name="ck_assistant_claims_confidence",
-        ),
-        CheckConstraint(
-            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
-            name="ck_assistant_claims_verifier_status",
-        ),
-        UniqueConstraint("message_id", "ordinal", name="uix_assistant_claims_message_ordinal"),
-        Index("idx_assistant_claims_message", "message_id", "ordinal"),
-    )
-
-    message: Mapped["Message"] = relationship("Message", back_populates="claims")
-    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
-        "AssistantMessageVerifierRun"
-    )
-    evidence: Mapped[list["AssistantMessageClaimEvidence"]] = relationship(
-        "AssistantMessageClaimEvidence",
-        back_populates="claim",
-        cascade="all, delete-orphan",
-        order_by="AssistantMessageClaimEvidence.ordinal",
-    )
-
-
-class AssistantMessageClaimEvidence(Base):
-    """One source snapshot linked to an assistant claim."""
-
-    __tablename__ = "assistant_message_claim_evidence"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    claim_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("assistant_message_claims.id"),
-        nullable=False,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    evidence_role: Mapped[str] = mapped_column(Text, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    retrieval_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("message_retrievals.id"),
-        nullable=True,
-    )
-    evidence_span_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("evidence_spans.id"),
-        nullable=True,
-    )
-    context_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    result_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    exact_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
-    snippet_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
-    snippet_suffix: Mapped[str | None] = mapped_column(Text, nullable=True)
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    retrieval_status: Mapped[str] = mapped_column(Text, nullable=False)
-    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    included_in_prompt: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
-    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("ordinal >= 0", name="ck_assistant_claim_evidence_ordinal"),
-        CheckConstraint(
-            "evidence_role IN ('supports', 'contradicts', 'context', 'scope_boundary')",
-            name="ck_assistant_claim_evidence_role",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_assistant_claim_evidence_source_ref_object",
-        ),
-        CheckConstraint(
-            "context_ref IS NULL OR context_ref = 'null'::jsonb OR jsonb_typeof(context_ref) = 'object'",
-            name="ck_assistant_claim_evidence_context_ref_object",
-        ),
-        CheckConstraint(
-            "result_ref IS NULL OR result_ref = 'null'::jsonb OR jsonb_typeof(result_ref) = 'object'",
-            name="ck_assistant_claim_evidence_result_ref_object",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR locator = 'null'::jsonb OR jsonb_typeof(locator) = 'object'",
-            name="ck_assistant_claim_evidence_locator_object",
-        ),
-        CheckConstraint(
-            "evidence_role NOT IN ('supports', 'contradicts') OR "
-            "(locator IS NOT NULL AND locator != 'null'::jsonb)",
-            name="ck_assistant_claim_evidence_support_locator_required",
-        ),
-        CheckConstraint(
-            "evidence_role NOT IN ('supports', 'contradicts') OR "
-            "(source_version IS NOT NULL AND char_length(btrim(source_version)) > 0)",
-            name="ck_assistant_claim_evidence_support_source_version_required",
-        ),
-        CheckConstraint(
-            "score IS NULL OR score >= 0",
-            name="ck_assistant_claim_evidence_score",
-        ),
-        CheckConstraint(
-            """
-            retrieval_status IN (
-                'attached_context',
-                'retrieved',
-                'selected',
-                'included_in_prompt',
-                'excluded_by_budget',
-                'excluded_by_scope',
-                'web_result'
-            )
-            """,
-            name="ck_assistant_claim_evidence_retrieval_status",
-        ),
-        CheckConstraint(
-            """
-            evidence_role NOT IN ('supports', 'contradicts')
-            OR (exact_snippet IS NOT NULL AND char_length(btrim(exact_snippet)) > 0)
-            """,
-            name="ck_assistant_claim_evidence_snippet_required",
-        ),
-        UniqueConstraint("claim_id", "ordinal", name="uix_assistant_claim_evidence_ordinal"),
-        Index("idx_assistant_claim_evidence_claim", "claim_id", "ordinal"),
-        Index("idx_assistant_claim_evidence_retrieval", "retrieval_id"),
-        Index("idx_assistant_claim_evidence_evidence_span", "evidence_span_id"),
-    )
-
-    claim: Mapped["AssistantMessageClaim"] = relationship(
-        "AssistantMessageClaim",
-        back_populates="evidence",
-    )
 
 
 class ConversationMemoryItem(Base):

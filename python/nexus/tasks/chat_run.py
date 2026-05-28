@@ -8,6 +8,8 @@ from uuid import UUID
 
 import httpx
 from llm_calling.router import LLMRouter
+from web_search_tool.brave import BraveSearchProvider
+from web_search_tool.types import WebSearchProvider
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
@@ -23,9 +25,7 @@ logger = get_logger(__name__)
 def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> dict:
     run_uuid = UUID(run_id)
     reader_context_hint = (
-        ReaderContextHint.model_validate(reader_context)
-        if reader_context is not None
-        else None
+        ReaderContextHint.model_validate(reader_context) if reader_context is not None else None
     )
     settings = get_settings()
     session_factory = get_session_factory()
@@ -58,10 +58,16 @@ def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> di
                     enable_gemini=settings.enable_gemini,
                     enable_deepseek=settings.enable_deepseek,
                 )
+            web_search_provider: WebSearchProvider | None = (
+                BraveSearchProvider(client, api_key=settings.brave_search_api_key)
+                if settings.brave_search_api_key
+                else None
+            )
             return await execute_chat_run(
                 db,
                 run_id=run_uuid,
                 llm_router=router,
+                web_search_provider=web_search_provider,
                 reader_context=reader_context_hint,
             )
 

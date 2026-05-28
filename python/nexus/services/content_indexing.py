@@ -1315,18 +1315,6 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
     db.execute(
         text(
             """
-            UPDATE assistant_message_claim_evidence ace
-            SET evidence_span_id = NULL
-            FROM evidence_spans es
-            WHERE ace.evidence_span_id = es.id
-              AND es.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
             UPDATE message_retrievals mr
             SET evidence_span_id = NULL
             FROM evidence_spans es

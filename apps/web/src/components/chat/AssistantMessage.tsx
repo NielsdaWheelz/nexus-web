@@ -31,10 +31,7 @@ export default function AssistantMessage({
   switchableLeafIds,
   onSelectFork,
   onReplyToAssistant,
-  onActivateTarget,
-  onAskAboutSource,
-  onSaveSourceQuote,
-  hasReaderActivator,
+  onCitationActivate,
   errorLabel,
   timestampLabel,
 }: {
@@ -43,10 +40,7 @@ export default function AssistantMessage({
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  onActivateTarget: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
-  hasReaderActivator: boolean;
+  onCitationActivate?: (target: ReaderSourceTarget) => void;
   errorLabel: string;
   timestampLabel: string;
 }) {
@@ -183,10 +177,7 @@ export default function AssistantMessage({
         <AssistantEvidenceDisclosure
           message={message}
           answerRef={answerRef}
-          onActivateTarget={onActivateTarget}
-          onAskAboutSource={onAskAboutSource}
-          onSaveSourceQuote={onSaveSourceQuote}
-          hasReaderActivator={hasReaderActivator}
+          onCitationActivate={onCitationActivate}
         />
       ) : null}
       {selectionDraft ? (

@@ -76,9 +76,7 @@ def test_prod_succeeds_when_cors_list_contains_app_public_url_origin(
         {
             "APP_PUBLIC_URL": "https://nexus.nielseriknandal.com",
             "STREAM_BASE_URL": "https://stream.nielseriknandal.com",
-            "STREAM_CORS_ORIGINS": (
-                "https://nexus.nielseriknandal.com,https://preview.foo.app"
-            ),
+            "STREAM_CORS_ORIGINS": ("https://nexus.nielseriknandal.com,https://preview.foo.app"),
             "STREAM_TOKEN_SIGNING_KEY": "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw==",
         },
     )

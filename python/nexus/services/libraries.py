@@ -574,9 +574,7 @@ def validate_libraries_accessible(
     ).fetchall()
     accessible_ids = {UUID(str(row[0])) for row in accessible_rows}
     if accessible_ids != set(targets):
-        raise ForbiddenError(
-            ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not accessible"
-        )
+        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not accessible")
 
 
 def add_media_to_libraries(
@@ -2153,4 +2151,3 @@ def set_subscription_libraries(
                     "library_id": library_id,
                 },
             )
-

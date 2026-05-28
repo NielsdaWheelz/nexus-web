@@ -115,9 +115,7 @@ def ensure_podcast(
         if podcast_id is not None:
             feed_url_owner_id = select_podcast_id_by_feed_url(db, normalized_body.feed_url)
             if feed_url_owner_id is not None and feed_url_owner_id != podcast_id:
-                update_podcast_metadata(
-                    db, podcast_id=podcast_id, body=normalized_body, now=now
-                )
+                update_podcast_metadata(db, podcast_id=podcast_id, body=normalized_body, now=now)
                 replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
                 return PodcastEnsureOut(podcast_id=podcast_id)
 
@@ -617,9 +615,7 @@ def upsert_podcast(
             replace_podcast_contributors_from_body(db, existing_id, body)
             return existing_id
 
-        update_podcast_metadata(
-            db, podcast_id=existing_id, body=body, now=now, set_feed_url=True
-        )
+        update_podcast_metadata(db, podcast_id=existing_id, body=body, now=now, set_feed_url=True)
         replace_podcast_contributors_from_body(db, existing_id, body)
         return existing_id
 

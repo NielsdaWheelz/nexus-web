@@ -14,7 +14,6 @@ from nexus.db.models import ChatRun, Message, MessageLLM, Model
 from nexus.errors import ApiErrorCode
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, append_run_event
-from nexus.services.chat_run_evidence import finalize_message_evidence
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_prompt_tracking import prompt_assembly_metadata
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
@@ -147,7 +146,6 @@ def finalize_run(
     usage: LLMUsage | None,
     provider_request_id: str | None,
     viewer_id: UUID | None,
-    verifier_hint: dict[str, Any] | None = None,
 ) -> None:
     run = (
         db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().first()
@@ -165,30 +163,12 @@ def finalize_run(
         assistant_message.status = assistant_status
         assistant_message.error_code = error_code
         assistant_message.updated_at = datetime.now(UTC)
-        if assistant_status == "complete":
-            claim_events, claim_evidence_events = finalize_message_evidence(
-                db,
-                run,
-                assistant_message,
-                verifier_hint,
-            )
-            assistant_message.message_document = message_document_with_run_components(
-                db,
-                run_id=run.id,
-                role="assistant",
-                content=content,
-            )
-            for claim_event in claim_events:
-                append_run_event(db, run, "claim", claim_event)
-            for claim_evidence_event in claim_evidence_events:
-                append_run_event(db, run, "claim_evidence", claim_evidence_event)
-        else:
-            assistant_message.message_document = message_document_with_run_components(
-                db,
-                run_id=run.id,
-                role="assistant",
-                content=content,
-            )
+        assistant_message.message_document = message_document_with_run_components(
+            db,
+            run_id=run.id,
+            role="assistant",
+            content=content,
+        )
 
     key = resolved_key or (model and dummy_resolved_key(model))
     if assistant_message is not None and model is not None and key is not None:

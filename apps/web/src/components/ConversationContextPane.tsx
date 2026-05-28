@@ -7,8 +7,6 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
-import ConversationProvenancePanel from "@/components/chat/ConversationProvenancePanel";
-import { countProvenanceSignals } from "@/lib/conversations/provenance/buildModel";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type {
   ContextItem,
@@ -100,12 +98,9 @@ export default function ConversationContextPane({
   onRemoveContext,
   testId = "conversation-context-pane",
 }: ConversationContextPaneProps) {
-  const [mode, setMode] = useState<"context" | "provenance" | "forks">(
-    "context",
-  );
+  const [mode, setMode] = useState<"context" | "forks">("context");
   const hasMemory =
     Boolean(memory?.state_snapshot) || (memory?.memory_items?.length ?? 0) > 0;
-  const provenanceCount = countProvenanceSignals(messages, memory);
   const forkCount = Object.values(forkOptionsByParentId).reduce(
     (count, forks) => count + forks.length,
     0,
@@ -141,14 +136,6 @@ export default function ConversationContextPane({
         <button
           type="button"
           role="tab"
-          aria-selected={mode === "provenance"}
-          onClick={() => setMode("provenance")}
-        >
-          Provenance{provenanceCount > 0 ? ` ${provenanceCount}` : ""}
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={mode === "forks"}
           onClick={() => setMode("forks")}
         >
@@ -173,11 +160,6 @@ export default function ConversationContextPane({
           ) : (
             <FeedbackNotice severity="neutral" title="No forks yet." />
           )
-        ) : mode === "provenance" ? (
-          <ConversationProvenancePanel
-            messages={messages}
-            memory={memory}
-          />
         ) : (
           <ContextContent
             singleton={singleton}

@@ -41,13 +41,13 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     replace_media_contributor_credits,
 )
+from nexus.services.libraries import assign_libraries_for_media
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.transcript_segments import (
     insert_transcript_fragments,
     normalize_transcript_segments,
 )
-from nexus.services.libraries import assign_libraries_for_media
 from nexus.services.url_normalize import validate_requested_url
 
 from ._normalize import (
@@ -2343,5 +2343,3 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
         keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
 
     return keys
-
-

@@ -316,5 +316,3 @@ def _sanitize_image(element: HtmlElement, base_url: str) -> None:
     encoded_url = quote(absolute_url, safe="")
     proxy_url = IMAGE_PROXY_URL.format(encoded_url=encoded_url)
     element.set("src", proxy_url)
-
-

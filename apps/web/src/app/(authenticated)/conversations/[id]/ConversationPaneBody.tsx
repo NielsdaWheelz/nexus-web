@@ -14,20 +14,13 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse/requests";
 import { createRandomId } from "@/lib/createRandomId";
-import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
-import {
-  buildQuoteSelector,
-  getLocatorQuoteParts,
-} from "@/lib/highlights/quoteText";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -95,7 +88,6 @@ export default function ConversationPaneBody() {
   const searchParams = usePaneSearchParams();
   const {
     attachedContexts,
-    setAttachedContexts,
     removeContext,
     clearContexts,
     stripAttachState,
@@ -127,7 +119,6 @@ export default function ConversationPaneBody() {
       id={id}
       runIdFromUrl={runIdFromUrl}
       attachedContexts={attachedContexts}
-      setAttachedContexts={setAttachedContexts}
       onRemoveContext={removeContext}
       onMessageSent={clearAttachState}
       onRunFinished={clearRunParam}
@@ -144,7 +135,6 @@ function ChatView({
   id,
   runIdFromUrl,
   attachedContexts,
-  setAttachedContexts,
   onRemoveContext,
   onMessageSent,
   onRunFinished,
@@ -152,7 +142,6 @@ function ChatView({
   id: string;
   runIdFromUrl: string | null;
   attachedContexts: ContextItem[];
-  setAttachedContexts: Dispatch<SetStateAction<ContextItem[]>>;
   onRemoveContext: (index: number) => void;
   onMessageSent: () => void;
   onRunFinished: (runId: string) => void;
@@ -668,93 +657,6 @@ function ChatView({
     [router],
   );
 
-  const handleAskAboutSource = useCallback(
-    (target: ReaderSourceTarget) => {
-      const exact = target.snippet?.trim();
-      if (!exact) {
-        handleReaderSourceActivate(target);
-        return;
-      }
-      const locator = target.locator;
-      const selector = buildQuoteSelector({
-        exact,
-        ...getLocatorQuoteParts(locator),
-      });
-      setAttachedContexts((current) =>
-        mergeContextItems(current, [
-          {
-            kind: "reader_selection",
-            client_context_id: createRandomId(),
-            media_id: target.media_id,
-            media_kind:
-              locator.type === "pdf_page_geometry"
-                ? "pdf"
-                : locator.type === "transcript_time_range"
-                  ? "transcript"
-                  : locator.type === "epub_fragment_offsets"
-                    ? "epub"
-                    : "web_article",
-            media_title: target.label ?? "Source",
-            ...selector,
-            preview: exact.slice(0, 120),
-            locator: target.locator,
-            source_version: target.source_version,
-            color: "yellow",
-          },
-        ]),
-      );
-    },
-    [handleReaderSourceActivate, setAttachedContexts],
-  );
-
-  const handleSaveSourceQuote = useCallback(
-    async (target: ReaderSourceTarget) => {
-      const locator = target.locator;
-      try {
-        if (
-          (locator.type === "epub_fragment_offsets" ||
-            locator.type === "web_text_offsets") &&
-          typeof locator.fragment_id === "string" &&
-          typeof locator.start_offset === "number" &&
-          typeof locator.end_offset === "number" &&
-          locator.end_offset > locator.start_offset
-        ) {
-          await apiFetch(`/api/fragments/${locator.fragment_id}/highlights`, {
-            method: "POST",
-            body: JSON.stringify({
-              start_offset: locator.start_offset,
-              end_offset: locator.end_offset,
-              color: "yellow",
-            }),
-          });
-          return;
-        }
-        if (
-          locator.type === "pdf_page_geometry" &&
-          typeof locator.page_number === "number" &&
-          Array.isArray(locator.quads) &&
-          locator.quads.length > 0
-        ) {
-          await apiFetch(`/api/media/${target.media_id}/pdf-highlights`, {
-            method: "POST",
-            body: JSON.stringify({
-              page_number: locator.page_number,
-              quads: locator.quads,
-              exact:
-                (typeof locator.exact === "string" && locator.exact) ||
-                target.snippet ||
-                "",
-              color: "yellow",
-            }),
-          });
-        }
-      } catch (err) {
-        setError(toFeedback(err, { fallback: "Failed to save quote" }));
-      }
-    },
-    [],
-  );
-
   usePaneChromeOverride({
     options: conversationResourceOptions({
       deleting,
@@ -807,8 +709,6 @@ function ChatView({
             <ChatSurface
               messages={messages}
               onReaderSourceActivate={handleReaderSourceActivate}
-              onAskAboutSource={handleAskAboutSource}
-              onSaveSourceQuote={handleSaveSourceQuote}
               forkOptionsByParentId={forkOptionsByParentId}
               switchableLeafIds={switchableLeafIds}
               onSelectFork={(fork) => {

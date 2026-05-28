@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 from nexus.evidence_span_ids import trusted_evidence_span_ids
-from nexus.schemas.context_memory import ConversationMemoryInspectionOut, SourceRef
+from nexus.schemas.context_memory import ConversationMemoryInspectionOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 
 # Valid sharing modes - must match DB constraint
@@ -87,8 +87,7 @@ CHAT_RUN_EVENT_TYPES = Literal[
     "tool_call",
     "retrieval_result",
     "source_manifest_delta",
-    "claim",
-    "claim_evidence",
+    "citation_index",
     "delta",
     "done",
 ]
@@ -101,16 +100,6 @@ EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "excluded_by_scope",
     "web_result",
 ]
-CLAIM_SUPPORT_STATUSES = Literal[
-    "supported",
-    "partially_supported",
-    "contradicted",
-    "not_enough_evidence",
-    "out_of_scope",
-    "not_source_grounded",
-]
-CLAIM_EVIDENCE_ROLES = Literal["supports", "contradicts", "context", "scope_boundary"]
-EVIDENCE_VERIFIER_STATUSES = Literal["llm_verified", "parse_failed", "failed"]
 CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retrieval"]
 
 
@@ -129,6 +118,52 @@ class ConversationSingletonOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+PINNED_SOURCE_KINDS = Literal["media", "library", "reader_selection"]
+
+
+class ConversationPinnedSourceOut(BaseModel):
+    """Persistent source scope for a conversation."""
+
+    id: UUID
+    ordinal: int = Field(ge=0)
+    kind: PINNED_SOURCE_KINDS
+    target_id: UUID | None = None
+    locator: RetrievalLocator | None = None
+    source_version: str | None = None
+    exact: str | None = None
+    title: str
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AddPinnedSourceRequest(BaseModel):
+    """Request to add a pinned source to a conversation."""
+
+    kind: PINNED_SOURCE_KINDS
+    target_id: UUID | None = None
+    locator: RetrievalLocator | None = None
+    source_version: str | None = None
+    exact: str | None = None
+    title: str = Field(min_length=1, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate_kind_fields(self) -> "AddPinnedSourceRequest":
+        if self.kind in ("media", "library"):
+            if self.target_id is None:
+                raise ValueError(f"target_id required for kind={self.kind}")
+        else:
+            if self.target_id is not None:
+                raise ValueError("target_id must be null for reader_selection")
+            if self.locator is None or self.exact is None or self.source_version is None:
+                raise ValueError(
+                    "reader_selection requires locator + exact + source_version",
+                )
+        return self
+
+
 class ConversationOut(BaseModel):
     """Response schema for a conversation.
 
@@ -143,6 +178,7 @@ class ConversationOut(BaseModel):
     is_owner: bool
     sharing: str  # "private" | "library" | "public"
     singleton: ConversationSingletonOut | None = None
+    pinned_sources: list[ConversationPinnedSourceOut] = Field(default_factory=list)
     message_count: int
     memory: ConversationMemoryInspectionOut | None = None
     created_at: datetime
@@ -262,121 +298,10 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
         return self
 
 
-class MessageDocumentVerificationSummaryBlock(BaseModel):
-    type: Literal["verification_summary"]
-    id: UUID
-    message_id: UUID
-    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
-    support_status: CLAIM_SUPPORT_STATUSES
-    verifier_status: EVIDENCE_VERIFIER_STATUSES
-    claim_count: int = Field(ge=0)
-    supported_claim_count: int = Field(ge=0)
-    unsupported_claim_count: int = Field(ge=0)
-    not_enough_evidence_count: int = Field(ge=0)
-    prompt_assembly_id: UUID | None = None
-    verifier_run_id: UUID | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageDocumentCitationAuditBlock(BaseModel):
-    type: Literal["citation_audit"]
-    id: UUID
-    message_id: UUID
-    chat_run_id: UUID | None = None
-    verifier_run_id: UUID | None = None
-    supported_claim_count: int = Field(ge=0)
-    supported_claims_with_valid_offsets_count: int = Field(ge=0)
-    supported_claims_with_citation_count: int = Field(ge=0)
-    missing_locator_count: int = Field(ge=0)
-    missing_source_version_count: int = Field(ge=0)
-    supported_claims_have_valid_offsets: bool
-    supported_claims_have_citation_placement: bool
-    claim_evidence_has_required_locators: bool
-    claim_evidence_has_source_versions: bool
-    details: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageDocumentClaimBlock(BaseModel):
-    type: Literal["claim"]
-    claim_id: UUID
-    message_id: UUID | None = None
-    ordinal: int = Field(ge=0)
-    claim_text: str
-    answer_start_offset: int | None = Field(default=None, ge=0)
-    answer_end_offset: int | None = Field(default=None, ge=0)
-    claim_kind: Literal["answer", "insufficient_evidence"]
-    support_status: CLAIM_SUPPORT_STATUSES
-    unsupported_reason: str | None = None
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    verifier_status: EVIDENCE_VERIFIER_STATUSES
-    created_at: datetime | None = None
-    evidence_ids: list[UUID] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_offsets(self) -> "MessageDocumentClaimBlock":
-        if (
-            self.answer_start_offset is not None
-            and self.answer_end_offset is not None
-            and self.answer_end_offset <= self.answer_start_offset
-        ):
-            raise ValueError("answer_end_offset must be greater than answer_start_offset")
-        return self
-
-
-class MessageDocumentClaimEvidenceBlock(BaseModel):
-    type: Literal["claim_evidence"]
-    id: UUID
-    claim_id: UUID
-    ordinal: int = Field(ge=0)
-    evidence_role: CLAIM_EVIDENCE_ROLES
-    source_ref: SourceRef
-    retrieval_id: UUID | None = None
-    evidence_span_id: UUID | None = None
-    context_ref: RetrievalContextRef | None = None
-    result_ref: RetrievalResultRef | None = None
-    exact_snippet: str | None = None
-    snippet_prefix: str | None = None
-    snippet_suffix: str | None = None
-    locator: RetrievalLocator | None = None
-    deep_link: str | None = None
-    citation_label: str | None = None
-    score: float | None = None
-    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
-    selected: bool
-    included_in_prompt: bool
-    source_version: str | None = None
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_citable_evidence(self) -> "MessageDocumentClaimEvidenceBlock":
-        if self.evidence_role in {"supports", "contradicts"}:
-            if self.locator is None:
-                raise ValueError("supporting claim evidence requires a locator")
-            if self.source_version is None:
-                raise ValueError("supporting claim evidence requires a source_version")
-            if not isinstance(self.exact_snippet, str) or not self.exact_snippet.strip():
-                raise ValueError("supporting claim evidence requires an exact_snippet")
-        return self
-
-
 MessageDocumentBlock = Annotated[
     MessageDocumentTextBlock
     | MessageDocumentSourceManifestBlock
-    | MessageDocumentRetrievalResultBlock
-    | MessageDocumentVerificationSummaryBlock
-    | MessageDocumentCitationAuditBlock
-    | MessageDocumentClaimBlock
-    | MessageDocumentClaimEvidenceBlock,
+    | MessageDocumentRetrievalResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -469,80 +394,6 @@ class MessageRetrievalOut(BaseModel):
             exclude_defaults=True,
         ):
             raise ValueError("locator must match result_ref.locator")
-        return self
-
-
-class ChatRunClaimEventPayload(BaseModel):
-    """Strict SSE payload for a finalized assistant claim."""
-
-    id: UUID
-    message_id: UUID
-    ordinal: int = Field(ge=0)
-    claim_text: str = Field(min_length=1)
-    answer_start_offset: int | None = Field(default=None, ge=0)
-    answer_end_offset: int | None = Field(default=None, ge=0)
-    claim_kind: Literal["answer", "insufficient_evidence"]
-    support_status: CLAIM_SUPPORT_STATUSES
-    unsupported_reason: str | None = None
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    verifier_status: EVIDENCE_VERIFIER_STATUSES
-    verifier_run_id: UUID
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_offsets(self) -> "ChatRunClaimEventPayload":
-        if (
-            self.answer_start_offset is not None
-            and self.answer_end_offset is not None
-            and self.answer_end_offset <= self.answer_start_offset
-        ):
-            raise ValueError("answer_end_offset must be greater than answer_start_offset")
-        if self.support_status in {
-            "not_enough_evidence",
-            "out_of_scope",
-            "not_source_grounded",
-        } and not (self.unsupported_reason and self.unsupported_reason.strip()):
-            raise ValueError("unsupported claims require unsupported_reason")
-        return self
-
-
-class ChatRunClaimEvidenceEventPayload(BaseModel):
-    """Strict SSE payload for one source snapshot attached to a claim."""
-
-    id: UUID
-    claim_id: UUID
-    ordinal: int = Field(ge=0)
-    evidence_role: CLAIM_EVIDENCE_ROLES
-    source_ref: SourceRef
-    retrieval_id: UUID | None = None
-    evidence_span_id: UUID | None = None
-    context_ref: RetrievalContextRef | None = None
-    result_ref: RetrievalResultRef | None = None
-    exact_snippet: str | None = None
-    snippet_prefix: str | None = None
-    snippet_suffix: str | None = None
-    locator: RetrievalLocator | None = None
-    deep_link: str | None = None
-    score: float | None = None
-    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
-    selected: bool
-    included_in_prompt: bool
-    source_version: str | None = Field(default=None, min_length=1)
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_citable_evidence(self) -> "ChatRunClaimEvidenceEventPayload":
-        if self.evidence_role in {"supports", "contradicts"}:
-            if self.locator is None:
-                raise ValueError("supporting claim evidence requires a locator")
-            if self.source_version is None:
-                raise ValueError("supporting claim evidence requires a source_version")
-            if not isinstance(self.exact_snippet, str) or not self.exact_snippet.strip():
-                raise ValueError("supporting claim evidence requires an exact_snippet")
         return self
 
 
@@ -640,6 +491,23 @@ class ChatRunDoneEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatRunCitationIndexEntry(BaseModel):
+    n: int = Field(ge=1)
+    retrieval_id: UUID
+    tool_call_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunCitationIndexEventPayload(BaseModel):
+    """Strict SSE payload mapping citation `[N]` markers to retrievals."""
+
+    assistant_message_id: UUID
+    entries: list[ChatRunCitationIndexEntry]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate strict chat-run SSE payloads before storage/replay."""
 
@@ -653,34 +521,13 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
         return ChatRunSourceManifestDeltaEventPayload.model_validate(payload).model_dump(
             mode="json"
         )
-    if event_type == "claim":
-        return ChatRunClaimEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "claim_evidence":
-        return ChatRunClaimEvidenceEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "citation_index":
+        return ChatRunCitationIndexEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "delta":
         return ChatRunDeltaEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "done":
         return ChatRunDoneEventPayload.model_validate(payload).model_dump(mode="json")
     raise ValueError("unknown chat-run event type")
-
-
-class AssistantVerifierRunOut(BaseModel):
-    """Append-only verifier run ledger for one assistant message."""
-
-    id: UUID
-    message_id: UUID
-    chat_run_id: UUID | None = None
-    prompt_assembly_id: UUID | None = None
-    verifier_name: str
-    verifier_version: str
-    verifier_status: EVIDENCE_VERIFIER_STATUSES
-    support_status: CLAIM_SUPPORT_STATUSES
-    claim_count: int
-    supported_claim_count: int
-    unsupported_claim_count: int
-    not_enough_evidence_count: int
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
 
 
 class MessageRetrievalCandidateLedgerOut(BaseModel):
@@ -729,12 +576,6 @@ REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high",
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
 MAX_CONTEXTS = 10
-
-
-class AssistantVerifierRunListResponse(BaseModel):
-    data: list[AssistantVerifierRunOut]
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class MessageRetrievalCandidateLedgerListResponse(BaseModel):

@@ -105,9 +105,7 @@ def test_references_media_lists_referencing_general_conversation(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
 
-    response = auth_client.get(
-        f"/chat-references/media/{media_id}", headers=auth_headers(user_id)
-    )
+    response = auth_client.get(f"/chat-references/media/{media_id}", headers=auth_headers(user_id))
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -121,18 +119,14 @@ def test_references_media_lists_referencing_general_conversation(
     assert first["message_count"] == 1
 
 
-def test_references_media_excludes_singleton(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_references_media_excludes_singleton(auth_client, direct_db: DirectSessionManager):
     """The viewer's doc-chat singleton for the same media never appears in the
     references list (it would be pinned, not listed)."""
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     with direct_db.session() as session:
         library_id = create_test_library(session, user_id, "Excludes Library")
-        media_id = create_test_media_in_library(
-            session, user_id, library_id, title="Excludes Doc"
-        )
+        media_id = create_test_media_in_library(session, user_id, library_id, title="Excludes Doc")
         # Singleton conversation
         singleton_conv_id = create_test_conversation(session, user_id)
         singleton_user_id = create_test_message(
@@ -179,9 +173,7 @@ def test_references_media_excludes_singleton(
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("chat_singletons", "conversation_id", singleton_conv_id)
 
-    response = auth_client.get(
-        f"/chat-references/media/{media_id}", headers=auth_headers(user_id)
-    )
+    response = auth_client.get(f"/chat-references/media/{media_id}", headers=auth_headers(user_id))
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -192,17 +184,13 @@ def test_references_media_excludes_singleton(
     )
 
 
-def test_references_media_orders_by_recency(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_references_media_orders_by_recency(auth_client, direct_db: DirectSessionManager):
     """References are ordered by ``updated_at`` desc (most-recent first)."""
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     with direct_db.session() as session:
         library_id = create_test_library(session, user_id, "Order Library")
-        media_id = create_test_media_in_library(
-            session, user_id, library_id, title="Ordered Doc"
-        )
+        media_id = create_test_media_in_library(session, user_id, library_id, title="Ordered Doc")
         # Three referencing conversations with controlled timestamps.
         conv_old_id = create_test_conversation(session, user_id)
         conv_mid_id = create_test_conversation(session, user_id)
@@ -242,9 +230,7 @@ def test_references_media_orders_by_recency(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
 
-    response = auth_client.get(
-        f"/chat-references/media/{media_id}", headers=auth_headers(user_id)
-    )
+    response = auth_client.get(f"/chat-references/media/{media_id}", headers=auth_headers(user_id))
 
     assert response.status_code == 200, response.text
     ordered_ids = [item["id"] for item in response.json()["data"]["conversations"]]
@@ -255,24 +241,18 @@ def test_references_media_orders_by_recency(
     ], f"Expected newest-first ordering, got {ordered_ids}"
 
 
-def test_references_media_pagination_offset_limit(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_references_media_pagination_offset_limit(auth_client, direct_db: DirectSessionManager):
     """``limit`` + ``offset`` paginate; ``next_offset`` is set when more pages
     exist and is None on the last page."""
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     with direct_db.session() as session:
         library_id = create_test_library(session, user_id, "Pagination Library")
-        media_id = create_test_media_in_library(
-            session, user_id, library_id, title="Paginated Doc"
-        )
+        media_id = create_test_media_in_library(session, user_id, library_id, title="Paginated Doc")
         conv_ids: list[UUID] = []
         for i in range(3):
             cid = create_test_conversation(session, user_id)
-            msg_id = create_test_message(
-                session, cid, 1, "user", f"Reference {i}"
-            )
+            msg_id = create_test_message(session, cid, 1, "user", f"Reference {i}")
             _attach_media_context_to_message(
                 session,
                 user_id=user_id,
@@ -312,10 +292,7 @@ def test_references_media_pagination_offset_limit(
     assert second_data["next_offset"] is None
 
     # No duplicates across pages.
-    all_ids = [
-        item["id"]
-        for item in first_data["conversations"] + second_data["conversations"]
-    ]
+    all_ids = [item["id"] for item in first_data["conversations"] + second_data["conversations"]]
     assert len(set(all_ids)) == 3
     assert isinstance(time.time(), float)  # silence unused import warning
 
@@ -341,9 +318,7 @@ def test_references_media_forbidden_for_invisible_media(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
 
-    response = auth_client.get(
-        f"/chat-references/media/{media_id}", headers=auth_headers(other_id)
-    )
+    response = auth_client.get(f"/chat-references/media/{media_id}", headers=auth_headers(other_id))
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "E_SINGLETON_TARGET_FORBIDDEN"

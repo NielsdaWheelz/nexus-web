@@ -7,18 +7,21 @@ events.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 import httpx
 from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
-from llm_calling.types import LLMUsage
-from sqlalchemy import select
+from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import can_read_media, is_library_member
 from nexus.config import get_settings
@@ -26,6 +29,7 @@ from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
+    ConversationPinnedSource,
     Message,
     Model,
 )
@@ -47,7 +51,16 @@ from nexus.schemas.conversation import (
     ReaderContextHint,
     SingletonTarget,
 )
-from nexus.services.agent_tools.app_search import execute_app_search
+from nexus.services.agent_tools.app_search import (
+    APP_SEARCH_TOOL_DEFINITION,
+    APP_SEARCH_TOOL_NAME,
+    execute_app_search,
+)
+from nexus.services.agent_tools.web_search import (
+    WEB_SEARCH_TOOL_DEFINITION,
+    WEB_SEARCH_TOOL_NAME,
+    execute_web_search,
+)
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     resolve_api_key,
@@ -66,10 +79,6 @@ from nexus.services.chat_run_event_store import (
     has_delta_without_terminal,
     is_cancel_requested,
     mark_running,
-)
-from nexus.services.chat_run_evidence import (
-    is_source_backed_run,
-    message_prompt_evidence_rows,
 )
 from nexus.services.chat_run_finalize import (
     ERROR_CODE_TO_MESSAGE,
@@ -100,16 +109,8 @@ from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.chat_run_singletons import resolve_singleton_conversation
 from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
-from nexus.services.chat_run_verification import (
-    LLM_TIMEOUT_SECONDS,
-    ChatRunLLMRouter,
-    verified_assistant_content,
-)
 from nexus.services.context_assembler import (
     assemble_chat_context,
-    load_message_context_refs,
-    load_recent_history_units,
-    message_context_ref_payloads,
     persist_prompt_assembly,
 )
 from nexus.services.context_lookup import (
@@ -118,24 +119,46 @@ from nexus.services.context_lookup import (
 from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.conversation_branches import (
     ensure_branch_metadata,
-    load_message_path,
     persist_active_leaf,
 )
 from nexus.services.conversation_memory import (
-    collect_memory_source_refs,
-    load_active_memory_items,
     refresh_conversation_memory,
 )
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
-from nexus.services.retrieval_planner import build_retrieval_plan
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
 
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
+LLM_TIMEOUT_SECONDS = 45.0
+MAX_TOOL_ITERATIONS = 8
+
+_CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name=APP_SEARCH_TOOL_NAME,
+        description=APP_SEARCH_TOOL_DEFINITION["description"],
+        parameters=APP_SEARCH_TOOL_DEFINITION["parameters"],
+    ),
+    ToolSpec(
+        name=WEB_SEARCH_TOOL_NAME,
+        description=WEB_SEARCH_TOOL_DEFINITION["description"],
+        parameters=WEB_SEARCH_TOOL_DEFINITION["parameters"],
+    ),
+)
+
+
+class ChatRunLLMRouter(Protocol):
+    def generate_stream(
+        self,
+        provider: str,
+        req: LLMRequest,
+        api_key: str,
+        *,
+        timeout_s: int,
+    ) -> AsyncIterator[LLMChunk]: ...
 
 
 def _llm_error_from_unread_stream_response(
@@ -161,6 +184,123 @@ def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
     if model.provider == "openai" and reasoning in {"default", "low", "medium", "high", "max"}:
         return min(REASONING_OUTPUT_TOKENS, model.max_context_tokens)
     return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
+
+
+def _pinned_search_scope(db: Session, conversation_id: UUID) -> tuple[UUID | None, UUID | None]:
+    """If the conversation has exactly one pinned media or library, return it as a default scope."""
+    rows = db.execute(
+        select(ConversationPinnedSource.kind, ConversationPinnedSource.target_id).where(
+            ConversationPinnedSource.conversation_id == conversation_id,
+            ConversationPinnedSource.kind.in_(("media", "library")),
+        )
+    ).all()
+    media_ids = [r[1] for r in rows if r[0] == "media"]
+    library_ids = [r[1] for r in rows if r[0] == "library"]
+    return (
+        media_ids[0] if len(media_ids) == 1 else None,
+        library_ids[0] if len(library_ids) == 1 else None,
+    )
+
+
+def _assign_citation_ordinals(db: Session, *, tool_call_id: UUID | None, start_ordinal: int) -> int:
+    """Assign citation_ordinal to selected retrievals for a tool call; return next ordinal."""
+    if tool_call_id is None:
+        return start_ordinal
+    rows = db.execute(
+        text(
+            """
+            WITH numbered AS (
+                SELECT id, :start_ordinal + (ROW_NUMBER() OVER (ORDER BY ordinal) - 1) AS n
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                  AND selected = true
+                  AND citation_ordinal IS NULL
+            )
+            UPDATE message_retrievals AS mr
+            SET citation_ordinal = numbered.n
+            FROM numbered
+            WHERE mr.id = numbered.id
+            RETURNING numbered.n
+            """
+        ),
+        {"tool_call_id": tool_call_id, "start_ordinal": start_ordinal},
+    ).fetchall()
+    return start_ordinal + len(rows)
+
+
+def _app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
+    results = [
+        {
+            "n": start_ordinal + i,
+            "title": citation.title,
+            "snippet": citation.snippet,
+            "kind": citation.result_type,
+            "source_label": citation.source_label,
+        }
+        for i, citation in enumerate(run_result.selected_citations)
+    ]
+    return json.dumps(
+        {
+            "results": results,
+            "total_candidates": len(run_result.citations),
+            "status": run_result.status,
+            "error_code": run_result.error_code,
+        },
+        default=str,
+    )
+
+
+def _web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
+    results = [
+        {
+            "n": start_ordinal + i,
+            "title": citation.title,
+            "url": citation.url,
+            "snippet": citation.snippet,
+            "source": citation.source_name,
+            "published_at": citation.published_at,
+        }
+        for i, citation in enumerate(run_result.selected_citations)
+    ]
+    return json.dumps(
+        {
+            "results": results,
+            "total_candidates": len(run_result.citations),
+            "status": run_result.status,
+            "error_code": run_result.error_code,
+        },
+        default=str,
+    )
+
+
+def _emit_citation_index(db: Session, run: ChatRun) -> None:
+    rows = db.execute(
+        text(
+            """
+            SELECT mr.citation_ordinal, mr.id, mr.tool_call_id
+            FROM message_retrievals mr
+            JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+            WHERE mtc.assistant_message_id = :amid
+              AND mr.citation_ordinal IS NOT NULL
+            ORDER BY mr.citation_ordinal ASC
+            """
+        ),
+        {"amid": run.assistant_message_id},
+    ).fetchall()
+    if not rows:
+        return
+    append_run_event(
+        db,
+        run,
+        "citation_index",
+        {
+            "assistant_message_id": str(run.assistant_message_id),
+            "entries": [
+                {"n": row[0], "retrieval_id": str(row[1]), "tool_call_id": str(row[2])}
+                for row in rows
+            ],
+        },
+    )
 
 
 def create_chat_run(
@@ -193,7 +333,9 @@ def create_chat_run(
             kind=singleton.kind,
             target_id=singleton.target_id,
         )
-    assert conversation_id is not None  # justify-service-invariant-check: mutex above guarantees it.
+    assert (
+        conversation_id is not None
+    )  # justify-service-invariant-check: mutex above guarantees it.
 
     contexts = list(contexts)
     normalized_key = normalize_idempotency_key(idempotency_key)
@@ -602,6 +744,7 @@ async def execute_chat_run(
     *,
     run_id: UUID,
     llm_router: ChatRunLLMRouter,
+    web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
 ) -> dict[str, str]:
     flow_id = str(run_id)
@@ -611,6 +754,7 @@ async def execute_chat_run(
             db,
             run_id=run_id,
             llm_router=llm_router,
+            web_search_provider=web_search_provider,
             reader_context=reader_context,
         )
     except ApiError as exc:
@@ -654,6 +798,7 @@ async def _execute_chat_run(
     *,
     run_id: UUID,
     llm_router: ChatRunLLMRouter,
+    web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
 ) -> dict[str, str]:
     run = db.get(ChatRun, run_id)
@@ -730,119 +875,6 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
-        attached_context_refs = load_message_context_refs(db, run.user_message_id)
-        path_messages = load_message_path(
-            db,
-            conversation_id=conversation.id,
-            leaf_message_id=user_message.id,
-        )
-        path_message_ids = [
-            message.id for message in path_messages if message.id != user_message.id
-        ]
-        snapshot = None
-        after_seq = None
-        memory_items = load_active_memory_items(
-            db,
-            conversation_id=conversation.id,
-            after_seq=after_seq,
-            prompt_version=PROMPT_VERSION,
-            allowed_message_ids=set(path_message_ids),
-        )
-        history_units = load_recent_history_units(
-            db,
-            conversation_id=conversation.id,
-            before_seq=user_message.seq,
-            after_seq=after_seq,
-            path_message_ids=path_message_ids,
-        )
-        planner_history = [
-            turn for history_unit in history_units[-4:] for turn in history_unit.turns
-        ]
-        attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
-
-        retrieval_plan = build_retrieval_plan(
-            user_content=user_message.content,
-            history=planner_history,
-            attached_context_refs=attached_context_ref_payloads,
-            memory_source_refs=collect_memory_source_refs(
-                memory_items=memory_items,
-                snapshot=snapshot,
-            ),
-        )
-
-        if retrieval_plan.app_search.enabled:
-            # justify-service-invariant-check: the planner only leaves query None
-            # when app_search is disabled; an enabled plan without a query is a defect.
-            planned_query = retrieval_plan.app_search.query
-            if planned_query is None:
-                raise AssertionError("enabled app-search plan is missing a query")
-            # The model owns scope at the tool boundary per spec §5.5. Until the
-            # tool-call dispatch loop lands, the planner-driven pre-fetch runs
-            # unscoped; execute_app_search renders this as scope="all" for the
-            # tool_call / source_manifest events.
-            append_and_commit(
-                db,
-                run.id,
-                "tool_call",
-                {
-                    "tool_call_id": None,
-                    "assistant_message_id": str(run.assistant_message_id),
-                    "tool_name": "app_search",
-                    "tool_call_index": 0,
-                    "status": "running",
-                    "scope": "all",
-                    "types": list(retrieval_plan.app_search.types),
-                    "semantic": retrieval_plan.app_search.semantic,
-                    "filters": dict(retrieval_plan.app_search.filters),
-                },
-            )
-            app_search_run = execute_app_search(
-                db,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-                user_message_id=run.user_message_id,
-                assistant_message_id=run.assistant_message_id,
-                media_id=None,
-                library_id=None,
-                planned_query=planned_query,
-                planned_types=retrieval_plan.app_search.types,
-                planned_filters=retrieval_plan.app_search.filters,
-            )
-            app_result_event = app_search_run.retrieval_result_event()
-            append_and_commit(db, run.id, "retrieval_result", app_result_event)
-            append_and_commit(
-                db,
-                run.id,
-                "source_manifest_delta",
-                {
-                    "assistant_message_id": str(run.assistant_message_id),
-                    "tool_call_id": str(app_search_run.tool_call_id)
-                    if app_search_run.tool_call_id
-                    else None,
-                    "tool_name": "app_search",
-                    "tool_call_index": app_search_run.tool_call_index,
-                    "query_hash": app_search_run.query_hash,
-                    "scope": app_search_run.scope,
-                    "filters": dict(app_search_run.filters),
-                    "requested_types": app_search_run.requested_types,
-                    "candidate_count": len(app_search_run.citations),
-                    "result_count": len(app_search_run.citations),
-                    "selected_count": len(app_search_run.selected_citations),
-                    "included_in_prompt_count": 0,
-                    "excluded_by_budget_count": 0,
-                    "excluded_by_scope_count": 0,
-                    "stale_count": 0,
-                    "unreadable_count": 0,
-                    "index_versions": [],
-                    "metadata": (
-                        {"empty_status": app_search_run.empty_status}
-                        if app_search_run.empty_status
-                        else {}
-                    ),
-                    "latency_ms": app_search_run.latency_ms,
-                    "status": app_search_run.status,
-                },
-            )
         if is_cancel_requested(db, run.id):
             finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
@@ -905,34 +937,16 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": error_code}
 
-        assistant_message = db.get(Message, run.assistant_message_id)
-        _, prompt_evidence_rows = (
-            message_prompt_evidence_rows(
-                db,
-                run,
-                assistant_message,
-                reconcile_inclusion=False,
-            )
-            if assistant_message is not None
-            else (None, [])
-        )
-        buffer_provider_deltas = (
-            is_source_backed_run(
-                db,
-                run=run,
-                assistant_message=assistant_message,
-                evidence_rows=prompt_evidence_rows,
-            )
-            if assistant_message is not None
-            else False
-        )
-        llm_request = assembly.llm_request
+        llm_request = dataclasses.replace(assembly.llm_request, tools=_CHAT_TOOL_SPECS)
+        turns: list[Turn] = list(llm_request.messages)
         full_content = ""
         usage: LLMUsage | None = None
         provider_request_id: str | None = None
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
+        citation_n_next = 1
+        tool_call_index_next = 0
         llm_start = time.monotonic()
         llm_log_fields = safe_kv(
             provider=model.provider,
@@ -950,43 +964,175 @@ async def _execute_chat_run(
         )
         logger.info("llm.request.started", **llm_log_fields)
         try:
-            async for chunk in llm_router.generate_stream(
-                model.provider,
-                llm_request,
-                resolved_key.api_key,
-                timeout_s=int(LLM_TIMEOUT_SECONDS),
-            ):
-                if chunk.done:
-                    terminal_seen = True
-                    usage = chunk.usage
-                    provider_request_id = chunk.provider_request_id
-                    if chunk.status == "incomplete":
-                        incomplete_reason = "unknown"
-                        if chunk.incomplete_details is not None:
-                            reason = chunk.incomplete_details.get("reason")
-                            incomplete_reason = reason if isinstance(reason, str) else "unknown"
-                    break
-                if chunk.delta_text:
-                    delta = chunk.delta_text
-                    if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
-                        remaining = MAX_ASSISTANT_CONTENT_LENGTH - len(full_content)
-                        delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
-                    if delta:
-                        full_content += delta
-                        if not buffer_provider_deltas:
-                            append_and_commit(db, run.id, "delta", {"delta": delta})
-                    if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
-                        locally_truncated = True
+            for _iteration in range(MAX_TOOL_ITERATIONS):
+                pending_tool_calls: list[Any] = []
+                iter_text = ""
+                iter_terminal = False
+                iter_request = dataclasses.replace(llm_request, messages=turns)
+                async for chunk in llm_router.generate_stream(
+                    model.provider,
+                    iter_request,
+                    resolved_key.api_key,
+                    timeout_s=int(LLM_TIMEOUT_SECONDS),
+                ):
+                    if chunk.done:
+                        iter_terminal = True
+                        terminal_seen = True
+                        usage = chunk.usage
+                        provider_request_id = chunk.provider_request_id
+                        if chunk.status == "incomplete":
+                            incomplete_reason = "unknown"
+                            if chunk.incomplete_details is not None:
+                                reason = chunk.incomplete_details.get("reason")
+                                incomplete_reason = reason if isinstance(reason, str) else "unknown"
                         break
-                if is_cancel_requested(db, run.id):
-                    finalize_cancelled(
-                        db,
-                        run,
-                        model,
-                        resolved_key,
-                        int((time.monotonic() - start_time) * 1000),
+                    if chunk.delta_text:
+                        delta = chunk.delta_text
+                        if len(full_content) + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
+                            remaining = MAX_ASSISTANT_CONTENT_LENGTH - len(full_content)
+                            delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
+                        if delta:
+                            full_content += delta
+                            iter_text += delta
+                            append_and_commit(db, run.id, "delta", {"delta": delta})
+                        if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
+                            locally_truncated = True
+                            break
+                    if chunk.tool_call is not None:
+                        pending_tool_calls.append(chunk.tool_call)
+                    if is_cancel_requested(db, run.id):
+                        finalize_cancelled(
+                            db,
+                            run,
+                            model,
+                            resolved_key,
+                            int((time.monotonic() - start_time) * 1000),
+                        )
+                        return {"status": "cancelled"}
+                if locally_truncated or not pending_tool_calls:
+                    break
+                if not iter_terminal:
+                    break
+                turns.append(
+                    Turn(
+                        role="assistant",
+                        content=iter_text,
+                        tool_calls=tuple(pending_tool_calls),
                     )
-                    return {"status": "cancelled"}
+                )
+                tool_results: list[ToolResult] = []
+                for tc in pending_tool_calls:
+                    tool_call_index_next += 1
+                    if tc.name == APP_SEARCH_TOOL_NAME:
+                        args = tc.arguments or {}
+                        media_arg = args.get("media_id")
+                        library_arg = args.get("library_id")
+                        types_arg = args.get("types")
+                        media_id = UUID(str(media_arg)) if isinstance(media_arg, str) else None
+                        library_id = (
+                            UUID(str(library_arg)) if isinstance(library_arg, str) else None
+                        )
+                        if media_id is None and library_id is None:
+                            pinned_media, pinned_library = _pinned_search_scope(
+                                db, run.conversation_id
+                            )
+                            media_id = pinned_media
+                            library_id = pinned_library
+                        run_result = execute_app_search(
+                            db,
+                            viewer_id=run.owner_user_id,
+                            conversation_id=run.conversation_id,
+                            user_message_id=run.user_message_id,
+                            assistant_message_id=run.assistant_message_id,
+                            media_id=media_id,
+                            library_id=library_id,
+                            planned_query=str(args.get("query") or ""),
+                            planned_types=[str(t) for t in (types_arg or ["content_chunk"])],
+                            planned_filters={},
+                            tool_call_index=tool_call_index_next,
+                        )
+                        start_n = citation_n_next
+                        citation_n_next = _assign_citation_ordinals(
+                            db,
+                            tool_call_id=run_result.tool_call_id,
+                            start_ordinal=citation_n_next,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            {**run_result.tool_call_event(), "status": run_result.status},
+                        )
+                        append_run_event(
+                            db, run, "retrieval_result", run_result.retrieval_result_event()
+                        )
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=_app_search_tool_output(run_result, start_n),
+                                is_error=run_result.status == "error",
+                            )
+                        )
+                    elif tc.name == WEB_SEARCH_TOOL_NAME:
+                        if web_search_provider is None:
+                            tool_results.append(
+                                ToolResult(
+                                    call_id=tc.id,
+                                    output='{"error":"web_search is not configured"}',
+                                    is_error=True,
+                                )
+                            )
+                            continue
+                        args = tc.arguments or {}
+                        fresh_arg = args.get("freshness_days")
+                        run_result = await execute_web_search(
+                            db,
+                            provider=web_search_provider,
+                            conversation_id=run.conversation_id,
+                            user_message_id=run.user_message_id,
+                            assistant_message_id=run.assistant_message_id,
+                            query=str(args.get("query") or ""),
+                            freshness_days=fresh_arg if isinstance(fresh_arg, int) else None,
+                            tool_call_index=tool_call_index_next,
+                        )
+                        start_n = citation_n_next
+                        citation_n_next = _assign_citation_ordinals(
+                            db,
+                            tool_call_id=run_result.tool_call_id,
+                            start_ordinal=citation_n_next,
+                        )
+                        append_run_event(
+                            db,
+                            run,
+                            "tool_call",
+                            {**run_result.tool_call_event(), "status": run_result.status},
+                        )
+                        append_run_event(
+                            db, run, "retrieval_result", run_result.retrieval_result_event()
+                        )
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=_web_search_tool_output(run_result, start_n),
+                                is_error=run_result.status == "error",
+                            )
+                        )
+                    else:
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=f'{{"error":"unknown tool: {tc.name}"}}',
+                                is_error=True,
+                            )
+                        )
+                db.commit()
+                turns.append(Turn(role="tool", tool_results=tuple(tool_results)))
+            else:
+                logger.warning(
+                    "chat_run.max_tool_iterations_exceeded",
+                    run_id=str(run.id),
+                    iterations=MAX_TOOL_ITERATIONS,
+                )
         except (LLMError, httpx.ResponseNotRead) as exc:
             llm_error = (
                 _llm_error_from_unread_stream_response(exc, model.provider)
@@ -1101,22 +1247,12 @@ async def _execute_chat_run(
             ),
         )
 
-        verified_content, verifier_hint = await verified_assistant_content(
-            db,
-            run=run,
-            model=model,
-            resolved_key=resolved_key,
-            llm_router=llm_router,
-            assistant_content=full_content,
-        )
-        if buffer_provider_deltas and verified_content:
-            append_and_commit(db, run.id, "delta", {"delta": verified_content})
-
+        _emit_citation_index(db, run)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         finalize_run(
             db,
             run_id=run.id,
-            assistant_content=verified_content,
+            assistant_content=full_content,
             assistant_status="complete",
             run_status="complete",
             done_status="complete",
@@ -1128,7 +1264,6 @@ async def _execute_chat_run(
             usage=usage,
             provider_request_id=provider_request_id,
             viewer_id=run.owner_user_id,
-            verifier_hint=verifier_hint,
         )
         refresh_conversation_memory(
             db,

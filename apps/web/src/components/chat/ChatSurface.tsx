@@ -33,8 +33,6 @@ export default function ChatSurface({
   onRetryAssistantResponse,
   retryingAssistantMessageIds,
   onReaderSourceActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
 }: {
   messages: ConversationMessage[];
   scrollportRef?: RefObject<HTMLDivElement | null>;
@@ -50,8 +48,6 @@ export default function ChatSurface({
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   retryingAssistantMessageIds?: Set<string>;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }) {
   const transcriptScrollportRef = useRef<HTMLDivElement | null>(null);
   const setScrollportRef = useCallback(
@@ -151,8 +147,6 @@ export default function ChatSurface({
               retryingAssistantMessageIds={retryingAssistantMessageIds}
               onRetryAssistantResponse={onRetryAssistantResponse}
               onReaderSourceActivate={onReaderSourceActivate}
-              onAskAboutSource={onAskAboutSource}
-              onSaveSourceQuote={onSaveSourceQuote}
             />
           ))}
         </div>

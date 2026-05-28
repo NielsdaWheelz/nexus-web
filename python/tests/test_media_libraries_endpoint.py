@@ -43,9 +43,7 @@ def _attach_media_to_default_library(auth_client, user_id: UUID, media_id: UUID)
     return default_library_id
 
 
-def _library_entry_ids_for_media(
-    direct_db: DirectSessionManager, media_id: UUID
-) -> set[UUID]:
+def _library_entry_ids_for_media(direct_db: DirectSessionManager, media_id: UUID) -> set[UUID]:
     with direct_db.session() as session:
         rows = session.execute(
             text(
@@ -63,9 +61,7 @@ def _library_entry_ids_for_media(
 class TestPostMediaLibrariesEndpoint:
     """Tests for POST /media/{id}/libraries — additive multi-library attach."""
 
-    def test_post_media_libraries_adds_set(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_post_media_libraries_adds_set(self, auth_client, direct_db: DirectSessionManager):
         """Posting a set of accessible library ids adds them all in one call."""
         viewer_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, viewer_id)
@@ -110,9 +106,7 @@ class TestPostMediaLibrariesEndpoint:
             "default library membership must be preserved by additive add"
         )
 
-    def test_post_media_libraries_idempotent(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_post_media_libraries_idempotent(self, auth_client, direct_db: DirectSessionManager):
         """Calling twice with the same ids yields empty `library_ids_added` second time."""
         viewer_id = create_test_user_id()
         _bootstrap_user(auth_client, viewer_id)
@@ -154,8 +148,7 @@ class TestPostMediaLibrariesEndpoint:
             f"got {second.status_code}: {second.text}"
         )
         assert second.json()["data"]["library_ids_added"] == [], (
-            "idempotent re-call must report zero ids inserted, "
-            f"got {second.json()['data']}"
+            f"idempotent re-call must report zero ids inserted, got {second.json()['data']}"
         )
 
         memberships = _library_entry_ids_for_media(direct_db, media_id)
@@ -239,4 +232,3 @@ class TestPostMediaLibrariesEndpoint:
         assert response.json()["data"]["library_ids_added"] == [], (
             "default library must not appear in library_ids_added (already implicit)"
         )
-

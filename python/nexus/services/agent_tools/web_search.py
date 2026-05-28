@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -10,7 +12,13 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
-from web_search_tool.types import WebSearchResultItem
+from web_search_tool.types import (
+    WebSearchError,
+    WebSearchProvider,
+    WebSearchRequest,
+    WebSearchResultItem,
+    WebSearchResultType,
+)
 
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import (
@@ -18,16 +26,31 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
-from nexus.services.search import hash_query
 
 logger = get_logger(__name__)
 
 WEB_SEARCH_TOOL_NAME = "web_search"
-WEB_SEARCH_TOOL_CALL_INDEX = 1
 WEB_SEARCH_LIMIT = 6
 WEB_SEARCH_SELECTED_LIMIT = 5
 WEB_SEARCH_CONTEXT_CHARS = 12000
 WEB_SEARCH_QUERY_MAX_CHARS = 400
+
+WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
+    "name": WEB_SEARCH_TOOL_NAME,
+    "description": "Search the open public web for current or non-saved information.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "freshness_days": {
+                "type": "integer",
+                "description": "Limit results to the last N days. Omit for no limit.",
+                "nullable": True,
+            },
+        },
+        "required": ["query"],
+    },
+}
 
 
 @dataclass(slots=True)
@@ -110,7 +133,7 @@ class WebSearchRun:
     provider_request_ids: list[str] = field(default_factory=list)
     empty_status: str | None = None
     tool_call_id: UUID | None = None
-    tool_call_index: int = WEB_SEARCH_TOOL_CALL_INDEX
+    tool_call_index: int = 0
 
     def tool_call_event(self) -> dict[str, Any]:
         return {
@@ -539,11 +562,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND ordinal >= :persisted_count
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM assistant_message_claim_evidence e
-                      WHERE e.retrieval_id = message_retrievals.id
-                  )
             )
             """
         ),
@@ -555,11 +573,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             DELETE FROM message_retrievals
             WHERE tool_call_id = :tool_call_id
               AND ordinal >= :persisted_count
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM assistant_message_claim_evidence e
-                  WHERE e.retrieval_id = message_retrievals.id
-              )
             """
         ),
         {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
@@ -604,3 +617,75 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         },
     )
     db.commit()
+
+
+async def execute_web_search(
+    db: Session,
+    *,
+    provider: WebSearchProvider,
+    conversation_id: UUID,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    query: str,
+    freshness_days: int | None,
+    tool_call_index: int,
+) -> WebSearchRun:
+    """Run a public web search and persist tool/retrieval metadata."""
+    start = time.monotonic()
+    raw_query = " ".join(query.split()).strip()[:WEB_SEARCH_QUERY_MAX_CHARS]
+    status = "complete"
+    error_code: str | None = None
+    citations: list[WebSearchCitation] = []
+    selected: list[WebSearchCitation] = []
+    context_text = ""
+    context_chars = 0
+    provider_request_ids: list[str] = []
+
+    if not raw_query:
+        status = "error"
+        error_code = "invalid_request"
+    else:
+        try:
+            response = await provider.search(
+                WebSearchRequest(
+                    query=raw_query,
+                    result_type=WebSearchResultType.MIXED,
+                    limit=WEB_SEARCH_LIMIT,
+                    freshness_days=freshness_days,
+                )
+            )
+            citations = [_citation_from_result(r) for r in response.results]
+            if response.provider_request_id:
+                provider_request_ids = [response.provider_request_id]
+            context_text, context_chars, selected = render_web_context_blocks(citations)
+        except WebSearchError as exc:
+            logger.warning(
+                "agent_web_search_error",
+                provider=exc.provider,
+                code=exc.code.value,
+                status_code=exc.status_code,
+            )
+            status = "error"
+            error_code = exc.code.value
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    run = WebSearchRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        query_hash=hashlib.sha256(raw_query.encode("utf-8")).hexdigest() if raw_query else None,
+        result_type="mixed",
+        requested_freshness_days=freshness_days,
+        requested_domains={"allowed": [], "blocked": []},
+        citations=citations,
+        selected_citations=selected,
+        context_text=context_text,
+        context_chars=context_chars,
+        latency_ms=latency_ms,
+        status=status,
+        error_code=error_code,
+        provider_request_ids=provider_request_ids,
+        tool_call_index=tool_call_index,
+    )
+    persist_web_search_run(db, run)
+    return run

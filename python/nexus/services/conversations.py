@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
-    AssistantMessageVerifierRun,
     ChatRun,
     ChatSingleton,
     Conversation,
@@ -50,7 +49,6 @@ from nexus.errors import (
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
-    AssistantVerifierRunOut,
     ConversationOut,
     ConversationReferenceOut,
     ConversationSingletonOut,
@@ -256,6 +254,13 @@ def conversation_to_out(
     viewer_id: UUID | None = None,
 ) -> ConversationOut:
     """Convert Conversation ORM model to ConversationOut schema."""
+    from nexus.services.pinned_sources import list_pinned_sources
+
+    pinned = (
+        list_pinned_sources(db, viewer_id=viewer_id, conversation_id=conversation.id)
+        if viewer_id is not None and conversation.owner_user_id == viewer_id
+        else []
+    )
     return ConversationOut(
         id=conversation.id,
         title=conversation.title,
@@ -263,6 +268,7 @@ def conversation_to_out(
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
         sharing=conversation.sharing,
         singleton=_singleton_for_conversation(db, viewer_id, conversation.id),
+        pinned_sources=pinned,
         message_count=message_count,
         memory=conversation_memory_inspection(db, conversation_id=conversation.id),
         created_at=conversation.created_at,
@@ -742,46 +748,6 @@ def _get_message_for_visible_read_or_404(
     return message
 
 
-def list_message_verifier_runs(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-) -> list[AssistantVerifierRunOut]:
-    _get_message_for_visible_read_or_404(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-    )
-    rows = db.scalars(
-        select(AssistantMessageVerifierRun)
-        .where(AssistantMessageVerifierRun.message_id == message_id)
-        .order_by(
-            AssistantMessageVerifierRun.created_at.asc(),
-            AssistantMessageVerifierRun.id.asc(),
-        )
-    ).all()
-    return [
-        AssistantVerifierRunOut(
-            id=row.id,
-            message_id=row.message_id,
-            chat_run_id=row.chat_run_id,
-            prompt_assembly_id=row.prompt_assembly_id,
-            verifier_name=row.verifier_name,
-            verifier_version=row.verifier_version,
-            verifier_status=cast(Any, row.verifier_status),
-            support_status=cast(Any, row.support_status),
-            claim_count=row.claim_count,
-            supported_claim_count=row.supported_claim_count,
-            unsupported_claim_count=row.unsupported_claim_count,
-            not_enough_evidence_count=row.not_enough_evidence_count,
-            metadata=row.metadata_,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
-
-
 def list_message_retrieval_candidate_ledgers(
     db: Session,
     *,
@@ -1002,9 +968,7 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
-    db.execute(
-        delete(ChatSingleton).where(ChatSingleton.conversation_id == conversation_id)
-    )
+    db.execute(delete(ChatSingleton).where(ChatSingleton.conversation_id == conversation_id))
 
     message_ids = _message_ids_for_conversation(db, conversation_id)
     delete_message_rows_without_commit(db, message_ids)
@@ -1085,43 +1049,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
             {"chat_run_ids": chat_run_ids},
         )
 
-    db.execute(
-        text("""
-            DELETE FROM assistant_message_citation_audits
-            WHERE message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
-    )
-    claim_ids = _assistant_claim_ids_for_messages(db, message_ids)
-    if claim_ids:
-        db.execute(
-            text("""
-                DELETE FROM assistant_message_claim_evidence
-                WHERE claim_id = ANY(:claim_ids)
-            """),
-            {"claim_ids": claim_ids},
-        )
-    db.execute(
-        text("""
-            DELETE FROM assistant_message_claims
-            WHERE message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
-    )
-    db.execute(
-        text("""
-            DELETE FROM assistant_message_evidence_summaries
-            WHERE message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
-    )
-    db.execute(
-        text("""
-            DELETE FROM assistant_message_verifier_runs
-            WHERE message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
-    )
     db.execute(
         text("""
             DELETE FROM chat_prompt_assemblies
@@ -1248,19 +1175,6 @@ def _chat_run_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list
         WHERE user_message_id = ANY(:message_ids)
            OR assistant_message_id = ANY(:message_ids)
         ORDER BY created_at ASC, id ASC
-        """,
-        {"message_ids": list(message_ids)},
-    )
-
-
-def _assistant_claim_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        SELECT id
-        FROM assistant_message_claims
-        WHERE message_id = ANY(:message_ids)
-        ORDER BY ordinal ASC, id ASC
         """,
         {"message_ids": list(message_ids)},
     )

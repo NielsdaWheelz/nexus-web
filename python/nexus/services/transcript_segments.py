@@ -118,5 +118,3 @@ def insert_transcript_fragments(
                 "created_at": now,
             },
         )
-
-

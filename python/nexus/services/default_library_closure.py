@@ -60,14 +60,10 @@ BACKFILL_PENDING_COUNT_GUARDRAIL: int = 500
 # ---------------------------------------------------------------------------
 
 
-def _ensure_library_entry_for_media(
-    db: Session, library_id: UUID, media_id: UUID
-) -> None:
+def _ensure_library_entry_for_media(db: Session, library_id: UUID, media_id: UUID) -> None:
     """Append a media row to library_entries at the next position if absent."""
     entry_exists = db.execute(
-        text(
-            "SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"
-        ),
+        text("SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"),
         {"lib": library_id, "media": media_id},
     ).fetchone()
     if entry_exists is not None:
@@ -735,5 +731,3 @@ def get_backfill_backlog_health(db: Session) -> dict:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-

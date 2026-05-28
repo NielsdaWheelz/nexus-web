@@ -1116,13 +1116,6 @@ def _persisted_contributor_ref_exists(db: Session, contributor: Contributor) -> 
             )
             OR EXISTS (
                 SELECT 1
-                FROM assistant_message_claim_evidence ace
-                WHERE {_json_contains_contributor_ref_sql("ace.context_ref")}
-                   OR {_json_contains_contributor_ref_sql("ace.result_ref")}
-                LIMIT 1
-            )
-            OR EXISTS (
-                SELECT 1
                 FROM chat_prompt_assemblies cpa
                 WHERE {included_context_refs_sql}
                 LIMIT 1

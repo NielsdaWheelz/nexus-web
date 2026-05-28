@@ -71,8 +71,6 @@ MAX_CONTEXT_CHARS = 25000
 _PDF_CONTEXT_RENDER_PATH = "pdf_quote_context_render"
 
 
-
-
 def _append_source_metadata_xml(
     lines: list[str],
     *,
@@ -630,8 +628,6 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
         )
     lines.append("</note_block>")
     return "\n".join(lines)
-
-
 
 
 def _render_conversation_context(db: Session, conversation_id: UUID) -> str | None:

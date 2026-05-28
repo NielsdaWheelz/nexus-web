@@ -784,9 +784,7 @@ def test_delete_document_hard_delete_cleans_chat_singletons(
         assert media_row is None
 
 
-def test_delete_library_cleans_chat_singletons(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_delete_library_cleans_chat_singletons(auth_client, direct_db: DirectSessionManager):
     """Per spec §4.7 / §5.1: deleting a library deletes every
     ``chat_singletons`` row pointing at it. The pointed-at conversation row
     is not deleted."""
@@ -815,9 +813,7 @@ def test_delete_library_cleans_chat_singletons(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
 
-    delete_resp = auth_client.delete(
-        f"/libraries/{library_id}", headers=auth_headers(user_id)
-    )
+    delete_resp = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
     assert delete_resp.status_code == 204, delete_resp.text
 
     with direct_db.session() as session:
@@ -892,9 +888,7 @@ def test_delete_conversation_rows_without_commit_cleans_chat_singletons(
 
     with direct_db.session() as session:
         singleton_row = session.execute(
-            text(
-                "SELECT 1 FROM chat_singletons WHERE conversation_id = :conversation_id"
-            ),
+            text("SELECT 1 FROM chat_singletons WHERE conversation_id = :conversation_id"),
             {"conversation_id": conversation_id},
         ).fetchone()
         assert singleton_row is None

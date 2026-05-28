@@ -80,8 +80,7 @@ export function useChatRunTail({
     handleToolCall,
     handleToolResult,
     handleSourceManifestDelta,
-    handleClaim,
-    handleClaimEvidence,
+    handleCitationIndex,
     handleDone,
     flushDeltas,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
@@ -335,13 +334,9 @@ export function useChatRunTail({
                 if (!currentRunIsVisible()) break;
                 handleSourceManifestDelta(currentAssistantId, event.data);
                 break;
-              case "claim":
+              case "citation_index":
                 if (!currentRunIsVisible()) break;
-                handleClaim(currentAssistantId, event.data);
-                break;
-              case "claim_evidence":
-                if (!currentRunIsVisible()) break;
-                handleClaimEvidence(currentAssistantId, event.data);
+                handleCitationIndex(currentAssistantId, event.data);
                 break;
               case "done":
                 if (currentRunIsVisible()) {
@@ -385,8 +380,7 @@ export function useChatRunTail({
       handleToolCall,
       handleToolResult,
       handleSourceManifestDelta,
-      handleClaim,
-      handleClaimEvidence,
+      handleCitationIndex,
       flushDeltas,
       mergeRunMessages,
       onFirstDelta,

@@ -12,7 +12,6 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.context_assembler import (
     assemble_chat_context,
     load_message_context_refs,
-    message_context_ref_payloads,
 )
 from nexus.services.context_rendering import PROMPT_VERSION
 from tests.factories import (

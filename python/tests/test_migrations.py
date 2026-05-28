@@ -7179,14 +7179,12 @@ class TestPodcastSubscriptionLibrariesMigration0113:
 
         constraint_names = {row[0] for row in constraints}
         assert "pk_podcast_subscription_libraries" in constraint_names, (
-            "composite PK must be named pk_podcast_subscription_libraries, "
-            f"got {constraint_names}"
+            f"composite PK must be named pk_podcast_subscription_libraries, got {constraint_names}"
         )
 
         index_names = {row[0] for row in indexes}
         assert "ix_podcast_subscription_libraries_library_id" in index_names, (
-            "secondary index for library_id reverse lookups is required, "
-            f"got {index_names}"
+            f"secondary index for library_id reverse lookups is required, got {index_names}"
         )
 
         # Both FKs must cascade-delete.
@@ -7200,8 +7198,7 @@ class TestPodcastSubscriptionLibrariesMigration0113:
             f"got {delete_actions['podcast_subscriptions']}"
         )
         assert delete_actions["libraries"] == "c", (
-            "FK to libraries must cascade-delete, "
-            f"got {delete_actions['libraries']}"
+            f"FK to libraries must cascade-delete, got {delete_actions['libraries']}"
         )
 
     def test_migration_0113_pk_rejects_duplicate_composite(self, migrated_engine):
@@ -7376,8 +7373,7 @@ class TestPodcastSubscriptionLibrariesMigration0113:
                 {"user_id": user_id, "podcast_id": podcast_id},
             ).scalar_one()
         assert remaining == 0, (
-            "deleting a podcast_subscription must cascade-delete join rows; "
-            f"got {remaining}"
+            f"deleting a podcast_subscription must cascade-delete join rows; got {remaining}"
         )
 
     def test_migration_0113_library_delete_cascades_to_join_table(self, migrated_engine):
@@ -7470,18 +7466,13 @@ class TestPodcastSubscriptionLibrariesMigration0113:
                 ),
                 {"library_id": library_id},
             ).scalar_one()
-        assert remaining == 0, (
-            "deleting a library must cascade-delete join rows; "
-            f"got {remaining}"
-        )
+        assert remaining == 0, f"deleting a library must cascade-delete join rows; got {remaining}"
 
 
 class TestChatSingletonsAndScopeDropMigration0114:
     """Schema assertions for migration 0114 (chat_singletons + drop scope columns)."""
 
-    def test_0114_upgrade_applies_chat_singletons_and_drops_scope_columns(
-        self, migrated_engine
-    ):
+    def test_0114_upgrade_applies_chat_singletons_and_drops_scope_columns(self, migrated_engine):
         """After upgrade head:
         - ``chat_singletons`` exists with the PK/unique/check spec'd in §5.1.
         - ``conversations`` no longer has ``scope_type`` / ``scope_id`` /

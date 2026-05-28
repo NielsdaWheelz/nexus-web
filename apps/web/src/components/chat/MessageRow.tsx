@@ -14,7 +14,6 @@ import UserMessage from "./UserMessage";
 
 export type ReaderSourceTargetSource =
   | "message_context"
-  | "claim_evidence"
   | "message_retrieval";
 
 export interface ReaderSourceTarget {
@@ -43,8 +42,6 @@ interface MessageRowProps {
   retryingAssistantMessageIds?: Set<string>;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
-  onAskAboutSource?: (target: ReaderSourceTarget) => void;
-  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }
 
 function formatTime(iso: string): string {
@@ -74,8 +71,6 @@ export function MessageRow({
   retryingAssistantMessageIds,
   onRetryAssistantResponse,
   onReaderSourceActivate,
-  onAskAboutSource,
-  onSaveSourceQuote,
 }: MessageRowProps) {
   const activateTarget = useCallback(
     (target: ReaderSourceTarget) => {
@@ -123,10 +118,7 @@ export function MessageRow({
           switchableLeafIds={switchableLeafIds}
           onSelectFork={onSelectFork}
           onReplyToAssistant={onReplyToAssistant}
-          onActivateTarget={activateTarget}
-          onAskAboutSource={onAskAboutSource}
-          onSaveSourceQuote={onSaveSourceQuote}
-          hasReaderActivator={Boolean(onReaderSourceActivate)}
+          onCitationActivate={activateTarget}
         />
       );
     case "system":

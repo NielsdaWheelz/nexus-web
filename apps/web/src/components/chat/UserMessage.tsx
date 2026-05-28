@@ -11,7 +11,7 @@ import type {
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import { readerTargetFromContext } from "@/lib/conversations/readerTarget";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
@@ -147,34 +147,6 @@ function citationPreviewFromContext(context: MessageContextSnapshot) {
     ...(title ? { title } : {}),
     ...(excerpt ? { excerpt } : {}),
     meta,
-  };
-}
-
-function readerTargetFromContext(
-  context: MessageContextSnapshot,
-  href: string | null,
-): ReaderSourceTarget | null {
-  if (context.kind !== "reader_selection") return null;
-  const mediaId = context.source_media_id ?? context.media_id;
-  if (
-    !mediaId ||
-    !context.source_version ||
-    !isRetrievalLocator(context.locator)
-  ) {
-    return null;
-  }
-  return {
-    source: "message_context",
-    media_id: mediaId,
-    locator: context.locator,
-    snippet: context.exact ?? context.preview ?? null,
-    source_version: context.source_version,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
-    status: "attached_context",
-    label: context.title ?? context.media_title,
-    href,
-    context_id: context.client_context_id ?? null,
   };
 }
 

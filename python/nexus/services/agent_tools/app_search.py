@@ -295,6 +295,7 @@ def execute_app_search(
     planned_query: str,
     planned_types: Sequence[str],
     planned_filters: Mapping[str, object],
+    tool_call_index: int = 0,
 ) -> AppSearchRun:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
     query = planned_query
@@ -340,6 +341,7 @@ def execute_app_search(
             error_code=error_code,
             filters=filters,
             empty_status=None,
+            tool_call_index=tool_call_index,
         )
         persist_app_search_run(db, run)
         return run
@@ -419,6 +421,7 @@ def execute_app_search(
         error_code=error_code,
         filters=filters,
         empty_status=empty_status,
+        tool_call_index=tool_call_index,
     )
     persist_app_search_run(db, run)
     return run
@@ -944,11 +947,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND ordinal >= :persisted_count
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM assistant_message_claim_evidence e
-                      WHERE e.retrieval_id = message_retrievals.id
-                  )
             )
             """
         ),
@@ -960,11 +958,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             DELETE FROM message_retrievals
             WHERE tool_call_id = :tool_call_id
               AND ordinal >= :persisted_count
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM assistant_message_claim_evidence e
-                  WHERE e.retrieval_id = message_retrievals.id
-              )
             """
         ),
         {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
@@ -1117,10 +1110,6 @@ def _render_single_retrieved_context(
         return _render_podcast_context(db, viewer_id, context_id, citation)
 
     return None
-
-
-
-
 
 
 def _append_citation_source_xml(lines: list[str], citation: AppSearchCitation) -> None:

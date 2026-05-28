@@ -64,8 +64,6 @@ def classify_youtube_url(url: str) -> YouTubeIdentity | None:
     return build_youtube_identity(provider_video_id)
 
 
-
-
 def _extract_video_id(parsed, host: str) -> str | None:
     if host == "youtu.be":
         video_id = _first_path_segment(parsed.path)

@@ -6,7 +6,6 @@ Tests cover the helpers in services/contexts.py:
 - Transactionally upsert conversation_media
 """
 
-import json
 from uuid import UUID, uuid4
 
 import pytest

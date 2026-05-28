@@ -182,41 +182,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM assistant_message_claim_evidence
-                            WHERE claim_id IN (
-                                SELECT ac.id
-                                FROM assistant_message_claims ac
-                                JOIN messages m ON m.id = ac.message_id
-                                JOIN conversations c ON c.id = m.conversation_id
-                                WHERE c.owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    for table_name in (
-                        "assistant_message_citation_audits",
-                        "assistant_message_evidence_summaries",
-                        "assistant_message_claims",
-                        "assistant_message_verifier_runs",
-                    ):
-                        session.execute(
-                            text(
-                                f"""
-                                DELETE FROM {table_name}
-                                WHERE message_id IN (
-                                    SELECT m.id
-                                    FROM messages m
-                                    JOIN conversations c ON c.id = m.conversation_id
-                                    WHERE c.owner_user_id = :value
-                                )
-                                """
-                            ),
-                            {"value": value},
-                        )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM source_manifests
                             WHERE conversation_id IN (
                                 SELECT id FROM conversations WHERE owner_user_id = :value
@@ -455,37 +420,6 @@ class DirectSessionManager:
                     )
                     session.execute(
                         text(
-                            """
-                            DELETE FROM assistant_message_claim_evidence
-                            WHERE claim_id IN (
-                                SELECT ac.id
-                                FROM assistant_message_claims ac
-                                JOIN messages m ON m.id = ac.message_id
-                                WHERE m.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    for table_name in (
-                        "assistant_message_citation_audits",
-                        "assistant_message_evidence_summaries",
-                        "assistant_message_claims",
-                        "assistant_message_verifier_runs",
-                    ):
-                        session.execute(
-                            text(
-                                f"""
-                                DELETE FROM {table_name}
-                                WHERE message_id IN (
-                                    SELECT id FROM messages WHERE conversation_id = :value
-                                )
-                                """
-                            ),
-                            {"value": value},
-                        )
-                    session.execute(
-                        text(
                             "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
                         ),
                         {"value": value},
@@ -578,44 +512,6 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM assistant_message_claim_evidence
-                            WHERE retrieval_id IN (
-                                SELECT mr.id
-                                FROM message_retrievals mr
-                                JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-                                WHERE mtc.user_message_id = :value
-                                   OR mtc.assistant_message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM assistant_message_claim_evidence
-                            WHERE claim_id IN (
-                                SELECT id
-                                FROM assistant_message_claims
-                                WHERE message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    for table_name in (
-                        "assistant_message_citation_audits",
-                        "assistant_message_evidence_summaries",
-                        "assistant_message_claims",
-                        "assistant_message_verifier_runs",
-                    ):
-                        session.execute(
-                            text(f"DELETE FROM {table_name} WHERE message_id = :value"),
-                            {"value": value},
-                        )
                     session.execute(
                         text(
                             """
@@ -781,37 +677,6 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM assistant_message_claim_evidence
-                            WHERE claim_id IN (
-                                SELECT ac.id
-                                FROM assistant_message_claims ac
-                                JOIN messages m ON m.id = ac.message_id
-                                WHERE m.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    for table_name in (
-                        "assistant_message_citation_audits",
-                        "assistant_message_evidence_summaries",
-                        "assistant_message_claims",
-                        "assistant_message_verifier_runs",
-                    ):
-                        session.execute(
-                            text(
-                                f"""
-                                DELETE FROM {table_name}
-                                WHERE message_id IN (
-                                    SELECT id FROM messages WHERE conversation_id = :value
-                                )
-                                """
-                            ),
-                            {"value": value},
-                        )
                     session.execute(
                         text(
                             """
