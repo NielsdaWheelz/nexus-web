@@ -205,6 +205,12 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         """Handle request validation errors (including malformed JSON)."""
+        logger.warning(
+            "request_validation_failed",
+            path=request.url.path,
+            method=request.method,
+            errors=exc.errors(),
+        )
         return JSONResponse(
             status_code=400,
             content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Invalid request body"),
