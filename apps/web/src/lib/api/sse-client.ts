@@ -1,49 +1,49 @@
 import { isAbortError } from "@/lib/errors";
-import { toChatSSEEvent, type SSEEvent } from "./sse/events";
 import { parseSSEJsonStream } from "./sse-stream";
 
 const RECONNECT_DELAY_MS = 1000;
 const EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
 
-type SSEEventHandler = (event: SSEEvent) => void;
-type SSEErrorHandler = (error: Error) => void;
-type SSECompleteHandler = (terminalEventSeen: boolean) => void;
-
 /**
- * Streams a chat run's SSE events from the FastAPI backend directly into the
- * caller's handlers. Manages its own AbortController, reconnects on transport
- * errors with the server-provided retry interval, and terminates on a `done`
- * event or external abort.
+ * Generic browser→FastAPI SSE client. Owns reconnect, token-getter, abort,
+ * content-type validation, and `Last-Event-ID` resumption. Caller supplies
+ * the URL, a fresh-token getter, and a typed event decoder.
  *
- * @param streamBaseUrl - Base URL of the FastAPI stream endpoint
- * @param streamToken - Bearer token (or a getter that returns one)
- * @param runId - Chat run ID returned by POST /api/chat-runs
- * @param handlers - Event callbacks
- * @param options - Optional fetch options
- * @returns Cleanup function to abort the stream
+ * The token getter is called every connect (including reconnects). Stream
+ * tokens are single-use JTI — reusing one returns E_STREAM_TOKEN_REPLAYED, so
+ * the getter must mint a fresh token each call.
  */
-export function sseClientDirect(
-  streamBaseUrl: string,
-  streamToken: string | (() => Promise<string>),
-  runId: string,
-  handlers: {
-    onEvent: SSEEventHandler;
-    onError: SSEErrorHandler;
-    onComplete?: SSECompleteHandler;
-    onLastEventId?: (id: string) => void;
-  },
-  options?: {
-    signal?: AbortSignal;
-    lastEventId?: string;
-  },
-): () => void {
+export function sseClientDirect<TEvent>(args: {
+  url: string;
+  streamToken: () => Promise<string>;
+  decode: (type: string, data: unknown) => TEvent;
+  isTerminal: (event: TEvent) => boolean;
+  onEvent: (event: TEvent) => void;
+  onError: (err: Error) => void;
+  onComplete?: (terminalEventSeen: boolean) => void;
+  onLastEventId?: (id: string) => void;
+  signal?: AbortSignal;
+  lastEventId?: string;
+}): () => void {
+  const {
+    url,
+    streamToken,
+    decode,
+    isTerminal,
+    onEvent,
+    onError,
+    onComplete,
+    onLastEventId,
+    signal,
+    lastEventId: initialLastEventId,
+  } = args;
+
   const controller = new AbortController();
-  const combinedSignal = options?.signal
-    ? combineSignals(options.signal, controller.signal)
+  const combinedSignal = signal
+    ? combineSignals(signal, controller.signal)
     : controller.signal;
 
-  const url = `${streamBaseUrl}/chat-runs/${runId}/events`;
-  let lastEventId = options?.lastEventId ?? "";
+  let lastEventId = initialLastEventId ?? "";
   let reconnectDelayMs = RECONNECT_DELAY_MS;
 
   (async () => {
@@ -52,8 +52,7 @@ export function sseClientDirect(
     while (!combinedSignal.aborted && !terminalEventSeen) {
       let response: Response;
       try {
-        const token =
-          typeof streamToken === "function" ? await streamToken() : streamToken;
+        const token = await streamToken();
         const headers: Record<string, string> = {
           Accept: "text/event-stream",
           Authorization: `Bearer ${token}`,
@@ -67,7 +66,7 @@ export function sseClientDirect(
         });
       } catch (err) {
         if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.(terminalEventSeen);
+          onComplete?.(terminalEventSeen);
           return;
         }
         await delay(reconnectDelayMs);
@@ -84,17 +83,17 @@ export function sseClientDirect(
         } catch {
           // justify-ignore-error: error bodies are optional; the HTTP status fallback is enough.
         }
-        handlers.onError(new Error(errorMessage));
+        onError(new Error(errorMessage));
         return;
       }
 
       if (!isEventStreamResponse(response)) {
-        handlers.onError(new Error("Invalid SSE content type"));
+        onError(new Error("Invalid SSE content type"));
         return;
       }
 
       if (!response.body) {
-        handlers.onError(new Error("Response body is null"));
+        onError(new Error("Response body is null"));
         return;
       }
 
@@ -104,11 +103,11 @@ export function sseClientDirect(
           (jsonEvent) => {
             if (jsonEvent.id) {
               lastEventId = jsonEvent.id;
-              handlers.onLastEventId?.(lastEventId);
+              onLastEventId?.(lastEventId);
             }
-            const event = toChatSSEEvent(jsonEvent.type, jsonEvent.data);
-            handlers.onEvent(event);
-            if (event.type === "done") terminalEventSeen = true;
+            const event = decode(jsonEvent.type, jsonEvent.data);
+            onEvent(event);
+            if (isTerminal(event)) terminalEventSeen = true;
           },
           (milliseconds) => {
             reconnectDelayMs = milliseconds;
@@ -116,7 +115,7 @@ export function sseClientDirect(
         );
       } catch (err) {
         if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.(terminalEventSeen);
+          onComplete?.(terminalEventSeen);
           return;
         }
         if (
@@ -126,7 +125,7 @@ export function sseClientDirect(
             err.message.startsWith("Invalid SSE payload") ||
             err.message.startsWith("Unknown SSE event type"))
         ) {
-          handlers.onError(err);
+          onError(err);
           return;
         }
         await delay(reconnectDelayMs);
@@ -136,15 +135,13 @@ export function sseClientDirect(
       break;
     }
 
-    handlers.onComplete?.(terminalEventSeen);
+    onComplete?.(terminalEventSeen);
   })().catch((err) => {
     if (isAbortError(err)) {
-      handlers.onComplete?.(false);
+      onComplete?.(false);
       return;
     }
-    handlers.onError(
-      err instanceof Error ? err : new Error("Unknown SSE error"),
-    );
+    onError(err instanceof Error ? err : new Error("Unknown SSE error"));
   });
 
   return () => controller.abort();
@@ -162,7 +159,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Combine two AbortSignals so that aborting either aborts the combined signal.
 function combineSignals(
   signal1: AbortSignal,
   signal2: AbortSignal,

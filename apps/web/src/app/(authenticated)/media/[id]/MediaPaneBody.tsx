@@ -42,7 +42,7 @@ import PdfReader, {
   type PdfTemporaryHighlight,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import {
   FeedbackNotice,
   PDF_PASSWORD_PROTECTED_MESSAGE,
@@ -53,7 +53,12 @@ import {
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import type { ContextItem } from "@/lib/api/sse/requests";
 import { createRandomId } from "@/lib/createRandomId";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import {
+  useMediaProcessingStatus,
+  type MediaProcessingSnapshot,
+} from "@/lib/media/useMediaProcessingStatus";
 import {
   applyHighlightsToHtml,
   type HighlightInput,
@@ -191,31 +196,16 @@ import styles from "./page.module.css";
 // Constants
 // =============================================================================
 
-interface Media {
+export interface Media extends MediaProcessingSnapshot {
   id: string;
   kind: string;
   title: string;
   podcast_title?: string | null;
   podcast_image_url?: string | null;
   canonical_source_url: string | null;
-  processing_status: string;
-  transcript_state?: TranscriptState;
-  transcript_coverage?: TranscriptCoverage;
   retrieval_status?: string | null;
   retrieval_status_reason?: string | null;
   source_version?: string | null;
-  capabilities?: {
-    can_read: boolean;
-    can_highlight: boolean;
-    can_quote: boolean;
-    can_search: boolean;
-    can_play: boolean;
-    can_download_file: boolean;
-    can_delete?: boolean;
-    can_retry?: boolean;
-    can_refresh_source?: boolean;
-    can_retry_metadata?: boolean;
-  };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
@@ -230,14 +220,11 @@ interface Media {
   } | null;
   subscription_default_playback_speed?: number | null;
   episode_state?: "unplayed" | "in_progress" | "played" | null;
-  failure_stage?: string | null;
-  last_error_code?: string | null;
   description?: string | null;
   description_html?: string | null;
   description_text?: string | null;
   metadata_enriched_at?: string | null;
   created_at: string;
-  updated_at: string;
 }
 
 interface MetadataRetryBaseline {
@@ -353,7 +340,6 @@ interface EvidenceResolutionResponse {
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
-const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
 const READER_SELECTION_CONTEXT_CP = 160;
@@ -408,23 +394,6 @@ function textQuoteField(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function shouldPollDocumentProcessing(
-  mediaKind: string | null | undefined,
-  processingStatus: string | null | undefined,
-): boolean {
-  if (
-    mediaKind !== "epub" &&
-    mediaKind !== "pdf" &&
-    mediaKind !== "web_article"
-  ) {
-    return false;
-  }
-  return (
-    processingStatus === "pending" ||
-    processingStatus === "extracting" ||
-    processingStatus === "embedding"
-  );
-}
 
 function isUserScrollKey(event: KeyboardEvent): boolean {
   return (
@@ -439,7 +408,15 @@ function isUserScrollKey(event: KeyboardEvent): boolean {
   );
 }
 
-export default function MediaPaneBody() {
+export type InitialMedia = Media;
+
+export default function MediaPaneBody({
+  initialMedia = null,
+  initialNavigation = null,
+}: {
+  initialMedia?: Media | null;
+  initialNavigation?: MediaNavigationResponse | null;
+} = {}) {
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("media route requires an id");
@@ -531,8 +508,10 @@ export default function MediaPaneBody() {
   ]);
 
   // ---- Core data state ----
-  const [media, setMedia] = useState<Media | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [media, setMedia] = useState<Media | null>(
+    initialMedia && initialMedia.id === id ? initialMedia : null,
+  );
+  const [loading, setLoading] = useState(media === null);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
@@ -548,30 +527,18 @@ export default function MediaPaneBody() {
   >(null);
 
   // ---- EPUB state ----
-  const [epubSections, setEpubSections] = useState<
-    ReaderNavigationSection[] | null
-  >(null);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [epubRestoreRequest, setEpubRestoreRequest] =
     useState<EpubRestoreRequest | null>(null);
   const [restorePhase, setRestorePhase] = useState<ReaderRestorePhase>("idle");
   const [activeEpubSection, setActiveEpubSection] =
     useState<EpubSectionContent | null>(null);
-  const [epubToc, setEpubToc] = useState<NormalizedNavigationTocNode[] | null>(
-    null,
-  );
   const [tocWarning, setTocWarning] = useState(false);
   const [epubSectionLoading, setEpubSectionLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
   const [epubTocExpanded, setEpubTocExpanded] = useState(false);
 
   // ---- Web article navigation state ----
-  const [webSections, setWebSections] = useState<
-    ReaderNavigationSection[] | null
-  >(null);
-  const [webToc, setWebToc] = useState<NormalizedNavigationTocNode[] | null>(
-    null,
-  );
   const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
     null,
   );
@@ -580,7 +547,9 @@ export default function MediaPaneBody() {
     useState<PdfReaderControlsState | null>(null);
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
-  const initialEpubRestoreResolvedRef = useRef(false);
+  const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
+    null,
+  );
 
   // Request-version guard for stale EPUB/highlight responses
   const epubSectionVersionRef = useRef(0);
@@ -932,12 +901,88 @@ export default function MediaPaneBody() {
     [],
   );
 
-  const loadReaderNavigation = useCallback(async () => {
-    const navResp = await apiFetch<MediaNavigationResponse>(
-      `/api/media/${id}/navigation`,
-    );
-    return readNavigationPayload(navResp);
-  }, [id, readNavigationPayload]);
+  const loadReaderNavigation = useCallback(
+    async (signal: AbortSignal) => {
+      const navResp = await apiFetch<MediaNavigationResponse>(
+        `/api/media/${id}/navigation`,
+        { signal },
+      );
+      return readNavigationPayload(navResp);
+    },
+    [id, readNavigationPayload],
+  );
+
+  const initialEpubNavigation = useMemo(() => {
+    if (
+      !initialNavigation ||
+      initialNavigation.data.kind !== "epub" ||
+      initialNavigation.data.media_id !== id
+    ) {
+      return undefined;
+    }
+    const payload = readNavigationPayload(initialNavigation);
+    return { sections: payload.sections, toc: payload.toc };
+  }, [initialNavigation, id, readNavigationPayload]);
+  const initialWebNavigation = useMemo(() => {
+    if (
+      !initialNavigation ||
+      initialNavigation.data.kind !== "web_article" ||
+      initialNavigation.data.media_id !== id
+    ) {
+      return undefined;
+    }
+    const payload = readNavigationPayload(initialNavigation);
+    return { sections: payload.sections, toc: payload.toc };
+  }, [initialNavigation, id, readNavigationPayload]);
+
+  const epubNavigationResource = useAsyncResource<{
+    sections: ReaderNavigationSection[];
+    toc: NormalizedNavigationTocNode[];
+  }>({
+    cacheKey: isEpub && canRead ? id : null,
+    load: async (signal) => {
+      const payload = await loadReaderNavigation(signal);
+      if (payload.kind !== "epub") {
+        throw new ApiError(0, "E_INVALID_KIND", "Expected EPUB navigation");
+      }
+      return { sections: payload.sections, toc: payload.toc };
+    },
+    initialData: initialEpubNavigation,
+  });
+  const webNavigationResource = useAsyncResource<{
+    sections: ReaderNavigationSection[];
+    toc: NormalizedNavigationTocNode[];
+  }>({
+    cacheKey: media?.kind === "web_article" && canRead ? id : null,
+    load: async (signal) => {
+      const payload = await loadReaderNavigation(signal);
+      if (payload.kind !== "web_article") {
+        throw new ApiError(
+          0,
+          "E_INVALID_KIND",
+          "Expected web article navigation",
+        );
+      }
+      return { sections: payload.sections, toc: payload.toc };
+    },
+    initialData: initialWebNavigation,
+  });
+  const epubSections =
+    epubNavigationResource.status === "ready"
+      ? epubNavigationResource.data.sections
+      : null;
+  const epubToc =
+    epubNavigationResource.status === "ready"
+      ? epubNavigationResource.data.toc
+      : null;
+  const webSections =
+    webNavigationResource.status === "ready"
+      ? webNavigationResource.data.sections
+      : null;
+  const webToc =
+    webNavigationResource.status === "ready"
+      ? webNavigationResource.data.toc
+      : null;
 
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -1189,49 +1234,37 @@ export default function MediaPaneBody() {
     [id],
   );
 
-  const refreshDocumentProcessingState = useCallback(async () => {
-    if (
-      !media?.id ||
-      (media.kind !== "epub" &&
-        media.kind !== "pdf" &&
-        media.kind !== "web_article")
-    ) {
-      return;
-    }
-
-    const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
-    const nextMedia = mediaResp.data;
-    setMedia(nextMedia);
-    if (
-      nextMedia.kind === "web_article" &&
-      nextMedia.capabilities?.can_read &&
-      fragments.length === 0
-    ) {
-      const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
-        `/api/media/${nextMedia.id}/fragments`,
-      );
-      setFragments(fragmentsResp.data);
-    }
-  }, [fragments.length, media?.id, media?.kind]);
-
-  const pollDocumentProcessing = useCallback(async () => {
-    try {
-      await refreshDocumentProcessingState();
-    } catch {
-      // Keep the pane responsive even if one poll attempt fails.
-    }
-  }, [refreshDocumentProcessingState]);
-
-  const documentProcessingPollEnabled = shouldPollDocumentProcessing(
-    media?.kind,
-    media?.processing_status,
+  const processingSnapshot = useMediaProcessingStatus(
+    media?.id ?? null,
+    media?.processing_status ?? "",
   );
 
-  useIntervalPoll({
-    enabled: Boolean(media?.id) && documentProcessingPollEnabled,
-    onPoll: pollDocumentProcessing,
-    pollIntervalMs: DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
+  useEffect(() => {
+    if (!processingSnapshot) return;
+    setMedia((prev) => (prev ? { ...prev, ...processingSnapshot } : prev));
+  }, [processingSnapshot]);
+
+  const webFragmentsResource = useAsyncResource<Fragment[]>({
+    cacheKey:
+      media?.kind === "web_article" &&
+      media.capabilities?.can_read === true &&
+      fragments.length === 0
+        ? media.id
+        : null,
+    load: async (signal) => {
+      const resp = await apiFetch<{ data: Fragment[] }>(
+        `/api/media/${media!.id}/fragments`,
+        { signal },
+      );
+      return resp.data;
+    },
   });
+
+  useEffect(() => {
+    if (webFragmentsResource.status === "ready") {
+      setFragments(webFragmentsResource.data);
+    }
+  }, [webFragmentsResource]);
 
   const refreshMetadataRetryState = useCallback(
     async (options?: { decrementOnNoChange?: boolean }) => {
@@ -1293,116 +1326,82 @@ export default function MediaPaneBody() {
   });
 
   // ==========================================================================
-  // EPUB orchestration — navigation + initial section
+  // EPUB restore — once per loaded navigation, resolve the initial section
   // ==========================================================================
 
   useEffect(() => {
-    if (
-      !media ||
-      media.kind !== "epub" ||
-      !isReadableStatus(media.processing_status)
-    )
+    if (!epubSections) {
+      appliedEpubNavigationRef.current = null;
       return;
+    }
     if (initialReaderResumeStateLoading) return;
-    if (initialEpubRestoreResolvedRef.current) return;
+    if (appliedEpubNavigationRef.current === epubSections) return;
+    appliedEpubNavigationRef.current = epubSections;
 
-    let cancelled = false;
-    setEpubError(null);
     const sessionId = beginRestoreSession("resolving");
-    initialEpubRestoreResolvedRef.current = true;
+    setTocWarning(false);
+    setEpubError(null);
 
-    const loadEpub = async () => {
-      try {
-        const navigation = await loadReaderNavigation();
-        if (cancelled || sessionId !== restoreSessionIdRef.current) return;
-        if (navigation.kind !== "epub") {
-          setEpubError("Failed to load EPUB navigation.");
-          void settleRestoreSession(sessionId);
-          return;
-        }
-        const sections = navigation.sections;
-        setEpubSections(sections);
-        setEpubToc(navigation.toc);
-        setTocWarning(false);
+    const restoreRequest = resolveInitialEpubRestoreRequest({
+      requestedSectionId: activeRequestedReaderLoc,
+      resumeState: initialEpubResumeState,
+      sections: epubSections,
+      readerPositionBucketCp: READER_POSITION_BUCKET_CP,
+    });
+    if (!restoreRequest) {
+      setEpubError("No sections available for this EPUB.");
+      void settleRestoreSession(sessionId);
+      return;
+    }
 
-        const restoreRequest = resolveInitialEpubRestoreRequest({
-          requestedSectionId: activeRequestedReaderLoc,
-          resumeState: initialEpubResumeState,
-          sections,
-          readerPositionBucketCp: READER_POSITION_BUCKET_CP,
-        });
+    const resolvedSection = epubSections.find(
+      (section) => section.section_id === restoreRequest.sectionId,
+    );
+    if (!resolvedSection) {
+      setEpubError("No sections available for this EPUB.");
+      void settleRestoreSession(sessionId);
+      return;
+    }
 
-        if (restoreRequest === null) {
-          setEpubError("No sections available for this EPUB.");
-          void settleRestoreSession(sessionId);
-          return;
-        }
+    if (activeRequestedReaderLoc !== restoreRequest.sectionId) {
+      router.replace(
+        buildEpubLocationHref(id, restoreRequest.sectionId, {
+          fragmentId: activeRequestedFragmentId,
+          highlightId: requestedHighlightId,
+        }),
+      );
+    }
 
-        const resolvedSection = sections.find(
-          (section) => section.section_id === restoreRequest.sectionId,
-        );
-        if (!resolvedSection) {
-          setEpubError("No sections available for this EPUB.");
-          void settleRestoreSession(sessionId);
-          return;
-        }
+    if (!updateRestorePhase(sessionId, "opening_target")) return;
 
-        if (activeRequestedReaderLoc !== restoreRequest.sectionId) {
-          router.replace(
-            buildEpubLocationHref(id, restoreRequest.sectionId, {
-              fragmentId: activeRequestedFragmentId,
-              highlightId: requestedHighlightId,
-            }),
-          );
-        }
-
-        if (!updateRestorePhase(sessionId, "opening_target")) {
-          return;
-        }
-
-        setActiveSectionId(restoreRequest.sectionId);
-        setEpubRestoreRequest(restoreRequest);
-      } catch (err) {
-        if (cancelled || sessionId !== restoreSessionIdRef.current) return;
-        initialEpubRestoreResolvedRef.current = false;
-        if (isApiError(err)) {
-          if (err.code === "E_MEDIA_NOT_READY") {
-            setEpubError("processing");
-          } else if (err.code === "E_MEDIA_NOT_FOUND") {
-            setError({
-              severity: "error",
-              title: "Media not found or you don't have access to it.",
-            });
-          } else {
-            setEpubError(
-              toFeedback(err, { fallback: "Failed to load EPUB navigation." })
-                .title,
-            );
-          }
-        } else {
-          setEpubError("Failed to load EPUB navigation.");
-        }
-      }
-    };
-
-    loadEpub();
-    return () => {
-      cancelled = true;
-    };
+    setActiveSectionId(restoreRequest.sectionId);
+    setEpubRestoreRequest(restoreRequest);
   }, [
-    beginRestoreSession,
+    epubSections,
+    initialReaderResumeStateLoading,
     activeRequestedReaderLoc,
     activeRequestedFragmentId,
-    id,
     initialEpubResumeState,
-    initialReaderResumeStateLoading,
-    loadReaderNavigation,
-    media,
     requestedHighlightId,
-    router,
+    beginRestoreSession,
     settleRestoreSession,
     updateRestorePhase,
+    id,
+    router,
   ]);
+
+  // Pane-level 404 from EPUB navigation fetch (media gone or no access).
+  useEffect(() => {
+    if (
+      epubNavigationResource.status === "error" &&
+      epubNavigationResource.error.code === "E_MEDIA_NOT_FOUND"
+    ) {
+      setError({
+        severity: "error",
+        title: "Media not found or you don't have access to it.",
+      });
+    }
+  }, [epubNavigationResource]);
 
   // ==========================================================================
   // EPUB — fetch active section content on section change
@@ -1511,11 +1510,8 @@ export default function MediaPaneBody() {
 
   useEffect(() => {
     restoreSessionIdRef.current = 0;
-    initialEpubRestoreResolvedRef.current = false;
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
-    setWebSections(null);
-    setWebToc(null);
     setActiveWebSectionId(null);
     setWebTocExpanded(false);
     webSectionScrollKeyRef.current = null;
@@ -1523,50 +1519,6 @@ export default function MediaPaneBody() {
     lastSavedTextAnchorOffsetRef.current = null;
     setTextRestoreSettled(false);
   }, [id]);
-
-  useEffect(() => {
-    if (
-      media?.kind !== "web_article" ||
-      !isReadableStatus(media?.processing_status ?? "")
-    ) {
-      setWebSections(null);
-      setWebToc(null);
-      setActiveWebSectionId(null);
-      return;
-    }
-
-    let cancelled = false;
-    const loadWebNavigation = async () => {
-      try {
-        const navigation = await loadReaderNavigation();
-        if (cancelled || navigation.kind !== "web_article") {
-          return;
-        }
-        setWebSections(navigation.sections);
-        setWebToc(navigation.toc);
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        setWebSections([]);
-        setWebToc([]);
-        if (
-          !isApiError(err) ||
-          (err.code !== "E_MEDIA_NOT_READY" && err.code !== "E_INVALID_KIND")
-        ) {
-          feedback.show({
-            severity: "error",
-            title: "Failed to load article contents.",
-          });
-        }
-      }
-    };
-
-    void loadWebNavigation();
-    return () => {
-      cancelled = true;
-    };
-  }, [feedback, loadReaderNavigation, media?.kind, media?.processing_status]);
 
   useEffect(() => {
     if (media?.kind !== "web_article" || webSections === null) {
@@ -3354,14 +3306,25 @@ export default function MediaPaneBody() {
     webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
 
   const epubTextDocumentContentState = (() => {
-    if (epubError && epubError !== "processing") {
+    if (epubNavigationResource.status === "error") {
+      return {
+        status: "error" as const,
+        message: toFeedback(epubNavigationResource.error, {
+          fallback: "Failed to load EPUB navigation.",
+        }).title,
+      };
+    }
+    if (epubError) {
       return { status: "error" as const, message: epubError };
     }
     if (!epubSections) {
-      return { status: "loading" as const, message: "Loading EPUB navigation..." };
+      return { status: "loading" as const, message: "Loading…" };
     }
     if (epubSections.length === 0) {
-      return { status: "empty" as const, message: "No sections available for this EPUB." };
+      return {
+        status: "empty" as const,
+        message: "No sections available for this EPUB.",
+      };
     }
     if (epubSectionLoading || !activeEpubSection) {
       return { status: "loading" as const, message: "Loading section..." };
@@ -3668,14 +3631,10 @@ export default function MediaPaneBody() {
   const handleProcessingRestarted = useCallback(
     ({ resetRefreshSource }: { resetRefreshSource: boolean }) => {
       setFragments([]);
-      setEpubSections(null);
-      setEpubToc(null);
       setActiveSectionId(null);
-      setWebSections(null);
-      setWebToc(null);
       setActiveWebSectionId(null);
       setWebTocExpanded(false);
-      setEpubError("processing");
+      setEpubError(null);
       if (!media) return;
       const targetId = media.id;
       setMedia((prev) =>

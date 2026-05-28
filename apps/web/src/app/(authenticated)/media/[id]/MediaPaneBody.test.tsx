@@ -11,11 +11,17 @@ const testState = vi.hoisted(() => ({
   mediaKind: "pdf" as "pdf" | "web_article" | "epub",
 }));
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: (...args: unknown[]) => testState.apiFetch(...args),
-  isApiError: (error: unknown) =>
-    Boolean(error && typeof error === "object" && "status" in error),
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: (...args: unknown[]) => testState.apiFetch(...args),
+    isApiError: (error: unknown) =>
+      Boolean(error && typeof error === "object" && "status" in error),
+  };
+});
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,

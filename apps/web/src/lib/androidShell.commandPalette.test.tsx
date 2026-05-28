@@ -69,10 +69,16 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   requestOpenInAppPane: (...args: unknown[]) => requestOpenInAppPaneMock(...args),
 }));
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
-  isApiError: () => false,
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: (...args: unknown[]) => apiFetchMock(...args),
+    isApiError: () => false,
+  };
+});
 
 import CommandPalette from "@/components/CommandPalette";
 

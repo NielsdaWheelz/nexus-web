@@ -12,11 +12,17 @@ import type {
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: apiFetchMock,
-  isApiError: (error: unknown) =>
-    error instanceof Error && error.name === "ApiError",
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: apiFetchMock,
+    isApiError: (error: unknown) =>
+      error instanceof Error && error.name === "ApiError",
+  };
+});
 
 beforeEach(() => {
   apiFetchMock.mockReset();

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { toChatSSEEvent, type SSEEvent } from "./sse/events";
 import { sseClientDirect } from "./sse-client";
+
+const CHAT_URL = "https://stream.nexus.test/chat-runs/run-1/events";
+const isChatTerminal = (event: SSEEvent) => event.type === "done";
 
 describe("sseClientDirect", () => {
   afterEach(() => {
@@ -53,30 +57,29 @@ describe("sseClientDirect", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const events: Array<{ type: string; data: unknown }> = [];
+    const events: SSEEvent[] = [];
     const deliveredEventIds: string[] = [];
 
     await new Promise<void>((resolve, reject) => {
-      sseClientDirect(
-        "https://stream.nexus.test",
-        "stream-token",
-        "run-1",
-        {
-          onEvent: (event) => {
-            events.push(event);
-          },
-          onError: reject,
-          onComplete: () => resolve(),
-          onLastEventId: (id) => {
-            deliveredEventIds.push(id);
-          },
+      sseClientDirect<SSEEvent>({
+        url: CHAT_URL,
+        streamToken: async () => "stream-token",
+        decode: toChatSSEEvent,
+        isTerminal: isChatTerminal,
+        onEvent: (event) => {
+          events.push(event);
         },
-        { lastEventId: "7" },
-      );
+        onError: reject,
+        onComplete: () => resolve(),
+        onLastEventId: (id) => {
+          deliveredEventIds.push(id);
+        },
+        lastEventId: "7",
+      });
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://stream.nexus.test/chat-runs/run-1/events",
+      CHAT_URL,
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
@@ -312,19 +315,18 @@ describe("sseClientDirect", () => {
     const deliveredEventIds: string[] = [];
 
     const complete = new Promise<void>((resolve, reject) => {
-      sseClientDirect(
-        "https://stream.nexus.test",
-        tokenSupplier,
-        "run-1",
-        {
-          onEvent: () => {},
-          onError: reject,
-          onComplete: () => resolve(),
-          onLastEventId: (id) => {
-            deliveredEventIds.push(id);
-          },
+      sseClientDirect<SSEEvent>({
+        url: CHAT_URL,
+        streamToken: tokenSupplier,
+        decode: toChatSSEEvent,
+        isTerminal: isChatTerminal,
+        onEvent: () => {},
+        onError: reject,
+        onComplete: () => resolve(),
+        onLastEventId: (id) => {
+          deliveredEventIds.push(id);
         },
-      );
+      });
     });
 
     await vi.waitFor(() => {
@@ -336,7 +338,7 @@ describe("sseClientDirect", () => {
     expect(tokenSupplier).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://stream.nexus.test/chat-runs/run-1/events",
+      CHAT_URL,
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer token-1",
@@ -345,7 +347,7 @@ describe("sseClientDirect", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "https://stream.nexus.test/chat-runs/run-1/events",
+      CHAT_URL,
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer token-2",
@@ -386,25 +388,24 @@ describe("sseClientDirect", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const events: Array<{ type: string; data: unknown }> = [];
+    const events: SSEEvent[] = [];
     let completedWithTerminal: boolean | null = null;
 
     await new Promise<void>((resolve, reject) => {
-      sseClientDirect(
-        "https://stream.nexus.test",
-        "stream-token",
-        "run-1",
-        {
-          onEvent: (event) => {
-            events.push(event);
-          },
-          onError: reject,
-          onComplete: (terminalEventSeen) => {
-            completedWithTerminal = terminalEventSeen;
-            resolve();
-          },
+      sseClientDirect<SSEEvent>({
+        url: CHAT_URL,
+        streamToken: async () => "stream-token",
+        decode: toChatSSEEvent,
+        isTerminal: isChatTerminal,
+        onEvent: (event) => {
+          events.push(event);
         },
-      );
+        onError: reject,
+        onComplete: (terminalEventSeen) => {
+          completedWithTerminal = terminalEventSeen;
+          resolve();
+        },
+      });
     });
 
     expect(events).toEqual([
@@ -450,25 +451,24 @@ describe("sseClientDirect", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const events: Array<{ type: string; data: unknown }> = [];
+    const events: SSEEvent[] = [];
     let completedWithTerminal: boolean | null = null;
 
     await new Promise<void>((resolve, reject) => {
-      sseClientDirect(
-        "https://stream.nexus.test",
-        "stream-token",
-        "run-1",
-        {
-          onEvent: (event) => {
-            events.push(event);
-          },
-          onError: reject,
-          onComplete: (terminalEventSeen) => {
-            completedWithTerminal = terminalEventSeen;
-            resolve();
-          },
+      sseClientDirect<SSEEvent>({
+        url: CHAT_URL,
+        streamToken: async () => "stream-token",
+        decode: toChatSSEEvent,
+        isTerminal: isChatTerminal,
+        onEvent: (event) => {
+          events.push(event);
         },
-      );
+        onError: reject,
+        onComplete: (terminalEventSeen) => {
+          completedWithTerminal = terminalEventSeen;
+          resolve();
+        },
+      });
     });
 
     expect(events).toEqual([
@@ -492,16 +492,15 @@ describe("sseClientDirect", () => {
 
     await expect(
       new Promise<void>((resolve, reject) => {
-        sseClientDirect(
-          "https://stream.nexus.test",
-          "stream-token",
-          "run-1",
-          {
-            onEvent: () => reject(new Error("unexpected event")),
-            onError: reject,
-            onComplete: () => resolve(),
-          },
-        );
+        sseClientDirect<SSEEvent>({
+          url: CHAT_URL,
+          streamToken: async () => "stream-token",
+          decode: toChatSSEEvent,
+          isTerminal: isChatTerminal,
+          onEvent: () => reject(new Error("unexpected event")),
+          onError: reject,
+          onComplete: () => resolve(),
+        });
       }),
     ).rejects.toThrow("Invalid SSE content type");
 
@@ -534,16 +533,15 @@ describe("sseClientDirect", () => {
     await expect(
       new Promise<void>((resolve, reject) => {
         rejectStream = reject;
-        stop = sseClientDirect(
-          "https://stream.nexus.test",
-          "stream-token",
-          "run-1",
-          {
-            onEvent: () => reject(new Error("unexpected event")),
-            onError,
-            onComplete: () => resolve(),
-          },
-        );
+        stop = sseClientDirect<SSEEvent>({
+          url: CHAT_URL,
+          streamToken: async () => "stream-token",
+          decode: toChatSSEEvent,
+          isTerminal: isChatTerminal,
+          onEvent: () => reject(new Error("unexpected event")),
+          onError,
+          onComplete: () => resolve(),
+        });
       }),
     ).rejects.toThrow("Unknown SSE event type: surprise");
 
@@ -604,16 +602,15 @@ describe("sseClientDirect", () => {
     await expect(
       new Promise<void>((resolve, reject) => {
         rejectStream = reject;
-        stop = sseClientDirect(
-          "https://stream.nexus.test",
-          "stream-token",
-          "run-1",
-          {
-            onEvent: () => reject(new Error("unexpected event")),
-            onError,
-            onComplete: () => resolve(),
-          },
-        );
+        stop = sseClientDirect<SSEEvent>({
+          url: CHAT_URL,
+          streamToken: async () => "stream-token",
+          decode: toChatSSEEvent,
+          isTerminal: isChatTerminal,
+          onEvent: () => reject(new Error("unexpected event")),
+          onError,
+          onComplete: () => resolve(),
+        });
       }),
     ).rejects.toThrow("Failed to parse SSE delta event");
 
@@ -788,20 +785,19 @@ async function collectOneSseEvent(eventType: string, data: unknown) {
     ),
   );
 
-  const events: Array<{ type: string; data: unknown }> = [];
+  const events: SSEEvent[] = [];
   await new Promise<void>((resolve, reject) => {
-    sseClientDirect(
-      "https://stream.nexus.test",
-      "stream-token",
-      "run-1",
-      {
-        onEvent: (event) => {
-          events.push(event);
-        },
-        onError: reject,
-        onComplete: () => resolve(),
+    sseClientDirect<SSEEvent>({
+      url: CHAT_URL,
+      streamToken: async () => "stream-token",
+      decode: toChatSSEEvent,
+      isTerminal: isChatTerminal,
+      onEvent: (event) => {
+        events.push(event);
       },
-    );
+      onError: reject,
+      onComplete: () => resolve(),
+    });
   });
   return events;
 }

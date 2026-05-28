@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
-import type { SSEEvent } from "@/lib/api/sse/events";
+import { toChatSSEEvent, type SSEEvent } from "@/lib/api/sse/events";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import type {
@@ -275,9 +275,9 @@ export function useChatRunTail({
 
         if (runTokensRef.current.get(runId) !== token || finished) return;
 
-        const abort = sseClientDirect(
-          streamBaseUrl,
-          async () => {
+        const abort = sseClientDirect<SSEEvent>({
+          url: `${streamBaseUrl}/chat-runs/${runId}/events`,
+          streamToken: async () => {
             if (firstStreamToken !== null) {
               const streamToken = firstStreamToken;
               firstStreamToken = null;
@@ -285,95 +285,94 @@ export function useChatRunTail({
             }
             return (await fetchStreamToken()).token;
           },
-          runId,
-          {
-            onEvent: (event: SSEEvent) => {
-              if (runTokensRef.current.get(runId) !== token) return;
-              retryAttempt = 0;
-              switch (event.type) {
-                case "meta":
-                  currentUserId = event.data.user_message_id;
-                  currentAssistantId = event.data.assistant_message_id;
-                  if (currentRunIsVisible()) {
-                    handleMetaReceived(
-                      originalUserId,
-                      currentUserId,
-                      originalAssistantId,
-                      currentAssistantId,
-                    );
-                  }
-                  onConversationAvailable?.(event.data.conversation_id, runId);
-                  break;
-                case "delta":
-                  if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
-                    firstDeltaRunIdsRef.current.add(runId);
-                    onFirstDelta?.(runId);
-                  }
-                  if (replayDeltaCharsToSkip > 0) {
-                    if (event.data.delta.length <= replayDeltaCharsToSkip) {
-                      replayDeltaCharsToSkip -= event.data.delta.length;
-                      break;
-                    }
-                    const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
-                    replayDeltaCharsToSkip = 0;
-                    if (!currentRunIsVisible()) break;
-                    handleDelta(currentAssistantId, remainingDelta);
+          decode: toChatSSEEvent,
+          isTerminal: (event) => event.type === "done",
+          onEvent: (event) => {
+            if (runTokensRef.current.get(runId) !== token) return;
+            retryAttempt = 0;
+            switch (event.type) {
+              case "meta":
+                currentUserId = event.data.user_message_id;
+                currentAssistantId = event.data.assistant_message_id;
+                if (currentRunIsVisible()) {
+                  handleMetaReceived(
+                    originalUserId,
+                    currentUserId,
+                    originalAssistantId,
+                    currentAssistantId,
+                  );
+                }
+                onConversationAvailable?.(event.data.conversation_id, runId);
+                break;
+              case "delta":
+                if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
+                  firstDeltaRunIdsRef.current.add(runId);
+                  onFirstDelta?.(runId);
+                }
+                if (replayDeltaCharsToSkip > 0) {
+                  if (event.data.delta.length <= replayDeltaCharsToSkip) {
+                    replayDeltaCharsToSkip -= event.data.delta.length;
                     break;
                   }
+                  const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
+                  replayDeltaCharsToSkip = 0;
                   if (!currentRunIsVisible()) break;
-                  handleDelta(currentAssistantId, event.data.delta);
+                  handleDelta(currentAssistantId, remainingDelta);
                   break;
-                case "tool_call":
-                  if (!currentRunIsVisible()) break;
-                  handleToolCall(currentAssistantId, event.data);
-                  break;
-                case "retrieval_result":
-                  if (!currentRunIsVisible()) break;
-                  handleToolResult(currentAssistantId, event.data);
-                  break;
-                case "source_manifest_delta":
-                  if (!currentRunIsVisible()) break;
-                  handleSourceManifestDelta(currentAssistantId, event.data);
-                  break;
-                case "claim":
-                  if (!currentRunIsVisible()) break;
-                  handleClaim(currentAssistantId, event.data);
-                  break;
-                case "claim_evidence":
-                  if (!currentRunIsVisible()) break;
-                  handleClaimEvidence(currentAssistantId, event.data);
-                  break;
-                case "done":
-                  if (currentRunIsVisible()) {
-                    handleDone(
-                      currentAssistantId,
-                      event.data.status,
-                      event.data.error_code,
-                    );
-                  }
-                  notifyDone(event.data.status, event.data.error_code);
-                  break;
-                default: {
-                  const _exhaustive: never = event;
-                  return _exhaustive;
                 }
+                if (!currentRunIsVisible()) break;
+                handleDelta(currentAssistantId, event.data.delta);
+                break;
+              case "tool_call":
+                if (!currentRunIsVisible()) break;
+                handleToolCall(currentAssistantId, event.data);
+                break;
+              case "retrieval_result":
+                if (!currentRunIsVisible()) break;
+                handleToolResult(currentAssistantId, event.data);
+                break;
+              case "source_manifest_delta":
+                if (!currentRunIsVisible()) break;
+                handleSourceManifestDelta(currentAssistantId, event.data);
+                break;
+              case "claim":
+                if (!currentRunIsVisible()) break;
+                handleClaim(currentAssistantId, event.data);
+                break;
+              case "claim_evidence":
+                if (!currentRunIsVisible()) break;
+                handleClaimEvidence(currentAssistantId, event.data);
+                break;
+              case "done":
+                if (currentRunIsVisible()) {
+                  handleDone(
+                    currentAssistantId,
+                    event.data.status,
+                    event.data.error_code,
+                  );
+                }
+                notifyDone(event.data.status, event.data.error_code);
+                break;
+              default: {
+                const _exhaustive: never = event;
+                return _exhaustive;
               }
-            },
-            onError: (err) => {
-              if (runTokensRef.current.get(runId) !== token) return;
-              console.error("Chat run stream failed:", err);
-              void continueAfterStreamBoundary(false);
-            },
-            onComplete: (terminalEventSeen) => {
-              if (runTokensRef.current.get(runId) !== token) return;
-              void continueAfterStreamBoundary(terminalEventSeen);
-            },
-            onLastEventId: (id) => {
-              lastEventId = id;
-            },
+            }
           },
-          lastEventId ? { lastEventId } : undefined,
-        );
+          onError: (err) => {
+            if (runTokensRef.current.get(runId) !== token) return;
+            console.error("Chat run stream failed:", err);
+            void continueAfterStreamBoundary(false);
+          },
+          onComplete: (terminalEventSeen) => {
+            if (runTokensRef.current.get(runId) !== token) return;
+            void continueAfterStreamBoundary(terminalEventSeen);
+          },
+          onLastEventId: (id) => {
+            lastEventId = id;
+          },
+          lastEventId,
+        });
         activeStreamsRef.current.set(runId, abort);
       };
 

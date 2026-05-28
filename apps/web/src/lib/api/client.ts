@@ -5,6 +5,8 @@
  * from client components to the BFF API routes.
  */
 
+import { isAbortError } from "@/lib/errors";
+
 /**
  * API error with status code and message.
  */
@@ -56,7 +58,8 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw err;
     if (!response.ok) {
       throw new ApiError(
         response.status,

@@ -44,6 +44,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
+from nexus.api.routes.media_events import router as media_events_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
 from nexus.auth.middleware import AuthMiddleware
@@ -236,6 +237,7 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
 
     # Include browser-callable stream event routes.
     app.include_router(stream_router)
+    app.include_router(media_events_router)
 
     # Include stream token minting route (/internal/stream-tokens) for the BFF.
     app.include_router(stream_tokens_router)

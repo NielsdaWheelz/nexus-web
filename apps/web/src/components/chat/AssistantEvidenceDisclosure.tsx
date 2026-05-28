@@ -27,7 +27,7 @@ import {
 } from "@/lib/api/sse/locators";
 import { apiFetch } from "@/lib/api/client";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
-import { useLazyFetchOnOpen } from "@/lib/useLazyFetchOnOpen";
+import { useAsyncResource, type AsyncResource } from "@/lib/useAsyncResource";
 import type {
   AssistantVerifierRun,
   ConversationMessage,
@@ -344,12 +344,11 @@ function AssistantSourceManifest({
     )
     .join("|");
 
-  const ledgers = useLazyFetchOnOpen<{
+  const ledgers = useAsyncResource<{
     candidate: MessageRetrievalCandidateLedger[];
     rerank: MessageRerankLedger[];
   }>({
-    open,
-    cacheKey: `${messageId}|${ledgerSignature}`,
+    cacheKey: open ? `${messageId}|${ledgerSignature}` : null,
     load: async () => {
       const [candidateResponse, rerankResponse] = await Promise.all([
         apiFetch<{ data: MessageRetrievalCandidateLedger[] }>(
@@ -364,13 +363,7 @@ function AssistantSourceManifest({
         rerank: rerankResponse.data,
       };
     },
-    errorMessage: "Audit ledger is unavailable.",
   });
-  const candidateLedgers = ledgers.data?.candidate ?? [];
-  const rerankLedgers = ledgers.data?.rerank ?? [];
-  const ledgersLoaded = ledgers.loaded;
-  const ledgersLoading = ledgers.loading;
-  const ledgerError = ledgers.error;
 
   if (manifestRows.length === 0) {
     return null;
@@ -547,11 +540,7 @@ function AssistantSourceManifest({
               ) : null}
               <SourceManifestAuditLedger
                 toolCallId={row.tool_call_id ?? null}
-                candidateLedgers={candidateLedgers}
-                rerankLedgers={rerankLedgers}
-                loading={ledgersLoading}
-                error={ledgerError}
-                loaded={ledgersLoaded}
+                ledgers={ledgers}
               />
             </div>
           ))}
@@ -563,41 +552,42 @@ function AssistantSourceManifest({
 
 function SourceManifestAuditLedger({
   toolCallId,
-  candidateLedgers,
-  rerankLedgers,
-  loading,
-  error,
-  loaded,
+  ledgers,
 }: {
   toolCallId: string | null;
-  candidateLedgers: MessageRetrievalCandidateLedger[];
-  rerankLedgers: MessageRerankLedger[];
-  loading: boolean;
-  error: string | null;
-  loaded: boolean;
+  ledgers: AsyncResource<{
+    candidate: MessageRetrievalCandidateLedger[];
+    rerank: MessageRerankLedger[];
+  }>;
 }) {
   if (!toolCallId) return null;
 
-  const candidates = candidateLedgers.filter(
-    (candidate) => candidate.tool_call_id === toolCallId,
-  );
-  const reranks = rerankLedgers.filter(
-    (rerank) => rerank.tool_call_id === toolCallId,
-  );
+  const candidates =
+    ledgers.status === "ready"
+      ? ledgers.data.candidate.filter(
+          (candidate) => candidate.tool_call_id === toolCallId,
+        )
+      : [];
+  const reranks =
+    ledgers.status === "ready"
+      ? ledgers.data.rerank.filter(
+          (rerank) => rerank.tool_call_id === toolCallId,
+        )
+      : [];
 
   return (
     <div className={styles.sourceManifestFilters}>
       <div className={styles.sourceManifestRowHeader}>
         <span>Audit ledger</span>
-        {loading ? <span>loading</span> : null}
-        {error ? <span>unavailable</span> : null}
-        {loaded && !loading && !error ? (
+        {ledgers.status === "loading" ? <span>loading</span> : null}
+        {ledgers.status === "error" ? <span>unavailable</span> : null}
+        {ledgers.status === "ready" ? (
           <span>
             {candidates.length} candidates, {reranks.length} rerank passes
           </span>
         ) : null}
       </div>
-      {error ? <div>{error}</div> : null}
+      {ledgers.status === "error" ? <div>Audit ledger is unavailable.</div> : null}
       {reranks.map((rerank) => (
         <div key={rerank.id} className={styles.evidenceFacts}>
           <span>{rerank.strategy}</span>
@@ -634,9 +624,7 @@ function SourceManifestAuditLedger({
           ) : null}
         </div>
       ))}
-      {loaded &&
-      !loading &&
-      !error &&
+      {ledgers.status === "ready" &&
       candidates.length === 0 &&
       reranks.length === 0 ? (
         <div>No audit ledger rows for this tool call.</div>
@@ -1031,23 +1019,16 @@ function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
 function VerifierRunLedger({ messageId }: { messageId: string }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const {
-    data: runs,
-    loaded,
-    loading,
-    error,
-  } = useLazyFetchOnOpen<AssistantVerifierRun[]>({
-    open,
-    cacheKey: messageId,
+  const runs = useAsyncResource<AssistantVerifierRun[]>({
+    cacheKey: open ? messageId : null,
     load: async () => {
       const response = await apiFetch<{ data: AssistantVerifierRun[] }>(
         `/api/messages/${messageId}/verifier-runs`,
       );
       return response.data;
     },
-    errorMessage: "Verifier ledger is unavailable.",
   });
-  const runList = runs ?? [];
+  const runList = runs.status === "ready" ? runs.data : [];
 
   return (
     <div className={styles.evidenceSummary}>
@@ -1064,14 +1045,16 @@ function VerifierRunLedger({ messageId }: { messageId: string }) {
       {open ? (
         <div id={panelId}>
           <div className={styles.evidenceFacts}>
-            {loading ? <span>loading</span> : null}
-            {error ? <span>unavailable</span> : null}
-            {loaded && !loading && !error ? (
+            {runs.status === "loading" ? <span>loading</span> : null}
+            {runs.status === "error" ? <span>unavailable</span> : null}
+            {runs.status === "ready" ? (
               <span>{runList.length} runs</span>
             ) : null}
           </div>
-          {error ? (
-            <div className={styles.sourceManifestFilters}>{error}</div>
+          {runs.status === "error" ? (
+            <div className={styles.sourceManifestFilters}>
+              Verifier ledger is unavailable.
+            </div>
           ) : null}
           {runList.map((run) => (
             <DiagnosticsDisclosure
@@ -1094,7 +1077,7 @@ function VerifierRunLedger({ messageId }: { messageId: string }) {
               <span>Created: {new Date(run.created_at).toLocaleString()}</span>
             </DiagnosticsDisclosure>
           ))}
-          {loaded && !loading && !error && runList.length === 0 ? (
+          {runs.status === "ready" && runList.length === 0 ? (
             <div className={styles.sourceManifestFilters}>
               No verifier runs.
             </div>

@@ -148,6 +148,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
             or (path.startswith("/stream/conversations/") and path.endswith("/messages"))
             or path == "/stream/conversations/messages"
+            or (path.startswith("/media/") and path.endswith("/events"))
         ):
             return await call_next(request)
 

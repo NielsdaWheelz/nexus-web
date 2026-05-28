@@ -204,7 +204,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "delta",
           data: { delta: "Streamed answer" },
@@ -234,7 +234,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "source_manifest_delta",
           data: {
@@ -274,7 +274,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "retrieval_result",
           data: {
@@ -343,7 +343,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "claim",
           data: {
@@ -378,7 +378,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "claim",
           data: {
@@ -424,7 +424,7 @@ describe("chat streaming", () => {
       token: "stream-token",
     });
     streamMocks.sseClientDirect.mockImplementation(
-      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+      (handlers) => {
         handlers.onEvent({
           type: "delta",
           data: { delta: "Hidden streamed answer" },
