@@ -1012,7 +1012,6 @@ async def _execute_chat_run(
                         args = tc.arguments or {}
                         media_arg = args.get("media_id")
                         library_arg = args.get("library_id")
-                        types_arg = args.get("types")
                         media_id = UUID(str(media_arg)) if isinstance(media_arg, str) else None
                         library_id = (
                             UUID(str(library_arg)) if isinstance(library_arg, str) else None
@@ -1032,7 +1031,7 @@ async def _execute_chat_run(
                             media_id=media_id,
                             library_id=library_id,
                             planned_query=str(args.get("query") or ""),
-                            planned_types=[str(t) for t in (types_arg or ["content_chunk"])],
+                            planned_types=["content_chunk"],
                             planned_filters={},
                             tool_call_index=tool_call_index_next,
                         )

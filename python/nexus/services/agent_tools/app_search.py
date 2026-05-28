@@ -63,7 +63,6 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
             "query": {"type": "string"},
             "media_id": {"type": "string", "format": "uuid", "nullable": True},
             "library_id": {"type": "string", "format": "uuid", "nullable": True},
-            "types": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["query"],
     },
