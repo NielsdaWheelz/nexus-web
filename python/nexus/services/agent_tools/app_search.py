@@ -52,17 +52,14 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": APP_SEARCH_TOOL_NAME,
     "description": (
         "Retrieve passages from the user's saved articles, books, podcasts, and "
-        "PDFs. Use this whenever you need the actual text of a saved source, "
-        "including the pinned media of the current chat. The backend defaults "
-        "`media_id` to the pinned media when both `media_id` and `library_id` "
-        "are omitted, so a bare query is enough to search within the pinned doc."
+        "PDFs. Pass just a query string; the backend scopes the search to the "
+        "pinned media of the current chat when present, or to everything the "
+        "user has saved otherwise."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "media_id": {"type": "string", "format": "uuid", "nullable": True},
-            "library_id": {"type": "string", "format": "uuid", "nullable": True},
         },
         "required": ["query"],
     },

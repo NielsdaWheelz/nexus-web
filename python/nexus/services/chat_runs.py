@@ -1010,25 +1010,9 @@ async def _execute_chat_run(
                     tool_call_index_next += 1
                     if tc.name == APP_SEARCH_TOOL_NAME:
                         args = tc.arguments or {}
-                        logger.info(
-                            "app_search.tool_args",
-                            run_id=str(run.id),
-                            tool_call_index=tool_call_index_next,
-                            arg_keys=sorted(args.keys()),
-                            args_repr=str(args)[:500],
+                        media_id, library_id = _pinned_search_scope(
+                            db, run.conversation_id
                         )
-                        media_arg = args.get("media_id")
-                        library_arg = args.get("library_id")
-                        media_id = UUID(str(media_arg)) if isinstance(media_arg, str) else None
-                        library_id = (
-                            UUID(str(library_arg)) if isinstance(library_arg, str) else None
-                        )
-                        if media_id is None and library_id is None:
-                            pinned_media, pinned_library = _pinned_search_scope(
-                                db, run.conversation_id
-                            )
-                            media_id = pinned_media
-                            library_id = pinned_library
                         run_result = execute_app_search(
                             db,
                             viewer_id=run.owner_user_id,
