@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import type {
@@ -39,18 +39,28 @@ const TERMINAL_STATUSES = new Set(["ready", "failed"]);
  * Subscribe to the FastAPI SSE stream that pushes `processing_status` (and
  * the surrounding capability/transcript/error fields) for one media row. The
  * stream self-terminates on a terminal status (`ready`, `failed`); the hook
- * does nothing when `initialStatus` is already terminal. Every `state` event
- * carries the full snapshot, so reconnects are idempotent — no Last-Event-ID
- * tracking needed.
+ * does nothing when the initial status is already terminal. Every `state`
+ * event carries the full snapshot, so reconnects are idempotent — no
+ * Last-Event-ID tracking needed.
  */
 export function useMediaProcessingStatus(
   mediaId: string | null,
   initialStatus: string,
-): MediaProcessingSnapshot | null {
+): {
+  snapshot: MediaProcessingSnapshot | null;
+  connectionState: "connecting" | "open" | "error";
+} {
   const [snapshot, setSnapshot] = useState<MediaProcessingSnapshot | null>(null);
+  const [connectionState, setConnectionState] = useState<
+    "connecting" | "open" | "error"
+  >("connecting");
+  const initialStatusRef = useRef(initialStatus);
 
   useEffect(() => {
-    if (!mediaId || TERMINAL_STATUSES.has(initialStatus)) return;
+    // Effect deps intentionally omit initialStatus: it mutates as snapshots
+    // arrive, and reopening the stream per change would churn stream tokens.
+    if (!mediaId || TERMINAL_STATUSES.has(initialStatusRef.current)) return;
+    setConnectionState("connecting");
     const controller = new AbortController();
     let firstToken: { token: string; stream_base_url: string } | null = null;
 
@@ -58,6 +68,7 @@ export function useMediaProcessingStatus(
       try {
         firstToken = await fetchStreamToken();
       } catch {
+        setConnectionState("error");
         return;
       }
       if (controller.signal.aborted) return;
@@ -77,14 +88,17 @@ export function useMediaProcessingStatus(
           data: data as MediaProcessingSnapshot,
         }),
         isTerminal: (event) => event.type === "done",
-        onEvent: (event) => setSnapshot(event.data),
-        onError: () => {},
+        onEvent: (event) => {
+          setConnectionState("open");
+          setSnapshot(event.data);
+        },
+        onError: () => setConnectionState("error"),
         signal: controller.signal,
       });
     })();
 
     return () => controller.abort();
-  }, [mediaId, initialStatus]);
+  }, [mediaId]);
 
-  return snapshot;
+  return { snapshot, connectionState };
 }

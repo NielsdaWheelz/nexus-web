@@ -265,6 +265,31 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     # Must be added AFTER auth middleware (runs before it in the stack)
     cors_origins = settings.stream_cors_origin_list
     if cors_origins:
+        app_url = urlparse(settings.app_public_url)
+        stream_url = urlparse(settings.effective_stream_base_url)
+        if (
+            app_url.scheme,
+            app_url.hostname,
+            app_url.port,
+        ) != (
+            stream_url.scheme,
+            stream_url.hostname,
+            stream_url.port,
+        ) and not any(
+            (parsed.scheme, parsed.hostname, parsed.port)
+            == (app_url.scheme, app_url.hostname, app_url.port)
+            for parsed in (urlparse(o) for o in cors_origins)
+        ):
+            if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise RuntimeError(
+                    f"STREAM_CORS_ORIGINS is missing APP_PUBLIC_URL origin "
+                    f"{settings.app_public_url!r}; current list: {cors_origins!r}"
+                )
+            logger.warning(
+                "stream_cors_middleware_missing_app_public_url_origin",
+                app_public_url=settings.app_public_url,
+                stream_cors_origins=cors_origins,
+            )
         app.add_middleware(StreamCORSMiddleware, allowed_origins=cors_origins)
         logger.info("stream_cors_middleware_enabled", origins=cors_origins)
     else:

@@ -1234,10 +1234,8 @@ export default function MediaPaneBody({
     [id],
   );
 
-  const processingSnapshot = useMediaProcessingStatus(
-    media?.id ?? null,
-    media?.processing_status ?? "",
-  );
+  const { snapshot: processingSnapshot, connectionState: processingConnectionState } =
+    useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
 
   useEffect(() => {
     if (!processingSnapshot) return;
@@ -3980,6 +3978,9 @@ export default function MediaPaneBody({
         <Pill tone="info">Checking metadata...</Pill>
       ) : metadataRetryPollExhausted ? (
         <Pill tone="warning">Still checking metadata. Refresh later.</Pill>
+      ) : null}
+      {processingConnectionState === "error" ? (
+        <Pill tone="warning">Reconnecting...</Pill>
       ) : null}
       {media &&
       isReadableStatus(media.processing_status) &&

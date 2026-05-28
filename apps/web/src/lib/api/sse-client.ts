@@ -69,7 +69,16 @@ export function sseClientDirect<TEvent>(args: {
           onComplete?.(terminalEventSeen);
           return;
         }
-        await delay(reconnectDelayMs);
+        // Exponential backoff with ±20% jitter, capped at 30s. Transport
+        // failures (fetch throws) are the runaway-retry surface — e.g. CORS
+        // misconfigs that fail every attempt — so each consecutive failure
+        // doubles the base before the next try. The base is reset on a
+        // successful open below; server `retry:` directives override the base
+        // and exponential growth resumes from that value.
+        await delay(
+          Math.round(reconnectDelayMs * (0.8 + Math.random() * 0.4)),
+        );
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
         continue;
       }
 
@@ -96,6 +105,12 @@ export function sseClientDirect<TEvent>(args: {
         onError(new Error("Response body is null"));
         return;
       }
+
+      // Stream is open with a valid content-type; reset the transport-failure
+      // backoff baseline so the next consecutive transport failure starts at
+      // 1s again. A server-side `retry:` directive may overwrite this during
+      // streaming via the callback below.
+      reconnectDelayMs = RECONNECT_DELAY_MS;
 
       try {
         await parseSSEJsonStream(
@@ -128,7 +143,11 @@ export function sseClientDirect<TEvent>(args: {
           onError(err);
           return;
         }
+        // Mid-stream failure: honor the current base exactly (it may be a
+        // server `retry:` override that the server expects us to respect to
+        // the millisecond), then grow it so a subsequent failure backs off.
         await delay(reconnectDelayMs);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
         continue;
       }
 

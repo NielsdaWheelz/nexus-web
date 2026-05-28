@@ -174,9 +174,9 @@ Initial state seeded from the server component prefetch; SSE only opens for non-
 
 ## API Design — SSE endpoint
 
-`GET /api/media/{id}/events` → Next.js BFF route at `apps/web/src/app/api/media/[id]/events/route.ts` proxies to FastAPI `GET /media/{media_id}/events`.
+`GET /media/{media_id}/events` on FastAPI. The browser opens the stream **directly** against FastAPI via `sseClientDirect` (`apps/web/src/lib/api/sse-client.ts`) — no `/api/*` proxy. Per the carve-out in `docs/rules/layers.md:24-26`, streaming SSE is the one client-side product call that bypasses the BFF; same pattern chat uses.
 
-FastAPI implementation in a new `apps/web/python/nexus/api/routes/media_events.py` mounted under the existing API router. Auth via `stream_token` (the same bearer-token pattern chat uses; the client first calls `POST /api/stream-token` to mint a short-lived token, then opens the EventSource with that token).
+FastAPI implementation in a new `python/nexus/api/routes/media_events.py` mounted under the existing API router. Auth via `stream_token`: the client calls `POST /api/stream-token` to mint a single-use short-lived token, then opens the stream against `${stream_base_url}/media/{id}/events` with that token (identical to the chat SSE auth path).
 
 Events emitted, framed per `apps/web/src/lib/api/sse/events.ts` rules:
 
@@ -188,7 +188,7 @@ Events emitted, framed per `apps/web/src/lib/api/sse/events.ts` rules:
 
 Server-side cadence: the FastAPI handler polls the DB every 1.0s (`justify-polling`: identical rationale to chat SSE — the API process has no push channel to the worker). Stream idle TTL is 60s; client reconnects with `Last-Event-ID` carrying the last `updated_at`. The handler self-terminates after emitting `done` and closes the stream cleanly.
 
-Client implementation: `useMediaProcessingStatus` opens one `EventSource` per mounted media pane, reconnects on transport errors with backoff, never opens for `null` mediaId, closes on unmount. The chat-SSE event parsers in `apps/web/src/lib/api/sse/` are the model for the strongly-typed payload parsing.
+Client implementation: `apps/web/src/lib/media/useMediaProcessingStatus.ts` opens one fetch-based SSE reader (`sseClientDirect`) per mounted media pane, reconnects on transport errors with backoff, never opens for `null` mediaId, closes on unmount. The chat-SSE event parsers in `apps/web/src/lib/api/sse/` are the model for the strongly-typed payload parsing.
 
 ## Rules
 
@@ -219,7 +219,6 @@ R8. **Errors propagate as `ApiError` or `AbortError`.** Loaders neither swallow 
 - `apps/web/src/lib/media/useMediaProcessingStatus.ts` — SSE subscriber hook.
 - `apps/web/src/lib/media/useMediaProcessingStatus.test.tsx` — Vitest.
 - `apps/web/src/lib/media/processingStatusEvents.ts` — parsers for media SSE events (mirrors `apps/web/src/lib/api/sse/events.ts` structure).
-- `apps/web/src/app/api/media/[id]/events/route.ts` — BFF SSE proxy.
 - `python/nexus/api/routes/media_events.py` — FastAPI SSE handler.
 - `python/tests/test_media_events.py` — backend test.
 
@@ -292,7 +291,7 @@ Hard cutover applies to the patterns, not the merge order. The implementation la
 
 **Phase 3 — Server prefetch (L2).** Extract `forward.ts`. Add `callFastAPI`. Convert `page.tsx` to async Server Component. Wire `initialMedia` + `initialNavigation` props. Delete the "Loading EPUB navigation…" branch and the first-paint client spinner.
 
-**Phase 4 — SSE (L3).** Add `python/nexus/api/routes/media_events.py`. Add BFF proxy route. Add `useMediaProcessingStatus` and its parsers. Replace the `useIntervalPoll` for processing status in `MediaPaneBody`. Delete `DOCUMENT_PROCESSING_POLL_INTERVAL_MS` and `pollDocumentProcessing` / `refreshDocumentProcessingState`.
+**Phase 4 — SSE (L3).** Add `python/nexus/api/routes/media_events.py`. Add `useMediaProcessingStatus` (direct SSE via `sseClientDirect`, authed with `stream_token`) and its parsers. Replace the `useIntervalPoll` for processing status in `MediaPaneBody`. Delete `DOCUMENT_PROCESSING_POLL_INTERVAL_MS` and `pollDocumentProcessing` / `refreshDocumentProcessingState`.
 
 **Phase 5 — Verification.** Typecheck, full Vitest, full pytest, e2e suite, dev server smoke test of the previously-broken EPUB load (the Hyperion Cantos epub in the repo root is a known reproduction case for large EPUBs).
 
