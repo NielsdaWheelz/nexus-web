@@ -213,14 +213,12 @@ Same function used for pinned-source `href`, search-result link, share-link gene
 
 ## Dismissal UX
 
-Three input surfaces, all routed through `clearTarget()`:
+Two input surfaces, both routed through `clearTarget()`:
 
-1. **Esc key:** while reader pane is focused AND `target.status === "active"`. Pre-empts the focus-mode toggle currently bound to Esc — focus mode keybinding moves to a non-Esc shortcut (e.g., `Shift+Esc` or stays on `Cmd+Shift+F`).
-2. **X chip on the focused highlight:** small dismissal pill appears adjacent to the focused span. Persistent (not auto-hiding). Click → `clearTarget()`.
-3. **Click outside the focused highlight:** if the click lands on reader content not inside the focused span AND no text is selected (selection-collapse check is preserved from current `handleReaderContentClick`).
-4. **Click the focused highlight itself:** toggles off. (Currently a click activates the highlight interaction menu; menu still opens, but clicking the *visual* chip area dismisses.)
+1. **Esc key:** while reader pane is focused. Pre-empts the focus-mode toggle currently bound to Esc — focus mode keybinding moves to `Shift+Esc`.
+2. **Click anywhere in reader content that is not the focused span** (with no active text selection — selection-collapse check preserved from `handleReaderContentClick`).
 
-Auto-dismiss after N seconds is **not** included by default — explicit UI is preferred per the [[feedback_explicit_ui_over_automation]] convention.
+No persistent chip — discoverability via Esc and click-anywhere is sufficient and matches the user's preferred interaction model. When `targetStatus` transitions to `"dismissed"`, a defensive effect clears focus state and any derived evidence/source highlight state to guarantee the visual goes away regardless of which reader surface owned it.
 
 ---
 
@@ -267,8 +265,6 @@ Auto-dismiss after N seconds is **not** included by default — explicit UI is p
 ### New
 - `apps/web/src/lib/reader/useReaderTarget.ts` — the hook.
 - `apps/web/src/lib/reader/readerTargetHash.ts` — pure hash encode/decode + grammar guards.
-- `apps/web/src/components/reader/ReaderTargetDismissChip.tsx` — the X chip rendered next to the focused span.
-- `docs/reader-target-contract.md` — short doc capturing this spec's URL contract section and the state machine, linked from `reader-implementation.md`.
 
 ### Modified
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
@@ -327,9 +323,8 @@ A reviewer can verify each independently:
 1. **No transient query params survive cutover.** Grep for `evidence`, `fragment`, `highlight`, `t_start_ms` in `apps/web/src/app/(authenticated)/media/**` returns zero hits in `useSearchParams` consumers.
 2. **Citation default-click produces no URL change** when the citation's media matches the current pane. The pulse animation and focus chip appear; URL stays as the canonical pane URL.
 3. **Citation shift+click opens a new pane** with href `/media/<id>` (canonical). The new pane's reader receives the hash on first render, scrolls to the target, displays the focus chip, then scrubs hash. After scrub, `wsv`/`ws` URL is the workspace blob plus path; no `#evidence-…` remains.
-4. **Esc dismisses focus.** With a focus chip visible, pressing Esc removes the `.hl-focused` class and the chip. Focus mode keybinding is moved to a non-Esc combination.
-5. **X chip dismisses focus.** Clicking the chip removes it.
-6. **Outside click dismisses focus.** Clicking on reader text outside the focused span (with no selection) dismisses.
+4. **Esc dismisses focus.** Pressing Esc with a target active removes the `.hl-focused` class and the evidence highlight. Focus mode keybinding moves to `Shift+Esc`.
+5. **Outside click dismisses focus.** Clicking anywhere in reader content outside the focused span (with no selection) dismisses.
 7. **Refresh on a hash URL works.** `/media/<id>#evidence-<id>` refreshed → reader opens, focuses target, scrubs hash. URL after first paint: `/media/<id>`.
 8. **Resume still works.** Opening `/media/<id>` (no hash) restores the user's last position from `reader_media_state`. Opening with a hash suppresses resume for that load.
 9. **Pane back-button skips citation jumps.** Open media A, click three citations in media A (in-place pulse), then open media B. Back-button returns to media A (one step), not to "media A before citation 3".

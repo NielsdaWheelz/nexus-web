@@ -183,7 +183,6 @@ import {
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
-import ReaderTargetDismissChip from "@/components/reader/ReaderTargetDismissChip";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
@@ -2595,6 +2594,13 @@ export default function MediaPaneBody({
     markActive,
   ]);
 
+  useEffect(() => {
+    if (targetStatus !== "dismissed") return;
+    clearFocus();
+    setResolvedEvidence(null);
+    setReaderSourceTarget(null);
+  }, [targetStatus, clearFocus]);
+
   // ==========================================================================
   // Selection Handling
   // ==========================================================================
@@ -4847,9 +4853,6 @@ export default function MediaPaneBody({
           />
         ) : null}
         <div className={styles.readerColumn} style={readerColumnStyle}>
-          {targetStatus === "active" ? (
-            <ReaderTargetDismissChip onDismiss={clearTarget} />
-          ) : null}
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
