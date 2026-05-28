@@ -1147,6 +1147,7 @@ async def _execute_chat_run(
                     **llm_log_fields,
                     outcome="error",
                     error_class=error_code,
+                    provider_error_message=llm_error.message,
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                 ),
             )
