@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -68,6 +68,15 @@ export default function ChatDetailSlideIn({
     () => attachedContexts ?? [],
   );
   const retryingAssistantMessageIds = useStringIdSet();
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
 
   useEffect(() => {
     const nextContexts = attachedContexts ?? [];
@@ -241,6 +250,7 @@ export default function ChatDetailSlideIn({
           <ChatComposer
             conversationId={activeConversationId}
             singletonTarget={activeConversationId ? null : singletonTarget}
+            parentMessageId={activeConversationId ? activeReplyParentMessageId : null}
             readerContext={readerContext}
             attachedContexts={pendingContexts}
             onRemoveContext={(index) =>
