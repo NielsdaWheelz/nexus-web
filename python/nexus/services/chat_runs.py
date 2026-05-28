@@ -161,16 +161,31 @@ class ChatRunLLMRouter(Protocol):
     ) -> AsyncIterator[LLMChunk]: ...
 
 
-def _llm_error_from_unread_stream_response(
+async def _llm_error_from_unread_stream_response(
     exc: httpx.ResponseNotRead,
     provider: str,
 ) -> LLMError:
     context = exc.__context__
     if isinstance(context, httpx.HTTPStatusError):
-        status_code = context.response.status_code
+        response = context.response
+        status_code = response.status_code
+        try:
+            await response.aread()
+            body_text = response.text
+        except Exception:
+            body_text = ""
+        try:
+            json_body = response.json()
+        except Exception:
+            json_body = None
+        snippet = body_text.strip()[:500] if body_text else ""
         return LLMError(
-            classify_provider_error(provider, status_code, None, None),
-            f"Provider returned HTTP {status_code}",
+            classify_provider_error(
+                provider, status_code, json_body if isinstance(json_body, dict) else None, None
+            ),
+            f"Provider returned HTTP {status_code}: {snippet}"
+            if snippet
+            else f"Provider returned HTTP {status_code}",
             provider=provider,
         )
     return LLMError(
@@ -1135,7 +1150,7 @@ async def _execute_chat_run(
                 )
         except (LLMError, httpx.ResponseNotRead) as exc:
             llm_error = (
-                _llm_error_from_unread_stream_response(exc, model.provider)
+                await _llm_error_from_unread_stream_response(exc, model.provider)
                 if isinstance(exc, httpx.ResponseNotRead)
                 else exc
             )
