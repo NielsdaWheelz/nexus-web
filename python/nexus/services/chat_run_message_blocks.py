@@ -126,7 +126,8 @@ def _retrieval_result_blocks_for_message(
                    mr.retrieval_status,
                    mr.included_in_prompt,
                    mr.source_version,
-                   mr.created_at
+                   mr.created_at,
+                   mr.citation_ordinal
             FROM message_retrievals mr
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :assistant_message_id
@@ -162,6 +163,7 @@ def _retrieval_result_blocks_for_message(
                 "included_in_prompt": bool(row[19]),
                 "source_version": row[20],
                 "created_at": row[21].isoformat() if row[21] is not None else None,
+                "citation_ordinal": row[22],
             }
         )
     return blocks

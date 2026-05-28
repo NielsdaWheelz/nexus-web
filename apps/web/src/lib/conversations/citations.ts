@@ -2,6 +2,7 @@ import type { ReaderCitationData } from "@/components/ui/MarkdownMessage";
 import type { ReaderCitationColor } from "@/components/ui/ReaderCitation";
 import { hrefFromPinned, readerTargetFromPinned, readerTargetFromRetrieval } from "./readerTarget";
 import type {
+  CitationIndexEntry,
   ConversationMessage,
   ConversationPinnedSource,
   MessageRetrieval,
@@ -17,6 +18,36 @@ const CITATION_COLORS: ReaderCitationColor[] = [
 
 function citationColor(n: number): ReaderCitationColor {
   return CITATION_COLORS[(n - 1) % CITATION_COLORS.length] ?? "neutral";
+}
+
+function retrievalBlocksOf(message: ConversationMessage): MessageRetrieval[] {
+  const blocks = message.message_document?.blocks ?? [];
+  const out: MessageRetrieval[] = [];
+  for (const block of blocks) {
+    if (block.type !== "retrieval_result") continue;
+    const { type: _type, ...rest } = block;
+    out.push(rest);
+  }
+  return out;
+}
+
+function citationIndexFromBlocks(retrievals: MessageRetrieval[]): CitationIndexEntry[] {
+  const entries: CitationIndexEntry[] = [];
+  for (const r of retrievals) {
+    if (
+      r.citation_ordinal != null &&
+      r.tool_call_id != null &&
+      r.ordinal != null
+    ) {
+      entries.push({
+        n: r.citation_ordinal,
+        retrieval_id: r.id ?? "",
+        tool_call_id: r.tool_call_id,
+        ordinal: r.ordinal,
+      });
+    }
+  }
+  return entries;
 }
 
 export function buildCitations(
@@ -37,10 +68,15 @@ export function buildCitations(
       href: hrefFromPinned(pin),
     });
   }
-  const index = message.citation_index;
-  if (!index?.length) return citations;
+  const retrievals = message.retrievals?.length
+    ? message.retrievals
+    : retrievalBlocksOf(message);
+  const index = message.citation_index?.length
+    ? message.citation_index
+    : citationIndexFromBlocks(retrievals);
+  if (!index.length) return citations;
   const byKey = new Map<string, MessageRetrieval>();
-  for (const retrieval of message.retrievals ?? []) {
+  for (const retrieval of retrievals) {
     if (retrieval.tool_call_id != null && retrieval.ordinal != null) {
       byKey.set(`${retrieval.tool_call_id}:${retrieval.ordinal}`, retrieval);
     }

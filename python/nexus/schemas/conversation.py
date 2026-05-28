@@ -247,6 +247,7 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
     tool_call_id: UUID | None = None
     tool_call_index: int | None = Field(default=None, ge=0)
     ordinal: int | None = Field(default=None, ge=0)
+    citation_ordinal: int | None = Field(default=None, ge=1)
     result_type: APP_SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None

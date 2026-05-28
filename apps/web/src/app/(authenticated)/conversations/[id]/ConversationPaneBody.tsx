@@ -24,6 +24,7 @@ import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedConte
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import PinnedSourcesTray from "@/components/chat/PinnedSourcesTray";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
@@ -708,6 +709,7 @@ function ChatView({
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
             {error ? <FeedbackNotice feedback={error} /> : null}
+            <PinnedSourcesTray conversationId={id} />
             <ChatSurface
               messages={messages}
               pinnedSources={pinnedSources}
