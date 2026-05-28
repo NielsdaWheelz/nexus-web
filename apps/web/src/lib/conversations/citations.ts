@@ -39,12 +39,14 @@ export function buildCitations(
   }
   const index = message.citation_index;
   if (!index?.length) return citations;
-  const byId = new Map<string, MessageRetrieval>();
+  const byKey = new Map<string, MessageRetrieval>();
   for (const retrieval of message.retrievals ?? []) {
-    if (retrieval.id) byId.set(retrieval.id, retrieval);
+    if (retrieval.tool_call_id != null && retrieval.ordinal != null) {
+      byKey.set(`${retrieval.tool_call_id}:${retrieval.ordinal}`, retrieval);
+    }
   }
   for (const entry of index) {
-    const retrieval = byId.get(entry.retrieval_id);
+    const retrieval = byKey.get(`${entry.tool_call_id}:${entry.ordinal}`);
     if (!retrieval) continue;
     const target = readerTargetFromRetrieval(retrieval);
     citations.push({

@@ -257,7 +257,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
     rows = db.execute(
         text(
             """
-            SELECT mr.citation_ordinal, mr.id, mr.tool_call_id
+            SELECT mr.citation_ordinal, mr.id, mr.tool_call_id, mr.ordinal
             FROM message_retrievals mr
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :amid
@@ -276,7 +276,12 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
         {
             "assistant_message_id": str(run.assistant_message_id),
             "entries": [
-                {"n": row[0], "retrieval_id": str(row[1]), "tool_call_id": str(row[2])}
+                {
+                    "n": row[0],
+                    "retrieval_id": str(row[1]),
+                    "tool_call_id": str(row[2]),
+                    "ordinal": row[3],
+                }
                 for row in rows
             ],
         },

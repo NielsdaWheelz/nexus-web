@@ -111,6 +111,7 @@ export interface CitationIndexEntry {
   n: number;
   retrieval_id: string;
   tool_call_id: string;
+  ordinal: number;
 }
 
 export type ConversationPinnedSourceKind = "media" | "library" | "reader_selection";

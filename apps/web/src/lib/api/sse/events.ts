@@ -127,6 +127,7 @@ export interface SSECitationIndexEvent {
       n: number;
       retrieval_id: string;
       tool_call_id: string;
+      ordinal: number;
     }>;
   };
 }
@@ -327,7 +328,8 @@ function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
         Number.isInteger(entry.n) &&
         (entry.n as number) >= 1 &&
         typeof entry.retrieval_id === "string" &&
-        typeof entry.tool_call_id === "string",
+        typeof entry.tool_call_id === "string" &&
+        Number.isInteger(entry.ordinal),
     )
   ) {
     throw new Error("Invalid SSE payload for citation_index");
