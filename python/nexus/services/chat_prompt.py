@@ -70,7 +70,10 @@ def render_system_prompt_block() -> str:
         "You are a reading assistant for the user's saved articles, books, podcasts, "
         "and PDFs. Pinned sources and tool results are numbered with an n attribute. "
         "When you use information from a pinned source or tool result, cite it as [N] "
-        "using its n. Cite only pinned-source or tool-result facts, not world knowledge."
+        "using its n. Cite only pinned-source or tool-result facts, not world knowledge. "
+        "Any <reader_selection> block is the exact passage the user is currently looking "
+        "at and asking about; treat pronouns like \"this\", \"it\", or \"the quote\" as "
+        "referring to that selection unless the user clearly means something else."
     )
 
 
