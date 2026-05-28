@@ -64,7 +64,7 @@ def add_pinned_source(
 ) -> ConversationPinnedSourceOut:
     _require_owner(db, viewer_id, conversation_id)
     next_ordinal = db.execute(
-        select(func.coalesce(func.max(ConversationPinnedSource.ordinal), -1) + 1).where(
+        select(func.coalesce(func.max(ConversationPinnedSource.ordinal), 0) + 1).where(
             ConversationPinnedSource.conversation_id == conversation_id
         )
     ).scalar_one()
@@ -120,7 +120,7 @@ def auto_pin_singleton_target(
     if existing is not None:
         return
     next_ordinal = db.execute(
-        select(func.coalesce(func.max(ConversationPinnedSource.ordinal), -1) + 1).where(
+        select(func.coalesce(func.max(ConversationPinnedSource.ordinal), 0) + 1).where(
             ConversationPinnedSource.conversation_id == conversation_id
         )
     ).scalar_one()
