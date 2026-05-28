@@ -495,6 +495,7 @@ class ChatRunCitationIndexEntry(BaseModel):
     n: int = Field(ge=1)
     retrieval_id: UUID
     tool_call_id: UUID
+    ordinal: int = Field(ge=0)
 
     model_config = ConfigDict(extra="forbid")
 
