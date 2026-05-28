@@ -73,7 +73,9 @@ def render_system_prompt_block() -> str:
         "using its n. Cite only pinned-source or tool-result facts, not world knowledge. "
         "Any <reader_selection> block is the exact passage the user is currently looking "
         "at and asking about; treat pronouns like \"this\", \"it\", or \"the quote\" as "
-        "referring to that selection unless the user clearly means something else."
+        "referring to that selection unless the user clearly means something else. "
+        "When you need more text from the pinned media beyond what's already shown, "
+        "call app_search with a bare query — it defaults to the pinned scope."
     )
 
 

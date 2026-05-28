@@ -51,9 +51,11 @@ APP_SEARCH_CONTEXT_CHARS = 16000
 APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": APP_SEARCH_TOOL_NAME,
     "description": (
-        "Search the viewer's in-app library. Optionally narrow retrieval to a "
-        "single media (`media_id`) or a single library (`library_id`); the two "
-        "are mutually exclusive. Omit both for an unscoped search."
+        "Retrieve passages from the user's saved articles, books, podcasts, and "
+        "PDFs. Use this whenever you need the actual text of a saved source, "
+        "including the pinned media of the current chat. The backend defaults "
+        "`media_id` to the pinned media when both `media_id` and `library_id` "
+        "are omitted, so a bare query is enough to search within the pinned doc."
     ),
     "parameters": {
         "type": "object",
