@@ -15,8 +15,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
-import httpx
-from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
+from llm_calling.errors import LLMError
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
@@ -159,40 +158,6 @@ class ChatRunLLMRouter(Protocol):
         *,
         timeout_s: int,
     ) -> AsyncIterator[LLMChunk]: ...
-
-
-async def _llm_error_from_unread_stream_response(
-    exc: httpx.ResponseNotRead,
-    provider: str,
-) -> LLMError:
-    context = exc.__context__
-    if isinstance(context, httpx.HTTPStatusError):
-        response = context.response
-        status_code = response.status_code
-        try:
-            await response.aread()
-            body_text = response.text
-        except Exception:
-            body_text = ""
-        try:
-            json_body = response.json()
-        except Exception:
-            json_body = None
-        snippet = body_text.strip()[:500] if body_text else ""
-        return LLMError(
-            classify_provider_error(
-                provider, status_code, json_body if isinstance(json_body, dict) else None, None
-            ),
-            f"Provider returned HTTP {status_code}: {snippet}"
-            if snippet
-            else f"Provider returned HTTP {status_code}",
-            provider=provider,
-        )
-    return LLMError(
-        LLMErrorCode.PROVIDER_DOWN,
-        "Provider stream error response was not readable",
-        provider=provider,
-    )
 
 
 def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
@@ -1148,12 +1113,7 @@ async def _execute_chat_run(
                     run_id=str(run.id),
                     iterations=MAX_TOOL_ITERATIONS,
                 )
-        except (LLMError, httpx.ResponseNotRead) as exc:
-            llm_error = (
-                await _llm_error_from_unread_stream_response(exc, model.provider)
-                if isinstance(exc, httpx.ResponseNotRead)
-                else exc
-            )
+        except LLMError as llm_error:
             latency_ms = int((time.monotonic() - start_time) * 1000)
             error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error.error_code].value
             logger.error(
