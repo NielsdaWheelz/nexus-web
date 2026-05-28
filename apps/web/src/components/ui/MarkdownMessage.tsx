@@ -197,6 +197,9 @@ function createMarkdownComponents({
         />
       );
     }
+    if (citationIndex !== null) {
+      return null;
+    }
 
     return <MarkdownLink href={href} {...rest}>{children}</MarkdownLink>;
   }
