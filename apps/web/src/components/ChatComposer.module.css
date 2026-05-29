@@ -38,6 +38,46 @@
   min-width: 0;
 }
 
+.pendingRefs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.pendingRef {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-canvas);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.pendingRefLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pendingRefRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.pendingRefRemove:hover {
+  color: var(--ink);
+}
+
 .modelSummaryButton {
   flex: 1 1 150px;
   min-width: 0;

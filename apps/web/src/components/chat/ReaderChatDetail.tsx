@@ -13,7 +13,6 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
-import type { ReaderContextHintInput } from "@/lib/api/sse/requests";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -25,10 +24,13 @@ import styles from "./ReaderChatDetail.module.css";
 const MESSAGE_PAGE_SIZE = 30;
 
 interface ReaderChatDetailProps {
-  conversationId: string;
-  readerContext: ReaderContextHintInput;
+  /** Existing conversation, or null for a chat not yet created (created on first send). */
+  conversationId: string | null;
+  mediaId: string;
+  /** A highlight URI to attach to the conversation when the user sends. */
+  pendingQuoteUri?: string | null;
   onBack: () => void;
-  onOpenFullChat: () => void;
+  onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }
 
@@ -37,22 +39,36 @@ interface ReaderChatDetailProps {
  * history + composer, plus a link out to the full conversation pane. Composes
  * the same primitives as the full pane (ChatSurface + ChatComposer +
  * useChatRunTail) without the pane's branching/chrome.
+ *
+ * The conversation and any pending quote are created/attached on the first send
+ * (via the composer's onResolveConversation), never eagerly.
  */
 export default function ReaderChatDetail({
   conversationId,
-  readerContext,
+  mediaId,
+  pendingQuoteUri = null,
   onBack,
   onOpenFullChat,
   onReaderSourceActivate,
 }: ReaderChatDetailProps) {
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const locallyCreatedConversationIdsRef = useRef<Set<string>>(new Set());
 
-  const [title, setTitle] = useState("Chat");
+  const [activeConversationId, setActiveConversationId] =
+    useState(conversationId);
+  const [title, setTitle] = useState("New chat");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
-  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(
+    Boolean(conversationId),
+  );
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
+  const [pendingReferences, setPendingReferences] = useState<
+    Array<{ uri: string; label: string }>
+  >(() =>
+    pendingQuoteUri ? [{ uri: pendingQuoteUri, label: "Selected quote" }] : [],
+  );
   const retryingAssistantMessageIds = useStringIdSet();
 
   const activeReplyParentMessageId = useMemo(() => {
@@ -71,8 +87,11 @@ export default function ReaderChatDetail({
   });
 
   useEffect(() => {
+    if (!activeConversationId) return;
     let cancelled = false;
-    apiFetch<{ data: { title: string } }>(`/api/conversations/${conversationId}`)
+    apiFetch<{ data: { title: string } }>(
+      `/api/conversations/${activeConversationId}`,
+    )
       .then((response) => {
         if (!cancelled) setTitle(response.data.title);
       })
@@ -80,18 +99,23 @@ export default function ReaderChatDetail({
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [activeConversationId]);
 
+  // Load history for an existing conversation. Skip locally-created ones — their
+  // messages were seeded optimistically on send.
   useEffect(() => {
-    abortAll();
-    setMessages([]);
-    setOlderCursor(null);
-    setLoadError(null);
-    setLoadingMessages(true);
-
+    if (
+      !activeConversationId ||
+      locallyCreatedConversationIdsRef.current.has(activeConversationId)
+    ) {
+      setLoadingMessages(false);
+      return;
+    }
     let cancelled = false;
+    setLoadingMessages(true);
+    setLoadError(null);
     apiFetch<ConversationMessagesResponse>(
-      `/api/conversations/${conversationId}/messages?limit=${MESSAGE_PAGE_SIZE}`,
+      `/api/conversations/${activeConversationId}/messages?limit=${MESSAGE_PAGE_SIZE}`,
     )
       .then((response) => {
         if (cancelled) return;
@@ -100,25 +124,26 @@ export default function ReaderChatDetail({
       })
       .catch((err) => {
         if (cancelled) return;
-        setLoadError(toFeedback(err, { fallback: "Failed to load chat history" }));
+        setLoadError(
+          toFeedback(err, { fallback: "Failed to load chat history" }),
+        );
       })
       .finally(() => {
         if (!cancelled) setLoadingMessages(false);
       });
-
     return () => {
       cancelled = true;
     };
-  }, [abortAll, conversationId]);
+  }, [activeConversationId]);
 
   const loadOlder = useCallback(async () => {
-    if (!olderCursor) return;
+    if (!activeConversationId || !olderCursor) return;
     const params = new URLSearchParams({
       limit: String(MESSAGE_PAGE_SIZE),
       cursor: olderCursor,
     });
     const response = await apiFetch<ConversationMessagesResponse>(
-      `/api/conversations/${conversationId}/messages?${params}`,
+      `/api/conversations/${activeConversationId}/messages?${params}`,
     );
     setMessages((prev) => {
       const existingIds = new Set(prev.map((m) => m.id));
@@ -127,11 +152,42 @@ export default function ReaderChatDetail({
     });
     setOlderCursor(response.page.next_cursor);
     shouldScrollRef.current = false;
-  }, [conversationId, olderCursor]);
+  }, [activeConversationId, olderCursor]);
+
+  // Commit pending references and resolve the conversation to send to: attach to
+  // the existing conversation, or create one referencing the document + quote.
+  const resolveConversation = useCallback(async (): Promise<string> => {
+    const refUris = pendingReferences.map((ref) => ref.uri);
+    if (activeConversationId) {
+      for (const uri of refUris) {
+        await apiFetch(`/api/conversations/${activeConversationId}/references`, {
+          method: "POST",
+          body: JSON.stringify({ resource_uri: uri }),
+        });
+      }
+      setPendingReferences([]);
+      return activeConversationId;
+    }
+    const created = await apiFetch<{ data: { id: string } }>(
+      "/api/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          initial_references: [`media:${mediaId}`, ...refUris],
+        }),
+      },
+    );
+    locallyCreatedConversationIdsRef.current.add(created.data.id);
+    setActiveConversationId(created.data.id);
+    setPendingReferences([]);
+    return created.data.id;
+  }, [activeConversationId, mediaId, pendingReferences]);
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunResponse["data"]) => {
       shouldScrollRef.current = true;
+      locallyCreatedConversationIdsRef.current.add(runData.conversation.id);
+      setActiveConversationId(runData.conversation.id);
       if (!runData.user_message.parent_message_id) {
         setMessages([runData.user_message, runData.assistant_message]);
       }
@@ -171,14 +227,18 @@ export default function ReaderChatDetail({
           <ArrowLeft size={16} aria-hidden="true" />
         </Button>
         <h2 className={styles.title}>{title}</h2>
-        <Button
-          variant="secondary"
-          size="sm"
-          leadingIcon={<ExternalLink size={14} aria-hidden="true" />}
-          onClick={onOpenFullChat}
-        >
-          Open in full chat
-        </Button>
+        {activeConversationId ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={<ExternalLink size={14} aria-hidden="true" />}
+            onClick={() => onOpenFullChat(activeConversationId)}
+          >
+            Open in full chat
+          </Button>
+        ) : (
+          <span className={styles.headerSpacer} />
+        )}
       </header>
 
       {loadError ? (
@@ -202,9 +262,16 @@ export default function ReaderChatDetail({
         }
         composer={
           <ChatComposer
-            conversationId={conversationId}
+            conversationId={activeConversationId}
             parentMessageId={activeReplyParentMessageId}
-            readerContext={readerContext}
+            readerContext={{ media_id: mediaId, library_id: null }}
+            pendingReferences={pendingReferences}
+            onRemovePendingReference={(uri) =>
+              setPendingReferences((prev) =>
+                prev.filter((ref) => ref.uri !== uri),
+              )
+            }
+            onResolveConversation={resolveConversation}
             onChatRunCreated={handleChatRunCreated}
             autoFocus
           />

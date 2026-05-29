@@ -29,6 +29,10 @@
   min-width: 0;
 }
 
+.headerSpacer {
+  width: 0;
+}
+
 .status {
   padding: var(--space-3) var(--space-4) 0;
 }

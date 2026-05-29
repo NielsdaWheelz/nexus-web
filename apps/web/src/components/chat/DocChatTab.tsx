@@ -2,56 +2,30 @@
 
 import Button from "@/components/ui/Button";
 import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
-import { apiFetch } from "@/lib/api/client";
 import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
 import styles from "./DocChatTab.module.css";
 
 interface DocChatTabProps {
   mediaId: string;
+  /** Open an existing chat inline in the rail. */
   onOpenChat: (conversationId: string) => void;
-  /** When set, selecting or creating a chat attaches this resource URI to it. */
+  /** Start a new chat inline in the rail (created on first send). */
+  onStartNewChat: () => void;
+  /** When set, a banner prompts the user to pick a chat to add the pending quote to. */
   pendingQuoteUri?: string | null;
-  /** Clears the pending quote after it is attached or cancelled. */
+  /** Cancels the pending quote. */
   onPendingQuoteResolved?: () => void;
 }
 
 export default function DocChatTab({
   mediaId,
   onOpenChat,
+  onStartNewChat,
   pendingQuoteUri,
   onPendingQuoteResolved,
 }: DocChatTabProps) {
   const resourceUri = `media:${mediaId}`;
   const { conversations, isLoading } = useChatsByReference(resourceUri);
-
-  const openChat = (conversationId: string) => {
-    onPendingQuoteResolved?.();
-    onOpenChat(conversationId);
-  };
-
-  const handleStartNewChat = async () => {
-    const references = pendingQuoteUri
-      ? [resourceUri, pendingQuoteUri]
-      : [resourceUri];
-    const created = await apiFetch<{ data: { id: string } }>(
-      "/api/conversations",
-      {
-        method: "POST",
-        body: JSON.stringify({ initial_references: references }),
-      },
-    );
-    openChat(created.data.id);
-  };
-
-  const handleSelectChat = async (conversationId: string) => {
-    if (pendingQuoteUri) {
-      await apiFetch(`/api/conversations/${conversationId}/references`, {
-        method: "POST",
-        body: JSON.stringify({ resource_uri: pendingQuoteUri }),
-      });
-    }
-    openChat(conversationId);
-  };
 
   return (
     <div className={styles.tab}>
@@ -75,14 +49,14 @@ export default function DocChatTab({
             <p className={styles.emptyText}>
               No chats reference this document yet.
             </p>
-            <Button variant="primary" size="sm" onClick={handleStartNewChat}>
+            <Button variant="primary" size="sm" onClick={onStartNewChat}>
               Start new chat about this document
             </Button>
           </div>
         ) : (
           <>
             <div className={styles.inlineNewRow}>
-              <Button variant="secondary" size="sm" onClick={handleStartNewChat}>
+              <Button variant="secondary" size="sm" onClick={onStartNewChat}>
                 + New chat
               </Button>
             </div>
@@ -91,7 +65,7 @@ export default function DocChatTab({
                 <li key={item.id}>
                   <ReferencingChatRow
                     item={item}
-                    onTap={() => void handleSelectChat(item.id)}
+                    onTap={() => onOpenChat(item.id)}
                   />
                 </li>
               ))}

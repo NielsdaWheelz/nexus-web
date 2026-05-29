@@ -452,11 +452,11 @@ describe("ChatComposer", () => {
     });
   });
 
-  it("sends an explicit no-branch anchor for root new conversations", async () => {
+  it("sends an explicit no-branch anchor for root continuation messages", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
-    render(<ChatComposer conversationId={null} />);
+    render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
       await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
@@ -472,16 +472,14 @@ describe("ChatComposer", () => {
     });
 
     const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
-      conversation_id?: string;
-    };
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
 
-    expect(body.conversation_id).toBeUndefined();
+    expect(body.conversation_id).toBe("conversation-1");
     expect(body.parent_message_id).toBeUndefined();
     expect(body.branch_anchor).toEqual({ kind: "none" });
     expect(body).not.toHaveProperty("conversation_scope");
     expect(body).not.toHaveProperty("web_search");
-    expect(body.singleton).toBeNull();
+    expect(body).not.toHaveProperty("singleton");
     expect(body.reader_context).toBeNull();
   });
 
@@ -507,14 +505,15 @@ describe("ChatComposer", () => {
     expect(message).toHaveValue("Draft during resolution");
   });
 
-  it("sends singleton + reader_context payload for a new doc-chat first message", async () => {
+  it("resolves the conversation on send and uses the resolved id with reader_context for a new doc-chat first message", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
+    const onResolveConversation = vi.fn(async () => "resolved-id");
 
     render(
       <ChatComposer
         conversationId={null}
-        singletonTarget={{ kind: "media", target_id: "media-1" }}
+        onResolveConversation={onResolveConversation}
         readerContext={{ media_id: "media-1", library_id: null }}
       />,
     );
@@ -532,19 +531,72 @@ describe("ChatComposer", () => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
     });
 
-    const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
-      conversation_id?: string;
-    };
+    expect(onResolveConversation).toHaveBeenCalledOnce();
 
-    expect(body.conversation_id).toBeUndefined();
-    expect(body.singleton).toEqual({ kind: "media", target_id: "media-1" });
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+
+    expect(body.conversation_id).toBe("resolved-id");
+    expect(body).not.toHaveProperty("singleton");
     expect(body.reader_context).toEqual({
       media_id: "media-1",
       library_id: null,
     });
     expect(body).not.toHaveProperty("web_search");
     expect(body).not.toHaveProperty("conversation_scope");
+  });
+
+  it("does not send when onResolveConversation returns null", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    const onResolveConversation = vi.fn(async () => null);
+
+    render(
+      <ChatComposer
+        conversationId={null}
+        onResolveConversation={onResolveConversation}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("This should not send");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(onResolveConversation).toHaveBeenCalledOnce();
+    });
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("renders pending reference chips and removes them on click", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+    const onRemovePendingReference = vi.fn();
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        pendingReferences={[
+          { uri: "media:media-1#p3", label: "On the Origin of Species" },
+        ]}
+        onRemovePendingReference={onRemovePendingReference}
+      />,
+    );
+
+    expect(
+      await screen.findByText("On the Origin of Species"),
+    ).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove On the Origin of Species" }),
+    );
+
+    expect(onRemovePendingReference).toHaveBeenCalledWith("media:media-1#p3");
   });
 
   it("does not render a web-search selector or scope chip in the composer", async () => {

@@ -665,7 +665,10 @@ export default function MediaPaneBody({
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
   // When set, the doc-chat rail tab shows this conversation inline (instead of
   // the chat list), with a link out to the full conversation pane.
-  const [railChatId, setRailChatId] = useState<string | null>(null);
+  const [railChat, setRailChat] = useState<{
+    conversationId: string | null;
+    quoteUri: string | null;
+  } | null>(null);
   // Whether the secondary rail (highlights/chat tabs) is open. The reader rail
   // is open-or-absent — there is no collapsed strip.
   const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
@@ -3048,20 +3051,35 @@ export default function MediaPaneBody({
   // Chat rail
   // ==========================================================================
 
-  const openDocChat = useCallback(() => {
-    setPendingQuoteUri(null);
+  const revealDocChatRail = useCallback(() => {
     setSecondaryRailMode("doc-chat");
     setHighlightsRailOpen(true);
     setMobileHighlightsDrawerOpen(false);
   }, []);
 
-  // Open a conversation inline inside the reader's doc-chat rail tab.
-  const openChatInRail = useCallback((conversationId: string) => {
-    setRailChatId(conversationId);
-    setSecondaryRailMode("doc-chat");
-    setHighlightsRailOpen(true);
-    setMobileHighlightsDrawerOpen(false);
-  }, []);
+  // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
+  const openDocChat = useCallback(() => {
+    setPendingQuoteUri(null);
+    setRailChat(null);
+    revealDocChatRail();
+  }, [revealDocChatRail]);
+
+  // Open an existing conversation inline in the rail, carrying any pending quote.
+  const openChatInRail = useCallback(
+    (conversationId: string) => {
+      setRailChat({ conversationId, quoteUri: pendingQuoteUri });
+      setPendingQuoteUri(null);
+      revealDocChatRail();
+    },
+    [pendingQuoteUri, revealDocChatRail],
+  );
+
+  // Start a new (unsent) conversation inline in the rail, carrying any pending quote.
+  const startChatInRail = useCallback(() => {
+    setRailChat({ conversationId: null, quoteUri: pendingQuoteUri });
+    setPendingQuoteUri(null);
+    revealDocChatRail();
+  }, [pendingQuoteUri, revealDocChatRail]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3579,39 +3597,35 @@ export default function MediaPaneBody({
     [paneRuntime],
   );
 
-  // Quote a highlight into a brand-new conversation, also referencing the
-  // document so the chat appears in this document's chat list.
+  // Quote a highlight into a brand-new (unsent) conversation in the rail. The
+  // conversation and reference are created when the user sends, not now.
   const quoteHighlightToNewChat = useCallback(
-    async (highlightId: string) => {
-      const created = await apiFetch<{ data: { id: string } }>(
-        "/api/conversations",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            initial_references: [`media:${id}`, `highlight:${highlightId}`],
-          }),
-        },
-      );
-      openChatInRail(created.data.id);
+    (highlightId: string) => {
+      setRailChat({
+        conversationId: null,
+        quoteUri: `highlight:${highlightId}`,
+      });
+      revealDocChatRail();
     },
-    [id, openChatInRail],
+    [revealDocChatRail],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
-  // doc-chat list so the user can pick which conversation to attach it to.
-  const quoteHighlightToExtantChat = useCallback((highlightId: string) => {
-    setPendingQuoteUri(`highlight:${highlightId}`);
-    setSecondaryRailMode("doc-chat");
-    setHighlightsRailOpen(true);
-    setMobileHighlightsDrawerOpen(false);
-  }, []);
+  // doc-chat list so the user can pick which conversation to add it to.
+  const quoteHighlightToExtantChat = useCallback(
+    (highlightId: string) => {
+      setPendingQuoteUri(`highlight:${highlightId}`);
+      revealDocChatRail();
+    },
+    [revealDocChatRail],
+  );
 
   // Drop the parked quote and the inline chat once the doc-chat list is no
   // longer the visible surface (tab switch, rail close).
   useEffect(() => {
     if (!isHighlightsRailOpen || secondaryRailMode !== "doc-chat") {
       setPendingQuoteUri(null);
-      setRailChatId(null);
+      setRailChat(null);
     }
   }, [isHighlightsRailOpen, secondaryRailMode]);
 
@@ -4405,7 +4419,7 @@ export default function MediaPaneBody({
     isMobileViewport &&
     isHighlightsRailOpen &&
     secondaryRailMode === "doc-chat" &&
-    !railChatId;
+    !railChat;
 
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
@@ -4718,18 +4732,24 @@ export default function MediaPaneBody({
                 id: "doc-chat",
                 icon: FileText,
                 tooltip: "Chat about this document",
-                body: railChatId ? (
+                body: railChat ? (
                   <ReaderChatDetail
-                    conversationId={railChatId}
-                    readerContext={{ media_id: id, library_id: null }}
-                    onBack={() => setRailChatId(null)}
-                    onOpenFullChat={() => handleOpenFullChat(railChatId)}
+                    key={`${railChat.conversationId ?? "new"}:${railChat.quoteUri ?? ""}`}
+                    conversationId={railChat.conversationId}
+                    mediaId={id}
+                    pendingQuoteUri={railChat.quoteUri}
+                    onBack={() => setRailChat(null)}
+                    onOpenFullChat={(cid) => {
+                      setRailChat(null);
+                      handleOpenFullChat(cid);
+                    }}
                     onReaderSourceActivate={handleReaderSourceActivate}
                   />
                 ) : (
                   <DocChatTab
                     mediaId={media.id}
                     onOpenChat={openChatInRail}
+                    onStartNewChat={startChatInRail}
                     pendingQuoteUri={pendingQuoteUri}
                     onPendingQuoteResolved={() => setPendingQuoteUri(null)}
                   />
@@ -4805,6 +4825,7 @@ export default function MediaPaneBody({
               <DocChatTab
                 mediaId={media.id}
                 onOpenChat={openChatInRail}
+                onStartNewChat={startChatInRail}
                 pendingQuoteUri={pendingQuoteUri}
                 onPendingQuoteResolved={() => setPendingQuoteUri(null)}
               />
@@ -4813,11 +4834,11 @@ export default function MediaPaneBody({
         </div>
       ) : null}
 
-      {isMobileViewport && railChatId ? (
+      {isMobileViewport && railChat ? (
         <div
           className={styles.highlightsBackdrop}
           data-testid="mobile-reader-chat-detail-backdrop"
-          onClick={() => setRailChatId(null)}
+          onClick={() => setRailChat(null)}
         >
           <aside
             className={styles.highlightsDrawer}
@@ -4828,12 +4849,14 @@ export default function MediaPaneBody({
           >
             <div className={styles.highlightsDrawerBody}>
               <ReaderChatDetail
-                conversationId={railChatId}
-                readerContext={{ media_id: id, library_id: null }}
-                onBack={() => setRailChatId(null)}
-                onOpenFullChat={() => {
-                  setRailChatId(null);
-                  handleOpenFullChat(railChatId);
+                key={`${railChat.conversationId ?? "new"}:${railChat.quoteUri ?? ""}`}
+                conversationId={railChat.conversationId}
+                mediaId={id}
+                pendingQuoteUri={railChat.quoteUri}
+                onBack={() => setRailChat(null)}
+                onOpenFullChat={(cid) => {
+                  setRailChat(null);
+                  handleOpenFullChat(cid);
                 }}
                 onReaderSourceActivate={handleReaderSourceActivate}
               />

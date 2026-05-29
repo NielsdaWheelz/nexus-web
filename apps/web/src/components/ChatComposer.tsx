@@ -8,14 +8,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ArrowUp, ChevronDown, X } from "lucide-react";
+import { ArrowUp, ChevronDown, Quote, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
   type ChatRunCreateRequest,
   type ReaderContextHintInput,
-  type SingletonTargetInput,
 } from "@/lib/api/sse/requests";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import Button from "@/components/ui/Button";
@@ -61,8 +60,13 @@ interface ChatComposerProps {
   onClearBranchDraft?: () => void;
   /** Jumps the transcript to the visible parent message for branch mode. */
   onJumpToBranchParent?: (messageId: string) => void;
-  /** Singleton target for first-send singleton materialization. Omit/null for existing conversations. */
-  singletonTarget?: SingletonTargetInput | null;
+  /** Resolves (creating if needed) the conversation to send to, committing any
+   *  pending references — defers conversation creation to send time. Falls back to conversationId. */
+  onResolveConversation?: () => Promise<string | null>;
+  /** Pending references shown as removable chips; committed by onResolveConversation on send. */
+  pendingReferences?: Array<{ uri: string; label: string }>;
+  /** Removes a pending reference chip before send. */
+  onRemovePendingReference?: (uri: string) => void;
   /** Reader context hint for the model (current media/library). Not a retrieval constraint. */
   readerContext?: ReaderContextHintInput | null;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
@@ -160,7 +164,9 @@ export default function ChatComposer({
   parentMessageId = null,
   onClearBranchDraft,
   onJumpToBranchParent,
-  singletonTarget = null,
+  onResolveConversation,
+  pendingReferences = [],
+  onRemovePendingReference,
   readerContext = null,
   disabledReason,
 }: ChatComposerProps) {
@@ -289,10 +295,7 @@ export default function ChatComposer({
       try {
         runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
           method: "POST",
-          body: JSON.stringify({
-            ...body,
-            ...(conversationId ? { conversation_id: conversationId } : {}),
-          }),
+          body: JSON.stringify(body),
           headers: { "Idempotency-Key": idempotencyKey },
         });
       } catch (err) {
@@ -304,7 +307,7 @@ export default function ChatComposer({
 
       return true;
     },
-    [conversationId, onChatRunCreated]
+    [onChatRunCreated]
   );
 
   // --------------------------------------------------------------------------
@@ -320,36 +323,47 @@ export default function ChatComposer({
     onSendStarted?.();
 
     const idempotencyKey = createRandomId();
-    const replyParentMessageId = branchDraft?.parentMessageId ?? parentMessageId;
-    const branchAnchor = branchDraft
-      ? branchDraft.anchor.kind === "assistant_message"
-        ? {
-            kind: "assistant_message" as const,
-            message_id: branchDraft.parentMessageId,
-          }
-        : branchDraft.anchor
-      : conversationId && replyParentMessageId
-        ? {
-            kind: "assistant_message" as const,
-            message_id: replyParentMessageId,
-          }
-        : { kind: "none" as const };
-    const body: ChatRunCreateRequest = {
-      content: trimmed,
-      model_id: selectedModelId,
-      reasoning: selectedReasoning,
-      key_mode: onlyUseMyKeys ? "byok_only" : "auto",
-      ...(conversationId && replyParentMessageId
-        ? { parent_message_id: replyParentMessageId }
-        : {}),
-      branch_anchor: branchAnchor,
-      singleton: conversationId ? null : singletonTarget,
-      reader_context: readerContext,
-    };
-
     let sent = false;
     try {
+      const targetConversationId = onResolveConversation
+        ? await onResolveConversation()
+        : conversationId;
+      if (!targetConversationId) {
+        setError("Could not start the conversation.");
+        return;
+      }
+
+      const replyParentMessageId =
+        branchDraft?.parentMessageId ?? parentMessageId;
+      const branchAnchor = branchDraft
+        ? branchDraft.anchor.kind === "assistant_message"
+          ? {
+              kind: "assistant_message" as const,
+              message_id: branchDraft.parentMessageId,
+            }
+          : branchDraft.anchor
+        : replyParentMessageId
+          ? {
+              kind: "assistant_message" as const,
+              message_id: replyParentMessageId,
+            }
+          : { kind: "none" as const };
+      const body: ChatRunCreateRequest = {
+        conversation_id: targetConversationId,
+        content: trimmed,
+        model_id: selectedModelId,
+        reasoning: selectedReasoning,
+        key_mode: onlyUseMyKeys ? "byok_only" : "auto",
+        ...(replyParentMessageId
+          ? { parent_message_id: replyParentMessageId }
+          : {}),
+        branch_anchor: branchAnchor,
+        reader_context: readerContext,
+      };
+
       sent = await sendChatRun(body, idempotencyKey);
+    } catch (err) {
+      setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
     } finally {
       setSending(false);
     }
@@ -367,7 +381,7 @@ export default function ChatComposer({
     selectedReasoning,
     onlyUseMyKeys,
     conversationId,
-    singletonTarget,
+    onResolveConversation,
     readerContext,
     disabledReason,
     sendChatRun,
@@ -447,6 +461,27 @@ export default function ChatComposer({
             onCancel={() => onClearBranchDraft?.()}
             onJumpToParent={onJumpToBranchParent}
           />
+        ) : null}
+
+        {pendingReferences.length > 0 ? (
+          <div className={styles.pendingRefs} aria-label="Attached to next message">
+            {pendingReferences.map((ref) => (
+              <span key={ref.uri} className={styles.pendingRef}>
+                <Quote size={12} aria-hidden="true" />
+                <span className={styles.pendingRefLabel}>{ref.label}</span>
+                {onRemovePendingReference ? (
+                  <button
+                    type="button"
+                    className={styles.pendingRefRemove}
+                    aria-label={`Remove ${ref.label}`}
+                    onClick={() => onRemovePendingReference(ref.uri)}
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </span>
+            ))}
+          </div>
         ) : null}
 
         <Textarea

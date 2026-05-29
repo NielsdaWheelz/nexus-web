@@ -99,6 +99,9 @@ describe("ConversationNewPaneBody", () => {
       if (path === "/api/models") {
         return jsonResponse(MODELS_RESPONSE);
       }
+      if (path === "/api/conversations" && init?.method === "POST") {
+        return jsonResponse({ data: { id: "new-conv-id" } });
+      }
       if (path === "/api/chat-runs" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
         return jsonResponse(buildChatRunResponse(body));
@@ -146,14 +149,14 @@ describe("ConversationNewPaneBody", () => {
     const chatRunCall = fetchMock.mock.calls.find(
       ([input, init]) => pathOf(input) === "/api/chat-runs" && init?.method === "POST",
     );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest & {
-      conversation_id?: string;
-    };
+    const body = JSON.parse(
+      String(chatRunCall?.[1]?.body),
+    ) as ChatRunCreateRequest;
 
-    expect(body.conversation_id).toBeUndefined();
+    expect(body.conversation_id).toBe("new-conv-id");
     expect(body).not.toHaveProperty("conversation_scope");
     expect(body).not.toHaveProperty("web_search");
-    expect(body.singleton).toBeNull();
+    expect(body).not.toHaveProperty("singleton");
     expect(onReplacePane).toHaveBeenCalledWith(
       "pane-1",
       "/conversations/conversation-1?run=run-1",

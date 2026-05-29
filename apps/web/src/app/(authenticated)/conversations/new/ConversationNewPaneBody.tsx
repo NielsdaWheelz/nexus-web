@@ -1,10 +1,10 @@
 /**
  * New conversation page — fresh chat composer.
  *
- * On first message send the backend creates a conversation, the pane streams
- * locally immediately, then the URL is replaced with /conversations/:id.
- * New conversations start with no references; the references rail on the
- * conversation pane handles adding context post-creation.
+ * On first message send the composer creates the conversation (via
+ * POST /conversations), the pane streams locally immediately, then the URL is
+ * replaced with /conversations/:id. New conversations start with no references;
+ * the references rail on the conversation pane handles adding context after.
  */
 
 "use client";
@@ -18,6 +18,7 @@ import {
 } from "react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import {
@@ -84,6 +85,16 @@ export default function ConversationNewPaneBody() {
       48;
   }, []);
 
+  const resolveConversation = useCallback(async (): Promise<string> => {
+    if (activeConversationId) return activeConversationId;
+    const created = await apiFetch<{ data: { id: string } }>(
+      "/api/conversations",
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    setActiveConversationId(created.data.id);
+    return created.data.id;
+  }, [activeConversationId]);
+
   const handleChatRunCreated = useCallback(
     (runData: ChatRunResponse["data"]) => {
       shouldScrollRef.current = true;
@@ -115,6 +126,7 @@ export default function ConversationNewPaneBody() {
           <ChatComposer
             conversationId={activeConversationId}
             parentMessageId={activeReplyParentMessageId}
+            onResolveConversation={resolveConversation}
             onChatRunCreated={handleChatRunCreated}
             onSendStarted={handleSendStarted}
             initialContent={draft}

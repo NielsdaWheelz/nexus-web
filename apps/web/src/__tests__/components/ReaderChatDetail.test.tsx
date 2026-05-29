@@ -79,7 +79,8 @@ function message(
   };
 }
 
-const CID = "CID";
+const CID = "conversation-1";
+const MEDIA_ID = "media-1";
 const userMessage = message("user-1", 1, "user", "What is in this document?");
 const assistantMessage = message(
   "assistant-1",
@@ -88,8 +89,6 @@ const assistantMessage = message(
   "Here is the answer.",
   "user-1",
 );
-
-const readerContext = { media_id: "media-1", library_id: "library-1" };
 
 function stubFetch() {
   vi.stubGlobal(
@@ -138,7 +137,7 @@ describe("ReaderChatDetail", () => {
     render(
       <ReaderChatDetail
         conversationId={CID}
-        readerContext={readerContext}
+        mediaId={MEDIA_ID}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -155,7 +154,7 @@ describe("ReaderChatDetail", () => {
     render(
       <ReaderChatDetail
         conversationId={CID}
-        readerContext={readerContext}
+        mediaId={MEDIA_ID}
         onBack={onBack}
         onOpenFullChat={vi.fn()}
       />,
@@ -167,13 +166,13 @@ describe("ReaderChatDetail", () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onOpenFullChat when the open-in-full-chat button is clicked", async () => {
+  it("calls onOpenFullChat with the conversation id when the open-in-full-chat button is clicked", async () => {
     const user = userEvent.setup();
     const onOpenFullChat = vi.fn();
     render(
       <ReaderChatDetail
         conversationId={CID}
-        readerContext={readerContext}
+        mediaId={MEDIA_ID}
         onBack={vi.fn()}
         onOpenFullChat={onOpenFullChat}
       />,
@@ -183,13 +182,14 @@ describe("ReaderChatDetail", () => {
       await screen.findByRole("button", { name: "Open in full chat" }),
     );
     expect(onOpenFullChat).toHaveBeenCalledTimes(1);
+    expect(onOpenFullChat).toHaveBeenCalledWith(CID);
   });
 
   it("renders the loaded user and assistant message text", async () => {
     render(
       <ReaderChatDetail
         conversationId={CID}
-        readerContext={readerContext}
+        mediaId={MEDIA_ID}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -205,7 +205,7 @@ describe("ReaderChatDetail", () => {
     render(
       <ReaderChatDetail
         conversationId={CID}
-        readerContext={readerContext}
+        mediaId={MEDIA_ID}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -214,5 +214,54 @@ describe("ReaderChatDetail", () => {
     expect(
       await screen.findByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
+  });
+
+  it("renders a new chat without fetching history and hides open-in-full-chat", async () => {
+    render(
+      <ReaderChatDetail
+        conversationId={null}
+        mediaId={MEDIA_ID}
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    // Title falls back to "New chat" for a not-yet-created conversation.
+    expect(
+      await screen.findByRole("heading", { name: "New chat" }),
+    ).toBeVisible();
+    // The composer still mounts (models fetched), so wait for it before
+    // asserting the absence of the full-chat affordance.
+    expect(
+      await screen.findByRole("textbox", { name: "Ask anything" }),
+    ).toBeVisible();
+
+    expect(
+      screen.queryByRole("button", { name: "Open in full chat" }),
+    ).toBeNull();
+
+    // No conversation/message fetches happen for a new chat — only /api/models.
+    const fetchMock = vi.mocked(fetch);
+    const fetchedPaths = fetchMock.mock.calls.map(([input]) =>
+      pathOf(input as RequestInfo | URL),
+    );
+    expect(fetchedPaths).not.toContain(`/api/conversations/${CID}/messages`);
+    expect(
+      fetchedPaths.some((path) => path.includes("/messages")),
+    ).toBe(false);
+  });
+
+  it("shows the pending quote chip in the composer", async () => {
+    render(
+      <ReaderChatDetail
+        conversationId={CID}
+        mediaId={MEDIA_ID}
+        pendingQuoteUri="highlight:HID"
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Selected quote")).toBeVisible();
   });
 });
