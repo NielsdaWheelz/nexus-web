@@ -77,8 +77,8 @@ class Settings(BaseSettings):
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
-    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE")
-    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_size: int = Field(default=5, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=5, alias="DATABASE_MAX_OVERFLOW")
     database_pool_timeout_seconds: float = Field(
         default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS"
     )

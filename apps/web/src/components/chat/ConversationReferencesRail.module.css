@@ -7,6 +7,17 @@
   background: var(--surface-2);
 }
 
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-6);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .row {
   display: flex;
   align-items: flex-start;

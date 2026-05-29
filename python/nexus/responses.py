@@ -11,7 +11,10 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import TimeoutError as SAQueuePoolTimeout
+from sqlalchemy.pool import QueuePool
 
+from nexus.db.engine import get_engine
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, get_request_id
 
@@ -95,7 +98,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     Logs the exception server-side but never leaks details to client.
     """
-    logger.exception("Unhandled exception: %s", exc)
+    pool = get_engine().pool
+    if isinstance(exc, SAQueuePoolTimeout) and isinstance(pool, QueuePool):
+        logger.error(
+            "db_pool_exhausted",
+            pool_checked_out=pool.checkedout(),
+            pool_overflow=pool.overflow(),
+            pool_size=pool.size(),
+            path=request.url.path,
+        )
+    else:
+        logger.exception("Unhandled exception: %s", exc)
 
     return JSONResponse(
         status_code=500,

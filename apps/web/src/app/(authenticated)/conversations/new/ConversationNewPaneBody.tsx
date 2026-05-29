@@ -11,13 +11,20 @@
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { PanelRightOpen } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
+import SecondaryRail, {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+} from "@/components/secondaryRail/SecondaryRail";
+import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -27,6 +34,7 @@ import {
 } from "@/components/feedback/Feedback";
 import {
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
@@ -36,12 +44,15 @@ import type {
 } from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
+const CHAT_REFERENCES_RAIL_WIDTH_PX = 320;
+
 // ============================================================================
 // Component
 // ============================================================================
 
 export default function ConversationNewPaneBody() {
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
   const scrollportRef = useRef<HTMLDivElement>(null);
@@ -63,6 +74,7 @@ export default function ConversationNewPaneBody() {
     return null;
   }, [messages]);
   useSetPaneTitle("New chat");
+  const [referencesRailExpanded, setReferencesRailExpanded] = useState(true);
 
   const { tailChatRun } = useChatRunTail({ setMessages, shouldScrollRef });
 
@@ -70,6 +82,18 @@ export default function ConversationNewPaneBody() {
     if (!scrollportRef.current || !shouldScrollRef.current) return;
     scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    if (!paneRuntime) return;
+    paneRuntime.setPaneExtraWidth(
+      referencesRailExpanded
+        ? CHAT_REFERENCES_RAIL_WIDTH_PX
+        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+    );
+    return () => {
+      paneRuntime.setPaneExtraWidth(0);
+    };
+  }, [paneRuntime, referencesRailExpanded]);
 
   const handleSendStarted = useCallback(() => {
     setResolveError(null);
@@ -116,29 +140,55 @@ export default function ConversationNewPaneBody() {
   );
 
   return (
-    <div className={styles.paneContentChat}>
-      <ChatSurface
-        messages={messages}
-        onReaderSourceActivate={handleReaderSourceActivate}
-        scrollportRef={scrollportRef}
-        onScroll={handleChatScroll}
-        composer={
-          <ChatComposer
-            conversationId={activeConversationId}
-            parentMessageId={activeReplyParentMessageId}
-            onResolveConversation={resolveConversation}
-            onChatRunCreated={handleChatRunCreated}
-            onSendStarted={handleSendStarted}
-            initialContent={draft}
-            draftKey="new-conversation"
+    <div className={styles.chatSplitLayout}>
+      <div className={styles.chatPrimaryColumn}>
+        <div className={styles.paneContentChat}>
+          <ChatSurface
+            messages={messages}
+            onReaderSourceActivate={handleReaderSourceActivate}
+            scrollportRef={scrollportRef}
+            onScroll={handleChatScroll}
+            composer={
+              <ChatComposer
+                conversationId={activeConversationId}
+                parentMessageId={activeReplyParentMessageId}
+                onResolveConversation={resolveConversation}
+                onChatRunCreated={handleChatRunCreated}
+                onSendStarted={handleSendStarted}
+                initialContent={draft}
+                draftKey="new-conversation"
+              />
+            }
+            emptyState={
+              resolveError ? (
+                <FeedbackNotice feedback={resolveError} />
+              ) : undefined
+            }
           />
+        </div>
+      </div>
+
+      <SecondaryRail
+        ariaLabel="References"
+        expanded={referencesRailExpanded}
+        onExpandedChange={setReferencesRailExpanded}
+        expandedWidthPx={CHAT_REFERENCES_RAIL_WIDTH_PX}
+        bodyClassName={styles.chatSecondaryRailBody}
+        collapsed={
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            className={styles.chatSecondaryRailCollapsedButton}
+            aria-label="Expand references"
+            onClick={() => setReferencesRailExpanded(true)}
+          >
+            <PanelRightOpen size={15} aria-hidden="true" />
+          </Button>
         }
-        emptyState={
-          resolveError ? (
-            <FeedbackNotice feedback={resolveError} />
-          ) : undefined
-        }
-      />
+      >
+        <ConversationReferencesRail conversationId={activeConversationId} />
+      </SecondaryRail>
     </div>
   );
 }

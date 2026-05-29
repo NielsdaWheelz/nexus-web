@@ -18,9 +18,14 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { createRandomId } from "@/lib/createRandomId";
+import { PanelRightOpen } from "lucide-react";
+import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
+import SecondaryRail, {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+} from "@/components/secondaryRail/SecondaryRail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -81,6 +86,8 @@ const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
   conversation: "conversation",
   message: "message",
 };
+
+const CHAT_REFERENCES_RAIL_WIDTH_PX = 320;
 
 export default function ConversationPaneBody() {
   const id = usePaneParam("id");
@@ -152,6 +159,7 @@ function ChatView({
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [referencesRailExpanded, setReferencesRailExpanded] = useState(true);
   const retryingAssistantMessageIds = useStringIdSet();
   useSetPaneTitle(
     loading ? null : conversation ? `Chat: ${conversation.title}` : "Chat",
@@ -638,6 +646,18 @@ function ChatView({
     }),
   });
 
+  useEffect(() => {
+    if (!paneRuntime) return;
+    paneRuntime.setPaneExtraWidth(
+      referencesRailExpanded
+        ? CHAT_REFERENCES_RAIL_WIDTH_PX
+        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+    );
+    return () => {
+      paneRuntime.setPaneExtraWidth(0);
+    };
+  }, [paneRuntime, referencesRailExpanded]);
+
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
@@ -661,10 +681,6 @@ function ChatView({
       <div className={styles.chatPrimaryColumn}>
         <div className={styles.paneContentChat}>
           {error ? <FeedbackNotice feedback={error} /> : null}
-          <ConversationReferencesRail
-            conversationId={id}
-            onOpenResource={handleOpenResource}
-          />
           <ChatSurface
             messages={messages}
             onReaderSourceActivate={handleReaderSourceActivate}
@@ -696,6 +712,31 @@ function ChatView({
           />
         </div>
       </div>
+
+      <SecondaryRail
+        ariaLabel="References"
+        expanded={referencesRailExpanded}
+        onExpandedChange={setReferencesRailExpanded}
+        expandedWidthPx={CHAT_REFERENCES_RAIL_WIDTH_PX}
+        bodyClassName={styles.chatSecondaryRailBody}
+        collapsed={
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            className={styles.chatSecondaryRailCollapsedButton}
+            aria-label="Expand references"
+            onClick={() => setReferencesRailExpanded(true)}
+          >
+            <PanelRightOpen size={15} aria-hidden="true" />
+          </Button>
+        }
+      >
+        <ConversationReferencesRail
+          conversationId={id}
+          onOpenResource={handleOpenResource}
+        />
+      </SecondaryRail>
     </div>
   );
 }

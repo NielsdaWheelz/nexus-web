@@ -41,6 +41,7 @@ type RunVisibilityTarget = {
 const CHAT_STREAM_RETRY_BASE_MS = 1000;
 const CHAT_STREAM_RETRY_MAX_MS = 8000;
 const CHAT_STREAM_RETRY_JITTER_MS = 250;
+const CHAT_STREAM_MAX_RECONNECTS = 8;
 
 function isTerminalRunStatus(
   status: ChatRunData["run"]["status"],
@@ -129,6 +130,7 @@ export function useChatRunTail({
       let lastEventId = "";
       let replayDeltaCharsToSkip = 0;
       let retryAttempt = 0;
+      let reconnectCount = 0;
       let retryTimer: ReturnType<typeof setTimeout> | null = null;
       let doneNotified = false;
       let finished = false;
@@ -248,6 +250,15 @@ export function useChatRunTail({
           finishRun();
           return;
         }
+        reconnectCount += 1;
+        if (reconnectCount >= CHAT_STREAM_MAX_RECONNECTS) {
+          if (currentRunIsVisible()) {
+            handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
+          }
+          notifyDone("error", "E_STREAM_INTERRUPTED");
+          finishRun();
+          return;
+        }
         if (persisted) {
           replayDeltaCharsToSkip = conversationMessageText(
             persisted.assistant_message,
@@ -294,7 +305,6 @@ export function useChatRunTail({
           isTerminal: (event) => event.type === "done",
           onEvent: (event) => {
             if (runTokensRef.current.get(runId) !== token) return;
-            retryAttempt = 0;
             switch (event.type) {
               case "meta":
                 currentUserId = event.data.user_message_id;
@@ -322,10 +332,14 @@ export function useChatRunTail({
                   const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
                   replayDeltaCharsToSkip = 0;
                   if (!currentRunIsVisible()) break;
+                  retryAttempt = 0;
+                  reconnectCount = 0;
                   handleDelta(currentAssistantId, remainingDelta);
                   break;
                 }
                 if (!currentRunIsVisible()) break;
+                retryAttempt = 0;
+                reconnectCount = 0;
                 handleDelta(currentAssistantId, event.data.delta);
                 break;
               case "tool_call":

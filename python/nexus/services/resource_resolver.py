@@ -280,7 +280,7 @@ def _resolve_chunk_batch(
         out.append(
             ResolvedResource(
                 uri=uri,
-                label=str(row[3]),
+                label=f'{row[3]} — "{_first_line(body)[:60]}"',
                 summary=_first_line(body),
                 inline_body=inline,
                 fetch_hint=f'read_resource("{uri}")',
@@ -416,8 +416,9 @@ def _resolve_fragment_batch(
     rows = db.execute(
         text(
             """
-            SELECT f.id, f.media_id, f.idx, f.canonical_text
+            SELECT f.id, f.media_id, f.idx, f.canonical_text, m.title
             FROM fragments f
+            JOIN media m ON m.id = f.media_id
             WHERE f.id = ANY(:ids)
             """
         ),
@@ -431,7 +432,7 @@ def _resolve_fragment_batch(
             out.append(_missing(uri))
             continue
         body = str(row[3] or "")
-        label = f"Fragment {int(row[2]) + 1}"
+        label = f"{row[4]} — fragment {int(row[2]) + 1}"
         inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
         out.append(
             ResolvedResource(

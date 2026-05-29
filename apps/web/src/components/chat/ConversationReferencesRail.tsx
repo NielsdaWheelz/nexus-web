@@ -8,11 +8,13 @@ export default function ConversationReferencesRail({
   conversationId,
   onOpenResource,
 }: {
-  conversationId: string;
+  conversationId: string | null;
   onOpenResource?: (uri: string) => void;
 }) {
   const { references, removeReference } = useConversationReferences(conversationId);
-  if (references.length === 0) return null;
+  if (references.length === 0) {
+    return <p className={styles.empty}>No references yet.</p>;
+  }
   return (
     <div className={styles.rail}>
       {references.map((reference) => (

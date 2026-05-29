@@ -54,9 +54,11 @@ function formatTime(iso: string): string {
 }
 
 function errorLabel(message: ConversationMessage): string {
-  return message.error_code === "E_LLM_INCOMPLETE"
-    ? "Response stopped before completion."
-    : "The response failed.";
+  if (message.error_code === "E_LLM_INCOMPLETE")
+    return "Response stopped before completion.";
+  if (message.error_code === "E_STREAM_INTERRUPTED")
+    return "The connection was interrupted. Reload to continue.";
+  return "The response failed.";
 }
 
 export function MessageRow({
