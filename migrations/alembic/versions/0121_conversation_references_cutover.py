@@ -25,18 +25,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Drop the deferred trigger function that backs the memory-items
-    # required-sources constraint triggers. The triggers themselves are
-    # attached to the tables and disappear when the tables are dropped;
-    # the function is freestanding and must be dropped explicitly.
+    # Child first: conversation_memory_item_sources references
+    # conversation_memory_items via memory_item_id. Dropping these tables
+    # also drops the constraint triggers that depend on the
+    # enforce_conversation_memory_required_sources() function, which we
+    # then drop explicitly (it is freestanding).
+    op.drop_table("conversation_memory_item_sources")
+    op.drop_table("conversation_memory_items")
     op.execute(
         "DROP FUNCTION IF EXISTS enforce_conversation_memory_required_sources()"
     )
-
-    # Child first: conversation_memory_item_sources references
-    # conversation_memory_items via memory_item_id.
-    op.drop_table("conversation_memory_item_sources")
-    op.drop_table("conversation_memory_items")
 
     op.drop_table("conversation_pinned_sources")
     op.drop_table("chat_singletons")
