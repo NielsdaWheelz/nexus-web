@@ -17,6 +17,7 @@ import {
   type CSSProperties,
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
+import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
 import ReaderOverviewRuler, {
@@ -662,6 +663,9 @@ export default function MediaPaneBody({
   // A highlight URI parked for "quote to existing chat": the next chat the user
   // picks (or creates) in the doc-chat list gets this attached as a reference.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
+  // When set, the doc-chat rail tab shows this conversation inline (instead of
+  // the chat list), with a link out to the full conversation pane.
+  const [railChatId, setRailChatId] = useState<string | null>(null);
   // Whether the secondary rail (highlights/chat tabs) is open. The reader rail
   // is open-or-absent — there is no collapsed strip.
   const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
@@ -3051,6 +3055,14 @@ export default function MediaPaneBody({
     setMobileHighlightsDrawerOpen(false);
   }, []);
 
+  // Open a conversation inline inside the reader's doc-chat rail tab.
+  const openChatInRail = useCallback((conversationId: string) => {
+    setRailChatId(conversationId);
+    setSecondaryRailMode("doc-chat");
+    setHighlightsRailOpen(true);
+    setMobileHighlightsDrawerOpen(false);
+  }, []);
+
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
       const route = `/conversations/${conversationId}`;
@@ -3580,9 +3592,9 @@ export default function MediaPaneBody({
           }),
         },
       );
-      handleOpenFullChat(created.data.id);
+      openChatInRail(created.data.id);
     },
-    [id, handleOpenFullChat],
+    [id, openChatInRail],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
@@ -3594,10 +3606,12 @@ export default function MediaPaneBody({
     setMobileHighlightsDrawerOpen(false);
   }, []);
 
-  // Drop the parked quote once the doc-chat list is no longer the visible surface.
+  // Drop the parked quote and the inline chat once the doc-chat list is no
+  // longer the visible surface (tab switch, rail close).
   useEffect(() => {
     if (!isHighlightsRailOpen || secondaryRailMode !== "doc-chat") {
       setPendingQuoteUri(null);
+      setRailChatId(null);
     }
   }, [isHighlightsRailOpen, secondaryRailMode]);
 
@@ -3971,6 +3985,33 @@ export default function MediaPaneBody({
       play();
     },
     [media?.kind, play, seekToMs],
+  );
+
+  // Activate a source cited in an in-rail chat: seek/highlight this document,
+  // or open a different source in a new pane.
+  const handleReaderSourceActivate = useCallback(
+    (target: ReaderSourceTarget) => {
+      if (target.media_id !== id) {
+        const route = target.href || `/media/${target.media_id}`;
+        const titleHint = target.label ?? "Source";
+        paneRuntime?.openInNewPane(route, titleHint);
+        return;
+      }
+
+      setReaderSourceTarget(target);
+
+      if (target.locator?.type === "transcript_time_range") {
+        const timestampMs = target.locator.t_start_ms;
+        if (
+          typeof timestampMs === "number" &&
+          Number.isInteger(timestampMs) &&
+          timestampMs >= 0
+        ) {
+          handleTranscriptSeek(timestampMs);
+        }
+      }
+    },
+    [handleTranscriptSeek, id, paneRuntime],
   );
 
   useEffect(() => {
@@ -4363,7 +4404,8 @@ export default function MediaPaneBody({
   const showMobileChatListDrawer =
     isMobileViewport &&
     isHighlightsRailOpen &&
-    secondaryRailMode === "doc-chat";
+    secondaryRailMode === "doc-chat" &&
+    !railChatId;
 
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
@@ -4676,10 +4718,18 @@ export default function MediaPaneBody({
                 id: "doc-chat",
                 icon: FileText,
                 tooltip: "Chat about this document",
-                body: (
+                body: railChatId ? (
+                  <ReaderChatDetail
+                    conversationId={railChatId}
+                    readerContext={{ media_id: id, library_id: null }}
+                    onBack={() => setRailChatId(null)}
+                    onOpenFullChat={() => handleOpenFullChat(railChatId)}
+                    onReaderSourceActivate={handleReaderSourceActivate}
+                  />
+                ) : (
                   <DocChatTab
                     mediaId={media.id}
-                    onOpenChat={handleOpenFullChat}
+                    onOpenChat={openChatInRail}
                     pendingQuoteUri={pendingQuoteUri}
                     onPendingQuoteResolved={() => setPendingQuoteUri(null)}
                   />
@@ -4754,9 +4804,38 @@ export default function MediaPaneBody({
             <div className={styles.highlightsDrawerBody}>
               <DocChatTab
                 mediaId={media.id}
-                onOpenChat={handleOpenFullChat}
+                onOpenChat={openChatInRail}
                 pendingQuoteUri={pendingQuoteUri}
                 onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {isMobileViewport && railChatId ? (
+        <div
+          className={styles.highlightsBackdrop}
+          data-testid="mobile-reader-chat-detail-backdrop"
+          onClick={() => setRailChatId(null)}
+        >
+          <aside
+            className={styles.highlightsDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Chat"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.highlightsDrawerBody}>
+              <ReaderChatDetail
+                conversationId={railChatId}
+                readerContext={{ media_id: id, library_id: null }}
+                onBack={() => setRailChatId(null)}
+                onOpenFullChat={() => {
+                  setRailChatId(null);
+                  handleOpenFullChat(railChatId);
+                }}
+                onReaderSourceActivate={handleReaderSourceActivate}
               />
             </div>
           </aside>
