@@ -8,13 +8,19 @@ from uuid import UUID
 
 import httpx
 from llm_calling.router import LLMRouter
+from sqlalchemy.orm import Session
 from web_search_tool.brave import BraveSearchProvider
 from web_search_tool.types import WebSearchProvider
 
 from nexus.config import get_settings
+from nexus.db.models import ChatRun, Model
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiErrorCode
+from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
 from nexus.schemas.conversation import ReaderContextHint
+from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
+from nexus.services.chat_run_finalize import dummy_resolved_key, finalize_error
 from nexus.services.chat_runs import execute_chat_run
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
@@ -80,3 +86,32 @@ def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> di
     finally:
         loop.close()
         db.close()
+
+
+def finalize_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
+    """Finalize the chat run for a dead-lettered chat_run queue row."""
+    raw_run_id = job.payload.get("run_id")
+    if raw_run_id is None:
+        raise ValueError("chat_run dead-letter payload is missing run_id")
+
+    run_id = UUID(str(raw_run_id))
+    run = db.get(ChatRun, run_id)
+    if run is None or run.status in TERMINAL_RUN_STATUSES:
+        return
+
+    model = db.get(Model, run.model_id)
+    error_code = job.error_code or ApiErrorCode.E_INTERNAL.value
+    finalize_error(
+        db,
+        run_id=run.id,
+        error_code=error_code,
+        viewer_id=run.owner_user_id,
+        model=model,
+        resolved_key=dummy_resolved_key(model) if model is not None else None,
+        key_mode=run.key_mode,
+        assistant_content=(
+            "The background job handling this response exhausted its attempts before "
+            "the model response could finish. Please retry."
+        ),
+        commit=False,
+    )

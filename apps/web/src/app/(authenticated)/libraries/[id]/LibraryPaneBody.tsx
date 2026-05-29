@@ -725,16 +725,15 @@ export default function LibraryPaneBody() {
     }
 
     try {
-      const response = await apiFetch<{ data: { id: string; title: string } }>(
-        "/api/conversations/resolve",
+      const response = await apiFetch<{ data: { id: string } }>(
+        "/api/conversations",
         {
           method: "POST",
-          body: JSON.stringify({ type: "library", library_id: library.id }),
+          body: JSON.stringify({ initial_references: [`library:${library.id}`] }),
         },
       );
       const route = `/conversations/${response.data.id}`;
-      const titleHint = response.data.title || library.name;
-      paneRuntime?.openInNewPane(route, titleHint);
+      paneRuntime?.openInNewPane(route, library.name);
     } catch (err) {
       setError(
         toFeedback(err, {
@@ -748,14 +747,13 @@ export default function LibraryPaneBody() {
     async (media: LibraryMediaEntry) => {
       try {
         const response = await apiFetch<{
-          data: { id: string; title: string };
-        }>("/api/conversations/resolve", {
+          data: { id: string };
+        }>("/api/conversations", {
           method: "POST",
-          body: JSON.stringify({ type: "media", media_id: media.id }),
+          body: JSON.stringify({ initial_references: [`media:${media.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
-        const titleHint = response.data.title || media.title;
-        paneRuntime?.openInNewPane(route, titleHint);
+        paneRuntime?.openInNewPane(route, media.title);
       } catch (err) {
         setError(
           toFeedback(err, {

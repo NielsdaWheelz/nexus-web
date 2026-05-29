@@ -9,6 +9,7 @@ of the contract under test.
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,7 +23,6 @@ from nexus.db.models import (
     Message,
     NoteBlock,
     Page,
-    SourceSnapshot,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.resource_resolver import (
@@ -55,36 +55,6 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
     """
     from sqlalchemy import text as sql_text
 
-    fragment = Fragment(
-        id=uuid4(),
-        media_id=media_id,
-        idx=0,
-        canonical_text=text,
-        html_sanitized=f"<p>{text}</p>",
-    )
-    db.add(fragment)
-    db.flush()
-    block_id = db.execute(
-        sql_text(
-            """
-            INSERT INTO content_blocks (fragment_id, block_idx, block_text, block_offset, block_length, block_kind)
-            VALUES (:fragment_id, 0, :block_text, 0, :block_length, 'paragraph')
-            RETURNING id
-            """
-        ),
-        {"fragment_id": fragment.id, "block_text": text, "block_length": len(text)},
-    ).scalar_one()
-    source_snapshot = SourceSnapshot(
-        id=uuid4(),
-        media_id=media_id,
-        source_kind="web_article",
-        source_version="v1",
-        artifact_ref=f"fragments:{fragment.id}",
-        source_sha256=f"sha-{uuid4().hex}",
-        block_count=1,
-    )
-    db.add(source_snapshot)
-    db.flush()
     index_run_id = db.execute(
         sql_text(
             """
@@ -102,17 +72,68 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
         ),
         {"media_id": media_id},
     ).scalar_one()
+    source_snapshot_id = db.execute(
+        sql_text(
+            """
+            INSERT INTO source_snapshots (
+                id, media_id, index_run_id, source_kind, artifact_kind, artifact_ref,
+                content_type, byte_length, source_fingerprint, source_version,
+                extractor_version, content_sha256, metadata
+            )
+            VALUES (
+                gen_random_uuid(), :media_id, :index_run_id, 'web_article', 'html',
+                :artifact_ref, 'text/html', :byte_length, :source_fingerprint, 'v1',
+                '0', :content_sha256, '{}'::jsonb
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "index_run_id": index_run_id,
+            "artifact_ref": f"resolver-test:{media_id}",
+            "byte_length": len(text.encode("utf-8")),
+            "source_fingerprint": f"resolver-test:{uuid4()}",
+            "content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        },
+    ).scalar_one()
+    block_id = db.execute(
+        sql_text(
+            """
+            INSERT INTO content_blocks (
+                media_id, index_run_id, source_snapshot_id, block_idx, block_kind,
+                canonical_text, text_sha256, extraction_confidence,
+                source_start_offset, source_end_offset,
+                heading_path, locator, selector, metadata
+            )
+            VALUES (
+                :media_id, :index_run_id, :source_snapshot_id, 0, 'paragraph',
+                :canonical_text, :text_sha256, 1.0, 0, :source_end_offset,
+                '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "index_run_id": index_run_id,
+            "source_snapshot_id": source_snapshot_id,
+            "canonical_text": text,
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "source_end_offset": len(text),
+        },
+    ).scalar_one()
     span = EvidenceSpan(
         id=uuid4(),
         media_id=media_id,
         index_run_id=index_run_id,
-        source_snapshot_id=source_snapshot.id,
+        source_snapshot_id=source_snapshot_id,
         start_block_id=block_id,
         end_block_id=block_id,
         start_block_offset=0,
         end_block_offset=len(text),
         span_text=text,
-        span_sha256=f"sha-{uuid4().hex}",
+        span_sha256=hashlib.sha256(f"span:{text}".encode()).hexdigest(),
         selector={},
         citation_label="excerpt",
         resolver_kind="web",
@@ -152,7 +173,17 @@ def _make_highlight_with_anchor(db: Session, user_id: UUID, media_id: UUID) -> U
     fragment = (
         db.query(Fragment).filter(Fragment.media_id == media_id).order_by(Fragment.idx).first()
     )
-    assert fragment is not None, "Test setup must create a fragment before highlighting"
+    if fragment is None:
+        exact = "some highlighted text"
+        fragment = Fragment(
+            id=uuid4(),
+            media_id=media_id,
+            idx=0,
+            canonical_text=exact,
+            html_sanitized=f"<p>{exact}</p>",
+        )
+        db.add(fragment)
+        db.flush()
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,

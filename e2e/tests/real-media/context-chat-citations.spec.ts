@@ -60,7 +60,6 @@ test("@real-media search evidence chat citations open each media reader", async 
     },
   ];
   const traces: Array<Record<string, unknown>> = [];
-  let preTestConversationId: string | null = null;
   const conversationIds: string[] = [];
   let productError: unknown = null;
 
@@ -86,31 +85,6 @@ test("@real-media search evidence chat citations open each media reader", async 
       expect(result.context_ref.evidence_span_ids.length).toBeGreaterThan(0);
       const evidenceSpanId = result.context_ref.evidence_span_ids[0];
 
-      const scopedConversationResponse = await page.request.post(
-        "/api/conversations/resolve",
-        {
-          data: {
-            type: "media",
-            media_id: mediaId,
-          },
-        },
-      );
-      const scopedConversationResponseText =
-        await scopedConversationResponse.text();
-      expect(
-        scopedConversationResponse.ok(),
-        scopedConversationResponseText,
-      ).toBeTruthy();
-      preTestConversationId = JSON.parse(
-        scopedConversationResponseText,
-      ).data.id;
-      await deleteE2eResource(
-        page.request,
-        `/api/conversations/${preTestConversationId}`,
-        `Pre-test scoped conversation ${preTestConversationId}`,
-      );
-      preTestConversationId = null;
-
       const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
       await expect(
         resultLink,
@@ -121,19 +95,26 @@ test("@real-media search evidence chat citations open each media reader", async 
         throw new Error(`${kind} result for ${mediaId} did not expose a href`);
       }
 
-      const askWithEvidence = page
-        .locator(`a[href*="scope=media%3A${mediaId}"][href*="attach_context="]`)
-        .filter({ hasText: "Ask with evidence" })
-        .first();
-      await expect(askWithEvidence).toBeVisible();
-      await askWithEvidence.click();
+      const conversationResponse = await page.request.post(
+        "/api/conversations",
+        {
+          data: {
+            initial_references: [`media:${mediaId}`, `chunk:${result.context_ref.id}`],
+          },
+        },
+      );
+      const conversationResponseText = await conversationResponse.text();
+      expect(conversationResponse.ok(), conversationResponseText).toBeTruthy();
+      const conversationId = JSON.parse(conversationResponseText).data.id;
+      conversationIds.push(conversationId);
+      await page.goto(`/conversations/${conversationId}`);
 
       await expect(page.getByLabel("Ask anything")).toBeVisible({
         timeout: 30_000,
       });
       const composerContext = page.getByLabel("Conversation context").first();
       await expect(composerContext).toBeVisible();
-      await expect(composerContext).toContainText("content_chunk");
+      await expect(composerContext).toContainText("chunk:", { timeout: 30_000 });
 
       await page.getByLabel("Web search mode").selectOption("off");
       await page
@@ -155,7 +136,6 @@ test("@real-media search evidence chat citations open each media reader", async 
       expect(chatRunResponse.ok(), chatRunResponseText).toBeTruthy();
       const chatRunCreated = JSON.parse(chatRunResponseText);
       const runId = chatRunCreated.data.run.id;
-      conversationIds.push(chatRunCreated.data.conversation.id);
       const workerResult = await drainRealMediaWorkerForChatRun(page, runId);
       expect(workerResult.status, JSON.stringify(workerResult)).toBe(
         "complete",
@@ -237,18 +217,7 @@ test("@real-media search evidence chat citations open each media reader", async 
     throw error;
   } finally {
     const cleanupErrors: unknown[] = [];
-    if (preTestConversationId) {
-      try {
-        await deleteE2eResource(
-          page.request,
-          `/api/conversations/${preTestConversationId}`,
-          `Pre-test scoped conversation ${preTestConversationId}`,
-        );
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    for (const conversationId of conversationIds) {
+    for (const conversationId of [...new Set(conversationIds)]) {
       try {
         await deleteE2eResource(
           page.request,

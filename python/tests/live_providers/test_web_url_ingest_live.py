@@ -97,15 +97,23 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
         initial_search_trace,
         refreshed_search_trace,
     )
+    conversation_response = auth_client.post(
+        "/conversations",
+        headers=headers,
+        json={"initial_references": [f"media:{media_id}"]},
+    )
+    assert conversation_response.status_code == 201, conversation_response.text
+    conversation_id = conversation_response.json()["data"]["id"]
+
     stale_context_response = auth_client.post(
         "/chat-runs",
         headers={**headers, "Idempotency-Key": f"live-provider-web-stale-context-{media_id}"},
         json={
+            "conversation_id": conversation_id,
             "content": "Use this stale evidence.",
             "model_id": str(model_id),
             "reasoning": "none",
             "key_mode": "platform_only",
-            "singleton": {"kind": "media", "target_id": str(media_id)},
             "contexts": [
                 {
                     "kind": "object_ref",

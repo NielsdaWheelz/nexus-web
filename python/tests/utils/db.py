@@ -265,6 +265,17 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
+                            DELETE FROM conversation_references
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
                             DELETE FROM messages
                             WHERE conversation_id IN (
                                 SELECT id FROM conversations WHERE owner_user_id = :value
@@ -367,6 +378,10 @@ class DirectSessionManager:
                     )
 
                 if table == "conversations" and column == "id":
+                    session.execute(
+                        text("DELETE FROM conversation_references WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
                     session.execute(
                         text(
                             """

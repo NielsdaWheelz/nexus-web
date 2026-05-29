@@ -2,7 +2,8 @@
 
 this records the current reader model and the constraints we actively ship.
 
-URL contract for deep-link targeting: see `reader-target-link-cutover.md`.
+URL deep-link targets are one-shot reader focus state consumed by
+`useReaderTarget`.
 
 ## constraints we enforce
 
@@ -189,7 +190,7 @@ pure black/white to reduce halation under long sessions.
 - reader section/TOC jumps that change the active section/page are pane-local
   push navigation. Highlight, evidence, and transcript-time targets are
   dismissible focus state owned by `useReaderTarget`; they do not push pane
-  history. See `reader-target-link-cutover.md`.
+  history.
 - reader URL repair, invalid target cleanup, and canonical target normalization
   use pane-local replace navigation and do not add Back entries; any `replace`
   navigation must strip the URL hash via the pane router
@@ -230,7 +231,7 @@ pure black/white to reduce halation under long sessions.
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`
 - the frontend canonical deep-link is `#loc-{section_id}` (one-shot hash
-  consumed by `useReaderTarget`); see `reader-target-link-cutover.md`
+  consumed by `useReaderTarget`)
 - legacy `chapters` and `toc` reader routes are removed from the client surface
 - pane titles are driven by media metadata, not by navigation section title or
   active section content. navigation and section loading are content-level

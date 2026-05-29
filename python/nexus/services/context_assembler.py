@@ -74,12 +74,10 @@ class AssemblyLedger:
     input_budget_tokens: int
     estimated_input_tokens: int
     included_message_ids: tuple[UUID, ...]
-    included_memory_item_ids: tuple[UUID, ...]
     included_retrieval_ids: tuple[UUID, ...]
     included_context_refs: tuple[Mapping[str, object], ...]
     dropped_items: tuple[Mapping[str, object], ...]
     budget_breakdown: Mapping[str, object]
-    snapshot_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -339,16 +337,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
         "provider_request_hash": ledger.provider_request_hash,
-        "snapshot_id": ledger.snapshot_id,
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
         "reserved_reasoning_tokens": ledger.reserved_reasoning_tokens,
         "input_budget_tokens": ledger.input_budget_tokens,
         "estimated_input_tokens": ledger.estimated_input_tokens,
         "included_message_ids": [str(message_id) for message_id in ledger.included_message_ids],
-        "included_memory_item_ids": [
-            str(memory_item_id) for memory_item_id in ledger.included_memory_item_ids
-        ],
         "included_retrieval_ids": [
             str(retrieval_id) for retrieval_id in ledger.included_retrieval_ids
         ],
@@ -385,14 +379,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 cacheable_input_tokens_estimate,
                 prompt_block_manifest,
                 provider_request_hash,
-                snapshot_id,
                 max_context_tokens,
                 reserved_output_tokens,
                 reserved_reasoning_tokens,
                 input_budget_tokens,
                 estimated_input_tokens,
                 included_message_ids,
-                included_memory_item_ids,
                 included_retrieval_ids,
                 included_context_refs,
                 dropped_items,
@@ -410,14 +402,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :cacheable_input_tokens_estimate,
                 :prompt_block_manifest,
                 :provider_request_hash,
-                :snapshot_id,
                 :max_context_tokens,
                 :reserved_output_tokens,
                 :reserved_reasoning_tokens,
                 :input_budget_tokens,
                 :estimated_input_tokens,
                 :included_message_ids,
-                :included_memory_item_ids,
                 :included_retrieval_ids,
                 :included_context_refs,
                 :dropped_items,
@@ -426,7 +416,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             """
         ).bindparams(
             bindparam("included_message_ids", type_=JSONB),
-            bindparam("included_memory_item_ids", type_=JSONB),
             bindparam("included_retrieval_ids", type_=JSONB),
             bindparam("included_context_refs", type_=JSONB),
             bindparam("dropped_items", type_=JSONB),
@@ -803,10 +792,8 @@ def _build_ledger(
         included_message_ids=tuple(
             message_id for unit in included_history_units for message_id in unit.message_ids
         ),
-        included_memory_item_ids=(),
         included_retrieval_ids=(),
         included_context_refs=tuple(included_context_refs),
         dropped_items=tuple(item.to_json() for item in selection.dropped),
         budget_breakdown=selection.breakdown,
-        snapshot_id=None,
     )

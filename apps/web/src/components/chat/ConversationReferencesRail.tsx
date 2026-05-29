@@ -1,17 +1,18 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
+import type { ConversationReference } from "@/lib/conversations/types";
 import styles from "./ConversationReferencesRail.module.css";
 
 export default function ConversationReferencesRail({
-  conversationId,
+  references,
+  removeReference,
   onOpenResource,
 }: {
-  conversationId: string | null;
+  references: ConversationReference[];
+  removeReference: (referenceId: string) => Promise<void>;
   onOpenResource?: (uri: string) => void;
 }) {
-  const { references, removeReference } = useConversationReferences(conversationId);
   if (references.length === 0) {
     return <p className={styles.empty}>No references yet.</p>;
   }

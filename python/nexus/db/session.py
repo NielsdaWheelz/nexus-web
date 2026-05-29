@@ -65,6 +65,19 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def release_connection(db: Session) -> None:
+    """Return a request session's checked-out connection before response transfer.
+
+    FastAPI yield-dependency cleanup runs after the response body is sent. For
+    hot read routes with large JSON bodies, that can leave a PostgreSQL
+    transaction idle while the ASGI server is blocked on client reads. Routes
+    that have fully materialized their response can call this before returning.
+    """
+    if db.in_transaction():
+        db.rollback()
+    db.close()
+
+
 @contextmanager
 def transaction(db: Session) -> Generator[None, None, None]:
     """Context manager for database transactions.

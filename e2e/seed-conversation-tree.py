@@ -160,7 +160,6 @@ def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
             owner_user_id=owner_user_id,
             title="E2E scroll tree conversation",
             sharing="private",
-            scope_type="general",
             next_seq=1,
         )
         db.add(conversation)
@@ -221,7 +220,6 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             owner_user_id=owner_user_id,
             title="E2E branching tree conversation",
             sharing="private",
-            scope_type="general",
             next_seq=1,
         )
         db.add(conversation)

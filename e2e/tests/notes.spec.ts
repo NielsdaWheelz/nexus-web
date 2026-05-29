@@ -152,6 +152,7 @@ test.describe("notes cutover", () => {
     let highlightId: string | null = null;
     let highlightFragmentId: string | null = null;
     let noteBlockId: string | null = null;
+    let conversationId: string | null = null;
     let productError: unknown = null;
 
     try {
@@ -202,16 +203,34 @@ test.describe("notes cutover", () => {
         page.locator(`section[aria-label="Backlinks"] a[href="/media/${seeded.media_id}"]`)
       ).toBeVisible({ timeout: 10_000 });
 
-      await page.goto(`/conversations/new?attach_context=note_block:${noteBlockId}`);
-      await expect(page.locator('section[aria-label="Pending contexts"]')).toContainText(
-        "Note",
-        { timeout: 10_000 }
-      );
+      const conversationResponse = await page.request.post("/api/conversations", {
+        data: { initial_references: [`note_block:${noteBlockId}`] },
+      });
+      await expectOk(conversationResponse, "Create note-backed conversation");
+      const conversationPayload = (await conversationResponse.json()) as {
+        data: { id: string };
+      };
+      conversationId = conversationPayload.data.id;
+      await page.goto(`/conversations/${conversationId}`);
+      await expect(page.getByLabel("Conversation context")).toContainText(noteText, {
+        timeout: 10_000,
+      });
     } catch (error) {
       productError = error;
       throw error;
     } finally {
       const cleanupErrors: unknown[] = [];
+      if (conversationId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/conversations/${conversationId}`,
+            `Conversation ${conversationId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
       if (!noteBlockId && highlightId && highlightFragmentId) {
         try {
           const linkedNote = await linkedNoteForHighlight(page, highlightFragmentId, highlightId);

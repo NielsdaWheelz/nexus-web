@@ -109,15 +109,15 @@ export default function LibrariesPaneBody() {
 
   const handleOpenLibraryChat = useCallback(async (library: Library) => {
     try {
-      const response = await apiFetch<{ data: { id: string; title: string } }>(
-        "/api/conversations/resolve",
+      const response = await apiFetch<{ data: { id: string } }>(
+        "/api/conversations",
         {
           method: "POST",
-          body: JSON.stringify({ type: "library", library_id: library.id }),
+          body: JSON.stringify({ initial_references: [`library:${library.id}`] }),
         }
       );
       const route = `/conversations/${response.data.id}`;
-      paneRuntime?.openInNewPane(route, response.data.title || library.name);
+      paneRuntime?.openInNewPane(route, library.name);
     } catch (err) {
       setError(
         toFeedback(err, {

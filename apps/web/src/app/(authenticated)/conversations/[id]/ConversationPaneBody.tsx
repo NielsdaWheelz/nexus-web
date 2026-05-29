@@ -38,6 +38,7 @@ import type {
   ConversationTreeResponse,
   ChatRunListResponse,
   ChatRunResponse,
+  ConversationReference,
   ConversationSummary,
   ForkOption,
 } from "@/lib/conversations/types";
@@ -136,7 +137,11 @@ function ChatView({
 }) {
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const { mutate: mutateReferences } = useConversationReferences(id);
+  const {
+    references,
+    removeReference,
+    upsertReference,
+  } = useConversationReferences(id);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
@@ -166,6 +171,9 @@ function ChatView({
   );
 
   const scrollportRef = useRef<HTMLDivElement>(null);
+  const treeRequestRef = useRef<Promise<ConversationTreeResponse> | null>(null);
+  const activeRunsRequestRef = useRef<Promise<ChatRunListResponse> | null>(null);
+  const requestScopeRef = useRef(0);
   const shouldScrollRef = useRef(true);
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
@@ -196,14 +204,40 @@ function ChatView({
       selectedPathIdsRef.current.has(assistantMessageId),
     [],
   );
+  const handleReferenceAdded = useCallback(
+    (data: {
+      reference_id: string;
+      conversation_id: string;
+      resource_uri: string;
+      label: string;
+      summary: string;
+      inline_body: string | null;
+      fetch_hint: string;
+      missing: boolean;
+      created_at: string;
+    }) => {
+      if (data.conversation_id !== id) return;
+      const reference: ConversationReference = {
+        id: data.reference_id,
+        conversation_id: data.conversation_id,
+        resource_uri: data.resource_uri,
+        label: data.label,
+        summary: data.summary,
+        inline_body: data.inline_body,
+        fetch_hint: data.fetch_hint,
+        missing: data.missing,
+        created_at: data.created_at,
+      };
+      upsertReference(reference);
+    },
+    [id, upsertReference],
+  );
   const { tailChatRun, abortAll } = useChatRunTail({
     setMessages,
     setForkOptionsByParentId,
     shouldScrollRef,
     onRunFinished,
-    onReferenceAdded: () => {
-      void mutateReferences();
-    },
+    onReferenceAdded: handleReferenceAdded,
     shouldApplyRun: shouldApplyRunToSelectedPath,
   });
   const switchableLeafIds = useMemo(
@@ -256,12 +290,31 @@ function ChatView({
   );
 
   const loadConversationTree = useCallback(async () => {
-    const response = await apiFetch<{ data: ConversationTreeResponse }>(
+    if (treeRequestRef.current) return treeRequestRef.current;
+    const requestScope = requestScopeRef.current;
+    const request = apiFetch<{ data: ConversationTreeResponse }>(
       `/api/conversations/${id}/tree?limit=50`,
-    );
-    applyConversationTree(response.data);
-    return response.data;
+    )
+      .then((response) => {
+        if (requestScope === requestScopeRef.current) {
+          applyConversationTree(response.data);
+        }
+        return response.data;
+      })
+      .finally(() => {
+        if (treeRequestRef.current === request) {
+          treeRequestRef.current = null;
+        }
+      });
+    treeRequestRef.current = request;
+    return request;
   }, [applyConversationTree, id]);
+
+  useEffect(() => {
+    requestScopeRef.current += 1;
+    treeRequestRef.current = null;
+    activeRunsRequestRef.current = null;
+  }, [id]);
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunData) => {
@@ -277,22 +330,24 @@ function ChatView({
         setMessages([runData.user_message, runData.assistant_message]);
       }
       void tailChatRun(runData);
-      void loadConversationTree().catch((err) => {
-        console.error("Failed to refresh conversation tree:", err);
-      });
     },
-    [loadConversationTree, tailChatRun],
+    [tailChatRun],
   );
 
   const tailVisibleActiveRuns = useCallback(
     async (visibleMessageIds: Set<string>, skipRunId: string | null = null) => {
       try {
-        const activeRuns = await apiFetch<ChatRunListResponse>(
-          `/api/chat-runs?${new URLSearchParams({
-            conversation_id: id,
-            status: "active",
-          })}`,
-        );
+        if (!activeRunsRequestRef.current) {
+          activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
+            `/api/chat-runs?${new URLSearchParams({
+              conversation_id: id,
+              status: "active",
+            })}`,
+          ).finally(() => {
+            activeRunsRequestRef.current = null;
+          });
+        }
+        const activeRuns = await activeRunsRequestRef.current;
         for (const runData of activeRuns.data) {
           if (runData.run.id === skipRunId) continue;
           if (
@@ -315,15 +370,18 @@ function ChatView({
   // --------------------------------------------------------------------------
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       try {
         const tree = await loadConversationTree();
+        if (cancelled) return;
         setError(null);
         if (runIdFromUrl) {
           try {
             const runResponse = await apiFetch<ChatRunResponse>(
               `/api/chat-runs/${runIdFromUrl}`,
             );
+            if (cancelled) return;
             if (runResponse.data.conversation.id === id) {
               void tailChatRun(runResponse.data);
             }
@@ -336,12 +394,19 @@ function ChatView({
           runIdFromUrl,
         );
       } catch (err) {
-        setError(toFeedback(err, { fallback: "Failed to load conversation" }));
+        if (!cancelled) {
+          setError(toFeedback(err, { fallback: "Failed to load conversation" }));
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [
     id,
     loadConversationTree,
@@ -733,7 +798,8 @@ function ChatView({
         }
       >
         <ConversationReferencesRail
-          conversationId={id}
+          references={references}
+          removeReference={removeReference}
           onOpenResource={handleOpenResource}
         />
       </SecondaryRail>

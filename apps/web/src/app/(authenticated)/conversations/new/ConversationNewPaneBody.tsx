@@ -3,8 +3,8 @@
  *
  * On first message send the composer creates the conversation (via
  * POST /conversations), the pane streams locally immediately, then the URL is
- * replaced with /conversations/:id. New conversations start with no references;
- * the references rail on the conversation pane handles adding context after.
+ * replaced with /conversations/:id. New conversations start with no references
+ * unless their creator supplies initial_references through POST /conversations.
  */
 
 "use client";
@@ -28,6 +28,7 @@ import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
+import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -40,6 +41,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type {
   ChatRunResponse,
+  ConversationReference,
   ConversationMessage,
 } from "@/lib/conversations/types";
 import styles from "../page.module.css";
@@ -75,8 +77,51 @@ export default function ConversationNewPaneBody() {
   }, [messages]);
   useSetPaneTitle("New chat");
   const [referencesRailExpanded, setReferencesRailExpanded] = useState(true);
+  const {
+    references,
+    removeReference,
+    upsertReference,
+  } = useConversationReferences(activeConversationId);
 
-  const { tailChatRun } = useChatRunTail({ setMessages, shouldScrollRef });
+  const handleReferenceAdded = useCallback(
+    (data: {
+      reference_id: string;
+      conversation_id: string;
+      resource_uri: string;
+      label: string;
+      summary: string;
+      inline_body: string | null;
+      fetch_hint: string;
+      missing: boolean;
+      created_at: string;
+    }) => {
+      if (
+        activeConversationId !== null &&
+        data.conversation_id !== activeConversationId
+      ) {
+        return;
+      }
+      const reference: ConversationReference = {
+        id: data.reference_id,
+        conversation_id: data.conversation_id,
+        resource_uri: data.resource_uri,
+        label: data.label,
+        summary: data.summary,
+        inline_body: data.inline_body,
+        fetch_hint: data.fetch_hint,
+        missing: data.missing,
+        created_at: data.created_at,
+      };
+      upsertReference(reference);
+    },
+    [activeConversationId, upsertReference],
+  );
+
+  const { tailChatRun } = useChatRunTail({
+    setMessages,
+    shouldScrollRef,
+    onReferenceAdded: handleReferenceAdded,
+  });
 
   useLayoutEffect(() => {
     if (!scrollportRef.current || !shouldScrollRef.current) return;
@@ -187,7 +232,10 @@ export default function ConversationNewPaneBody() {
           </Button>
         }
       >
-        <ConversationReferencesRail conversationId={activeConversationId} />
+        <ConversationReferencesRail
+          references={references}
+          removeReference={removeReference}
+        />
       </SecondaryRail>
     </div>
   );

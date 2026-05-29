@@ -386,6 +386,7 @@ export function useChatRunTail({
             lastEventId = id;
           },
           lastEventId,
+          maxReconnects: 0,
         });
         activeStreamsRef.current.set(runId, abort);
       };

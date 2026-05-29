@@ -304,6 +304,7 @@ def execute_app_search(
     planned_types: Sequence[str],
     planned_filters: Mapping[str, object],
     tool_call_index: int = 0,
+    forced_error: str | None = None,
 ) -> AppSearchRun:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
     query = planned_query
@@ -319,6 +320,8 @@ def execute_app_search(
     # input → validate each URI is a media/library reference of this
     # conversation.
     try:
+        if forced_error is not None:
+            raise InvalidScopeError(forced_error)
         resolved_scopes = _resolve_scope_uris(
             db,
             conversation_id=conversation_id,

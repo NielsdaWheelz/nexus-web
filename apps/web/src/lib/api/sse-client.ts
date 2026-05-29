@@ -24,6 +24,7 @@ export function sseClientDirect<TEvent>(args: {
   onLastEventId?: (id: string) => void;
   signal?: AbortSignal;
   lastEventId?: string;
+  maxReconnects?: number;
 }): () => void {
   const {
     url,
@@ -36,6 +37,7 @@ export function sseClientDirect<TEvent>(args: {
     onLastEventId,
     signal,
     lastEventId: initialLastEventId,
+    maxReconnects = 8,
   } = args;
 
   const controller = new AbortController();
@@ -45,6 +47,7 @@ export function sseClientDirect<TEvent>(args: {
 
   let lastEventId = initialLastEventId ?? "";
   let reconnectDelayMs = RECONNECT_DELAY_MS;
+  let reconnects = 0;
 
   (async () => {
     let terminalEventSeen = false;
@@ -69,6 +72,11 @@ export function sseClientDirect<TEvent>(args: {
           onComplete?.(terminalEventSeen);
           return;
         }
+        if (reconnects >= maxReconnects) {
+          onError(err instanceof Error ? err : new Error("SSE connection failed"));
+          return;
+        }
+        reconnects += 1;
         // Exponential backoff with ±20% jitter, capped at 30s. Transport
         // failures (fetch throws) are the runaway-retry surface — e.g. CORS
         // misconfigs that fail every attempt — so each consecutive failure
@@ -106,12 +114,6 @@ export function sseClientDirect<TEvent>(args: {
         return;
       }
 
-      // Stream is open with a valid content-type; reset the transport-failure
-      // backoff baseline so the next consecutive transport failure starts at
-      // 1s again. A server-side `retry:` directive may overwrite this during
-      // streaming via the callback below.
-      reconnectDelayMs = RECONNECT_DELAY_MS;
-
       try {
         await parseSSEJsonStream(
           response.body,
@@ -122,6 +124,8 @@ export function sseClientDirect<TEvent>(args: {
             }
             const event = decode(jsonEvent.type, jsonEvent.data);
             onEvent(event);
+            reconnects = 0;
+            reconnectDelayMs = RECONNECT_DELAY_MS;
             if (isTerminal(event)) terminalEventSeen = true;
           },
           (milliseconds) => {
@@ -143,6 +147,11 @@ export function sseClientDirect<TEvent>(args: {
           onError(err);
           return;
         }
+        if (reconnects >= maxReconnects) {
+          onError(err instanceof Error ? err : new Error("SSE stream interrupted"));
+          return;
+        }
+        reconnects += 1;
         // Mid-stream failure: honor the current base exactly (it may be a
         // server `retry:` override that the server expects us to respect to
         // the millisecond), then grow it so a subsequent failure backs off.

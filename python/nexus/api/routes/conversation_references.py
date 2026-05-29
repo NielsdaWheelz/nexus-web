@@ -11,7 +11,6 @@ Routes:
 - DELETE /api/conversations/{conversation_id}/references/{reference_id}
 """
 
-from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
@@ -47,7 +46,7 @@ def list_conversation_references(
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
     """
     rows = references_service.list_references(db, conversation_id, viewer_id=viewer.user_id)
-    return {"data": [asdict(row) for row in rows]}
+    return {"data": [references_service.reference_to_api_payload(row) for row in rows]}
 
 
 @router.post("/conversations/{conversation_id}/references", status_code=201)
@@ -67,7 +66,7 @@ def add_conversation_reference(
         db, conversation_id, body.resource_uri, viewer_id=viewer.user_id
     )
     db.commit()
-    return success_response(asdict(row))
+    return success_response(references_service.reference_to_api_payload(row))
 
 
 @router.delete(

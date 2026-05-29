@@ -140,6 +140,109 @@ def test_worker_can_treat_failed_task_result_as_failed_job(db_session: Session):
     }
 
 
+def test_worker_runs_dead_letter_handler_when_task_exhausts_attempts(db_session: Session):
+    handled: list[tuple[str, str | None]] = []
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "status": "failed",
+            "reason": "terminal_failure",
+            "error_code": "E_TERMINAL_TEST",
+        }
+
+    def dead_letter_handler(db: Session, job) -> None:
+        handled.append((str(job.id), job.error_code))
+        db.execute(text("SELECT 1"))
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-dead-letter-result",
+        registry={
+            "test_dead_letter_result_job": JobDefinition(
+                kind="test_dead_letter_result_job",
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+                failed_result_statuses=("failed",),
+                dead_letter_handler=dead_letter_handler,
+            )
+        },
+    )
+
+    job = enqueue_job(
+        db_session,
+        kind="test_dead_letter_result_job",
+        payload={},
+        max_attempts=1,
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "dead"
+    assert handled == [(str(job.id), "E_TERMINAL_TEST")]
+
+
+def test_worker_runs_dead_letter_handler_for_exhausted_expired_lease(
+    db_session: Session,
+):
+    handled: list[tuple[str, str | None]] = []
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        raise AssertionError("expired exhausted job must not run handler again")
+
+    def dead_letter_handler(db: Session, job) -> None:
+        handled.append((str(job.id), job.error_code))
+        db.execute(text("SELECT 1"))
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-dead-letter-expired",
+        registry={
+            "test_dead_letter_expired_job": JobDefinition(
+                kind="test_dead_letter_expired_job",
+                handler=handler,
+                max_attempts=2,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+                dead_letter_handler=dead_letter_handler,
+            )
+        },
+    )
+
+    job = enqueue_job(
+        db_session,
+        kind="test_dead_letter_expired_job",
+        payload={"value": "abc"},
+        max_attempts=2,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 2,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "dead"
+    assert handled == [(str(job.id), "E_JOB_LEASE_EXPIRED")]
+
+
 def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(
     direct_db: DirectSessionManager,
 ):

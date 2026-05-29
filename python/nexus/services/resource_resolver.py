@@ -150,7 +150,7 @@ def _resolve_media_batch(
                 label=label,
                 summary="Searchable.",
                 inline_body=None,
-                fetch_hint=f'app_search(scope="{uri}", query=...)',
+                fetch_hint=f'app_search(scopes=["{uri}"], query=...)',
             )
         )
     return out
@@ -195,7 +195,7 @@ def _resolve_library_batch(
                 label=name,
                 summary=summary,
                 inline_body=None,
-                fetch_hint=f'app_search(scope="{uri}", query=...)',
+                fetch_hint=f'app_search(scopes=["{uri}"], query=...)',
             )
         )
     return out
@@ -280,7 +280,7 @@ def _resolve_chunk_batch(
         out.append(
             ResolvedResource(
                 uri=uri,
-                label=f'{row[3]} — "{_first_line(body)[:60]}"',
+                label=f"{row[3]} - chunk: {_first_line(body)[:80]}",
                 summary=_first_line(body),
                 inline_body=inline,
                 fetch_hint=f'read_resource("{uri}")',

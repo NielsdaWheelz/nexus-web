@@ -4854,13 +4854,7 @@ class TestS3SchemaConstraints:
             "chat_prompt_assemblies_chat_run_id_fkey",
             "chat_prompt_assemblies_conversation_id_fkey",
             "chat_prompt_assemblies_assistant_message_id_fkey",
-            "chat_prompt_assemblies_snapshot_id_fkey",
             "chat_run_events_run_id_fkey",
-            "assistant_message_evidence_summaries_message_id_fkey",
-            "assistant_message_evidence_summaries_prompt_assembly_id_fkey",
-            "assistant_message_claims_message_id_fkey",
-            "assistant_message_claim_evidence_claim_id_fkey",
-            "assistant_message_claim_evidence_retrieval_id_fkey",
         }
         with Session(migrated_engine) as session:
             rows = session.execute(
@@ -7470,7 +7464,7 @@ class TestPodcastSubscriptionLibrariesMigration0113:
 
 
 class TestConversationReferencesCutoverMigration0121:
-    """Schema assertions for migration 0121 (conversation_references cutover).
+    """Schema assertions for the conversation_references cutover at HEAD.
 
     Migration 0121 drops the five fragmented chat-context tables
     (``conversation_memory_items``, ``conversation_memory_item_sources``,
@@ -7478,7 +7472,10 @@ class TestConversationReferencesCutoverMigration0121:
     ``message_context_items``) plus ``source_manifests``, and creates the
     polymorphic ``conversation_references`` table. The pre-existing
     ``scope_*`` columns on ``conversations`` were already dropped by 0114
-    and stay dropped at HEAD.
+    and stay dropped at HEAD. Migration 0123 adds the read-path index used by
+    ``GET /api/conversations/{id}/references``. Migration 0124 drops the
+    legacy conversation state snapshot table and prompt-assembly memory/snapshot
+    columns.
     """
 
     def test_0121_drops_fragmented_chat_context_tables(self, migrated_engine):
@@ -7502,6 +7499,7 @@ class TestConversationReferencesCutoverMigration0121:
             "chat_singletons",
             "message_context_items",
             "source_manifests",
+            "conversation_state_snapshots",
         }
         leftover = dropped & tables
         assert leftover == set(), (
@@ -7565,6 +7563,32 @@ class TestConversationReferencesCutoverMigration0121:
             f"conversation_references must declare ix_conversation_references_resource_uri; "
             f"got {indexes}"
         )
+        assert "ix_conversation_references_conversation_created" in indexes, (
+            "conversation_references must declare "
+            "ix_conversation_references_conversation_created for ordered reads; "
+            f"got {indexes}"
+        )
+
+    def test_0124_drops_legacy_snapshot_and_memory_prompt_columns(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            prompt_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'chat_prompt_assemblies'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        stale_columns = {"snapshot_id", "included_memory_item_ids"}
+        assert stale_columns.isdisjoint(prompt_columns), (
+            "chat_prompt_assemblies must not retain legacy snapshot/memory columns; "
+            f"got {prompt_columns}"
+        )
 
     def test_0121_conversations_has_no_scope_columns(self, migrated_engine):
         """Scope columns were dropped by 0114 and stay dropped through 0121."""
@@ -7587,7 +7611,7 @@ class TestConversationReferencesCutoverMigration0121:
                 f"got columns {conversations_columns}"
             )
 
-    def test_0121_downgrade_raises(self):
+    def test_references_cutover_downgrade_raises(self):
         """Per spec, the references cutover is irreversible by policy.
         ``alembic downgrade -1`` from HEAD raises ``NotImplementedError``."""
         result = run_alembic_command("downgrade -1")

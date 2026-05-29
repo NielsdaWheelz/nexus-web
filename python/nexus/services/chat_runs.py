@@ -15,7 +15,8 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from llm_calling.errors import LLMError
+import httpx
+from llm_calling.errors import LLMError, classify_provider_error
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -111,13 +112,34 @@ from nexus.services.conversation_branches import (
     ensure_branch_metadata,
     persist_active_leaf,
 )
-from nexus.services.conversation_references import insert_reference_if_absent
+from nexus.services.conversation_references import (
+    insert_reference_if_absent,
+    reference_to_event_payload,
+    resolve_reference_row,
+)
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
+
+
+def _unread_stream_api_error_code(provider: str, exc: httpx.ResponseNotRead) -> str | None:
+    """Recover provider classification when a streaming HTTP body was not read."""
+    context = exc.__context__
+    if not isinstance(context, httpx.HTTPStatusError):
+        return None
+    response = context.response
+    if response is None:
+        return None
+    llm_error_code = classify_provider_error(
+        provider,
+        response.status_code,
+        None,
+        None,
+    )
+    return LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error_code].value
 
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
@@ -350,16 +372,12 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
         new_row = insert_reference_if_absent(db, run.conversation_id, uri)
         if new_row is None:
             continue
+        resolved_reference = resolve_reference_row(db, new_row, viewer_id=run.owner_user_id)
         append_run_event(
             db,
             run,
             "reference_added",
-            {
-                "reference_id": str(new_row.id),
-                "conversation_id": str(run.conversation_id),
-                "resource_uri": uri,
-                "created_at": new_row.created_at.isoformat(),
-            },
+            reference_to_event_payload(resolved_reference),
         )
 
 
@@ -1043,6 +1061,12 @@ async def _execute_chat_run(
                     if tc.name == APP_SEARCH_TOOL_NAME:
                         args = tc.arguments or {}
                         raw_scopes = args.get("scopes")
+                        forced_error = None
+                        if "scope" in args and "scopes" not in args:
+                            forced_error = (
+                                "app_search uses scopes=[...] for URI scopes; "
+                                "the singular scope field is invalid"
+                            )
                         scopes: list[str] = (
                             [str(s) for s in raw_scopes] if isinstance(raw_scopes, list) else []
                         )
@@ -1057,6 +1081,7 @@ async def _execute_chat_run(
                             planned_types=["content_chunk"],
                             planned_filters={},
                             tool_call_index=tool_call_index_next,
+                            forced_error=forced_error,
                         )
                         start_n = citation_n_next
                         citation_n_next = _assign_citation_ordinals(
@@ -1173,6 +1198,34 @@ async def _execute_chat_run(
                     outcome="error",
                     error_class=error_code,
                     provider_error_message=llm_error.message,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                ),
+            )
+            finalize_error(
+                db,
+                run_id=run.id,
+                error_code=error_code,
+                viewer_id=run.owner_user_id,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=latency_ms,
+                usage=usage,
+                provider_request_id=provider_request_id,
+            )
+            return {"status": "error", "error_code": error_code}
+        except httpx.ResponseNotRead as unread_error:
+            error_code = _unread_stream_api_error_code(model.provider, unread_error)
+            if error_code is None:
+                raise
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=error_code,
+                    provider_error_message=str(unread_error),
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                 ),
             )

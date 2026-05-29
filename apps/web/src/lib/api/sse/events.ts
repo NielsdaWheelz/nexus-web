@@ -111,6 +111,11 @@ export interface SSEReferenceAddedEvent {
     reference_id: string;
     conversation_id: string;
     resource_uri: string;
+    label: string;
+    summary: string;
+    inline_body: string | null;
+    fetch_hint: string;
+    missing: boolean;
     created_at: string;
   };
 }
@@ -291,6 +296,11 @@ function parseReferenceAddedData(
     typeof data.reference_id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.resource_uri !== "string" ||
+    typeof data.label !== "string" ||
+    typeof data.summary !== "string" ||
+    !(typeof data.inline_body === "string" || data.inline_body === null) ||
+    typeof data.fetch_hint !== "string" ||
+    typeof data.missing !== "boolean" ||
     typeof data.created_at !== "string"
   ) {
     throw new Error("Invalid SSE payload for reference_added");

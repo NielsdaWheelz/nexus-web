@@ -21,6 +21,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation
@@ -49,7 +50,8 @@ class ResolvedResourceWithId:
     """A resolved resource plus its conversation_references row metadata."""
 
     id: UUID
-    uri: str
+    conversation_id: UUID
+    resource_uri: str
     label: str
     summary: str
     inline_body: str | None
@@ -96,17 +98,19 @@ def _require_owner(db: Session, viewer_id: UUID, conversation_id: UUID) -> Conve
 
 def _validate_uri(resource_uri: str) -> None:
     if not _URI_PATTERN.match(resource_uri):
-        raise ValueError(
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
             f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<UUID>' "
             "where scheme is one of media, library, span, chunk, highlight, page, "
-            "note_block, fragment, conversation, message."
+            "note_block, fragment, conversation, message.",
         )
 
 
 def _combine(row: ConversationReference, resolved: ResolvedResource) -> ResolvedResourceWithId:
     return ResolvedResourceWithId(
         id=row.id,
-        uri=resolved.uri,
+        conversation_id=row.conversation_id,
+        resource_uri=resolved.uri,
         label=resolved.label,
         summary=resolved.summary,
         inline_body=resolved.inline_body,
@@ -114,6 +118,95 @@ def _combine(row: ConversationReference, resolved: ResolvedResource) -> Resolved
         missing=resolved.missing,
         created_at=row.created_at,
     )
+
+
+def reference_to_api_payload(row: ResolvedResourceWithId) -> dict[str, object]:
+    """Serialize a resolved reference for the REST API contract."""
+    return {
+        "id": str(row.id),
+        "conversation_id": str(row.conversation_id),
+        "resource_uri": row.resource_uri,
+        "label": row.label,
+        "summary": row.summary,
+        "inline_body": row.inline_body,
+        "fetch_hint": row.fetch_hint,
+        "missing": row.missing,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def reference_to_event_payload(row: ResolvedResourceWithId) -> dict[str, object]:
+    """Serialize a newly added reference for chat-run SSE."""
+    payload = reference_to_api_payload(row)
+    payload["reference_id"] = payload.pop("id")
+    return payload
+
+
+def resolve_reference_row(
+    db: Session,
+    row: ConversationReference,
+    *,
+    viewer_id: UUID,
+) -> ResolvedResourceWithId:
+    """Hydrate one existing ``conversation_references`` row."""
+    resolved = resolve(db, row.resource_uri, viewer_id=viewer_id)
+    return _combine(row, resolved)
+
+
+def _select_reference(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    resource_uri: str,
+) -> ConversationReference | None:
+    return db.execute(
+        select(ConversationReference).where(
+            ConversationReference.conversation_id == conversation_id,
+            ConversationReference.resource_uri == resource_uri,
+        )
+    ).scalar_one_or_none()
+
+
+def _insert_reference_if_missing(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    resource_uri: str,
+) -> tuple[ConversationReference, bool]:
+    existing = _select_reference(
+        db,
+        conversation_id=conversation_id,
+        resource_uri=resource_uri,
+    )
+    if existing is not None:
+        return existing, False
+
+    try:
+        with db.begin_nested():
+            row_id = db.scalar(
+                text(
+                    """
+                    INSERT INTO conversation_references (conversation_id, resource_uri)
+                    VALUES (:conversation_id, :resource_uri)
+                    RETURNING id
+                    """
+                ),
+                {"conversation_id": conversation_id, "resource_uri": resource_uri},
+            )
+    except IntegrityError:
+        existing = _select_reference(
+            db,
+            conversation_id=conversation_id,
+            resource_uri=resource_uri,
+        )
+        if existing is not None:
+            return existing, False
+        raise
+    assert row_id is not None
+    row = db.get(ConversationReference, row_id)
+    if row is None:
+        raise RuntimeError("Inserted conversation reference could not be reloaded")
+    return row, True
 
 
 def list_references(
@@ -152,19 +245,11 @@ def add_reference(
     if resolved.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    # SELECT-then-INSERT per database.md:40. Idempotent on (conversation_id, uri).
-    existing = db.execute(
-        select(ConversationReference).where(
-            ConversationReference.conversation_id == conversation_id,
-            ConversationReference.resource_uri == resource_uri,
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return _combine(existing, resolved)
-
-    row = ConversationReference(conversation_id=conversation_id, resource_uri=resource_uri)
-    db.add(row)
-    db.flush()
+    row, _created = _insert_reference_if_missing(
+        db,
+        conversation_id=conversation_id,
+        resource_uri=resource_uri,
+    )
     return _combine(row, resolved)
 
 
@@ -198,18 +283,12 @@ def insert_reference_if_absent(
     chat-run that already owns the conversation.
     """
     _validate_uri(resource_uri)
-    existing = db.execute(
-        select(ConversationReference.id).where(
-            ConversationReference.conversation_id == conversation_id,
-            ConversationReference.resource_uri == resource_uri,
-        )
-    ).first()
-    if existing is not None:
-        return None
-    row = ConversationReference(conversation_id=conversation_id, resource_uri=resource_uri)
-    db.add(row)
-    db.flush()
-    return row
+    row, created = _insert_reference_if_missing(
+        db,
+        conversation_id=conversation_id,
+        resource_uri=resource_uri,
+    )
+    return row if created else None
 
 
 def list_conversations_with_reference(

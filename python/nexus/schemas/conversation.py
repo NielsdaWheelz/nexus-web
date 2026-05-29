@@ -356,6 +356,11 @@ class ChatRunReferenceAddedEventPayload(BaseModel):
     reference_id: UUID
     conversation_id: UUID
     resource_uri: str = Field(min_length=1)
+    label: str
+    summary: str
+    inline_body: str | None = None
+    fetch_hint: str
+    missing: bool
     created_at: datetime
 
     model_config = ConfigDict(extra="forbid")

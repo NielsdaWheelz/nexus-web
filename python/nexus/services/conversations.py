@@ -820,10 +820,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     )
 
     db.execute(
-        text("DELETE FROM conversation_state_snapshots WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
         text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
@@ -991,5 +987,4 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
         """,
         {"message_ids": list(message_ids)},
     )
-
 

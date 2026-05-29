@@ -37,7 +37,7 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
         "system context. Accepts a resource URI such as 'span:UUID', 'chunk:UUID', "
         "'highlight:UUID', 'page:UUID', 'note_block:UUID', 'fragment:UUID', "
         "'message:UUID', or 'conversation:UUID'. Not valid for 'media:UUID' or "
-        "'library:UUID' — those are search scopes; use app_search with scope=..."
+        "'library:UUID' — those are search scopes; use app_search with scopes=[...]"
     ),
     "parameters": {
         "type": "object",

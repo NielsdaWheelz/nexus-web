@@ -31,10 +31,7 @@ describe("SearchResultRow", () => {
     ).toHaveAttribute("href", "/notes/note-1");
     expect(screen.getByText("note_block")).toBeInTheDocument();
     expect(screen.getByText("Deep Work Notes")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Ask with context" })).toHaveAttribute(
-      "href",
-      "/conversations/new?attach_context=note_block%3Aa1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    );
+    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
   it("uses linked highlight quote as the note row link title", () => {
@@ -98,12 +95,7 @@ describe("SearchResultRow", () => {
     const emphasized = screen.getByText("match");
     expect(emphasized.tagName).toBe("MARK");
     expect(screen.getByText("p. 12")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Ask with evidence" })).toHaveAttribute(
-      "href",
-      "/conversations/new?scope=media%3Ab1b2c3d4-e5f6-7890-abcd-ef1234567890" +
-        "&attach_context=content_chunk%3Ac1b2c3d4-e5f6-7890-abcd-ef1234567890" +
-        "%3Ad1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    );
+    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
   it("renders web results as external evidence without object-ref ask attachments", () => {

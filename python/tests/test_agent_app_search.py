@@ -75,7 +75,7 @@ def test_execute_app_search_persists_retrieval_metadata(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope="all",
+            scopes=[],
             planned_query="App Search Needle",
             planned_types=list(ALL_RESULT_TYPES),
             planned_filters={},
@@ -240,7 +240,7 @@ def test_execute_app_search_persists_normalized_executed_filters(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope="all",
+            scopes=[],
             planned_query="Mixed Filter Needle",
             planned_types=["media"],
             planned_filters={
@@ -310,7 +310,7 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope="all",
+            scopes=[],
             planned_query="typed provider failure",
             planned_types=["content_chunk"],
             planned_filters={},
@@ -363,6 +363,18 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
             content="",
             status="pending",
         )
+        session.execute(
+            text(
+                """
+                INSERT INTO conversation_references (conversation_id, resource_uri)
+                VALUES (:conversation_id, :resource_uri)
+                """
+            ),
+            {
+                "conversation_id": conversation_id,
+                "resource_uri": f"library:{library_id}",
+            },
+        )
 
         run = execute_app_search(
             session,
@@ -370,7 +382,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope=f"library:{library_id}",
+            scopes=[f"library:{library_id}"],
             planned_query="indexed evidence",
             planned_types=["content_chunk"],
             planned_filters={},
@@ -448,6 +460,18 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
             library_id,
             title="Indexed Evidence Present",
         )
+        session.execute(
+            text(
+                """
+                INSERT INTO conversation_references (conversation_id, resource_uri)
+                VALUES (:conversation_id, :resource_uri)
+                """
+            ),
+            {
+                "conversation_id": conversation_id,
+                "resource_uri": f"library:{library_id}",
+            },
+        )
 
         run = execute_app_search(
             session,
@@ -455,7 +479,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope=f"library:{library_id}",
+            scopes=[f"library:{library_id}"],
             planned_query="termthatdoesnotexist",
             planned_types=["media"],
             planned_filters={},
@@ -551,7 +575,7 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            scope="all",
+            scopes=[],
             planned_query="test exact",
             planned_types=["highlight"],
             planned_filters={},
@@ -561,8 +585,8 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
         assert run.status == "complete"
         assert run.selected_citations
         assert run.selected_citations[0].result_type == "highlight"
-        assert "<highlight>" in run.context_text
-        assert "<quote>test exact</quote>" in run.context_text
+        assert '<app_search_result type="highlight">' in run.context_text
+        assert "<exact>test exact</exact>" in run.context_text
 
         retrieval_row = session.execute(
             text(

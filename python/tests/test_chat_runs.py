@@ -1533,8 +1533,8 @@ class TestCitationReferenceWriteThrough:
                     )
                     VALUES (
                         :tool_call_id, 1, 'content_chunk', :chunk_id_str, 'all',
-                        '{"type": "content_chunk", "id": "' || :chunk_id_str || '"}'::jsonb,
-                        ('{"id": "' || :chunk_id_str || '"}')::jsonb,
+                        CAST(:context_ref AS jsonb),
+                        CAST(:result_ref AS jsonb),
                         true, :citation_ordinal
                     )
                     """
@@ -1542,6 +1542,10 @@ class TestCitationReferenceWriteThrough:
                 {
                     "tool_call_id": tool_call_id,
                     "chunk_id_str": str(chunk_id),
+                    "context_ref": json.dumps(
+                        {"type": "content_chunk", "id": str(chunk_id)}
+                    ),
+                    "result_ref": json.dumps({"id": str(chunk_id)}),
                     "citation_ordinal": citation_ordinal_value,
                 },
             )
@@ -1650,10 +1654,21 @@ class TestCitationReferenceWriteThrough:
             "reference_added must be emitted AFTER citation_index per spec"
         )
         assert isinstance(reference_added_payload, dict)
+        assert reference_added_payload["reference_id"], (
+            f"reference_added payload should include the durable reference id; "
+            f"got {reference_added_payload!r}"
+        )
         assert reference_added_payload["resource_uri"] == f"chunk:{chunk_id}", (
             f"reference_added payload should carry the cited URI; "
             f"got {reference_added_payload!r}"
         )
+        assert reference_added_payload["conversation_id"] == str(conversation_id), (
+            f"reference_added payload should carry the conversation id; "
+            f"got {reference_added_payload!r}"
+        )
+        assert {"label", "summary", "inline_body", "fetch_hint", "missing", "created_at"} <= set(
+            reference_added_payload
+        ), f"reference_added payload is missing resolver fields: {reference_added_payload!r}"
 
     def test_uncited_retrieval_does_not_write_reference(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

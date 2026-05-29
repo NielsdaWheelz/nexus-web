@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
+    dead_letter_expired_job,
     enqueue_job,
     enqueue_unique_job,
     fail_job,
@@ -234,7 +235,9 @@ def test_claim_next_job_reclaims_stale_running_lease(db_session: Session):
     )
 
 
-def test_claim_next_job_dead_letters_stale_running_job_at_max_attempts(db_session: Session):
+def test_dead_letter_expired_job_marks_stale_running_job_at_max_attempts(
+    db_session: Session,
+):
     job = enqueue_job(
         db_session,
         kind="ingest_pdf",
@@ -257,10 +260,11 @@ def test_claim_next_job_dead_letters_stale_running_job_at_max_attempts(db_sessio
     )
     db_session.commit()
 
-    claimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+    dead = dead_letter_expired_job(db_session)
     db_session.commit()
 
-    assert claimed is None, "Expected max-attempt stale running job not to be reclaimed."
+    assert dead is not None, "Expected max-attempt stale running job to dead-letter."
+    assert dead.id == job.id
     row = db_session.execute(
         text(
             """
@@ -279,7 +283,9 @@ def test_claim_next_job_dead_letters_stale_running_job_at_max_attempts(db_sessio
     assert row[4] == "E_JOB_LEASE_EXPIRED"
 
 
-def test_claim_next_job_dead_letters_one_stale_max_attempt_job_per_claim(db_session: Session):
+def test_dead_letter_expired_job_marks_one_stale_max_attempt_job_per_call(
+    db_session: Session,
+):
     first = enqueue_job(
         db_session,
         kind="ingest_pdf",
@@ -308,10 +314,10 @@ def test_claim_next_job_dead_letters_one_stale_max_attempt_job_per_claim(db_sess
     )
     db_session.commit()
 
-    claimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+    dead = dead_letter_expired_job(db_session)
     db_session.commit()
 
-    assert claimed is None, "Expected max-attempt stale running jobs not to be reclaimed."
+    assert dead is not None, "Expected one max-attempt stale running job to dead-letter."
     statuses = dict(
         db_session.execute(
             text("SELECT id, status FROM background_jobs WHERE id IN (:first_id, :second_id)"),
@@ -319,11 +325,13 @@ def test_claim_next_job_dead_letters_one_stale_max_attempt_job_per_claim(db_sess
         ).fetchall()
     )
     assert sorted(statuses.values()) == ["dead", "running"], (
-        f"Expected claim-time stale reconciliation to be bounded to one row. Statuses={statuses}"
+        f"Expected stale reconciliation to be bounded to one row. Statuses={statuses}"
     )
 
 
-def test_claim_next_job_dead_letters_only_allowed_stale_max_attempt_job(db_session: Session):
+def test_dead_letter_expired_job_marks_only_allowed_stale_max_attempt_job(
+    db_session: Session,
+):
     blocked = enqueue_job(
         db_session,
         kind="maintenance_job",
@@ -352,15 +360,14 @@ def test_claim_next_job_dead_letters_only_allowed_stale_max_attempt_job(db_sessi
     )
     db_session.commit()
 
-    claimed = claim_next_job(
+    dead = dead_letter_expired_job(
         db_session,
-        worker_id="worker-allowed-stale",
-        lease_seconds=60,
         allowed_kinds=["user_job"],
     )
     db_session.commit()
 
-    assert claimed is None
+    assert dead is not None
+    assert dead.id == allowed.id
     statuses = dict(
         db_session.execute(
             text("SELECT id, status FROM background_jobs WHERE id IN (:blocked_id, :allowed_id)"),

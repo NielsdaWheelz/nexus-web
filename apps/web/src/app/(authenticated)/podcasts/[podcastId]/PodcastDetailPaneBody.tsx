@@ -692,14 +692,13 @@ export default function PodcastDetailPaneBody() {
     async (episode: PodcastEpisodeMedia) => {
       try {
         const response = await apiFetch<{
-          data: { id: string; title: string };
-        }>("/api/conversations/resolve", {
+          data: { id: string };
+        }>("/api/conversations", {
           method: "POST",
-          body: JSON.stringify({ type: "media", media_id: episode.id }),
+          body: JSON.stringify({ initial_references: [`media:${episode.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
-        const titleHint = response.data.title || episode.title;
-        paneRuntime?.openInNewPane(route, titleHint);
+        paneRuntime?.openInNewPane(route, episode.title);
       } catch (chatError) {
         setError(
           toFeedback(chatError, { fallback: "Failed to open episode chat" }),

@@ -237,66 +237,6 @@ def claim_next_job(
         "worker_id": worker_id,
         "lease_seconds": max(int(lease_seconds), 1),
     }
-    if allowed_kinds is None:
-        db.execute(
-            text(
-                """
-                WITH candidate AS (
-                    SELECT id
-                    FROM background_jobs
-                    WHERE status = 'running'
-                      AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at <= now()
-                      AND attempts >= max_attempts
-                    ORDER BY lease_expires_at ASC, created_at ASC, id ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE background_jobs j
-                SET
-                    status = 'dead',
-                    lease_expires_at = NULL,
-                    claimed_by = NULL,
-                    finished_at = now(),
-                    error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
-                    last_error = COALESCE(last_error, 'Job lease expired after max attempts.'),
-                    updated_at = now()
-                FROM candidate
-                WHERE j.id = candidate.id
-                """
-            )
-        )
-    else:
-        db.execute(
-            text(
-                """
-                WITH candidate AS (
-                    SELECT id
-                    FROM background_jobs
-                    WHERE status = 'running'
-                      AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at <= now()
-                      AND attempts >= max_attempts
-                      AND kind = ANY(:allowed_kinds)
-                    ORDER BY lease_expires_at ASC, created_at ASC, id ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE background_jobs j
-                SET
-                    status = 'dead',
-                    lease_expires_at = NULL,
-                    claimed_by = NULL,
-                    finished_at = now(),
-                    error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
-                    last_error = COALESCE(last_error, 'Job lease expired after max attempts.'),
-                    updated_at = now()
-                FROM candidate
-                WHERE j.id = candidate.id
-                """
-            ),
-            {"allowed_kinds": list(allowed_kinds)},
-        )
 
     if allowed_kinds is None:
         claimed = (
@@ -413,6 +353,114 @@ def claim_next_job(
     if claimed is None:
         return None
     return _row_to_job(claimed)
+
+
+def dead_letter_expired_job(
+    db: Session,
+    *,
+    allowed_kinds: Sequence[str] | None = None,
+) -> JobRow | None:
+    """Mark one exhausted, expired running job dead and return it.
+
+    This is intentionally separate from claim_next_job so the worker can run
+    kind-specific dead-letter side effects in the same transaction that moves
+    the queue row to dead.
+    """
+    if allowed_kinds is not None and len(allowed_kinds) == 0:
+        return None
+
+    if allowed_kinds is None:
+        row = (
+            db.execute(
+                text(
+                    """
+                    WITH candidate AS (
+                        SELECT id
+                        FROM background_jobs
+                        WHERE status = 'running'
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at <= now()
+                          AND attempts >= max_attempts
+                        ORDER BY lease_expires_at ASC, created_at ASC, id ASC
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE background_jobs j
+                    SET
+                        status = 'dead',
+                        lease_expires_at = NULL,
+                        claimed_by = NULL,
+                        finished_at = now(),
+                        error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
+                        last_error = COALESCE(
+                            last_error,
+                            'Job lease expired after max attempts.'
+                        ),
+                        updated_at = now()
+                    FROM candidate
+                    WHERE j.id = candidate.id
+                    RETURNING j.*
+                    """
+                )
+            )
+            .mappings()
+            .first()
+        )
+    else:
+        row = (
+            db.execute(
+                text(
+                    """
+                    WITH candidate AS (
+                        SELECT id
+                        FROM background_jobs
+                        WHERE status = 'running'
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at <= now()
+                          AND attempts >= max_attempts
+                          AND kind = ANY(:allowed_kinds)
+                        ORDER BY lease_expires_at ASC, created_at ASC, id ASC
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE background_jobs j
+                    SET
+                        status = 'dead',
+                        lease_expires_at = NULL,
+                        claimed_by = NULL,
+                        finished_at = now(),
+                        error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
+                        last_error = COALESCE(
+                            last_error,
+                            'Job lease expired after max attempts.'
+                        ),
+                        updated_at = now()
+                    FROM candidate
+                    WHERE j.id = candidate.id
+                    RETURNING j.*
+                    """
+                ),
+                {"allowed_kinds": list(allowed_kinds)},
+            )
+            .mappings()
+            .first()
+        )
+
+    if row is None:
+        return None
+    return _row_to_job(row)
+
+
+def get_job(db: Session, job_id: UUID) -> JobRow | None:
+    row = (
+        db.execute(
+            text("SELECT * FROM background_jobs WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .first()
+    )
+    return _row_to_job(row) if row is not None else None
 
 
 def heartbeat_job(

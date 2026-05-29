@@ -17,8 +17,10 @@ from sqlalchemy.orm import Session
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
+    dead_letter_expired_job,
     enqueue_unique_job,
     fail_job,
+    get_job,
     heartbeat_job,
 )
 from nexus.jobs.registry import (
@@ -69,6 +71,21 @@ class JobWorker:
     def run_once(self) -> bool:
         """Claim and execute exactly one due job row."""
         with self.session_factory() as db:
+            dead_job = dead_letter_expired_job(db, allowed_kinds=self.allowed_kinds)
+            if dead_job is not None:
+                definition = self.registry.get(dead_job.kind)
+                if definition is None:
+                    logger.error(
+                        "worker_unknown_dead_letter_job_kind",
+                        worker_id=self.worker_id,
+                        job_id=str(dead_job.id),
+                        kind=dead_job.kind,
+                    )
+                else:
+                    self._handle_dead_letter(db, definition, dead_job)
+                db.commit()
+                return True
+
             claimed = claim_next_job(
                 db,
                 worker_id=self.worker_id,
@@ -139,6 +156,10 @@ class JobWorker:
                         retry_delays_seconds=definition.retry_delays_seconds,
                         result_payload=result_payload,
                     )
+                    if transition == "dead":
+                        dead_job = get_job(db, claimed.id)
+                        if dead_job is not None:
+                            self._handle_dead_letter(db, definition, dead_job)
                     db.commit()
                 if transition is None:
                     logger.warning(
@@ -197,6 +218,10 @@ class JobWorker:
                     error_message=str(exc),
                     retry_delays_seconds=definition.retry_delays_seconds,
                 )
+                if transition == "dead":
+                    dead_job = get_job(db, claimed.id)
+                    if dead_job is not None:
+                        self._handle_dead_letter(db, definition, dead_job)
                 db.commit()
                 if transition is None:
                     logger.warning(
@@ -210,6 +235,25 @@ class JobWorker:
             heartbeat_thread.join(timeout=5)
 
         return True
+
+    def _handle_dead_letter(
+        self,
+        db: Session,
+        definition: JobDefinition,
+        job: Any,
+    ) -> None:
+        """Run the kind-specific dead-letter hook inside the queue transition."""
+        handler = definition.dead_letter_handler
+        if handler is None:
+            return
+        handler(db, job)
+        logger.warning(
+            "worker_job_dead_letter_handled",
+            worker_id=self.worker_id,
+            job_id=str(job.id),
+            kind=job.kind,
+            error_code=job.error_code,
+        )
 
     def run_scheduler_once(self, *, now: datetime | None = None) -> int:
         """Enqueue due periodic jobs with deterministic per-slot dedupe."""

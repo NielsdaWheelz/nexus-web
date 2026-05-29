@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import release_connection
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
@@ -78,9 +79,12 @@ def list_conversations(
             limit=limit,
             cursor=cursor,
         )
+        payload = [c.model_dump(mode="json") for c in conversations]
+        page_payload = page.model_dump(mode="json")
+        release_connection(db)
         return {
-            "data": [c.model_dump(mode="json") for c in conversations],
-            "page": page.model_dump(mode="json"),
+            "data": payload,
+            "page": page_payload,
         }
 
     # Explicit app-level scope validation (no framework enum/422 leakage)
@@ -100,9 +104,12 @@ def list_conversations(
         cursor=cursor,
         scope=effective_scope,
     )
+    payload = [c.model_dump(mode="json") for c in conversations]
+    page_payload = page.model_dump(mode="json")
+    release_connection(db)
     return {
-        "data": [c.model_dump(mode="json") for c in conversations],
-        "page": page.model_dump(mode="json"),
+        "data": payload,
+        "page": page_payload,
     }
 
 
@@ -175,7 +182,9 @@ def get_conversation_tree(
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
     )
-    return success_response(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    release_connection(db)
+    return success_response(payload)
 
 
 @router.post("/conversations/{conversation_id}/active-path")

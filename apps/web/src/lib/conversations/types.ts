@@ -24,7 +24,6 @@ export interface ConversationSummary {
   title: string;
   sharing: string;
   message_count: number;
-  memory?: ConversationMemoryInspection | null;
   created_at: string;
   updated_at: string;
 }
@@ -89,38 +88,6 @@ export type MessageRetrievalResultRef =
   | SearchCitationEventData
   | WebCitationEventData;
 
-export type ConversationSourceRefType =
-  | "message"
-  | "message_context"
-  | "message_retrieval"
-  | "app_context_ref"
-  | "web_result";
-
-interface ConversationSourceRefLocation {
-  page?: number | null;
-  fragment_id?: string | null;
-  t_start_ms?: number | null;
-  start_offset?: number | null;
-  end_offset?: number | null;
-}
-
-export interface ConversationSourceRef {
-  type: ConversationSourceRefType;
-  id: string;
-  label?: string | null;
-  conversation_id?: string | null;
-  message_id?: string | null;
-  message_seq?: number | null;
-  tool_call_id?: string | null;
-  retrieval_id?: string | null;
-  context_ref?: RetrievalContextRef | null;
-  result_ref?: MessageRetrievalResultRef | null;
-  media_id?: string | null;
-  deep_link?: string | null;
-  location?: ConversationSourceRefLocation | null;
-  source_version?: string | null;
-}
-
 export type MessageEvidenceRetrievalStatus =
   | "attached_context"
   | "retrieved"
@@ -131,67 +98,6 @@ export type MessageEvidenceRetrievalStatus =
   | "web_result";
 
 export type MessageEvidenceLocator = RetrievalLocator;
-
-type ConversationMemoryKind =
-  | "goal"
-  | "constraint"
-  | "decision"
-  | "correction"
-  | "open_question"
-  | "task"
-  | "assistant_commitment"
-  | "user_preference"
-  | "source_claim";
-
-type ConversationMemoryStatus = "active" | "superseded" | "invalid";
-
-export type ConversationMemoryEvidenceRole =
-  | "supports"
-  | "contradicts"
-  | "supersedes"
-  | "context";
-
-export interface ConversationMemorySource {
-  id?: string;
-  ordinal?: number | null;
-  evidence_role: ConversationMemoryEvidenceRole;
-  source_ref: ConversationSourceRef;
-}
-
-export interface ConversationMemoryItem {
-  id: string;
-  kind: ConversationMemoryKind;
-  status: ConversationMemoryStatus;
-  body: string;
-  source_required: boolean;
-  confidence?: number | null;
-  valid_from_seq?: number | null;
-  valid_through_seq?: number | null;
-  supersedes_id?: string | null;
-  created_by_message_id?: string | null;
-  prompt_version?: string | null;
-  memory_version?: string | number | null;
-  sources: ConversationMemorySource[];
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface ConversationStateSnapshot {
-  id: string;
-  status: ConversationMemoryStatus;
-  covered_through_seq: number;
-  prompt_version?: string | null;
-  snapshot_version?: string | number | null;
-  memory_item_ids: string[];
-  source_refs: ConversationSourceRef[];
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface ConversationMemoryInspection {
-  state_snapshot?: ConversationStateSnapshot | null;
-  memory_items: ConversationMemoryItem[];
-}
 
 export interface MessageToolCall {
   id?: string;

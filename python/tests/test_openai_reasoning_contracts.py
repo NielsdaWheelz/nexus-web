@@ -142,7 +142,6 @@ def _post_chat_run(
         "content": "Summarize the current notes.",
         "model_id": str(model_id),
         "key_mode": "auto",
-        "contexts": [],
     }
     if reasoning is not None:
         payload["reasoning"] = reasoning

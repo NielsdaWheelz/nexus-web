@@ -600,25 +600,6 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM message_context_items
-            WHERE object_type = 'note_block'
-              AND object_id IN (
-                  SELECT ol.a_id
-                  FROM object_links ol
-                  JOIN highlights h ON h.id = ol.b_id
-                  JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                  JOIN fragments f ON f.id = hfa.fragment_id
-                  WHERE ol.a_type = 'note_block'
-                    AND ol.b_type = 'highlight'
-                    AND f.media_id = :media_id
-              )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
             DELETE FROM note_blocks
             WHERE id IN (
                 SELECT ol.a_id

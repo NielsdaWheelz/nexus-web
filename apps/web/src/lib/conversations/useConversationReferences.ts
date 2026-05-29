@@ -56,5 +56,20 @@ export function useConversationReferences(conversationId: string | null) {
     [conversationId],
   );
 
-  return { references, isLoading, removeReference, mutate };
+  const upsertReference = useCallback((reference: ConversationReference) => {
+    setReferences((current) => {
+      const index = current.findIndex((item) => item.id === reference.id);
+      if (index >= 0) {
+        return current.map((item, idx) => (idx === index ? reference : item));
+      }
+      return [...current, reference].sort((left, right) => {
+        if (left.created_at !== right.created_at) {
+          return left.created_at.localeCompare(right.created_at);
+        }
+        return left.id.localeCompare(right.id);
+      });
+    });
+  }, []);
+
+  return { references, isLoading, removeReference, mutate, upsertReference };
 }

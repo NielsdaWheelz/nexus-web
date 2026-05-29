@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ForbiddenError, NotFoundError
+from nexus.errors import ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.conversation_references import (
     add_reference,
@@ -53,7 +53,9 @@ def test_add_reference_returns_resolved_row_with_metadata(
     added = add_reference(db_session, conversation_id, uri, viewer_id=bootstrapped_user)
     db_session.commit()
 
-    assert added.uri == uri, f"Added row should echo the URI; got {added.uri}"
+    assert added.resource_uri == uri, (
+        f"Added row should echo the URI; got {added.resource_uri}"
+    )
     assert "Referenced Doc" in added.label, (
         f"Added row label should reflect resolver hydration; got {added.label}"
     )
@@ -105,7 +107,7 @@ def test_add_reference_invalid_uri_raises(
 ):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
 
-    with pytest.raises(ValueError, match="Invalid resource_uri"):
+    with pytest.raises(InvalidRequestError, match="Invalid resource_uri"):
         add_reference(
             db_session,
             conversation_id,
@@ -159,11 +161,12 @@ def test_list_references_returns_added_at_ascending(
 
     rows = list_references(db_session, conversation_id, viewer_id=bootstrapped_user)
 
-    assert [row.uri for row in rows] == [
+    assert [row.resource_uri for row in rows] == [
         f"media:{first_media_id}",
         f"media:{second_media_id}",
     ], (
-        f"References should be ordered by created_at ASC; got {[row.uri for row in rows]}"
+        "References should be ordered by created_at ASC; "
+        f"got {[row.resource_uri for row in rows]}"
     )
 
 

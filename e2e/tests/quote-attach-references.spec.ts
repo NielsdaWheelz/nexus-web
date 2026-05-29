@@ -11,15 +11,12 @@ interface NonPdfSeed {
 }
 
 interface ChatReferencesResponse {
-  data: {
-    conversations: Array<{
-      id: string;
-      first_user_message_excerpt: string;
-      message_count: number;
-      is_singleton: boolean;
-    }>;
-    next_offset: number | null;
-  };
+  data: Array<{
+    id: string;
+    title: string;
+    message_count: number;
+    updated_at: string;
+  }>;
 }
 
 function readNonPdfSeed(): NonPdfSeed {
@@ -31,13 +28,14 @@ async function readReferences(
   page: Page,
   mediaId: string,
 ): Promise<ChatReferencesResponse["data"]> {
+  const resourceUri = `media:${mediaId}`;
   const response = await page.request.get(
-    `/api/chat-references/media/${mediaId}?limit=200`,
+    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=200`,
   );
   const body = await response.text();
   expect(
     response.ok(),
-    `GET /api/chat-references/media/${mediaId} failed: status=${response.status()}; body=${body.slice(0, 300)}`,
+    `GET /api/conversations?has_reference=${resourceUri} failed: status=${response.status()}; body=${body.slice(0, 300)}`,
   ).toBeTruthy();
   return (JSON.parse(body) as ChatReferencesResponse).data;
 }
@@ -114,46 +112,37 @@ test.describe("quote-attach references (post-cutover)", () => {
       timeout: 15_000,
     });
 
-    // The reference endpoint should surface this new (non-singleton) chat
-    // because it attached a media_context referencing the seeded media. Poll
-    // because the chat-run pipeline commits asynchronously.
+    // The reference-backed conversations endpoint should surface this new chat
+    // because the conversation was created with a media reference. Poll because
+    // the chat-run pipeline commits asynchronously.
     await expect
       .poll(
         async () => {
-          const { conversations } = await readReferences(page, seed.media_id);
+          const conversations = await readReferences(page, seed.media_id);
           return conversations.length;
         },
         { timeout: 20_000 },
       )
       .toBeGreaterThan(0);
 
-    const { conversations } = await readReferences(page, seed.media_id);
+    const conversations = await readReferences(page, seed.media_id);
     expect(conversations.length).toBeGreaterThan(0);
-    expect(
-      conversations.every((conv) => conv.is_singleton === false),
-      "Reference list must not include the doc-chat singleton (§4.6).",
-    ).toBeTruthy();
-    const newChat = conversations.find((conv) =>
-      conv.first_user_message_excerpt.includes(messageText),
-    );
+    const newChat = conversations.find((conv) => conv.message_count > 0);
     expect(
       newChat,
-      `Expected a referencing chat carrying first message "${messageText}", got: ${JSON.stringify(conversations.map((c) => c.first_user_message_excerpt))}`,
+      `Expected a referencing chat after sending "${messageText}", got: ${JSON.stringify(conversations)}`,
     ).toBeDefined();
 
     // Revisit the doc's reader pane and confirm the new chat appears in the
-    // "Other chats" section of the Doc chat tab.
+    // reference-backed Doc chat list.
     await openMediaInSinglePaneWorkspace(page, seed.media_id);
     const reloadedRail = await openReaderSecondaryRail(page);
     await reloadedRail
       .getByRole("tab", { name: "Chat about this document" })
       .click();
     await expect(
-      reloadedRail.getByRole("heading", { name: "Other chats" }),
-    ).toBeVisible({ timeout: 10_000 });
-    await expect(
       reloadedRail.getByRole("button", {
-        name: new RegExp(messageText, "i"),
+        name: new RegExp(newChat?.title ?? "Chat", "i"),
       }),
     ).toBeVisible({ timeout: 10_000 });
   });

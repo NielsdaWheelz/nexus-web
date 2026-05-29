@@ -64,6 +64,7 @@ def finalize_error(
     usage: LLMUsage | None = None,
     provider_request_id: str | None = None,
     assistant_content: str | None = None,
+    commit: bool = True,
 ) -> None:
     """Finalize a run as an error using the standard error/error/error status shape.
 
@@ -92,6 +93,7 @@ def finalize_error(
         usage=usage,
         provider_request_id=provider_request_id,
         viewer_id=viewer_id,
+        commit=commit,
     )
 
 
@@ -149,12 +151,14 @@ def finalize_run(
     usage: LLMUsage | None,
     provider_request_id: str | None,
     viewer_id: UUID | None,
+    commit: bool = True,
 ) -> None:
     run = (
         db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().first()
     )
     if run is None or run.status in TERMINAL_RUN_STATUSES:
-        db.commit()
+        if commit:
+            db.commit()
         return
 
     assistant_message = db.get(Message, run.assistant_message_id)
@@ -216,4 +220,5 @@ def finalize_run(
     if assistant_message is not None and done_status == "complete":
         done_payload["final_chars"] = len(assistant_message.content)
     append_run_event(db, run, "done", done_payload)
-    db.commit()
+    if commit:
+        db.commit()

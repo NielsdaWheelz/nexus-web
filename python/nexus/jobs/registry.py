@@ -8,11 +8,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.config import get_settings
+from nexus.jobs.queue import JobRow
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 JobHandler = Callable[..., Mapping[str, Any] | None]
+JobDeadLetterHandler = Callable[["Session", JobRow], None]
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,7 @@ class JobDefinition:
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
     failed_result_statuses: tuple[str, ...] = ()
+    dead_letter_handler: JobDeadLetterHandler | None = None
 
 
 def get_default_registry() -> dict[str, JobDefinition]:
@@ -113,6 +119,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
+            dead_letter_handler=_dead_letter_chat_run,
         ),
         "library_intelligence_build_job": JobDefinition(
             kind="library_intelligence_build_job",
@@ -272,6 +279,12 @@ def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
         run_id=str(payload["run_id"]),
         reader_context=reader_context_payload,
     )
+
+
+def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
+    from nexus.tasks.chat_run import finalize_dead_lettered_chat_run
+
+    finalize_dead_lettered_chat_run(db, job)
 
 
 def _run_library_intelligence_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
