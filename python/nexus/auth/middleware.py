@@ -14,6 +14,7 @@ from uuid import UUID
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -180,10 +181,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
         email = payload.get("email")
         roles = _extract_viewer_roles(payload)
 
-        # Step 5: Bootstrap user/library if callback provided
+        # Step 5: Bootstrap user/library if callback provided.
+        # bootstrap_callback runs a blocking DB transaction; dispatch is async,
+        # so call it off the event loop. Calling it inline blocks the loop on
+        # pool checkout under contention, which stalls response flushing and the
+        # post-response db.close() of in-flight requests — turning transient pool
+        # pressure into a self-sustaining deadlock.
         if self.bootstrap_callback:
             try:
-                default_library_id = self.bootstrap_callback(user_id, email=email)
+                default_library_id = await run_in_threadpool(
+                    self.bootstrap_callback, user_id, email=email
+                )
             except Exception as e:
                 logger.exception("Bootstrap failed for user %s: %s", user_id, e)
                 return self._error_json_response(
