@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useRef, type ReactNode } from "react";
+import { MessageSquare } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import PaneShell, {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
+import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 
 const disabledNavigation = {
@@ -19,9 +21,9 @@ function paneSizing(input: {
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
-  extraWidthPx?: number;
+  fixedPrimaryChromeWidthPx?: number;
 }): EffectivePaneSizing {
-  const extraWidthPx = input.extraWidthPx ?? 0;
+  const fixedPrimaryChromeWidthPx = input.fixedPrimaryChromeWidthPx ?? 0;
   const primaryWidthPx = Math.min(
     input.maxWidthPx,
     Math.max(input.minWidthPx, input.widthPx)
@@ -30,17 +32,17 @@ function paneSizing(input: {
     primaryWidthPx,
     primaryMinWidthPx: input.minWidthPx,
     primaryMaxWidthPx: input.maxWidthPx,
-    renderedWidthPx: primaryWidthPx + extraWidthPx,
-    renderedMinWidthPx: input.minWidthPx + extraWidthPx,
-    renderedMaxWidthPx: input.maxWidthPx + extraWidthPx,
-    extraWidthPx,
+    renderedPrimarySlotWidthPx: primaryWidthPx + fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotMinWidthPx: input.minWidthPx + fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotMaxWidthPx: input.maxWidthPx + fixedPrimaryChromeWidthPx,
+    fixedPrimaryChromeWidthPx,
     storedWidthCorrectionPx: null,
   };
 }
 
 describe("PaneShell", () => {
   it("delegates keyboard resize to the focused resize handle", () => {
-    const onResizePane = vi.fn();
+    const onResizePrimaryPane = vi.fn();
     render(
       <PaneShell
         paneId="pane-a"
@@ -48,7 +50,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={onResizePane}
+        onResizePrimaryPane={onResizePrimaryPane}
       >
         <div>Body content</div>
       </PaneShell>
@@ -64,10 +66,10 @@ describe("PaneShell", () => {
     fireEvent.keyDown(handle, { key: "Home" });
     fireEvent.keyDown(handle, { key: "End" });
 
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 576);
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 544);
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 1400);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 576);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 544);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 320);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 1400);
   });
 
   it("forwards pane Back and Forward controls", () => {
@@ -84,7 +86,7 @@ describe("PaneShell", () => {
         navigation={navigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
       >
         <div>Body content</div>
       </PaneShell>
@@ -98,7 +100,7 @@ describe("PaneShell", () => {
   });
 
   it("keyboard resize clamps to a raised runtime minimum", () => {
-    const onResizePane = vi.fn();
+    const onResizePrimaryPane = vi.fn();
     render(
       <PaneShell
         paneId="pane-a"
@@ -106,7 +108,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 500, minWidthPx: 684, maxWidthPx: 2400 })}
         bodyMode="document"
-        onResizePane={onResizePane}
+        onResizePrimaryPane={onResizePrimaryPane}
       >
         <div>Body content</div>
       </PaneShell>
@@ -120,11 +122,11 @@ describe("PaneShell", () => {
       key: "ArrowRight",
     });
 
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 700);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 700);
   });
 
   it("supports pointer drag resize on desktop", () => {
-    const onResizePane = vi.fn();
+    const onResizePrimaryPane = vi.fn();
     render(
       <PaneShell
         paneId="pane-a"
@@ -132,7 +134,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={onResizePane}
+        onResizePrimaryPane={onResizePrimaryPane}
       >
         <div>Body content</div>
       </PaneShell>
@@ -144,8 +146,8 @@ describe("PaneShell", () => {
     fireEvent.mouseMove(document, { clientX: 40 });
     fireEvent.mouseUp(document);
 
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 720);
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 720);
+    expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 320);
   });
 
   it("keeps Copy pane link first and renders pane options after separators", async () => {
@@ -157,7 +159,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         options={[
           { id: "chat", label: "Chat about this document", onSelect: () => {} },
           { id: "reader-settings", label: "Reader settings", href: "/settings/reader" },
@@ -199,7 +201,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
       >
         <div style={{ height: "1200px" }}>Tall body</div>
@@ -228,7 +230,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="contained"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
       >
         <ContainedModeProbe />
@@ -265,7 +267,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
       >
         <WiredDocumentBody>
@@ -321,7 +323,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
       >
         <LockVisibleProbe />
@@ -362,7 +364,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
       >
         <TwoLocksProbe />
@@ -422,7 +424,7 @@ describe("PaneShell", () => {
           navigation={disabledNavigation}
           sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
           bodyMode="document"
-          onResizePane={() => {}}
+          onResizePrimaryPane={() => {}}
           isMobile
         >
           <WiredDocumentBody>
@@ -461,7 +463,7 @@ describe("PaneShell", () => {
         actions={<button type="button">Default action</button>}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
       >
         <ChromeOverrideProbe shouldOverride />
       </PaneShell>
@@ -481,7 +483,7 @@ describe("PaneShell", () => {
         actions={<button type="button">Default action</button>}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
       >
         <div>Replacement body</div>
       </PaneShell>
@@ -505,7 +507,7 @@ describe("PaneShell", () => {
         actions={<button type="button">Default action</button>}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
       >
         <ChromeOverrideProbe shouldOverride />
       </PaneShell>
@@ -525,7 +527,7 @@ describe("PaneShell", () => {
         actions={<button type="button">Default action</button>}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
       >
         <ChromeOverrideProbe shouldOverride={false} />
       </PaneShell>
@@ -550,7 +552,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
-        onResizePane={() => {}}
+        onResizePrimaryPane={() => {}}
         isMobile
         mobileCommandPalettePaneCount={3}
       >
@@ -569,12 +571,14 @@ describe("PaneShell", () => {
     window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
   });
 
-  it("grows by the secondary rail width and shrinks back when the rail closes", () => {
+  it("composes visible sidecar width without changing primary resize values", async () => {
+    const onResizeSidecarPane = vi.fn();
     const props = {
       paneId: "pane-a",
       title: "Reader",
       bodyMode: "document" as const,
-      onResizePane: () => {},
+      onResizePrimaryPane: () => {},
+      onResizeSidecarPane,
       navigation: disabledNavigation,
     };
     const { rerender } = render(
@@ -582,14 +586,17 @@ describe("PaneShell", () => {
         {...props}
         sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
       >
-        <div>Body content</div>
+        <SidecarDescriptorProbe />
       </PaneShell>
     );
     const shell = screen.getByTestId("pane-shell-root");
     expect(shell).toHaveStyle({ width: "700px" });
     expect(shell).toHaveStyle({ minWidth: "684px" });
     expect(shell).toHaveStyle({ maxWidth: "2400px" });
-    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "700");
+    expect(screen.getByRole("separator", { name: "Resize pane Reader" })).toHaveAttribute(
+      "aria-valuenow",
+      "700",
+    );
 
     rerender(
       <PaneShell
@@ -598,28 +605,73 @@ describe("PaneShell", () => {
           widthPx: 700,
           minWidthPx: 684,
           maxWidthPx: 2400,
-          extraWidthPx: 360,
         })}
+        sidecar={{
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-doc-chat",
+          widthPx: 360,
+          visibility: "visible",
+        }}
+        sidecarSizing={{
+          widthPx: 360,
+          minWidthPx: 280,
+          maxWidthPx: 720,
+          storedWidthCorrectionPx: null,
+        }}
       >
-        <div>Body content</div>
+        <SidecarDescriptorProbe />
       </PaneShell>
     );
+    await screen.findByTestId("workspace-sidecar-pane");
     expect(shell).toHaveStyle({ width: "1060px" });
     expect(shell).toHaveStyle({ minWidth: "1044px" });
     expect(shell).toHaveStyle({ maxWidth: "2760px" });
-    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "700");
+    expect(screen.getByRole("separator", { name: "Resize pane Reader" })).toHaveAttribute(
+      "aria-valuenow",
+      "700",
+    );
 
     rerender(
       <PaneShell
         {...props}
         sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
+        sidecar={{
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-doc-chat",
+          widthPx: 360,
+          visibility: "collapsed",
+        }}
       >
-        <div>Body content</div>
+        <SidecarDescriptorProbe />
       </PaneShell>
     );
     expect(shell).toHaveStyle({ width: "700px" });
   });
 });
+
+function SidecarDescriptorProbe() {
+  usePaneSidecar({
+    groupId: "reader-tools",
+    defaultSurfaceId: "reader-highlights",
+    surfaces: [
+      {
+        id: "reader-highlights",
+        groupId: "reader-tools",
+        title: "Highlights",
+        icon: MessageSquare,
+        body: <div>Highlights sidecar</div>,
+      },
+      {
+        id: "reader-doc-chat",
+        groupId: "reader-tools",
+        title: "Document chat",
+        icon: MessageSquare,
+        body: <div>Document chat sidecar</div>,
+      },
+    ],
+  });
+  return <div>Body content</div>;
+}
 
 function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
   usePaneChromeOverride(

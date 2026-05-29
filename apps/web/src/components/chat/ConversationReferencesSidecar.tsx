@@ -2,9 +2,9 @@
 
 import { X } from "lucide-react";
 import type { ConversationReference } from "@/lib/conversations/types";
-import styles from "./ConversationReferencesRail.module.css";
+import styles from "./ConversationReferencesSidecar.module.css";
 
-export default function ConversationReferencesRail({
+export default function ConversationReferencesSidecar({
   references,
   removeReference,
   onOpenResource,
@@ -17,7 +17,7 @@ export default function ConversationReferencesRail({
     return <p className={styles.empty}>No references yet.</p>;
   }
   return (
-    <div className={styles.rail}>
+    <div className={styles.sidecar}>
       {references.map((reference) => (
         <div
           key={reference.id}

@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openMediaInSinglePaneWorkspace, openReaderSecondaryRail } from "./reader";
+import { openMediaInSinglePaneWorkspace, openReaderSidecar } from "./reader";
 
 interface NonPdfSeed {
   media_id: string;
@@ -19,15 +19,13 @@ test.describe("reader pane tabs (references cutover)", () => {
     const seed = readNonPdfSeed();
     await openMediaInSinglePaneWorkspace(page, seed.media_id);
 
-    const rail = await openReaderSecondaryRail(page);
-    const tablist = rail.getByRole("tablist", { name: "Reader tools" });
+    const sidecar = await openReaderSidecar(page);
+    const tablist = sidecar.getByRole("tablist", { name: "Sidecar surfaces" });
     const tabs = tablist.getByRole("tab");
 
     await expect(tabs).toHaveCount(2);
-    await expect(tabs.nth(0)).toHaveAccessibleName(
-      "Highlights for this document",
-    );
-    await expect(tabs.nth(1)).toHaveAccessibleName("Chat about this document");
+    await expect(tabs.nth(0)).toHaveAccessibleName("Highlights");
+    await expect(tabs.nth(1)).toHaveAccessibleName("Document chat");
 
     for (let index = 0; index < 2; index += 1) {
       const text = (await tabs.nth(index).innerText()).trim();
@@ -38,7 +36,7 @@ test.describe("reader pane tabs (references cutover)", () => {
     await tabs.nth(1).click();
     await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
     await expect(
-      rail.getByRole("button", {
+      sidecar.getByRole("button", {
         name: /Start new chat about this document|\+ New chat/i,
       }),
     ).toBeVisible({ timeout: 10_000 });

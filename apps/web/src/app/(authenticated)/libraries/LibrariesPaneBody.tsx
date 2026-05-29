@@ -107,25 +107,16 @@ export default function LibrariesPaneBody() {
     }
   };
 
-  const handleOpenLibraryChat = useCallback(async (library: Library) => {
-    try {
-      const response = await apiFetch<{ data: { id: string } }>(
-        "/api/conversations",
-        {
-          method: "POST",
-          body: JSON.stringify({ initial_references: [`library:${library.id}`] }),
-        }
+  const handleOpenLibraryChat = useCallback(
+    (library: Library) => {
+      paneRuntime?.openInNewPane(
+        `/libraries/${library.id}`,
+        library.name,
+        "library-chat",
       );
-      const route = `/conversations/${response.data.id}`;
-      paneRuntime?.openInNewPane(route, library.name);
-    } catch (err) {
-      setError(
-        toFeedback(err, {
-          fallback: "Failed to open library chat",
-        })
-      );
-    }
-  }, [paneRuntime]);
+    },
+    [paneRuntime],
+  );
 
   /* ---- Edit dialog handlers ---- */
 
@@ -321,10 +312,13 @@ export default function LibrariesPaneBody() {
                   }
                   options={libraryResourceOptions({
                     library,
-                    onOpenChat: () => void handleOpenLibraryChat(library),
+                    onOpenChat: () => handleOpenLibraryChat(library),
                     onViewIntelligence: () => {
-                      const route = `/libraries/${library.id}?view=intelligence`;
-                      paneRuntime?.openInNewPane(route, library.name);
+                      paneRuntime?.openInNewPane(
+                        `/libraries/${library.id}`,
+                        library.name,
+                        "library-intelligence",
+                      );
                     },
                     onEdit: () => void openEditDialog(library),
                     onDelete: () => void handleDeleteLibrary(library),

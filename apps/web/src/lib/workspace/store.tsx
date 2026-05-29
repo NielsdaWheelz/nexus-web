@@ -54,6 +54,13 @@ import {
   type PaneChromeDescriptor,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
+import { paneRouteAllowsSidecarGroup } from "@/lib/panes/paneRouteModel";
+import {
+  getSidecarGroupForSurface,
+  getSidecarWidthPolicy,
+  resolveEffectiveSidecarSizing,
+  type WorkspaceSidecarSurfaceId,
+} from "@/lib/workspace/sidecarSizing";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 
 type HistoryMode = "replace" | "push";
@@ -64,7 +71,7 @@ type WorkspaceAction =
   | { type: "activate_pane"; paneId: string }
   | {
       type: "open_pane";
-      panes: WorkspacePaneState[];
+      pane: WorkspacePaneState;
       afterPaneId: string | null;
       activate: boolean;
       mode: PaneNavigationMode;
@@ -79,7 +86,15 @@ type WorkspaceAction =
   | { type: "go_back_pane"; paneId: string }
   | { type: "go_forward_pane"; paneId: string }
   | { type: "close_pane"; paneId: string }
-  | { type: "resize_pane"; paneId: string; widthPx: number }
+  | { type: "resize_primary_pane"; paneId: string; widthPx: number }
+  | { type: "open_sidecar"; paneId: string; surfaceId: WorkspaceSidecarSurfaceId }
+  | { type: "close_sidecar"; paneId: string }
+  | {
+      type: "set_active_sidecar_surface";
+      paneId: string;
+      surfaceId: WorkspaceSidecarSurfaceId;
+    }
+  | { type: "resize_sidecar"; paneId: string; widthPx: number }
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
 
@@ -127,14 +142,22 @@ function applyPaneHrefTransition(
   if (pane.href === href) {
     return pane;
   }
+  const preserveResource = hasSamePaneResource(pane.href, href);
+  const sidecar =
+    preserveResource &&
+    pane.sidecar &&
+    paneRouteAllowsSidecarGroup(href, pane.sidecar.groupId)
+      ? pane.sidecar
+      : null;
   return {
     ...pane,
     href,
-    widthPx: resolvePaneTransitionWidth(
-      pane.widthPx,
-      hasSamePaneResource(pane.href, href),
+    primaryWidthPx: resolvePaneTransitionWidth(
+      pane.primaryWidthPx,
+      preserveResource,
       workspacePrimaryMetrics,
     ),
+    sidecar,
     history:
       mode === "push"
         ? { back: [...pane.history.back, pane.href], forward: [] }
@@ -150,7 +173,8 @@ function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
   return (
     pane?.visibility === "visible" &&
     state.activePaneId === pane.id &&
-    pane.href === WORKSPACE_DEFAULT_FALLBACK_HREF
+    pane.href === WORKSPACE_DEFAULT_FALLBACK_HREF &&
+    pane.sidecar === null
   );
 }
 
@@ -174,22 +198,26 @@ export function mergeRestoredWorkspaceWithUrlIntent(
     hasSamePaneResource(pane.href, requestedPane.href)
   );
   if (existingPane) {
+    const panes = restored.panes.map((pane) => {
+      if (pane.id !== existingPane.id) {
+        return pane;
+      }
+      const transitioned = applyPaneHrefTransition(
+        pane,
+        requestedPane.href,
+        "replace",
+        workspacePrimaryMetrics,
+      );
+      return {
+        ...transitioned,
+        sidecar: requestedPane.sidecar ?? transitioned.sidecar,
+        visibility: "visible" as const,
+      };
+    });
     return trimAndEnsureActivePaneId({
       ...restored,
       activePaneId: existingPane.id,
-      panes: restored.panes.map((pane) =>
-        pane.id === existingPane.id
-          ? {
-              ...applyPaneHrefTransition(
-                pane,
-                requestedPane.href,
-                "replace",
-                workspacePrimaryMetrics,
-              ),
-              visibility: "visible" as const,
-            }
-          : pane
-      ),
+      panes,
     }, workspacePrimaryMetrics);
   }
 
@@ -235,50 +263,56 @@ function workspaceReducer(
     case "open_pane": {
       let panes = state.panes;
       let activePaneId = state.activePaneId;
+      const paneToOpen = {
+        ...action.pane,
+        primaryWidthPx: clampPaneWidth(
+          action.pane.primaryWidthPx,
+          workspacePrimaryMetrics,
+        ),
+        visibility: "visible" as const,
+      };
+      const existingPane = panes.find((item) =>
+        hasSamePaneResource(item.href, paneToOpen.href)
+      );
 
-      for (const pane of action.panes) {
-        const paneToOpen = {
-          ...pane,
-          widthPx: clampPaneWidth(pane.widthPx, workspacePrimaryMetrics),
-          visibility: "visible" as const,
-        };
-        const existingPane = panes.find((item) =>
-          hasSamePaneResource(item.href, paneToOpen.href)
-        );
-
-        if (existingPane) {
-          panes = panes.map((item) =>
-            item.id === existingPane.id
-              ? {
-                  ...applyPaneHrefTransition(
-                    item,
-                    paneToOpen.href,
-                    action.mode,
-                    workspacePrimaryMetrics,
-                  ),
-                  visibility: "visible" as const,
-                }
-              : item
-          );
-          if (action.activate) {
-            activePaneId = existingPane.id;
+      if (existingPane) {
+        panes = panes.map((item) => {
+          if (item.id !== existingPane.id) {
+            return item;
           }
-          continue;
-        }
-
-        if (panes.length + 1 > MAX_PANES) {
-          const keep = MAX_PANES - 1;
-          panes = panes.filter((p) => p.id === activePaneId).concat(
-            panes.filter((p) => p.id !== activePaneId).slice(-(keep - 1))
+          const transitioned = applyPaneHrefTransition(
+            item,
+            paneToOpen.href,
+            action.mode,
+            workspacePrimaryMetrics,
           );
-        }
-        const insertIdx = action.afterPaneId
-          ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
-          : panes.length;
-        panes = [...panes.slice(0, insertIdx), paneToOpen, ...panes.slice(insertIdx)];
+          return {
+            ...transitioned,
+            sidecar: paneToOpen.sidecar ?? transitioned.sidecar,
+            visibility: "visible" as const,
+          };
+        });
         if (action.activate) {
-          activePaneId = paneToOpen.id;
+          activePaneId = existingPane.id;
         }
+        return trimAndEnsureActivePaneId(
+          { ...state, panes, activePaneId },
+          workspacePrimaryMetrics,
+        );
+      }
+
+      if (panes.length + 1 > MAX_PANES) {
+        const keep = MAX_PANES - 1;
+        panes = panes.filter((p) => p.id === activePaneId).concat(
+          panes.filter((p) => p.id !== activePaneId).slice(-(keep - 1))
+        );
+      }
+      const insertIdx = action.afterPaneId
+        ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
+        : panes.length;
+      panes = [...panes.slice(0, insertIdx), paneToOpen, ...panes.slice(insertIdx)];
+      if (action.activate) {
+        activePaneId = paneToOpen.id;
       }
 
       return trimAndEnsureActivePaneId(
@@ -323,11 +357,17 @@ function workspaceReducer(
           ? {
               ...p,
               href,
-              widthPx: resolvePaneTransitionWidth(
-                p.widthPx,
+              primaryWidthPx: resolvePaneTransitionWidth(
+                p.primaryWidthPx,
                 hasSamePaneResource(p.href, href),
                 workspacePrimaryMetrics,
               ),
+              sidecar:
+                hasSamePaneResource(p.href, href) &&
+                p.sidecar &&
+                paneRouteAllowsSidecarGroup(href, p.sidecar.groupId)
+                  ? p.sidecar
+                  : null,
               visibility: "visible" as const,
               history: {
                 back: p.history.back.slice(0, -1),
@@ -354,11 +394,17 @@ function workspaceReducer(
           ? {
               ...p,
               href,
-              widthPx: resolvePaneTransitionWidth(
-                p.widthPx,
+              primaryWidthPx: resolvePaneTransitionWidth(
+                p.primaryWidthPx,
                 hasSamePaneResource(p.href, href),
                 workspacePrimaryMetrics,
               ),
+              sidecar:
+                hasSamePaneResource(p.href, href) &&
+                p.sidecar &&
+                paneRouteAllowsSidecarGroup(href, p.sidecar.groupId)
+                  ? p.sidecar
+                  : null,
               visibility: "visible" as const,
               history: {
                 back: [...p.history.back, p.href],
@@ -417,11 +463,95 @@ function workspaceReducer(
       );
     }
 
-    case "resize_pane": {
+    case "resize_primary_pane": {
       const panes = state.panes.map((p) =>
         p.id === action.paneId
-          ? { ...p, widthPx: clampPaneWidth(action.widthPx, workspacePrimaryMetrics) }
+          ? {
+              ...p,
+              primaryWidthPx: clampPaneWidth(action.widthPx, workspacePrimaryMetrics),
+            }
           : p
+      );
+      return { ...state, panes };
+    }
+
+    case "open_sidecar": {
+      const panes = state.panes.map((pane) => {
+        if (pane.id !== action.paneId) {
+          return pane;
+        }
+        const groupId = getSidecarGroupForSurface(action.surfaceId);
+        if (!paneRouteAllowsSidecarGroup(pane.href, groupId)) {
+          return pane;
+        }
+        const policy = getSidecarWidthPolicy(groupId);
+        const widthPx =
+          pane.sidecar?.groupId === groupId
+            ? resolveEffectiveSidecarSizing({
+                storedWidthPx: pane.sidecar.widthPx,
+                policy,
+              }).widthPx
+            : resolveEffectiveSidecarSizing({
+                storedWidthPx: Number.NaN,
+                policy,
+              }).widthPx;
+        return {
+          ...pane,
+          sidecar: {
+            groupId,
+            activeSurfaceId: action.surfaceId,
+            widthPx,
+            visibility: "visible" as const,
+          },
+        };
+      });
+      return { ...state, panes };
+    }
+
+    case "close_sidecar": {
+      const panes = state.panes.map((pane) =>
+        pane.id === action.paneId && pane.sidecar
+          ? { ...pane, sidecar: { ...pane.sidecar, visibility: "collapsed" as const } }
+          : pane
+      );
+      return { ...state, panes };
+    }
+
+    case "set_active_sidecar_surface": {
+      const panes = state.panes.map((pane) => {
+        if (pane.id !== action.paneId || !pane.sidecar) {
+          return pane;
+        }
+        const groupId = getSidecarGroupForSurface(action.surfaceId);
+        if (groupId !== pane.sidecar.groupId) {
+          return pane;
+        }
+        return {
+          ...pane,
+          sidecar: {
+            ...pane.sidecar,
+            activeSurfaceId: action.surfaceId,
+            visibility: "visible" as const,
+          },
+        };
+      });
+      return { ...state, panes };
+    }
+
+    case "resize_sidecar": {
+      const panes = state.panes.map((pane) =>
+        pane.id === action.paneId && pane.sidecar
+          ? {
+              ...pane,
+              sidecar: {
+                ...pane.sidecar,
+                widthPx: resolveEffectiveSidecarSizing({
+                  storedWidthPx: action.widthPx,
+                  policy: getSidecarWidthPolicy(pane.sidecar.groupId),
+                }).widthPx,
+              },
+            }
+          : pane
       );
       return { ...state, panes };
     }
@@ -481,20 +611,35 @@ function workspaceReducer(
 // Build pane for an open action
 // ---------------------------------------------------------------------------
 
-function buildPanesForOpen(
+function buildPaneForOpen(
   href: string,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-): WorkspacePaneState[] {
+  sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
+): WorkspacePaneState {
   const mainId = createPaneId();
-  return [
-    {
-      id: mainId,
-      href,
-      widthPx: getDefaultPaneWidthPx(workspacePrimaryMetrics),
-      visibility: "visible",
-      history: createEmptyPaneHistory(),
-    },
-  ];
+  const groupId = sidecarSurfaceId
+    ? getSidecarGroupForSurface(sidecarSurfaceId)
+    : null;
+  const policy = groupId ? getSidecarWidthPolicy(groupId) : null;
+  return {
+    id: mainId,
+    href,
+    primaryWidthPx: getDefaultPaneWidthPx(workspacePrimaryMetrics),
+    sidecar:
+      sidecarSurfaceId && groupId && policy && paneRouteAllowsSidecarGroup(href, groupId)
+        ? {
+            groupId,
+            activeSurfaceId: sidecarSurfaceId,
+            widthPx: resolveEffectiveSidecarSizing({
+              storedWidthPx: Number.NaN,
+              policy,
+            }).widthPx,
+            visibility: "visible",
+          }
+        : null,
+    visibility: "visible",
+    history: createEmptyPaneHistory(),
+  };
 }
 
 function findPaneIdForOpen(
@@ -596,6 +741,7 @@ interface WorkspaceStoreValue {
     activate?: boolean;
     replace?: boolean;
     titleHint?: string;
+    sidecarSurfaceId?: WorkspaceSidecarSurfaceId;
   }) => void;
   navigatePane: (
     paneId: string,
@@ -605,7 +751,14 @@ interface WorkspaceStoreValue {
   goBackPane: (paneId: string) => void;
   goForwardPane: (paneId: string) => void;
   closePane: (paneId: string) => void;
-  resizePane: (paneId: string, widthPx: number) => void;
+  resizePrimaryPane: (paneId: string, widthPx: number) => void;
+  openSidecar: (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => void;
+  closeSidecar: (paneId: string) => void;
+  setActiveSidecarSurface: (
+    paneId: string,
+    surfaceId: WorkspaceSidecarSurfaceId,
+  ) => void;
+  resizeSidecarPane: (paneId: string, widthPx: number) => void;
   minimizePane: (paneId: string) => void;
   restorePane: (paneId: string) => void;
   publishPaneTitle: (input: {
@@ -771,13 +924,13 @@ export function WorkspaceStoreProvider({
     const handleOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
       const href = normalizeWorkspaceHref(detail.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href, workspacePrimaryMetrics);
-      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, panes[0]!);
+      const pane = buildPaneForOpen(href, workspacePrimaryMetrics);
+      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, pane);
       publishPaneTitleHint(targetPaneId, href, detail.titleHint);
       dispatchAndSync(
         {
           type: "open_pane",
-          panes,
+          pane,
           afterPaneId: null,
           activate: true,
           mode: "push",
@@ -931,17 +1084,22 @@ export function WorkspaceStoreProvider({
       activate?: boolean;
       replace?: boolean;
       titleHint?: string;
+      sidecarSurfaceId?: WorkspaceSidecarSurfaceId;
     }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href, workspacePrimaryMetrics);
-      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, panes[0]!);
+      const pane = buildPaneForOpen(
+        href,
+        workspacePrimaryMetrics,
+        input.sidecarSurfaceId,
+      );
+      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, pane);
       publishPaneTitleHint(targetPaneId, href, input.titleHint);
       const mode = input.replace ? "replace" : "push";
       dispatchAndSync(
         {
           type: "open_pane",
-          panes,
+          pane,
           afterPaneId: input.openerPaneId ?? null,
           activate: input.activate ?? true,
           mode,
@@ -990,9 +1148,36 @@ export function WorkspaceStoreProvider({
     [dispatchAndSync]
   );
 
-  const resizePane = useCallback(
+  const resizePrimaryPane = useCallback(
     (paneId: string, widthPx: number) =>
-      dispatchAndSync({ type: "resize_pane", paneId, widthPx }, "replace"),
+      dispatchAndSync({ type: "resize_primary_pane", paneId, widthPx }, "replace"),
+    [dispatchAndSync]
+  );
+
+  const openSidecar = useCallback(
+    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) =>
+      dispatchAndSync({ type: "open_sidecar", paneId, surfaceId }, "replace"),
+    [dispatchAndSync]
+  );
+
+  const closeSidecar = useCallback(
+    (paneId: string) =>
+      dispatchAndSync({ type: "close_sidecar", paneId }, "replace"),
+    [dispatchAndSync]
+  );
+
+  const setActiveSidecarSurface = useCallback(
+    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) =>
+      dispatchAndSync(
+        { type: "set_active_sidecar_surface", paneId, surfaceId },
+        "replace",
+      ),
+    [dispatchAndSync]
+  );
+
+  const resizeSidecarPane = useCallback(
+    (paneId: string, widthPx: number) =>
+      dispatchAndSync({ type: "resize_sidecar", paneId, widthPx }, "replace"),
     [dispatchAndSync]
   );
 
@@ -1046,7 +1231,11 @@ export function WorkspaceStoreProvider({
       goBackPane,
       goForwardPane,
       closePane,
-      resizePane,
+      resizePrimaryPane,
+      openSidecar,
+      closeSidecar,
+      setActiveSidecarSurface,
+      resizeSidecarPane,
       minimizePane,
       restorePane,
       publishPaneTitle,
@@ -1061,7 +1250,11 @@ export function WorkspaceStoreProvider({
       goBackPane,
       goForwardPane,
       closePane,
-      resizePane,
+      resizePrimaryPane,
+      openSidecar,
+      closeSidecar,
+      setActiveSidecarSurface,
+      resizeSidecarPane,
       minimizePane,
       restorePane,
       publishPaneTitle,

@@ -3,10 +3,6 @@ import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import {
-  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/railSizing";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import ConversationNewPaneBody from "./ConversationNewPaneBody";
 
@@ -122,10 +118,10 @@ describe("ConversationNewPaneBody", () => {
         routeId="conversation-new"
         resourceRef={null}
         resourceKey={resolvePaneRouteIdentity(href).resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
         onOpenInNewPane={vi.fn()}
@@ -168,79 +164,4 @@ describe("ConversationNewPaneBody", () => {
     );
   });
 
-  it("publishes chat context rail width as pane sizing", async () => {
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      value: 1200,
-      writable: true,
-    });
-    const user = userEvent.setup();
-    const onSetPaneSizing = vi.fn();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const path = pathOf(input);
-        if (path === "/api/models") {
-          return jsonResponse(MODELS_RESPONSE);
-        }
-        throw new Error(`Unexpected fetch call: ${path}`);
-      }),
-    );
-
-    const href = "/conversations/new";
-    const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
-    const { unmount } = render(
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href={href}
-        routeId="conversation-new"
-        resourceRef={null}
-        resourceKey={resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneTitle={vi.fn()}
-        onSetPaneSizing={onSetPaneSizing}
-      >
-        <ConversationNewPaneBody />
-      </PaneRuntimeProvider>,
-    );
-
-    expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
-    ).toBeInTheDocument();
-    await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        sizing: {
-          primaryWidth: { kind: "workspace" },
-          extraWidthPx: CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-        },
-      });
-    });
-
-    await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
-    await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        sizing: {
-          primaryWidth: { kind: "workspace" },
-          extraWidthPx: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-        },
-      });
-    });
-
-    unmount();
-    expect(onSetPaneSizing).toHaveBeenLastCalledWith({
-      paneId: "pane-1",
-      resourceKey,
-      sizing: { primaryWidth: { kind: "workspace" }, extraWidthPx: 0 },
-    });
-  });
 });

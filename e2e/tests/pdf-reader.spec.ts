@@ -5,7 +5,7 @@ import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
   openHighlightsPane,
-  readerSecondaryRailForActivePane,
+  readerSidecarForActivePane,
 } from "./reader";
 import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
 
@@ -127,12 +127,12 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const rail = readerSecondaryRailForActivePane(page);
-  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  const sidecar = readerSidecarForActivePane(page);
+  await expect(sidecar).toBeVisible({ timeout: 10_000 });
   await expect(
-    rail.getByRole("tab", { name: "Chat about this document" }),
+    sidecar.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(rail.getByLabel("Conversation context")).toContainText(exact);
+  await expect(sidecar.getByLabel("Conversation context")).toContainText(exact);
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {

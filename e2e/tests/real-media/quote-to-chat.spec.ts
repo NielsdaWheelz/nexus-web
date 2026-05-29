@@ -69,16 +69,14 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
   ).toBeVisible({ timeout: 5_000 });
   await actions.getByRole("button", { name: "Add to document chat" }).click();
 
-  const rail = page.getByTestId("reader-secondary-rail");
-  await expect(rail).toHaveAttribute("data-expanded", "true", {
-    timeout: 10_000,
-  });
+  const sidecar = page.getByTestId("workspace-sidecar-pane");
+  await expect(sidecar).toBeVisible({ timeout: 10_000 });
   await expect(
-    rail.getByRole("tab", { name: "Chat about this document" }),
+    sidecar.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  const contextRail = rail.getByLabel("Conversation context");
-  await expect(contextRail).toBeVisible({ timeout: 10_000 });
-  await expect(contextRail).toContainText(selectedText);
+  const contextSidecar = sidecar.getByLabel("Conversation context");
+  await expect(contextSidecar).toBeVisible({ timeout: 10_000 });
+  await expect(contextSidecar).toContainText(selectedText);
   // justify-polling: the UI opens reader doc-chat state asynchronously after
   // command dispatch; Playwright has no event hook for that pane count. The
   // cadence is 250ms for up to 10s to catch accidental chat-pane creation.

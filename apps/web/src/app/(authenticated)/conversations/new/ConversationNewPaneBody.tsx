@@ -11,22 +11,15 @@
 
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { PanelRightOpen } from "lucide-react";
+import { Link2 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
-import {
-  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/railSizing";
-import Button from "@/components/ui/Button";
+import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -41,6 +34,8 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import type {
   ChatRunResponse,
   ConversationReference,
@@ -76,7 +71,6 @@ export default function ConversationNewPaneBody() {
     return null;
   }, [messages]);
   useSetPaneTitle("New chat");
-  const [referencesRailExpanded, setReferencesRailExpanded] = useState(true);
   const {
     references,
     removeReference,
@@ -128,21 +122,41 @@ export default function ConversationNewPaneBody() {
     scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
   }, [messages]);
 
-  useEffect(() => {
-    if (!paneRuntime) return;
-    paneRuntime.setPaneSizing({
-      primaryWidth: { kind: "workspace" },
-      extraWidthPx: referencesRailExpanded
-        ? CONVERSATION_REFERENCES_RAIL_WIDTH_PX
-        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-    });
-    return () => {
-      paneRuntime.setPaneSizing({
-        primaryWidth: { kind: "workspace" },
-        extraWidthPx: 0,
-      });
-    };
-  }, [paneRuntime, referencesRailExpanded]);
+  const paneOptions = useMemo(
+    () => [
+      {
+        id: "open-references",
+        label: "References",
+        onSelect: () => paneRuntime?.openSidecar("conversation-references"),
+      },
+    ],
+    [paneRuntime],
+  );
+  usePaneChromeOverride({ options: paneOptions });
+  const sidecarDescriptor = useMemo(
+    () => ({
+      groupId: "conversation-context" as const,
+      defaultSurfaceId: "conversation-references" as const,
+      surfaces: [
+        {
+          id: "conversation-references" as const,
+          groupId: "conversation-context" as const,
+          title: "References",
+          icon: Link2,
+          body: (
+            <div className={styles.chatSidecarBody}>
+              <ConversationReferencesSidecar
+                references={references}
+                removeReference={removeReference}
+              />
+            </div>
+          ),
+        },
+      ],
+    }),
+    [references, removeReference],
+  );
+  usePaneSidecar(sidecarDescriptor);
 
   const handleSendStarted = useCallback(() => {
     setResolveError(null);
@@ -217,30 +231,6 @@ export default function ConversationNewPaneBody() {
         </div>
       </div>
 
-      <SecondaryRail
-        ariaLabel="References"
-        expanded={referencesRailExpanded}
-        onExpandedChange={setReferencesRailExpanded}
-        expandedWidthPx={CONVERSATION_REFERENCES_RAIL_WIDTH_PX}
-        bodyClassName={styles.chatSecondaryRailBody}
-        collapsed={
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            className={styles.chatSecondaryRailCollapsedButton}
-            aria-label="Expand references"
-            onClick={() => setReferencesRailExpanded(true)}
-          >
-            <PanelRightOpen size={15} aria-hidden="true" />
-          </Button>
-        }
-      >
-        <ConversationReferencesRail
-          references={references}
-          removeReference={removeReference}
-        />
-      </SecondaryRail>
     </div>
   );
 }

@@ -18,9 +18,19 @@ import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
+import {
+  PaneSidecarContext,
+  type PaneSidecarDescriptor,
+} from "@/components/workspace/PaneSidecar";
+import SidecarPaneShell from "@/components/workspace/SidecarPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import type {
+  WorkspaceSidecarSizing,
+  WorkspaceSidecarState,
+  WorkspaceSidecarSurfaceId,
+} from "@/lib/workspace/sidecarSizing";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +97,10 @@ const MOBILE_CHROME_SCROLL_DELTA_EPSILON_PX = 1;
 const MOBILE_CHROME_HIDE_TOLERANCE_PX = 24;
 const MOBILE_CHROME_REVEAL_TOLERANCE_PX = 16;
 
+const noopResizeSidecarPane = () => {};
+const noopCloseSidecar = () => {};
+const noopSetActiveSidecarSurface = () => {};
+
 /**
  * Call from a body component rendered inside PaneShell to push toolbar,
  * options, meta, or actions into the pane chrome. Uses useLayoutEffect so the
@@ -125,7 +139,15 @@ interface PaneShellProps {
   navigation: SurfaceHeaderNavigation;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
-  onResizePane: (paneId: string, widthPx: number) => void;
+  sidecar?: WorkspaceSidecarState | null;
+  sidecarSizing?: WorkspaceSidecarSizing | null;
+  onResizePrimaryPane: (paneId: string, widthPx: number) => void;
+  onResizeSidecarPane?: (paneId: string, widthPx: number) => void;
+  onCloseSidecar?: (paneId: string) => void;
+  onSetActiveSidecarSurface?: (
+    paneId: string,
+    surfaceId: WorkspaceSidecarSurfaceId,
+  ) => void;
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
@@ -145,7 +167,12 @@ export default function PaneShell({
   navigation,
   sizing,
   bodyMode,
-  onResizePane,
+  sidecar = null,
+  sidecarSizing = null,
+  onResizePrimaryPane,
+  onResizeSidecarPane = noopResizeSidecarPane,
+  onCloseSidecar = noopCloseSidecar,
+  onSetActiveSidecarSurface = noopSetActiveSidecarSurface,
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
@@ -153,11 +180,11 @@ export default function PaneShell({
   children,
 }: PaneShellProps) {
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
-    paneId,
-    primaryWidthPx: sizing.primaryWidthPx,
-    primaryMinWidthPx: sizing.primaryMinWidthPx,
-    primaryMaxWidthPx: sizing.primaryMaxWidthPx,
-    onResizePane,
+    id: paneId,
+    widthPx: sizing.primaryWidthPx,
+    minWidthPx: sizing.primaryMinWidthPx,
+    maxWidthPx: sizing.primaryMaxWidthPx,
+    onResize: onResizePrimaryPane,
   });
   const chromeRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
@@ -175,6 +202,8 @@ export default function PaneShell({
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
   );
+  const [sidecarDescriptor, setSidecarDescriptor] =
+    useState<PaneSidecarDescriptor | null>(null);
 
   const isMobileDocumentPane = isMobile && bodyMode === "document";
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
@@ -385,12 +414,20 @@ export default function PaneShell({
     : styles.paneShell;
 
   const bodyId = `${paneId}-body`;
+  const visibleSidecar =
+    !isMobile &&
+    sidecar?.visibility === "visible" &&
+    sidecarSizing &&
+    sidecarDescriptor?.groupId === sidecar.groupId
+      ? { state: sidecar, sizing: sidecarSizing, descriptor: sidecarDescriptor }
+      : null;
+  const visibleSidecarWidthPx = visibleSidecar?.sizing.widthPx ?? 0;
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
     : {
-        width: `${sizing.renderedWidthPx}px`,
-        minWidth: `${sizing.renderedMinWidthPx}px`,
-        maxWidth: `${sizing.renderedMaxWidthPx}px`,
+        width: `${sizing.renderedPrimarySlotWidthPx + visibleSidecarWidthPx}px`,
+        minWidth: `${sizing.renderedPrimarySlotMinWidthPx + visibleSidecarWidthPx}px`,
+        maxWidth: `${sizing.renderedPrimarySlotMaxWidthPx + visibleSidecarWidthPx}px`,
       };
   if (isMobile && mobileChromeHeight > 0) {
     shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
@@ -445,87 +482,115 @@ export default function PaneShell({
       style={shellStyle}
     >
       <div
-        ref={chromeRef}
-        className={styles.chrome}
-        data-testid="pane-shell-chrome"
-        data-pane-chrome-focus="true"
-        tabIndex={-1}
-        onMouseDown={onChromeMouseDown}
+        className={styles.primaryPane}
+        style={{
+          width: isMobile ? "100%" : `${sizing.renderedPrimarySlotWidthPx}px`,
+          minWidth: isMobile
+            ? "100%"
+            : `${sizing.renderedPrimarySlotMinWidthPx}px`,
+          maxWidth: isMobile
+            ? "100%"
+            : `${sizing.renderedPrimarySlotMaxWidthPx}px`,
+        }}
       >
-        <SurfaceHeader
-          title={title}
-          titlePending={titlePending}
-          subtitle={subtitle}
-          meta={chromeOverrides.meta}
-          options={paneMenuOptions}
-          actions={
-            isMobile ? (
-              <>
-                {effectiveActions}
-                <Button
-                  variant="secondary"
-                  size="md"
-                  iconOnly
-                  className={styles.mobileCommandPaletteButton}
-                  onClick={() =>
-                    window.dispatchEvent(
-                      new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
-                    )
-                  }
-                  aria-label={mobileCommandPaletteLabel}
-                  aria-haspopup="dialog"
-                >
-                  <span className={styles.mobileCommandPaletteIcon}>
-                    <Command size={16} aria-hidden="true" />
-                    {showMobileCommandPalettePaneCount ? (
-                      <span
-                        className={styles.mobileCommandPaletteBadge}
-                        aria-hidden="true"
-                      >
-                        {mobileCommandPalettePaneCount}
-                      </span>
-                    ) : null}
-                  </span>
-                </Button>
-              </>
-            ) : (
-              effectiveActions
-            )
-          }
-          navigation={navigation}
-          onOptionsOpenChange={handleOptionsOpenChange}
+        <div
+          ref={chromeRef}
+          className={styles.chrome}
+          data-testid="pane-shell-chrome"
+          data-pane-chrome-focus="true"
+          tabIndex={-1}
+          onMouseDown={onChromeMouseDown}
+        >
+          <SurfaceHeader
+            title={title}
+            titlePending={titlePending}
+            subtitle={subtitle}
+            meta={chromeOverrides.meta}
+            options={paneMenuOptions}
+            actions={
+              isMobile ? (
+                <>
+                  {effectiveActions}
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    iconOnly
+                    className={styles.mobileCommandPaletteButton}
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
+                      )
+                    }
+                    aria-label={mobileCommandPaletteLabel}
+                    aria-haspopup="dialog"
+                  >
+                    <span className={styles.mobileCommandPaletteIcon}>
+                      <Command size={16} aria-hidden="true" />
+                      {showMobileCommandPalettePaneCount ? (
+                        <span
+                          className={styles.mobileCommandPaletteBadge}
+                          aria-hidden="true"
+                        >
+                          {mobileCommandPalettePaneCount}
+                        </span>
+                      ) : null}
+                    </span>
+                  </Button>
+                </>
+              ) : (
+                effectiveActions
+              )
+            }
+            navigation={navigation}
+            onOptionsOpenChange={handleOptionsOpenChange}
+          />
+          {effectiveToolbar ? (
+            <div className={styles.toolbar}>{effectiveToolbar}</div>
+          ) : null}
+        </div>
+        <div
+          className={styles.body}
+          id={bodyId}
+          data-testid="pane-shell-body"
+          data-body-mode={bodyMode}
+          data-pane-content="true"
+          style={bodyStyle}
+        >
+          <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
+            <PaneSidecarContext.Provider value={setSidecarDescriptor}>
+              <PaneMobileChromeControllerContext.Provider
+                value={bodyMode === "document" ? mobileChromeController : null}
+              >
+                {children}
+              </PaneMobileChromeControllerContext.Provider>
+            </PaneSidecarContext.Provider>
+          </PaneChromeOverrideContext.Provider>
+        </div>
+        <div
+          className={styles.resizeHandle}
+          role="separator"
+          aria-label={`Resize pane ${title}`}
+          aria-controls={bodyId}
+          aria-orientation="vertical"
+          aria-valuemin={sizing.primaryMinWidthPx}
+          aria-valuemax={sizing.primaryMaxWidthPx}
+          aria-valuenow={sizing.primaryWidthPx}
+          tabIndex={0}
+          onMouseDown={handleResizeMouseDown}
+          onKeyDown={handleResizeKeyDown}
         />
-        {effectiveToolbar ? <div className={styles.toolbar}>{effectiveToolbar}</div> : null}
       </div>
-      <div
-        className={styles.body}
-        id={bodyId}
-        data-testid="pane-shell-body"
-        data-body-mode={bodyMode}
-        data-pane-content="true"
-        style={bodyStyle}
-      >
-        <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-          <PaneMobileChromeControllerContext.Provider
-            value={bodyMode === "document" ? mobileChromeController : null}
-          >
-            {children}
-          </PaneMobileChromeControllerContext.Provider>
-        </PaneChromeOverrideContext.Provider>
-      </div>
-      <div
-        className={styles.resizeHandle}
-        role="separator"
-        aria-label={`Resize pane ${title}`}
-        aria-controls={bodyId}
-        aria-orientation="vertical"
-        aria-valuemin={sizing.primaryMinWidthPx}
-        aria-valuemax={sizing.primaryMaxWidthPx}
-        aria-valuenow={sizing.primaryWidthPx}
-        tabIndex={0}
-        onMouseDown={handleResizeMouseDown}
-        onKeyDown={handleResizeKeyDown}
-      />
+      {visibleSidecar ? (
+        <SidecarPaneShell
+          paneId={paneId}
+          descriptor={visibleSidecar.descriptor}
+          state={visibleSidecar.state}
+          sizing={visibleSidecar.sizing}
+          onActiveSurfaceChange={onSetActiveSidecarSurface}
+          onClose={onCloseSidecar}
+          onResize={onResizeSidecarPane}
+        />
+      ) : null}
     </section>
   );
 }

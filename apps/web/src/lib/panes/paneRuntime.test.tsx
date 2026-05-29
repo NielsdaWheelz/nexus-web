@@ -28,21 +28,38 @@ function OpenInNewPaneOnMount() {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.openInNewPane("/media/media-1", "Library Row Title");
+    runtime.openInNewPane(
+      "/media/media-1",
+      "Library Row Title",
+      "reader-highlights",
+    );
   }, [runtime]);
   return null;
 }
 
-function PublishSizingOnMount() {
+function PublishLayoutOnMount() {
   const runtime = usePaneRuntime();
   useEffect(() => {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.setPaneSizing({
+    runtime.setPaneLayout({
       primaryWidth: { kind: "intrinsic", widthPx: 640 },
-      extraWidthPx: 36,
+      fixedPrimaryChromeWidthPx: 28,
     });
+  }, [runtime]);
+  return null;
+}
+
+function SidecarCommandsOnMount() {
+  const runtime = usePaneRuntime();
+  useEffect(() => {
+    if (!runtime) {
+      throw new Error("Pane runtime missing");
+    }
+    runtime.openSidecar("reader-highlights");
+    runtime.setActiveSidecarSurface("reader-doc-chat");
+    runtime.closeSidecar();
   }, [runtime]);
   return null;
 }
@@ -192,6 +209,7 @@ describe("PaneRuntimeProvider", () => {
       expect(onOpenInNewPane).toHaveBeenCalledWith(
         "/media/media-1",
         "Library Row Title",
+        "reader-highlights",
       );
     });
   });
@@ -229,8 +247,8 @@ describe("PaneRuntimeProvider", () => {
     expect(state).toHaveAttribute("data-can-go-forward", "true");
   });
 
-  it("publishes pane sizing with pane and resource identity", async () => {
-    const onSetPaneSizing = vi.fn();
+  it("publishes pane layout with pane and resource identity", async () => {
+    const onSetPaneLayout = vi.fn();
     const identity = resolvePaneRouteIdentity("/libraries/library-1");
 
     render(
@@ -244,21 +262,56 @@ describe("PaneRuntimeProvider", () => {
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onSetPaneSizing={onSetPaneSizing}
+        onSetPaneLayout={onSetPaneLayout}
       >
-        <PublishSizingOnMount />
+        <PublishLayoutOnMount />
       </PaneRuntimeProvider>,
     );
 
     await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
+      expect(onSetPaneLayout).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey: identity.resourceKey,
-        sizing: {
+        layout: {
           primaryWidth: { kind: "intrinsic", widthPx: 640 },
-          extraWidthPx: 36,
+          fixedPrimaryChromeWidthPx: 28,
         },
       });
+    });
+  });
+
+  it("passes sidecar commands with pane identity", async () => {
+    const onOpenSidecar = vi.fn();
+    const onCloseSidecar = vi.fn();
+    const onSetActiveSidecarSurface = vi.fn();
+    const identity = resolvePaneRouteIdentity("/media/media-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/media/media-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onOpenSidecar={onOpenSidecar}
+        onCloseSidecar={onCloseSidecar}
+        onSetActiveSidecarSurface={onSetActiveSidecarSurface}
+      >
+        <SidecarCommandsOnMount />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(onOpenSidecar).toHaveBeenCalledWith("pane-1", "reader-highlights");
+      expect(onSetActiveSidecarSurface).toHaveBeenCalledWith(
+        "pane-1",
+        "reader-doc-chat",
+      );
+      expect(onCloseSidecar).toHaveBeenCalledWith("pane-1");
     });
   });
 
@@ -284,7 +337,11 @@ describe("PaneRuntimeProvider", () => {
 
     await waitFor(() => expect(onValue).toHaveBeenCalled());
     const runtimeValue = onValue.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-    expect(runtimeValue.setPaneSizing).toEqual(expect.any(Function));
+    expect(runtimeValue[`setPane${"Sizing"}`]).toBeUndefined();
+    expect(runtimeValue.setPaneLayout).toEqual(expect.any(Function));
+    expect(runtimeValue.openSidecar).toEqual(expect.any(Function));
+    expect(runtimeValue.closeSidecar).toEqual(expect.any(Function));
+    expect(runtimeValue.setActiveSidecarSurface).toEqual(expect.any(Function));
     expect(runtimeValue[`setPane${"Min"}Width`]).toBeUndefined();
     expect(runtimeValue[`setPane${"Extra"}Width`]).toBeUndefined();
   });

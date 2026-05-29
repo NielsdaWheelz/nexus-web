@@ -25,7 +25,7 @@ function makePane(
   visibility: WorkspacePaneState["visibility"] = "visible",
   history: WorkspacePaneHistory = { back: [], forward: [] }
 ): WorkspacePaneState {
-  return { id, href, widthPx: 480, visibility, history };
+  return { id, href, primaryWidthPx: 480, sidecar: null, visibility, history };
 }
 
 describe("workspace url codec", () => {
@@ -67,7 +67,7 @@ describe("workspace url codec", () => {
       workspacePrimaryMetrics,
     });
     expect(decoded.errorCode).toBeNull();
-    expect(decoded.state.panes[0]?.widthPx).toBe(2200);
+    expect(decoded.state.panes[0]?.primaryWidthPx).toBe(2200);
   });
 
   it("falls back when the URL state version is unsupported", () => {
@@ -116,6 +116,25 @@ describe("workspace url codec", () => {
       workspacePrimaryMetrics,
     );
     state.panes[0]!.history.back.push("/libraries");
+
+    const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
+    expect(result.errorCode).toBeNull();
+    const parsed = new URL(result.href, "http://localhost");
+    expect(parsed.searchParams.get("wsv")).toBe(String(WORKSPACE_SCHEMA_VERSION));
+    expect(parsed.searchParams.get("ws")).toBeTruthy();
+  });
+
+  it("keeps workspace params for a single pane with sidecar state", () => {
+    const state = createDefaultWorkspaceState(
+      "/media/123?foo=bar",
+      workspacePrimaryMetrics,
+    );
+    state.panes[0]!.sidecar = {
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+      widthPx: 360,
+      visibility: "visible",
+    };
 
     const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
     expect(result.errorCode).toBeNull();

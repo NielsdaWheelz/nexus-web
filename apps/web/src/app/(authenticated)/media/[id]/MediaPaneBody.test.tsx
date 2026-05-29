@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { SECONDARY_RAIL_EXPANDED_WIDTH_PX } from "@/components/secondaryRail/railSizing";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import MediaPaneBody from "./MediaPaneBody";
 
@@ -96,8 +95,8 @@ vi.mock("@/components/HtmlRenderer", () => ({
   default: () => <div data-testid="html-renderer" />,
 }));
 
-vi.mock("@/components/reader/AnchoredHighlightsRail", () => ({
-  default: () => <div>Highlights rail</div>,
+vi.mock("@/components/reader/AnchoredHighlightsSidecar", () => ({
+  default: () => <div>Highlights sidecar</div>,
 }));
 
 vi.mock("@/components/reader/ReaderOverviewRuler", () => ({
@@ -156,7 +155,8 @@ function fragmentResponse() {
 function renderMediaPane() {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
-  const onSetPaneSizing = vi.fn();
+  const onSetPaneLayout = vi.fn();
+  const onOpenSidecar = vi.fn();
 
   render(
     <FeedbackProvider>
@@ -166,15 +166,16 @@ function renderMediaPane() {
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
         pathParams={{ id: "media-1" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onSetPaneSizing={onSetPaneSizing}
+        onSetPaneLayout={onSetPaneLayout}
+        onOpenSidecar={onOpenSidecar}
       >
         <MediaPaneBody />
       </PaneRuntimeProvider>
@@ -182,7 +183,8 @@ function renderMediaPane() {
   );
 
   return {
-    onSetPaneSizing,
+    onSetPaneLayout,
+    onOpenSidecar,
     resourceKey: identity.resourceKey,
   };
 }
@@ -265,18 +267,18 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["web_article", "epub"] as const)(
-    "publishes workspace primary width and appended rail width for %s",
+    "publishes workspace primary layout and opens highlights sidecar for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneSizing, resourceKey } = renderMediaPane();
+      const { onSetPaneLayout, onOpenSidecar, resourceKey } = renderMediaPane();
 
       await waitFor(() => {
-        expect(onSetPaneSizing).toHaveBeenCalledWith({
+        expect(onSetPaneLayout).toHaveBeenCalledWith({
           paneId: "pane-1",
           resourceKey,
-          sizing: {
+          layout: {
             primaryWidth: { kind: "workspace" },
-            extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
+            fixedPrimaryChromeWidthPx: OVERVIEW_RULER_WIDTH_PX,
           },
         });
       });
@@ -284,45 +286,25 @@ describe("MediaPaneBody pane sizing", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
 
       await waitFor(() => {
-        expect(onSetPaneSizing).toHaveBeenCalledWith({
-          paneId: "pane-1",
-          resourceKey,
-          sizing: {
-            primaryWidth: { kind: "workspace" },
-            extraWidthPx:
-              OVERVIEW_RULER_WIDTH_PX + SECONDARY_RAIL_EXPANDED_WIDTH_PX,
-          },
-        });
-      });
-
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Collapse secondary rail" }),
-      );
-
-      await waitFor(() => {
-        expect(onSetPaneSizing).toHaveBeenCalledWith({
-          paneId: "pane-1",
-          resourceKey,
-          sizing: {
-            primaryWidth: { kind: "workspace" },
-            extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
-          },
-        });
+        expect(onOpenSidecar).toHaveBeenCalledWith(
+          "pane-1",
+          "reader-highlights",
+        );
       });
     },
   );
 
-  it("publishes intrinsic PDF width with rail extra width", async () => {
+  it("publishes intrinsic PDF primary layout without sidecar width", async () => {
     testState.mediaKind = "pdf";
-    const { onSetPaneSizing, resourceKey } = renderMediaPane();
+    const { onSetPaneLayout, onOpenSidecar, resourceKey } = renderMediaPane();
 
     await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
+      expect(onSetPaneLayout).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey,
-        sizing: {
+        layout: {
           primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
-          extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
+          fixedPrimaryChromeWidthPx: OVERVIEW_RULER_WIDTH_PX,
         },
       });
     });
@@ -330,15 +312,7 @@ describe("MediaPaneBody pane sizing", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
 
     await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        sizing: {
-          primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
-          extraWidthPx:
-            OVERVIEW_RULER_WIDTH_PX + SECONDARY_RAIL_EXPANDED_WIDTH_PX,
-        },
-      });
+      expect(onOpenSidecar).toHaveBeenCalledWith("pane-1", "reader-highlights");
     });
   });
 

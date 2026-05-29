@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -28,8 +29,8 @@ import {
   BookOpen,
   FileText,
   Globe,
-  List,
   Mic,
+  MessageSquare,
   Radio,
   Video,
 } from "lucide-react";
@@ -43,6 +44,7 @@ import {
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
+import LibraryChatTab from "@/components/chat/LibraryChatTab";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -57,11 +59,11 @@ import type {
   UserSearchResult,
 } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
-  usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -144,8 +146,6 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
-type LibraryView = "contents" | "intelligence";
-
 function hasContributorLinks(
   contributors: ContributorCredit[] | null | undefined,
 ): boolean {
@@ -174,7 +174,6 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const paneSearchParams = usePaneSearchParams();
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
@@ -184,11 +183,6 @@ export default function LibraryPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const [activeView, setActiveView] = useState<LibraryView>(() =>
-    paneSearchParams.get("view") === "intelligence"
-      ? "intelligence"
-      : "contents",
-  );
   useSetPaneTitle(library?.name ?? (loading ? null : "Library"));
 
   const [editOpen, setEditOpen] = useState(false);
@@ -208,13 +202,6 @@ export default function LibraryPaneBody() {
   );
   const libraryPanelRequestIdRef = useRef(0);
 
-  useEffect(() => {
-    setActiveView(
-      paneSearchParams.get("view") === "intelligence"
-        ? "intelligence"
-        : "contents",
-    );
-  }, [paneSearchParams]);
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
@@ -719,29 +706,20 @@ export default function LibraryPaneBody() {
     router.push("/libraries");
   }, [library, closeEditDialog, router]);
 
-  const handleOpenLibraryChat = useCallback(async () => {
-    if (!library) {
-      return;
-    }
+  const handleOpenLibraryChat = useCallback(() => {
+    paneRuntime?.openSidecar("library-chat");
+  }, [paneRuntime]);
 
-    try {
-      const response = await apiFetch<{ data: { id: string } }>(
-        "/api/conversations",
-        {
-          method: "POST",
-          body: JSON.stringify({ initial_references: [`library:${library.id}`] }),
-        },
-      );
-      const route = `/conversations/${response.data.id}`;
-      paneRuntime?.openInNewPane(route, library.name);
-    } catch (err) {
-      setError(
-        toFeedback(err, {
-          fallback: "Failed to open library chat",
-        }),
-      );
-    }
-  }, [library, paneRuntime]);
+  const handleOpenLibraryIntelligence = useCallback(() => {
+    paneRuntime?.openSidecar("library-intelligence");
+  }, [paneRuntime]);
+
+  const handleOpenFullLibraryChat = useCallback(
+    (conversationId: string) => {
+      paneRuntime?.openInNewPane(`/conversations/${conversationId}`, library?.name);
+    },
+    [library?.name, paneRuntime],
+  );
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
@@ -807,8 +785,8 @@ export default function LibraryPaneBody() {
         },
         ...libraryResourceOptions({
           library,
-          onOpenChat: () => void handleOpenLibraryChat(),
-          onViewIntelligence: () => setActiveView("intelligence"),
+          onOpenChat: handleOpenLibraryChat,
+          onViewIntelligence: handleOpenLibraryIntelligence,
           onEdit: () => void openEditDialog(),
           onDelete: () => {
             void handleDeleteLibrary();
@@ -818,6 +796,38 @@ export default function LibraryPaneBody() {
     : [];
 
   usePaneChromeOverride({ options: paneOptions });
+  const sidecarDescriptor = useMemo(
+    () =>
+      library
+        ? {
+            groupId: "library-tools" as const,
+            defaultSurfaceId: "library-chat" as const,
+            surfaces: [
+              {
+                id: "library-chat" as const,
+                groupId: "library-tools" as const,
+                title: "Library chat",
+                icon: MessageSquare,
+                body: (
+                  <LibraryChatTab
+                    libraryId={id}
+                    onOpenChat={handleOpenFullLibraryChat}
+                  />
+                ),
+              },
+              {
+                id: "library-intelligence" as const,
+                groupId: "library-tools" as const,
+                title: "Intelligence",
+                icon: BarChart3,
+                body: <LibraryIntelligenceView libraryId={id} />,
+              },
+            ],
+          }
+        : null,
+    [handleOpenFullLibraryChat, id, library],
+  );
+  usePaneSidecar(sidecarDescriptor);
 
   if (loading) {
     return <FeedbackNotice severity="info" title="Loading library..." />;
@@ -865,38 +875,7 @@ export default function LibraryPaneBody() {
         <div className={styles.content}>
           {error && <FeedbackNotice {...error} />}
 
-          <div
-            className={styles.viewSwitch}
-            role="tablist"
-            aria-label="Library view"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              role="tab"
-              aria-selected={activeView === "contents"}
-              className={styles.viewButton}
-              onClick={() => setActiveView("contents")}
-              leadingIcon={<List size={16} aria-hidden="true" />}
-            >
-              Contents
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              role="tab"
-              aria-selected={activeView === "intelligence"}
-              className={styles.viewButton}
-              onClick={() => setActiveView("intelligence")}
-              leadingIcon={<BarChart3 size={16} aria-hidden="true" />}
-            >
-              Intelligence
-            </Button>
-          </div>
-
-          {activeView === "intelligence" ? (
-            <LibraryIntelligenceView libraryId={id} />
-          ) : visibleEntries.length === 0 ? (
+          {visibleEntries.length === 0 ? (
             <FeedbackNotice
               severity="neutral"
               title="No podcasts or media in this library yet."

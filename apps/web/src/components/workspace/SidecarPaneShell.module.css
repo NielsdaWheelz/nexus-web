@@ -1,6 +1,8 @@
-.rail {
+.sidecar {
+  position: relative;
+  display: flex;
   flex: 0 0 auto;
-  min-width: 0;
+  flex-direction: column;
   min-height: 0;
   height: 100%;
   border-left: 1px solid var(--edge-subtle);
@@ -8,25 +10,7 @@
   color: var(--ink);
 }
 
-.collapsed {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.collapsed > * {
-  width: 100%;
-  flex-basis: auto;
-}
-
-.expanded {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .header {
-  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -36,21 +20,10 @@
   background: var(--surface-2);
 }
 
-.title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
 .tabs {
   display: flex;
-  flex-direction: row;
-  gap: var(--space-2);
   min-width: 0;
+  gap: var(--space-2);
 }
 
 .tab {
@@ -59,11 +32,10 @@
   justify-content: center;
   padding: 6px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
-  transition: color 80ms ease, background 80ms ease;
 }
 
 .tab:hover {
@@ -71,8 +43,8 @@
 }
 
 .tab[data-active="true"] {
-  color: var(--accent);
   background: var(--accent-muted);
+  color: var(--accent);
 }
 
 .tab:focus-visible {
@@ -85,4 +57,13 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--resize-handle-width);
+  height: 100%;
+  cursor: col-resize;
 }

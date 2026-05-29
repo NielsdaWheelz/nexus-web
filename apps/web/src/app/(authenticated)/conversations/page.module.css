@@ -24,15 +24,9 @@
   display: flex;
 }
 
-.chatSecondaryRailBody {
+.chatSidecarBody {
   overflow: hidden;
   background: var(--surface-2);
-}
-
-.chatSecondaryRailCollapsedButton.chatSecondaryRailCollapsedButton {
-  width: 100%;
-  height: var(--size-md);
-  border-radius: 0;
 }
 
 .linkedItemsColorSwatch {

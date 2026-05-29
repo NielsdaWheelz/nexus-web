@@ -95,7 +95,11 @@ export function isNonTrivialSession(state: WorkspaceState): boolean {
     return true;
   }
   const pane = state.panes[0];
-  return pane.href !== WORKSPACE_DEFAULT_FALLBACK_HREF || hasPaneHistory(pane.history);
+  return (
+    pane.href !== WORKSPACE_DEFAULT_FALLBACK_HREF ||
+    pane.sidecar !== null ||
+    hasPaneHistory(pane.history)
+  );
 }
 
 export function workspaceStatesEqual(
@@ -113,10 +117,19 @@ export function workspaceStatesEqual(
   }
   return a.panes.every((pane, index) => {
     const other = b.panes[index];
+    const sameSidecar =
+      pane.sidecar === null
+        ? other.sidecar === null
+        : other.sidecar !== null &&
+          pane.sidecar.groupId === other.sidecar.groupId &&
+          pane.sidecar.activeSurfaceId === other.sidecar.activeSurfaceId &&
+          pane.sidecar.widthPx === other.sidecar.widthPx &&
+          pane.sidecar.visibility === other.sidecar.visibility;
     return (
       pane.id === other.id &&
       pane.href === other.href &&
-      pane.widthPx === other.widthPx &&
+      pane.primaryWidthPx === other.primaryWidthPx &&
+      sameSidecar &&
       pane.visibility === other.visibility &&
       pane.history.back.length === other.history.back.length &&
       pane.history.forward.length === other.history.forward.length &&

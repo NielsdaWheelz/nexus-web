@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import AnchoredHighlightsRail from "./AnchoredHighlightsRail";
+import AnchoredHighlightsSidecar from "./AnchoredHighlightsSidecar";
 import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
 vi.mock("@/components/notes/HighlightNoteEditor", () => ({
@@ -77,7 +77,7 @@ function highlight(
   };
 }
 
-function AnchoredHighlightsRailHarness({
+function AnchoredHighlightsSidecarHarness({
   focusedId = null,
   onFocusHighlight = () => {},
   canQuoteToChat = true,
@@ -111,7 +111,7 @@ function AnchoredHighlightsRailHarness({
         </div>
       </div>
       <FeedbackProvider>
-        <AnchoredHighlightsRail
+        <AnchoredHighlightsSidecar
           highlights={[
             highlight(
               "h1",
@@ -190,7 +190,7 @@ function StableNoteKeyHarness({
         </div>
       </div>
       <FeedbackProvider>
-        <AnchoredHighlightsRail
+        <AnchoredHighlightsSidecar
           highlights={[row]}
           contentRef={contentRef}
           focusedId={null}
@@ -231,9 +231,9 @@ function StableNoteKeyHarness({
   );
 }
 
-describe("AnchoredHighlightsRail", () => {
+describe("AnchoredHighlightsSidecar", () => {
   it("renders only viewport-visible highlight rows", async () => {
-    render(<AnchoredHighlightsRailHarness />);
+    render(<AnchoredHighlightsSidecarHarness />);
 
     await waitFor(() => {
       expect(screen.getByTestId("anchored-highlight-row-h1")).toBeTruthy();
@@ -244,7 +244,7 @@ describe("AnchoredHighlightsRail", () => {
   });
 
   it("aligns a visible row to its source scanline", async () => {
-    render(<AnchoredHighlightsRailHarness />);
+    render(<AnchoredHighlightsSidecarHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     const target = screen.getByText("First target");
@@ -257,7 +257,7 @@ describe("AnchoredHighlightsRail", () => {
   });
 
   it("shows the final visible row UI without requiring focus first", async () => {
-    render(<AnchoredHighlightsRailHarness />);
+    render(<AnchoredHighlightsSidecarHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     expect(within(row).getByText("Before visible context")).toBeVisible();
@@ -285,7 +285,7 @@ describe("AnchoredHighlightsRail", () => {
   it("focuses the source highlight when the row is clicked", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
-    render(<AnchoredHighlightsRailHarness onFocusHighlight={onFocusHighlight} />);
+    render(<AnchoredHighlightsSidecarHarness onFocusHighlight={onFocusHighlight} />);
 
     await user.click(await screen.findByTestId("anchored-highlight-row-h1"));
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
@@ -296,7 +296,7 @@ describe("AnchoredHighlightsRail", () => {
     const onQuoteToNewChat = vi.fn();
     const onQuoteToExtantChat = vi.fn();
     render(
-      <AnchoredHighlightsRailHarness
+      <AnchoredHighlightsSidecarHarness
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExtantChat={onQuoteToExtantChat}
       />,
@@ -322,7 +322,7 @@ describe("AnchoredHighlightsRail", () => {
   });
 
   it("hides the quote-to-chat buttons when quoting is disabled", async () => {
-    render(<AnchoredHighlightsRailHarness canQuoteToChat={false} />);
+    render(<AnchoredHighlightsSidecarHarness canQuoteToChat={false} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     expect(

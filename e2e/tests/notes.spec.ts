@@ -123,9 +123,9 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
   await page.getByRole("button", { name: "Open highlights pane" }).click();
-  const rail = page.getByTestId("reader-secondary-rail");
-  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
-  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+  const sidecar = page.getByTestId("workspace-sidecar-pane");
+  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

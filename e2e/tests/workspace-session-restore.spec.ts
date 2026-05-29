@@ -1,14 +1,20 @@
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import {
   WORKSPACE_E2E_SCHEMA_VERSION,
   encodeWorkspaceStateParam,
   makeWorkspacePane,
+  workspaceUrlForState,
   type WorkspaceState,
 } from "./workspace";
+import { stateChangingApiHeaders } from "./api";
 
-// A fixed installation id so the test fully controls the device identity.
 // The app stores this under `nexus.installationId.v1` in localStorage.
-const DEVICE_ID = "e2e-workspace-session-restore-device";
 const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
@@ -31,8 +37,8 @@ function twoPaneSession(): WorkspaceState {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
     panes: [
-      makeWorkspacePane("pane-session-libraries", "/libraries", { widthPx: 480 }),
-      makeWorkspacePane("pane-session-notes", "/notes", { widthPx: 520 }),
+      makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
+      makeWorkspacePane("pane-session-notes", "/notes", { primaryWidthPx: 520 }),
     ],
   };
 }
@@ -45,9 +51,9 @@ function conversationsPaneSession(): WorkspaceState {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
     panes: [
-      makeWorkspacePane("pane-session-libraries", "/libraries", { widthPx: 480 }),
+      makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
       makeWorkspacePane("pane-session-conversations", "/conversations", {
-        widthPx: 520,
+        primaryWidthPx: 520,
       }),
     ],
   };
@@ -59,13 +65,23 @@ function trivialSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-default",
-    panes: [makeWorkspacePane("pane-session-default", "/libraries", { widthPx: 480 })],
+    panes: [makeWorkspacePane("pane-session-default", "/libraries", { primaryWidthPx: 480 })],
   };
+}
+
+function workspaceSessionRestoreDeviceId(testInfo: TestInfo): string {
+  const slug = testInfo.titlePath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return `e2e-workspace-session-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
 }
 
 // Pin the device id before any navigation so capture + restore key off the
 // id the test controls.
-async function pinDeviceId(page: Page): Promise<void> {
+async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
   await page.addInitScript(
     ([key, id]) => {
       try {
@@ -74,25 +90,28 @@ async function pinDeviceId(page: Page): Promise<void> {
         /* private mode / quota — ignored */
       }
     },
-    [INSTALLATION_ID_STORAGE_KEY, DEVICE_ID]
+    [INSTALLATION_ID_STORAGE_KEY, deviceId]
   );
 }
 
 async function putWorkspaceSession(
   request: APIRequestContext,
+  deviceId: string,
   state: WorkspaceState
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
-    data: { device_id: DEVICE_ID, state },
+    headers: stateChangingApiHeaders(),
+    data: { device_id: deviceId, state },
   });
   expect(response.ok()).toBeTruthy();
 }
 
 async function fetchWorkspaceSession(
-  request: APIRequestContext
+  request: APIRequestContext,
+  deviceId: string
 ): Promise<WorkspaceSessionResponse["data"]> {
   const response = await request.get(
-    `${WORKSPACE_SESSION_PATH}?device_id=${encodeURIComponent(DEVICE_ID)}`
+    `${WORKSPACE_SESSION_PATH}?device_id=${encodeURIComponent(deviceId)}`
   );
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as WorkspaceSessionResponse;
@@ -106,9 +125,10 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 }
 
 test.describe("workspace session restore", () => {
-  test("cold open silently restores a saved session", async ({ page }) => {
-    await pinDeviceId(page);
-    await putWorkspaceSession(page.request, twoPaneSession());
+  test("cold open silently restores a saved session", async ({ page }, testInfo) => {
+    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
+    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
 
     try {
       // Cold open: a base URL with no `ws=` param.
@@ -126,18 +146,19 @@ test.describe("workspace session restore", () => {
       // Applying the restored state writes it into the URL as a `ws=` param.
       await expect(page).toHaveURL(/[?&]ws=/);
     } finally {
-      await putWorkspaceSession(page.request, trivialSession());
+      await putWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 
-  test("a workspace change is captured to the saved session", async ({ page }) => {
-    await pinDeviceId(page);
+  test("a workspace change is captured to the saved session", async ({ page }, testInfo) => {
+    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
     // Start from a trivial session so the cold open arms capture without
     // restoring anything.
-    await putWorkspaceSession(page.request, trivialSession());
+    await putWorkspaceSession(page.request, deviceId, trivialSession());
 
     try {
-      await page.goto("/libraries");
+      await page.goto(workspaceUrlForState("/libraries", trivialSession()));
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
 
       // Open a second pane: shift-click an in-pane library link.
@@ -155,22 +176,25 @@ test.describe("workspace session restore", () => {
       // Wait out the ~1s debounce, then assert the captured session grew.
       await expect
         .poll(
-          async () => (await fetchWorkspaceSession(page.request)).own?.state.panes.length ?? 0,
+          async () =>
+            (await fetchWorkspaceSession(page.request, deviceId)).own?.state.panes
+              .length ?? 0,
           { timeout: 15_000 }
         )
         .toBeGreaterThan(1);
     } finally {
-      await putWorkspaceSession(page.request, trivialSession());
+      await putWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 
   test("a ws= URL is authoritative and silent restore does not override it", async ({
     page,
-  }) => {
-    await pinDeviceId(page);
+  }, testInfo) => {
+    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
     // Seed a saved session that is DISTINCT from the deep link below: silent
     // restore, if it ran, would surface a "Notes" pane.
-    await putWorkspaceSession(page.request, twoPaneSession());
+    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
 
     try {
       // The deep link carries its own panes (Libraries + Conversations).
@@ -180,21 +204,22 @@ test.describe("workspace session restore", () => {
       // The URL is authoritative: its panes render and silent restore stays
       // out of the way — the saved session's "Notes" pane never appears.
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Conversations\b/)).toBeVisible();
+      await expect(workspacePaneButton(page, /^Chats\b/)).toBeVisible();
       await expect(workspacePaneButton(page, /^Notes\b/)).toHaveCount(0);
     } finally {
-      await putWorkspaceSession(page.request, trivialSession());
+      await putWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 
   test("a direct URL without ws is active and preserves the saved workspace", async ({
     page,
-  }) => {
-    await pinDeviceId(page);
+  }, testInfo) => {
+    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
     // A direct app URL is still user intent, even without an encoded workspace
     // state. Restore may preserve saved panes, but it must not replace the
     // requested route with the saved active pane.
-    await putWorkspaceSession(page.request, twoPaneSession());
+    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
 
     try {
       await page.goto("/conversations");
@@ -210,7 +235,7 @@ test.describe("workspace session restore", () => {
         "page",
       );
     } finally {
-      await putWorkspaceSession(page.request, trivialSession());
+      await putWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 });

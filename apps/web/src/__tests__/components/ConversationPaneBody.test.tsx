@@ -4,10 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import {
-  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/railSizing";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -297,7 +293,7 @@ function retryRun(): ChatRunResponse["data"] {
   };
 }
 
-function renderPane(onSetPaneSizing = vi.fn()) {
+function renderPane() {
   const href = "/conversations/conversation-1";
   const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
   return render(
@@ -316,7 +312,6 @@ function renderPane(onSetPaneSizing = vi.fn()) {
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
       onSetPaneTitle={vi.fn()}
-      onSetPaneSizing={onSetPaneSizing}
     >
       <ConversationPaneBody />
     </PaneRuntimeProvider>,
@@ -432,67 +427,6 @@ describe("ConversationPaneBody", () => {
     expect(
       (retryCall?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
     ).toEqual(expect.any(String));
-  });
-
-  it("publishes chat context rail width as pane sizing", async () => {
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      value: 1200,
-      writable: true,
-    });
-    const user = userEvent.setup();
-    const onSetPaneSizing = vi.fn();
-    const resourceKey = resolvePaneRouteIdentity("/conversations/conversation-1")
-      .resourceKey;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
-          return jsonResponse({ data: treeResponse() });
-        }
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
-        }
-        if (path === "/api/chat-runs") {
-          return jsonResponse({ data: [] });
-        }
-        throw new Error(`Unexpected fetch call: ${path}`);
-      }),
-    );
-
-    const { unmount } = renderPane(onSetPaneSizing);
-
-    expect(await screen.findByText("Answer A")).toBeVisible();
-    await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        sizing: {
-          primaryWidth: { kind: "workspace" },
-          extraWidthPx: CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-        },
-      });
-    });
-
-    await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
-    await waitFor(() => {
-      expect(onSetPaneSizing).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        sizing: {
-          primaryWidth: { kind: "workspace" },
-          extraWidthPx: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-        },
-      });
-    });
-
-    unmount();
-    expect(onSetPaneSizing).toHaveBeenLastCalledWith({
-      paneId: "pane-1",
-      resourceKey,
-      sizing: { primaryWidth: { kind: "workspace" }, extraWidthPx: 0 },
-    });
   });
 
   it("preserves the chat viewport while switching cached paths and rolling back a failed active path", async () => {

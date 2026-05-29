@@ -314,7 +314,7 @@ Rules:
 - Backend validates the strict payload before storing/replaying the event.
 - Frontend SSE parsing requires the full resolved shape.
 - Frontend upserts this event into pane-level reference state.
-- Duplicate labels are a bug; the rail renders the resolved label once.
+- Duplicate labels are a bug; the sidecar renders the resolved label once.
 
 ## Citation Write-Through
 
@@ -406,7 +406,9 @@ Each conversation pane owns one reference state source:
 - `useConversationReferences(conversationId)` loads current references.
 - `upsertReference(reference)` merges `reference_added` events.
 - `removeReference(referenceId)` deletes from server and local state.
-- `ConversationReferencesRail` is prop-driven and has no hidden hook.
+- The conversation references surface is prop-driven and has no hidden hook.
+  Target desktop placement is a workspace sidecar pane under
+  `docs/workspace-sidecar-pane-cutover.md`.
 
 Reader, new-conversation, full-conversation, library, and podcast chat entry
 points all compose with the same reference state.
@@ -417,7 +419,8 @@ Entry point rules:
   `initial_references: ["library:UUID"]`.
 - Media/document/podcast-episode chat: `POST /api/conversations` with
   `initial_references: ["media:UUID"]`.
-- Existing conversation references are rendered by the rail from pane state.
+- Existing conversation references are rendered by the sidecar surface from pane
+  state.
 - Reader selections remain message content unless the user creates a durable
   highlight/reference.
 
@@ -478,7 +481,7 @@ Frontend:
 - `apps/web/src/lib/conversations/useConversationReferences.ts`
 - `apps/web/src/lib/api/sse-client.ts`
 - `apps/web/src/lib/api/sse/events.ts`
-- `apps/web/src/components/chat/ConversationReferencesRail.tsx`
+- `apps/web/src/components/chat/ConversationReferencesSidecar.tsx`
 - `apps/web/src/components/chat/useChatRunTail.ts`
 - `apps/web/src/app/(authenticated)/conversations/[id]/ConversationPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.tsx`
@@ -536,8 +539,8 @@ Frontend:
 - Reader/library/podcast entry points create conversations with
   `initial_references`.
 - No frontend code calls deleted BFF endpoints.
-- Reference rail is prop-driven and renders from pane-level state.
-- `reference_added` upserts into the same state the rail renders.
+- Reference sidecar content is prop-driven and renders from pane-level state.
+- `reference_added` upserts into the same state the sidecar renders.
 - `/tree` and active chat-run fetches are deduped.
 - Sending a message does not cause an unconditional immediate `/tree` refetch.
 - SSE reconnects are bounded.

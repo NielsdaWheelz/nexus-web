@@ -17,7 +17,7 @@ import {
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
+import AnchoredHighlightsSidecar from "@/components/reader/AnchoredHighlightsSidecar";
 import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
 import {
@@ -25,11 +25,7 @@ import {
   toTextAnchoredHighlightRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
-import {
-  OVERVIEW_RULER_WIDTH_PX,
-  SECONDARY_RAIL_EXPANDED_WIDTH_PX,
-} from "@/components/secondaryRail/railSizing";
+import { OVERVIEW_RULER_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderIntrinsicWidthState,
@@ -88,6 +84,7 @@ import {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
+import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
@@ -649,7 +646,7 @@ export default function MediaPaneBody({
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
-  const railFocusScrollAppliedRef = useRef<string | null>(null);
+  const sidecarFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
   const webSectionScrollKeyRef = useRef<string | null>(null);
@@ -658,21 +655,16 @@ export default function MediaPaneBody({
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
-  const [secondaryRailMode, setSecondaryRailMode] = useState<
-    "highlights" | "doc-chat"
-  >("highlights");
   // A highlight URI parked for "quote to existing chat": the next chat the user
   // picks (or creates) in the doc-chat list gets this attached as a reference.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
-  // When set, the doc-chat rail tab shows this conversation inline (instead of
+  // When set, the doc-chat sidecar surface shows this conversation inline (instead of
   // the chat list), with a link out to the full conversation pane.
-  const [railChat, setRailChat] = useState<{
+  const [sidecarChat, setSidecarChat] = useState<{
     conversationId: string | null;
     quoteUri: string | null;
   } | null>(null);
-  // Whether the secondary rail (highlights/chat tabs) is open. The reader rail
-  // is open-or-absent — there is no collapsed strip.
-  const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
+  const [isMobileDocChatDrawerOpen, setMobileDocChatDrawerOpen] = useState(false);
   const [isMobileHighlightsDrawerOpen, setMobileHighlightsDrawerOpen] =
     useState(false);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
@@ -2088,7 +2080,7 @@ export default function MediaPaneBody({
   }, [canRead, id]);
 
   // Re-fetch the media-wide highlights after a highlight mutation so the
-  // overview ruler trails the per-fragment `highlights` by one fetch.
+  // overview ruler lags the per-fragment `highlights` by one fetch.
   const refreshMediaHighlights = useCallback(() => {
     void fetchMediaHighlights(id)
       .then(setMediaHighlights)
@@ -3056,38 +3048,41 @@ export default function MediaPaneBody({
   );
 
   // ==========================================================================
-  // Chat rail
+  // Chat sidecar
   // ==========================================================================
 
-  const revealDocChatRail = useCallback(() => {
-    setSecondaryRailMode("doc-chat");
-    setHighlightsRailOpen(true);
+  const revealDocChatSidecar = useCallback(() => {
+    if (isMobileViewport) {
+      setMobileDocChatDrawerOpen(true);
+    } else {
+      paneRuntime?.openSidecar("reader-doc-chat");
+    }
     setMobileHighlightsDrawerOpen(false);
-  }, []);
+  }, [isMobileViewport, paneRuntime]);
 
   // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
   const openDocChat = useCallback(() => {
     setPendingQuoteUri(null);
-    setRailChat(null);
-    revealDocChatRail();
-  }, [revealDocChatRail]);
+    setSidecarChat(null);
+    revealDocChatSidecar();
+  }, [revealDocChatSidecar]);
 
-  // Open an existing conversation inline in the rail, carrying any pending quote.
-  const openChatInRail = useCallback(
+  // Open an existing conversation inline in the sidecar, carrying any pending quote.
+  const openChatInSidecar = useCallback(
     (conversationId: string) => {
-      setRailChat({ conversationId, quoteUri: pendingQuoteUri });
+      setSidecarChat({ conversationId, quoteUri: pendingQuoteUri });
       setPendingQuoteUri(null);
-      revealDocChatRail();
+      revealDocChatSidecar();
     },
-    [pendingQuoteUri, revealDocChatRail],
+    [pendingQuoteUri, revealDocChatSidecar],
   );
 
-  // Start a new (unsent) conversation inline in the rail, carrying any pending quote.
-  const startChatInRail = useCallback(() => {
-    setRailChat({ conversationId: null, quoteUri: pendingQuoteUri });
+  // Start a new (unsent) conversation inline in the sidecar, carrying any pending quote.
+  const startChatInSidecar = useCallback(() => {
+    setSidecarChat({ conversationId: null, quoteUri: pendingQuoteUri });
     setPendingQuoteUri(null);
-    revealDocChatRail();
-  }, [pendingQuoteUri, revealDocChatRail]);
+    revealDocChatSidecar();
+  }, [pendingQuoteUri, revealDocChatSidecar]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3241,11 +3236,17 @@ export default function MediaPaneBody({
       ? styles.readerThemeDark
       : styles.readerThemeLight
   }`;
-  const showDesktopSecondaryRail = !isMobileViewport && isHighlightsRailOpen;
-  const desktopSecondaryRailWidthPx = showDesktopSecondaryRail
-    ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
-    : 0;
-  // The overview ruler is always on for desktop readable media; the rail opens
+  const activeReaderSidecarSurface =
+    !isMobileViewport &&
+    paneRuntime?.sidecar?.groupId === "reader-tools" &&
+    paneRuntime.sidecar.visibility === "visible"
+      ? paneRuntime.sidecar.activeSurfaceId
+      : null;
+  const readerSidecarWidthPx =
+    activeReaderSidecarSurface && paneRuntime?.sidecar
+      ? paneRuntime.sidecar.widthPx
+      : 0;
+  // The overview ruler is always on for desktop readable media; the sidecar opens
   // to its right. Both occupy width the pane must reserve.
   const showDesktopOverviewRuler = !isMobileViewport && showHighlightsPane;
   const desktopOverviewRulerWidthPx = showDesktopOverviewRuler
@@ -3257,25 +3258,24 @@ export default function MediaPaneBody({
       !showHighlightsPane ||
       isPdf ||
       isMobileViewport ||
-      !isHighlightsRailOpen ||
-      secondaryRailMode !== "highlights" ||
+      activeReaderSidecarSurface !== "reader-highlights" ||
       !focusState.focusedId ||
       !activeContent ||
       !contentRef.current
     ) {
-      railFocusScrollAppliedRef.current = null;
+      sidecarFocusScrollAppliedRef.current = null;
       return;
     }
 
     const scrollKey = [
       activeContent.fragmentId,
       focusState.focusedId,
-      desktopSecondaryRailWidthPx,
+      readerSidecarWidthPx,
     ].join(":");
-    if (railFocusScrollAppliedRef.current === scrollKey) {
+    if (sidecarFocusScrollAppliedRef.current === scrollKey) {
       return;
     }
-    railFocusScrollAppliedRef.current = scrollKey;
+    sidecarFocusScrollAppliedRef.current = scrollKey;
 
     const frameId = window.requestAnimationFrame(() => {
       if (!contentRef.current || !focusState.focusedId) {
@@ -3299,13 +3299,12 @@ export default function MediaPaneBody({
     return () => window.cancelAnimationFrame(frameId);
   }, [
     activeContent,
-    desktopSecondaryRailWidthPx,
+    activeReaderSidecarSurface,
     focusState.focusedId,
     isMobileViewport,
     isPdf,
-    isHighlightsRailOpen,
+    readerSidecarWidthPx,
     renderedHtml,
-    secondaryRailMode,
     showHighlightsPane,
   ]);
 
@@ -3321,26 +3320,23 @@ export default function MediaPaneBody({
     if (!paneRuntime) {
       return;
     }
-    paneRuntime.setPaneSizing({
+    paneRuntime.setPaneLayout({
       primaryWidth:
         isPdf && pdfIntrinsicWidthPx !== null
           ? { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx }
           : { kind: "workspace" },
-      extraWidthPx:
-        !isMobileViewport && canRead
-          ? desktopOverviewRulerWidthPx + desktopSecondaryRailWidthPx
-          : 0,
+      fixedPrimaryChromeWidthPx:
+        !isMobileViewport && canRead ? desktopOverviewRulerWidthPx : 0,
     });
     return () => {
-      paneRuntime.setPaneSizing({
+      paneRuntime.setPaneLayout({
         primaryWidth: { kind: "workspace" },
-        extraWidthPx: 0,
+        fixedPrimaryChromeWidthPx: 0,
       });
     };
   }, [
     canRead,
     desktopOverviewRulerWidthPx,
-    desktopSecondaryRailWidthPx,
     isMobileViewport,
     isPdf,
     paneRuntime,
@@ -3548,17 +3544,17 @@ export default function MediaPaneBody({
     [paneRuntime],
   );
 
-  // Quote a highlight into a brand-new (unsent) conversation in the rail. The
+  // Quote a highlight into a brand-new (unsent) conversation in the sidecar. The
   // conversation and reference are created when the user sends, not now.
   const quoteHighlightToNewChat = useCallback(
     (highlightId: string) => {
-      setRailChat({
+      setSidecarChat({
         conversationId: null,
         quoteUri: `highlight:${highlightId}`,
       });
-      revealDocChatRail();
+      revealDocChatSidecar();
     },
-    [revealDocChatRail],
+    [revealDocChatSidecar],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
@@ -3566,19 +3562,27 @@ export default function MediaPaneBody({
   const quoteHighlightToExtantChat = useCallback(
     (highlightId: string) => {
       setPendingQuoteUri(`highlight:${highlightId}`);
-      revealDocChatRail();
+      revealDocChatSidecar();
     },
-    [revealDocChatRail],
+    [revealDocChatSidecar],
   );
 
   // Drop the parked quote and the inline chat once the doc-chat list is no
-  // longer the visible surface (tab switch, rail close).
+  // longer the visible surface (tab switch, sidecar close).
   useEffect(() => {
-    if (!isHighlightsRailOpen || secondaryRailMode !== "doc-chat") {
+    const docChatVisible = isMobileViewport
+      ? isMobileDocChatDrawerOpen || sidecarChat !== null
+      : activeReaderSidecarSurface === "reader-doc-chat";
+    if (!docChatVisible) {
       setPendingQuoteUri(null);
-      setRailChat(null);
+      setSidecarChat(null);
     }
-  }, [isHighlightsRailOpen, secondaryRailMode]);
+  }, [
+    activeReaderSidecarSurface,
+    isMobileDocChatDrawerOpen,
+    isMobileViewport,
+    sidecarChat,
+  ]);
 
   useEffect(() => {
     const handleChatShortcut = (event: KeyboardEvent) => {
@@ -3920,15 +3924,17 @@ export default function MediaPaneBody({
     meta: mediaHeaderMeta,
   });
 
-  // Keep the secondary rail on an available tab when focus mode or media state
+  // Keep the sidecar on an available tab when focus mode or media state
   // hides highlights.
   useEffect(() => {
     if (showHighlightsPane) {
       return;
     }
     setMobileHighlightsDrawerOpen(false);
-    setHighlightsRailOpen(false);
-  }, [showHighlightsPane]);
+    if (paneRuntime?.sidecar?.groupId === "reader-tools") {
+      paneRuntime.closeSidecar();
+    }
+  }, [paneRuntime, showHighlightsPane]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -3952,7 +3958,7 @@ export default function MediaPaneBody({
     [media?.kind, play, seekToMs],
   );
 
-  // Activate a source cited in an in-rail chat: seek/highlight this document,
+  // Activate a source cited in an in-sidecar chat: seek/highlight this document,
   // or open a different source in a new pane.
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget) => {
@@ -4039,7 +4045,7 @@ export default function MediaPaneBody({
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
   // Media-wide highlights mapped to overview-ruler rows. Separate from
-  // `anchoredHighlights` (per-fragment, projected for the rail): this maps the
+  // `anchoredHighlights` (per-fragment, projected for the sidecar): this maps the
   // typed-union `mediaHighlights` straight from stored anchors.
   const mediaAnchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
     return mediaHighlights.map((highlight) => {
@@ -4242,9 +4248,12 @@ export default function MediaPaneBody({
   );
 
   const onOpenHighlights = useCallback(() => {
-    setSecondaryRailMode("highlights");
-    setHighlightsRailOpen(true);
-  }, []);
+    if (isMobileViewport) {
+      setMobileHighlightsDrawerOpen(true);
+    } else {
+      paneRuntime?.openSidecar("reader-highlights");
+    }
+  }, [isMobileViewport, paneRuntime]);
 
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
@@ -4253,8 +4262,8 @@ export default function MediaPaneBody({
         activeContent?.fragmentId ?? "",
         activeEpubSection?.section_id ?? "",
         activeTranscriptFragment?.id ?? "",
-        desktopSecondaryRailWidthPx,
-        secondaryRailMode,
+        readerSidecarWidthPx,
+        activeReaderSidecarSurface ?? "",
         renderedHtml,
         readerProfile.font_family,
         readerProfile.font_size_px,
@@ -4282,7 +4291,7 @@ export default function MediaPaneBody({
       activeContent?.fragmentId,
       activeEpubSection?.section_id,
       activeTranscriptFragment?.id,
-      desktopSecondaryRailWidthPx,
+      activeReaderSidecarSurface,
       anchoredHighlights,
       media?.kind,
       pdfControlsState?.pageNumber,
@@ -4297,9 +4306,143 @@ export default function MediaPaneBody({
       readerProfile.line_height,
       readerProfile.theme,
       renderedHtml,
-      secondaryRailMode,
+      readerSidecarWidthPx,
     ],
   );
+
+  const highlightsSidecarBody = useMemo(
+    () =>
+      showHighlightsPane ? (
+        <AnchoredHighlightsSidecar
+          title="Visible highlights"
+          description={
+            isPdf
+              ? "Showing highlights visible in the PDF viewport."
+              : isEpub
+                ? "Showing highlights visible in the active section viewport."
+                : "Showing highlights visible in the reader viewport."
+          }
+          pdfActivePage={isPdf ? pdfHighlightsPaneState.activePage : null}
+          highlights={anchoredHighlights}
+          contentRef={isPdf ? pdfContentRef : contentRef}
+          focusedId={focusState.focusedId}
+          onFocusHighlight={focusHighlight}
+          measureKey={anchoredHighlightsMeasureKey}
+          isMobile={isMobileViewport}
+          isEditingBounds={focusState.editingBounds}
+          canQuoteToChat={media?.capabilities?.can_quote ?? false}
+          onQuoteToNewChat={quoteHighlightToNewChat}
+          onQuoteToExtantChat={quoteHighlightToExtantChat}
+          onColorChange={handleColorChange}
+          onDelete={handleDelete}
+          onStartEditBounds={startEditBounds}
+          onCancelEditBounds={cancelEditBounds}
+          onNoteSave={handleNoteSave}
+          onNoteDelete={handleNoteDelete}
+          onOpenConversation={handleOpenConversation}
+        />
+      ) : null,
+    [
+      anchoredHighlights,
+      anchoredHighlightsMeasureKey,
+      cancelEditBounds,
+      contentRef,
+      focusHighlight,
+      focusState.editingBounds,
+      focusState.focusedId,
+      handleColorChange,
+      handleDelete,
+      handleNoteDelete,
+      handleNoteSave,
+      handleOpenConversation,
+      isEpub,
+      isMobileViewport,
+      isPdf,
+      media?.capabilities?.can_quote,
+      pdfContentRef,
+      pdfHighlightsPaneState.activePage,
+      quoteHighlightToExtantChat,
+      quoteHighlightToNewChat,
+      showHighlightsPane,
+      startEditBounds,
+    ],
+  );
+
+  const showMobileChatListDrawer =
+    isMobileViewport &&
+    isMobileDocChatDrawerOpen &&
+    !sidecarChat;
+
+  const readerSidecarDescriptor = useMemo(
+    () =>
+      showHighlightsPane
+        ? {
+            groupId: "reader-tools" as const,
+            defaultSurfaceId: "reader-highlights" as const,
+            surfaces: [
+              {
+                id: "reader-highlights" as const,
+                groupId: "reader-tools" as const,
+                title: "Highlights",
+                icon: Highlighter,
+                body: (
+                  <div className={styles.readerSidecarBody}>
+                    {highlightsSidecarBody ?? (
+                      <div className={styles.readerSidecarEmpty}>
+                        Highlights are unavailable for this document.
+                      </div>
+                    )}
+                  </div>
+                ),
+              },
+              {
+                id: "reader-doc-chat" as const,
+                groupId: "reader-tools" as const,
+                title: "Document chat",
+                icon: FileText,
+                body: (
+                  <div className={styles.readerSidecarBody}>
+                    {sidecarChat ? (
+                      <ReaderChatDetail
+                        key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
+                        conversationId={sidecarChat.conversationId}
+                        mediaId={id}
+                        pendingQuoteUri={sidecarChat.quoteUri}
+                        onBack={() => setSidecarChat(null)}
+                        onOpenFullChat={(cid) => {
+                          setSidecarChat(null);
+                          handleOpenFullChat(cid);
+                        }}
+                        onReaderSourceActivate={handleReaderSourceActivate}
+                      />
+                    ) : (
+                      <DocChatTab
+                        mediaId={id}
+                        onOpenChat={openChatInSidecar}
+                        onStartNewChat={startChatInSidecar}
+                        pendingQuoteUri={pendingQuoteUri}
+                        onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+                      />
+                    )}
+                  </div>
+                ),
+              },
+            ],
+          }
+        : null,
+    [
+      handleOpenFullChat,
+      handleReaderSourceActivate,
+      highlightsSidecarBody,
+      id,
+      openChatInSidecar,
+      pendingQuoteUri,
+      sidecarChat,
+      showHighlightsPane,
+      startChatInSidecar,
+    ],
+  );
+  usePaneSidecar(readerSidecarDescriptor);
 
   // ==========================================================================
   // Render
@@ -4334,43 +4477,6 @@ export default function MediaPaneBody({
       </div>
     );
   }
-
-  const highlightsRail = showHighlightsPane ? (
-    <AnchoredHighlightsRail
-      title="Visible highlights"
-      description={
-        isPdf
-          ? "Showing highlights visible in the PDF viewport."
-          : isEpub
-            ? "Showing highlights visible in the active section viewport."
-            : "Showing highlights visible in the reader viewport."
-      }
-      pdfActivePage={isPdf ? pdfHighlightsPaneState.activePage : null}
-      highlights={anchoredHighlights}
-      contentRef={isPdf ? pdfContentRef : contentRef}
-      focusedId={focusState.focusedId}
-      onFocusHighlight={focusHighlight}
-      measureKey={anchoredHighlightsMeasureKey}
-      isMobile={isMobileViewport}
-      isEditingBounds={focusState.editingBounds}
-      canQuoteToChat={media?.capabilities?.can_quote ?? false}
-      onQuoteToNewChat={quoteHighlightToNewChat}
-      onQuoteToExtantChat={quoteHighlightToExtantChat}
-      onColorChange={handleColorChange}
-      onDelete={handleDelete}
-      onStartEditBounds={startEditBounds}
-      onCancelEditBounds={cancelEditBounds}
-      onNoteSave={handleNoteSave}
-      onNoteDelete={handleNoteDelete}
-      onOpenConversation={handleOpenConversation}
-    />
-  ) : null;
-
-  const showMobileChatListDrawer =
-    isMobileViewport &&
-    isHighlightsRailOpen &&
-    secondaryRailMode === "doc-chat" &&
-    !railChat;
 
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
@@ -4650,71 +4756,9 @@ export default function MediaPaneBody({
           />
         ) : null}
 
-        {showDesktopSecondaryRail ? (
-          <SecondaryRail
-            ariaLabel="Reader tools"
-            expanded={true}
-            onExpandedChange={(next) => {
-              if (!next) {
-                setHighlightsRailOpen(false);
-              }
-            }}
-            bodyClassName={styles.readerSecondaryRailBody}
-            testId="reader-secondary-rail"
-            tabs={[
-              {
-                id: "highlights",
-                icon: Highlighter,
-                tooltip: "Highlights for this document",
-                body: highlightsRail ?? (
-                  <div className={styles.readerSecondaryRailEmpty}>
-                    Highlights are unavailable for this document.
-                  </div>
-                ),
-              },
-              {
-                id: "doc-chat",
-                icon: FileText,
-                tooltip: "Chat about this document",
-                body: railChat ? (
-                  <ReaderChatDetail
-                    key={`${railChat.conversationId ?? "new"}:${railChat.quoteUri ?? ""}`}
-                    conversationId={railChat.conversationId}
-                    mediaId={id}
-                    pendingQuoteUri={railChat.quoteUri}
-                    onBack={() => setRailChat(null)}
-                    onOpenFullChat={(cid) => {
-                      setRailChat(null);
-                      handleOpenFullChat(cid);
-                    }}
-                    onReaderSourceActivate={handleReaderSourceActivate}
-                  />
-                ) : (
-                  <DocChatTab
-                    mediaId={media.id}
-                    onOpenChat={openChatInRail}
-                    onStartNewChat={startChatInRail}
-                    pendingQuoteUri={pendingQuoteUri}
-                    onPendingQuoteResolved={() => setPendingQuoteUri(null)}
-                  />
-                ),
-              },
-            ]}
-            activeTabId={secondaryRailMode}
-            onActiveTabIdChange={(tabId) => {
-              if (tabId !== "highlights" && tabId !== "doc-chat") {
-                return;
-              }
-              setSecondaryRailMode(tabId);
-              if (tabId === "doc-chat") {
-                setHighlightsRailOpen(true);
-              }
-            }}
-          />
-        ) : null}
       </div>
 
-      {isMobileViewport && isMobileHighlightsDrawerOpen && highlightsRail ? (
+      {isMobileViewport && isMobileHighlightsDrawerOpen && highlightsSidecarBody ? (
         <div
           className={styles.highlightsBackdrop}
           data-testid="mobile-highlights-backdrop"
@@ -4737,7 +4781,7 @@ export default function MediaPaneBody({
                 Close
               </Button>
             </header>
-            <div className={styles.highlightsDrawerBody}>{highlightsRail}</div>
+            <div className={styles.highlightsDrawerBody}>{highlightsSidecarBody}</div>
           </aside>
         </div>
       ) : null}
@@ -4746,7 +4790,7 @@ export default function MediaPaneBody({
         <div
           className={styles.highlightsBackdrop}
           data-testid="mobile-reader-chat-list-backdrop"
-          onClick={() => setHighlightsRailOpen(false)}
+          onClick={() => setMobileDocChatDrawerOpen(false)}
         >
           <aside
             className={styles.highlightsDrawer}
@@ -4760,7 +4804,7 @@ export default function MediaPaneBody({
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setHighlightsRailOpen(false)}
+                onClick={() => setMobileDocChatDrawerOpen(false)}
               >
                 Close
               </Button>
@@ -4768,8 +4812,8 @@ export default function MediaPaneBody({
             <div className={styles.highlightsDrawerBody}>
               <DocChatTab
                 mediaId={media.id}
-                onOpenChat={openChatInRail}
-                onStartNewChat={startChatInRail}
+                onOpenChat={openChatInSidecar}
+                onStartNewChat={startChatInSidecar}
                 pendingQuoteUri={pendingQuoteUri}
                 onPendingQuoteResolved={() => setPendingQuoteUri(null)}
               />
@@ -4778,11 +4822,11 @@ export default function MediaPaneBody({
         </div>
       ) : null}
 
-      {isMobileViewport && railChat ? (
+      {isMobileViewport && sidecarChat ? (
         <div
           className={styles.highlightsBackdrop}
           data-testid="mobile-reader-chat-detail-backdrop"
-          onClick={() => setRailChat(null)}
+          onClick={() => setSidecarChat(null)}
         >
           <aside
             className={styles.highlightsDrawer}
@@ -4793,13 +4837,13 @@ export default function MediaPaneBody({
           >
             <div className={styles.highlightsDrawerBody}>
               <ReaderChatDetail
-                key={`${railChat.conversationId ?? "new"}:${railChat.quoteUri ?? ""}`}
-                conversationId={railChat.conversationId}
+                key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
+                conversationId={sidecarChat.conversationId}
                 mediaId={id}
-                pendingQuoteUri={railChat.quoteUri}
-                onBack={() => setRailChat(null)}
+                pendingQuoteUri={sidecarChat.quoteUri}
+                onBack={() => setSidecarChat(null)}
                 onOpenFullChat={(cid) => {
-                  setRailChat(null);
+                  setSidecarChat(null);
                   handleOpenFullChat(cid);
                 }}
                 onReaderSourceActivate={handleReaderSourceActivate}

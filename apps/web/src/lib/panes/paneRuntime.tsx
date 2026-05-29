@@ -6,7 +6,11 @@ import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
-import type { PaneRuntimeSizing } from "@/lib/workspace/paneSizing";
+import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
+import type {
+  WorkspaceSidecarState,
+  WorkspaceSidecarSurfaceId,
+} from "@/lib/workspace/sidecarSizing";
 
 export interface PaneScopedRouter {
   canGoBack: boolean;
@@ -17,10 +21,10 @@ export interface PaneScopedRouter {
   forward: () => void;
 }
 
-export interface PaneRuntimeSizingPublication {
+export interface PaneRuntimeLayoutPublication {
   paneId: string;
   resourceKey: string;
-  sizing: PaneRuntimeSizing;
+  layout: PaneRuntimeLayout;
 }
 
 interface PaneRuntimeContextValue {
@@ -30,12 +34,20 @@ interface PaneRuntimeContextValue {
   routeId: string;
   resourceRef: string | null;
   resourceKey: string;
+  sidecar?: WorkspaceSidecarState | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
   router: PaneScopedRouter;
-  openInNewPane: (href: string, titleHint?: string) => void;
+  openInNewPane: (
+    href: string,
+    titleHint?: string,
+    sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
+  ) => void;
   setPaneTitle: (title: string | null) => void;
-  setPaneSizing: (sizing: PaneRuntimeSizing) => void;
+  setPaneLayout: (layout: PaneRuntimeLayout) => void;
+  openSidecar: (surfaceId: WorkspaceSidecarSurfaceId) => void;
+  closeSidecar: () => void;
+  setActiveSidecarSurface: (surfaceId: WorkspaceSidecarSurfaceId) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -46,6 +58,7 @@ interface PaneRuntimeProviderProps {
   routeId: string;
   resourceRef: string | null;
   resourceKey: string;
+  sidecar?: WorkspaceSidecarState | null;
   pathParams?: Record<string, string>;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -59,7 +72,11 @@ interface PaneRuntimeProviderProps {
     href: string,
     options?: { titleHint?: string },
   ) => void;
-  onOpenInNewPane: (href: string, titleHint?: string) => void;
+  onOpenInNewPane: (
+    href: string,
+    titleHint?: string,
+    sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
+  ) => void;
   onGoBackPane: (paneId: string) => void;
   onGoForwardPane: (paneId: string) => void;
   onSetPaneTitle?: (input: {
@@ -67,7 +84,13 @@ interface PaneRuntimeProviderProps {
     resourceKey: string;
     title: string | null;
   }) => void;
-  onSetPaneSizing?: (input: PaneRuntimeSizingPublication) => void;
+  onSetPaneLayout?: (input: PaneRuntimeLayoutPublication) => void;
+  onOpenSidecar?: (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => void;
+  onCloseSidecar?: (paneId: string) => void;
+  onSetActiveSidecarSurface?: (
+    paneId: string,
+    surfaceId: WorkspaceSidecarSurfaceId,
+  ) => void;
   children: React.ReactNode;
 }
 
@@ -91,6 +114,7 @@ export function PaneRuntimeProvider({
   routeId,
   resourceRef,
   resourceKey,
+  sidecar = null,
   pathParams = {},
   canGoBack,
   canGoForward,
@@ -100,7 +124,10 @@ export function PaneRuntimeProvider({
   onGoBackPane,
   onGoForwardPane,
   onSetPaneTitle,
-  onSetPaneSizing,
+  onSetPaneLayout,
+  onOpenSidecar,
+  onCloseSidecar,
+  onSetActiveSidecarSurface,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -112,6 +139,7 @@ export function PaneRuntimeProvider({
       routeId,
       resourceRef,
       resourceKey,
+      sidecar,
       pathParams,
       searchParams: parsed.searchParams,
       router: {
@@ -138,18 +166,31 @@ export function PaneRuntimeProvider({
           onGoForwardPane(paneId);
         },
       },
-      openInNewPane: (nextHref: string, titleHint?: string) => {
+      openInNewPane: (
+        nextHref: string,
+        titleHint?: string,
+        sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
+      ) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
-        onOpenInNewPane(normalized, titleHint);
+        onOpenInNewPane(normalized, titleHint, sidecarSurfaceId);
       },
       setPaneTitle: (title: string | null) => {
         onSetPaneTitle?.({ paneId, resourceKey, title });
       },
-      setPaneSizing: (sizing: PaneRuntimeSizing) => {
-        onSetPaneSizing?.({ paneId, resourceKey, sizing });
+      setPaneLayout: (layout: PaneRuntimeLayout) => {
+        onSetPaneLayout?.({ paneId, resourceKey, layout });
+      },
+      openSidecar: (surfaceId: WorkspaceSidecarSurfaceId) => {
+        onOpenSidecar?.(paneId, surfaceId);
+      },
+      closeSidecar: () => {
+        onCloseSidecar?.(paneId);
+      },
+      setActiveSidecarSurface: (surfaceId: WorkspaceSidecarSurfaceId) => {
+        onSetActiveSidecarSurface?.(paneId, surfaceId);
       },
     }),
     [
@@ -162,13 +203,17 @@ export function PaneRuntimeProvider({
       onOpenInNewPane,
       onReplacePane,
       onSetPaneTitle,
-      onSetPaneSizing,
+      onSetPaneLayout,
+      onOpenSidecar,
+      onCloseSidecar,
+      onSetActiveSidecarSurface,
       paneId,
       parsed.pathname,
       parsed.searchParams,
       pathParams,
       resourceRef,
       resourceKey,
+      sidecar,
       routeId,
     ]
   );

@@ -7,9 +7,9 @@ import styles from "./DocChatTab.module.css";
 
 interface DocChatTabProps {
   mediaId: string;
-  /** Open an existing chat inline in the rail. */
+  /** Open an existing chat inline in the sidecar. */
   onOpenChat: (conversationId: string) => void;
-  /** Start a new chat inline in the rail (created on first send). */
+  /** Start a new chat inline in the sidecar (created on first send). */
   onStartNewChat: () => void;
   /** When set, a banner prompts the user to pick a chat to add the pending quote to. */
   pendingQuoteUri?: string | null;

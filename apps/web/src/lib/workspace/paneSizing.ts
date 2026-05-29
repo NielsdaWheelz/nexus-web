@@ -11,79 +11,87 @@ export type PaneRuntimePrimaryWidth =
   | { kind: "workspace" }
   | { kind: "intrinsic"; widthPx: number };
 
-export interface PaneRuntimeSizing {
+export interface PaneRuntimeLayout {
   primaryWidth: PaneRuntimePrimaryWidth;
-  extraWidthPx: number;
+  fixedPrimaryChromeWidthPx: number;
 }
 
 export interface EffectivePaneSizing {
   primaryWidthPx: number;
   primaryMinWidthPx: number;
   primaryMaxWidthPx: number;
-  renderedWidthPx: number;
-  renderedMinWidthPx: number;
-  renderedMaxWidthPx: number;
-  extraWidthPx: number;
+  renderedPrimarySlotWidthPx: number;
+  renderedPrimarySlotMinWidthPx: number;
+  renderedPrimarySlotMaxWidthPx: number;
+  fixedPrimaryChromeWidthPx: number;
   storedWidthCorrectionPx: number | null;
 }
 
-export const DEFAULT_PANE_RUNTIME_SIZING: PaneRuntimeSizing = {
+export const DEFAULT_PANE_RUNTIME_LAYOUT: PaneRuntimeLayout = {
   primaryWidth: { kind: "workspace" },
-  extraWidthPx: 0,
+  fixedPrimaryChromeWidthPx: 0,
 };
 
-export function normalizePaneRuntimeSizing(
-  sizing: PaneRuntimeSizing
-): PaneRuntimeSizing {
-  if (!Number.isFinite(sizing.extraWidthPx) || sizing.extraWidthPx < 0) {
-    throw new Error("Pane runtime sizing extra width must be non-negative.");
+export function normalizePaneRuntimeLayout(
+  layout: PaneRuntimeLayout
+): PaneRuntimeLayout {
+  if (
+    !Number.isFinite(layout.fixedPrimaryChromeWidthPx) ||
+    layout.fixedPrimaryChromeWidthPx < 0
+  ) {
+    throw new Error("Pane runtime fixed chrome width must be non-negative.");
   }
   let primaryWidth: PaneRuntimePrimaryWidth;
-  switch (sizing.primaryWidth.kind) {
+  switch (layout.primaryWidth.kind) {
     case "workspace":
       primaryWidth = { kind: "workspace" };
       break;
     case "intrinsic":
       if (
-        !Number.isFinite(sizing.primaryWidth.widthPx) ||
-        sizing.primaryWidth.widthPx <= 0
+        !Number.isFinite(layout.primaryWidth.widthPx) ||
+        layout.primaryWidth.widthPx <= 0
       ) {
         throw new Error("Pane runtime intrinsic width must be positive.");
       }
       primaryWidth = {
         kind: "intrinsic",
-        widthPx: Math.ceil(sizing.primaryWidth.widthPx),
+        widthPx: Math.ceil(layout.primaryWidth.widthPx),
       };
       break;
     default: {
-      const exhaustive: never = sizing.primaryWidth;
+      const exhaustive: never = layout.primaryWidth;
       throw new Error(`Unhandled pane runtime primary width: ${exhaustive}`);
     }
   }
-  const extraWidthPx = Math.ceil(sizing.extraWidthPx);
-  return { primaryWidth, extraWidthPx };
+  return {
+    primaryWidth,
+    fixedPrimaryChromeWidthPx: Math.ceil(layout.fixedPrimaryChromeWidthPx),
+  };
 }
 
-export function isEmptyPaneRuntimeSizing(sizing: PaneRuntimeSizing): boolean {
-  return sizing.primaryWidth.kind === "workspace" && sizing.extraWidthPx === 0;
+export function isEmptyPaneRuntimeLayout(layout: PaneRuntimeLayout): boolean {
+  return (
+    layout.primaryWidth.kind === "workspace" &&
+    layout.fixedPrimaryChromeWidthPx === 0
+  );
 }
 
 export function resolveEffectivePaneSizing(input: {
   storedWidthPx: number;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   routeWidth: PaneWidthContract;
-  runtimeSizing: PaneRuntimeSizing;
+  runtimeLayout: PaneRuntimeLayout;
   isMobile: boolean;
 }): EffectivePaneSizing {
-  const runtimeSizing = input.isMobile
-    ? DEFAULT_PANE_RUNTIME_SIZING
-    : normalizePaneRuntimeSizing(input.runtimeSizing);
+  const runtimeLayout = input.isMobile
+    ? DEFAULT_PANE_RUNTIME_LAYOUT
+    : normalizePaneRuntimeLayout(input.runtimeLayout);
   const workspaceMinWidthPx = Math.ceil(input.workspacePrimaryMetrics.primaryMinWidthPx);
   const intrinsicWidthPx =
     !input.isMobile &&
     input.routeWidth.allowsIntrinsicPrimaryWidth &&
-    runtimeSizing.primaryWidth.kind === "intrinsic"
-      ? runtimeSizing.primaryWidth.widthPx
+    runtimeLayout.primaryWidth.kind === "intrinsic"
+      ? runtimeLayout.primaryWidth.widthPx
       : null;
   const primaryMinWidthPx = intrinsicWidthPx ?? workspaceMinWidthPx;
   const primaryMaxWidthPx = Math.max(
@@ -97,16 +105,18 @@ export function resolveEffectivePaneSizing(input: {
     primaryMaxWidthPx,
     Math.max(primaryMinWidthPx, storedWidthPx)
   );
-  const extraWidthPx = input.isMobile ? 0 : runtimeSizing.extraWidthPx;
+  const fixedPrimaryChromeWidthPx = input.isMobile
+    ? 0
+    : runtimeLayout.fixedPrimaryChromeWidthPx;
 
   return {
     primaryWidthPx,
     primaryMinWidthPx,
     primaryMaxWidthPx,
-    renderedWidthPx: primaryWidthPx + extraWidthPx,
-    renderedMinWidthPx: primaryMinWidthPx + extraWidthPx,
-    renderedMaxWidthPx: primaryMaxWidthPx + extraWidthPx,
-    extraWidthPx,
+    renderedPrimarySlotWidthPx: primaryWidthPx + fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotMinWidthPx: primaryMinWidthPx + fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotMaxWidthPx: primaryMaxWidthPx + fixedPrimaryChromeWidthPx,
+    fixedPrimaryChromeWidthPx,
     storedWidthCorrectionPx:
       !input.isMobile && storedWidthPx < primaryMinWidthPx
         ? primaryMinWidthPx

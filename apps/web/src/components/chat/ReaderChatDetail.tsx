@@ -35,7 +35,7 @@ interface ReaderChatDetailProps {
 }
 
 /**
- * A conversation rendered inline inside the reader's secondary rail: full chat
+ * A conversation rendered inline inside the reader's document-chat sidecar: full chat
  * history + composer, plus a link out to the full conversation pane. Composes
  * the same primitives as the full pane (ChatSurface + ChatComposer +
  * useChatRunTail) without the pane's branching/chrome.

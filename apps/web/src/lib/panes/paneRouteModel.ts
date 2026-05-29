@@ -1,6 +1,7 @@
 "use client";
 
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import type { WorkspaceSidecarGroupId } from "@/lib/workspace/sidecarSizing";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -53,6 +54,7 @@ export interface PaneRouteModelDefinition extends PaneWidthContract {
   titleMode: "static" | "dynamic";
   resourceRef?: (params: RouteParams) => string | null;
   bodyMode: PaneBodyMode;
+  sidecarGroups?: readonly WorkspaceSidecarGroupId[];
 }
 
 export interface ResolvedPaneRouteModel {
@@ -98,6 +100,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `library:${params.id}` : null),
     bodyMode: "standard",
+    sidecarGroups: ["library-tools"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -107,6 +110,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `media:${params.id}` : null),
     bodyMode: "document",
+    sidecarGroups: ["reader-tools"],
     ...MEDIA_READER_WIDTH_CONTRACT,
   }),
   route({
@@ -123,6 +127,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "New chat",
     titleMode: "static",
     bodyMode: "contained",
+    sidecarGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -132,6 +137,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `conversation:${params.id}` : null),
     bodyMode: "contained",
+    sidecarGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -363,4 +369,11 @@ export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {
     maxWidthPx: definition.maxWidthPx,
     allowsIntrinsicPrimaryWidth: definition.allowsIntrinsicPrimaryWidth,
   };
+}
+
+export function paneRouteAllowsSidecarGroup(
+  href: string,
+  groupId: WorkspaceSidecarGroupId,
+): boolean {
+  return resolvePaneRouteModel(href).definition?.sidecarGroups?.includes(groupId) ?? false;
 }

@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useRef } from "react";
 
 interface UseResizeHandleInput {
-  paneId: string;
-  primaryWidthPx: number;
-  primaryMinWidthPx: number;
-  primaryMaxWidthPx: number;
-  onResizePane: (paneId: string, widthPx: number) => void;
+  id: string;
+  widthPx: number;
+  minWidthPx: number;
+  maxWidthPx: number;
+  onResize: (id: string, widthPx: number) => void;
 }
 
 interface UseResizeHandleReturn {
@@ -16,16 +16,16 @@ interface UseResizeHandleReturn {
 }
 
 export function useResizeHandle({
-  paneId,
-  primaryWidthPx,
-  primaryMinWidthPx,
-  primaryMaxWidthPx,
-  onResizePane,
+  id,
+  widthPx,
+  minWidthPx,
+  maxWidthPx,
+  onResize,
 }: UseResizeHandleInput): UseResizeHandleReturn {
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const clamp = useCallback(
-    (value: number) => Math.min(primaryMaxWidthPx, Math.max(primaryMinWidthPx, value)),
-    [primaryMaxWidthPx, primaryMinWidthPx]
+    (value: number) => Math.min(maxWidthPx, Math.max(minWidthPx, value)),
+    [maxWidthPx, minWidthPx]
   );
 
   useEffect(
@@ -44,7 +44,7 @@ export function useResizeHandle({
       resizeCleanupRef.current?.();
 
       const startX = event.clientX;
-      const startWidth = primaryWidthPx;
+      const startWidth = widthPx;
       const doc = event.currentTarget.ownerDocument;
       const cleanup = () => {
         doc.body.style.cursor = "";
@@ -55,7 +55,7 @@ export function useResizeHandle({
       };
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX;
-        onResizePane(paneId, clamp(startWidth + delta));
+        onResize(id, clamp(startWidth + delta));
       };
       const handleMouseUp = () => {
         cleanup();
@@ -67,33 +67,26 @@ export function useResizeHandle({
       doc.addEventListener("mouseup", handleMouseUp);
       resizeCleanupRef.current = cleanup;
     },
-    [clamp, onResizePane, paneId, primaryWidthPx]
+    [clamp, id, onResize, widthPx]
   );
 
   const handleResizeKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        onResizePane(paneId, clamp(primaryWidthPx - 16));
+        onResize(id, clamp(widthPx - 16));
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        onResizePane(paneId, clamp(primaryWidthPx + 16));
+        onResize(id, clamp(widthPx + 16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        onResizePane(paneId, primaryMinWidthPx);
+        onResize(id, minWidthPx);
       } else if (event.key === "End") {
         event.preventDefault();
-        onResizePane(paneId, primaryMaxWidthPx);
+        onResize(id, maxWidthPx);
       }
     },
-    [
-      clamp,
-      onResizePane,
-      paneId,
-      primaryMaxWidthPx,
-      primaryMinWidthPx,
-      primaryWidthPx,
-    ]
+    [clamp, id, maxWidthPx, minWidthPx, onResize, widthPx]
   );
 
   return { handleResizeMouseDown, handleResizeKeyDown };

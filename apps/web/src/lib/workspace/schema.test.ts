@@ -34,7 +34,7 @@ describe("workspace schema", () => {
     expect(state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
     expect(state.panes).toHaveLength(1);
     expect(state.panes[0]?.href).toBe("/media/abc");
-    expect(state.panes[0]?.widthPx).toBe(workspacePrimaryMetrics.primaryDefaultWidthPx);
+    expect(state.panes[0]?.primaryWidthPx).toBe(workspacePrimaryMetrics.primaryDefaultWidthPx);
     expect(state.panes[0]?.visibility).toBe("visible");
     expect(state.panes[0]?.history).toEqual({ back: [], forward: [] });
     expect(state.activePaneId).toBe(state.panes[0]?.id);
@@ -59,7 +59,7 @@ describe("workspace schema", () => {
     const state = sanitize({
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
-      panes: [{ id: "pane-1", href: "/media/1", widthPx: 480 }],
+      panes: [{ id: "pane-1", href: "/media/1", primaryWidthPx: 480 }],
     });
     expect(state.panes[0]?.href).toBe("/libraries");
   });
@@ -69,7 +69,7 @@ describe("workspace schema", () => {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
-        { id: "pane-1", href: "/media/1", widthPx: 480, visibility: "visible" },
+        { id: "pane-1", href: "/media/1", primaryWidthPx: 480, visibility: "visible" },
       ],
     });
     expect(state.panes[0]?.href).toBe("/libraries");
@@ -84,7 +84,7 @@ describe("workspace schema", () => {
           {
             id: "pane-1",
             href: "/media/1",
-            widthPx: 480,
+            primaryWidthPx: 480,
             visibility: "visible",
             history: {
               back: ["http://localhost/libraries?sort=recent"],
@@ -110,7 +110,7 @@ describe("workspace schema", () => {
           {
             id: "pane-1",
             href: "/media/1",
-            widthPx: 480,
+            primaryWidthPx: 480,
             visibility: "visible",
             history: { back: ["https://example.com/media/0"], forward: [] },
           },
@@ -128,7 +128,7 @@ describe("workspace schema", () => {
       panes: Array.from({ length: MAX_PANES + 10 }, (_, i) => ({
         id: `pane-${i}`,
         href: `/media/${i}`,
-        widthPx: 480,
+        primaryWidthPx: 480,
         visibility: "visible",
         history: { back: [], forward: [] },
       })),
@@ -142,15 +142,15 @@ describe("workspace schema", () => {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
-        { id: "pane-1", href: "/libraries", widthPx: 10, visibility: "visible", history: { back: [], forward: [] } },
-        { id: "pane-2", href: "/media/1", widthPx: 99999, visibility: "visible", history: { back: [], forward: [] } },
+        { id: "pane-1", href: "/libraries", primaryWidthPx: 10, visibility: "visible", history: { back: [], forward: [] } },
+        { id: "pane-2", href: "/media/1", primaryWidthPx: 99999, visibility: "visible", history: { back: [], forward: [] } },
       ],
     });
-    expect(state.panes[0]?.widthPx).toBe(workspacePrimaryMetrics.primaryMinWidthPx);
-    expect(state.panes[1]?.widthPx).toBe(99999);
+    expect(state.panes[0]?.primaryWidthPx).toBe(workspacePrimaryMetrics.primaryMinWidthPx);
+    expect(state.panes[1]?.primaryWidthPx).toBe(99999);
   });
 
-  it("uses workspace defaults when a persisted pane omits widthPx", () => {
+  it("rejects old-shape panes that omit primaryWidthPx", () => {
     const state = sanitize({
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
@@ -161,12 +161,60 @@ describe("workspace schema", () => {
         { id: "pane-4", href: "/settings", visibility: "visible", history: { back: [], forward: [] } },
       ],
     });
-    expect(state.panes.map((pane) => pane.widthPx)).toEqual([
-      684,
-      684,
-      684,
-      684,
-    ]);
+    expect(state.panes).toHaveLength(1);
+    expect(state.panes[0]?.href).toBe("/libraries");
+    expect(state.panes[0]?.sidecar).toBeNull();
+  });
+
+  it("sanitizes compatible sidecar state", () => {
+    const state = sanitize({
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      activePaneId: "pane-1",
+      panes: [
+        {
+          id: "pane-1",
+          href: "/media/1",
+          primaryWidthPx: 720,
+          sidecar: {
+            groupId: "reader-tools",
+            activeSurfaceId: "reader-highlights",
+            widthPx: 9999,
+            visibility: "visible",
+          },
+          visibility: "visible",
+          history: { back: [], forward: [] },
+        },
+      ],
+    });
+    expect(state.panes[0]?.sidecar).toEqual({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+      widthPx: 720,
+      visibility: "visible",
+    });
+  });
+
+  it("drops incompatible sidecar state", () => {
+    const state = sanitize({
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      activePaneId: "pane-1",
+      panes: [
+        {
+          id: "pane-1",
+          href: "/libraries",
+          primaryWidthPx: 720,
+          sidecar: {
+            groupId: "reader-tools",
+            activeSurfaceId: "reader-highlights",
+            widthPx: 320,
+            visibility: "visible",
+          },
+          visibility: "visible",
+          history: { back: [], forward: [] },
+        },
+      ],
+    });
+    expect(state.panes[0]?.sidecar).toBeNull();
   });
 
   it("keeps route width policy to max width and intrinsic permission", () => {
@@ -194,8 +242,8 @@ describe("workspace schema", () => {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [
-        { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
-        { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
+        { id: "pane-1", href: "/libraries", primaryWidthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
+        { id: "pane-2", href: "/media/1", primaryWidthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
       ],
     });
     expect(state.panes.map((pane) => pane.visibility)).toEqual(["minimized", "visible"]);
@@ -208,8 +256,8 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
-          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-1", href: "/libraries", primaryWidthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
+          { id: "pane-2", href: "/media/1", primaryWidthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
         ],
       },
       { fallbackHref: "/conversations" },
@@ -227,7 +275,7 @@ describe("workspace schema", () => {
       panes: Array.from({ length: 5 }, (_, index) => ({
         id: `pane-${index}`,
         href: `/media/current-${index}`,
-        widthPx: 480,
+        primaryWidthPx: 480,
         visibility: "visible",
         history: { back: history, forward: history },
       })),

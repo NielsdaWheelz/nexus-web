@@ -224,7 +224,9 @@ export function buildWorkspaceUrl(
 
   // Single pane → omit workspace params from URL
   const isTrivial =
-    state.panes.length === 1 && !hasPaneHistory(state.panes[0]!.history);
+    state.panes.length === 1 &&
+    state.panes[0]!.sidecar === null &&
+    !hasPaneHistory(state.panes[0]!.history);
   if (isTrivial) {
     const qs = params.toString();
     return {

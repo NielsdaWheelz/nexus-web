@@ -2,8 +2,13 @@
 
 ## Status
 
-This is the target contract and implementation plan for simplifying workspace
-pane widths.
+This is the target contract and implementation plan for simplifying primary
+workspace pane widths.
+
+Secondary work surfaces are no longer part of this target contract. Reader
+highlights, document chats, library chats, library intelligence, and
+conversation references are governed by
+`docs/workspace-sidecar-pane-cutover.md`.
 
 The cutover is strict:
 
@@ -11,7 +16,8 @@ The cutover is strict:
 - Default primary width equals minimum primary width.
 - The non-PDF primary width is the measured reader text content floor.
 - PDF panes are the only primary-width exception.
-- Overview rulers and secondary rails are runtime extra width.
+- Overview rulers are fixed primary-adjacent chrome outside primary width.
+- Secondary work surfaces are sidecar panes, not fixed runtime extra width.
 - Pane width policy has one owner.
 - Effective pane sizing has one calculation.
 - Runtime pane sizing has one API.
@@ -19,8 +25,8 @@ The cutover is strict:
 - No compatibility path for old pane width behavior.
 
 Any code path that keeps the old per-layout defaults, adds overview ruler width
-to primary width, or gives PDF the universal text floor is wrong and should be
-deleted.
+to primary width, treats a secondary work surface as fixed fixed sidecar width, or
+gives PDF the universal text floor is wrong and should be deleted.
 
 ## Problem Statement
 
@@ -50,8 +56,13 @@ The correct target is a hard cutover to one simple rule:
 ```text
 non-PDF primary pane min/default = reader text content floor
 PDF primary pane min/default = measured PDF page width
-rendered pane width = primary pane width + runtime extra width
+rendered pane width =
+  primary pane width + fixed primary chrome width + sidecar width
 ```
+
+Fixed primary chrome is limited to non-resizable built-in chrome such as the
+reader overview ruler. Secondary surfaces use the sidecar pane contract in
+`docs/workspace-sidecar-pane-cutover.md`.
 
 ## Goals
 
@@ -62,13 +73,14 @@ rendered pane width = primary pane width + runtime extra width
 - Keep web article and EPUB protected reader text behavior.
 - Apply that protected reader floor universally to non-PDF panes.
 - Remove the overview ruler from the protected reader floor.
-- Treat overview ruler width like secondary rail width: runtime extra width.
+- Treat overview ruler width as fixed primary-adjacent chrome outside primary
+  width.
 - Make PDF panes show the whole rendered PDF page by default.
 - Make PDF panes impossible to shrink below their measured rendered page width.
 - Keep desktop workspace panes as independent shells in one horizontal canvas.
 - Keep mobile panes at viewport width with no desktop width publication.
 - Keep persisted pane width as primary content width only.
-- Keep outward UI chrome out of persisted primary width.
+- Keep fixed chrome and sidecar width out of persisted primary width.
 - Delete stale width constants, layout-kind width distinctions, and tests that
   preserve old behavior.
 - Update docs and tests in the same cutover so the product contract is stated
@@ -77,9 +89,10 @@ rendered pane width = primary pane width + runtime extra width
 ## Non-Goals
 
 - Replacing the flat workspace with nested split panes.
-- Making arbitrary child panels independently resizable.
+- Making arbitrary child panels independently resizable outside the sidecar
+  contract.
 - Persisting overview ruler width.
-- Persisting secondary rail width.
+- Persisting arbitrary child-panel width outside the sidecar contract.
 - Preserving old route-specific default widths.
 - Preserving the old runtime `{ minWidthPx: null }` API shape.
 - Supporting both old and new pane width schemas.
@@ -121,17 +134,17 @@ The existing architecture should be reused, not replaced:
 - `apps/web/src/lib/workspace/paneSizing.ts`
   owns effective pane sizing math.
 - `apps/web/src/lib/panes/paneRuntime.tsx`
-  owns the pane body to workspace runtime sizing API.
+  owns the pane body to workspace runtime layout API.
 - `apps/web/src/components/workspace/WorkspaceHost.tsx`
-  owns runtime sizing records and rendered pane descriptors.
+  owns runtime layout records and rendered pane descriptors.
 - `apps/web/src/components/workspace/PaneShell.tsx`
   owns shell inline dimensions and resize ARIA.
 - `apps/web/src/components/workspace/useResizeHandle.ts`
   owns pointer and keyboard resize interaction.
 - `apps/web/src/lib/reader/ReaderContext.tsx`
   already wraps the authenticated workspace and owns reader profile access.
-- `apps/web/src/components/secondaryRail/railSizing.ts`
-  already centralizes secondary rail widths.
+- `apps/web/src/lib/workspace/sidecarSizing.ts`
+  should own target sidecar width policy after the sidecar cutover.
 - `apps/web/src/components/PdfReader.tsx`
   owns PDF.js page rendering and knows rendered page geometry.
 
@@ -146,13 +159,12 @@ helpers.
 Every desktop pane has a primary width.
 
 Primary width is the width the user resizes. It is stored in workspace state as
-`WorkspacePaneState.widthPx`.
+`WorkspacePaneState.primaryWidthPx`.
 
 Primary width excludes:
 
 - overview ruler width
-- secondary rail width
-- collapsed rail width
+- sidecar pane width
 - mobile drawer width
 - transient overlays
 
@@ -186,7 +198,7 @@ The floor is not:
 - long URL width
 - CSS `min-content`
 - overview ruler width
-- secondary rail width
+- sidecar pane width
 
 ### Default Equals Minimum
 
@@ -197,7 +209,7 @@ default primary width = minimum primary width = reader text content floor
 ```
 
 Opening a new non-PDF pane stores the current measured reader text content floor
-as `widthPx`.
+as `primaryWidthPx`.
 
 If reader profile changes increase the floor, visible non-PDF panes whose stored
 width is below the new floor are resized to the new floor.
@@ -231,47 +243,50 @@ widths above the floor remain user-owned.
 
 PDF width is measured from rendered PDF geometry, not reader text settings.
 
-### Runtime Extra Width
+### Fixed Primary Chrome Width
 
 Rendered pane width is:
 
 ```text
-primary width + runtime extra width
+primary width + fixed primary chrome width + sidecar width
 ```
 
-Runtime extra width includes outward chrome:
+This document owns the primary width and fixed primary chrome terms only.
+
+Fixed primary chrome includes:
 
 - reader overview ruler
-- reader secondary rail
-- conversation references rail
-- collapsed rail affordances, when they occupy horizontal space
 
-Runtime extra width does not mutate stored `widthPx`.
+Fixed primary chrome does not mutate stored `primaryWidthPx`.
 
-Opening outward chrome increases rendered pane width. Closing it removes only
-the outward extra width.
+Opening fixed primary chrome increases rendered pane width. Closing it removes
+only the fixed primary chrome width.
+
+Secondary surfaces are not fixed primary chrome. They are sidecar panes with
+independent width state under `docs/workspace-sidecar-pane-cutover.md`.
 
 ### Overview Ruler
 
-The reader overview ruler is runtime extra width.
+The reader overview ruler is fixed primary-adjacent chrome.
 
 It must not be added to the primary pane floor.
 
-It composes exactly like a rail:
+It composes as fixed primary chrome:
 
 ```text
-extraWidthPx += READER_OVERVIEW_RULER_WIDTH_PX
+fixedPrimaryChromeWidthPx += READER_OVERVIEW_RULER_WIDTH_PX
 ```
 
 When the overview ruler is hidden, its contribution is `0`.
 
-### Secondary Rails
+### Secondary Surfaces
 
-Secondary rails remain runtime extra width.
+Secondary surfaces are sidecar panes.
 
-Conversation panes, reader highlight rails, and document chat rails publish only
-their outward rail width. They do not publish a primary min width unless they
-are the PDF reader publishing measured PDF width.
+Conversation references, reader highlights, document chat, library chat, and
+library intelligence do not publish fixed secondary width. They use the sidecar
+pane state, sizing, shell, and resize contract in
+`docs/workspace-sidecar-pane-cutover.md`.
 
 ### Mobile
 
@@ -281,16 +296,16 @@ Mobile ignores:
 
 - universal reader text floor
 - PDF intrinsic width
-- runtime extra width
+- fixed primary chrome width
+- sidecar width
 - overview ruler width
-- secondary rail width
 
 Mobile keeps the existing reader behavior:
 
 - one active visible pane
 - no desktop horizontal pane canvas
 - no persistent desktop overview ruler
-- no persistent desktop secondary rail
+- no persistent desktop sidecar shell
 - highlights through drawer or direct interaction
 - pane chrome local to the active pane
 
@@ -315,7 +330,7 @@ Rules:
 - The value is workspace-wide, not pane-local.
 - It is not a CSS token source of truth.
 
-### Pane Runtime Sizing
+### Pane Runtime Layout
 
 Replace the old nullable runtime min-width API with an explicit primary-width
 source:
@@ -325,9 +340,9 @@ type PaneRuntimePrimaryWidth =
   | { kind: "workspace" }
   | { kind: "intrinsic"; widthPx: number };
 
-interface PaneRuntimeSizing {
+interface PaneRuntimeLayout {
   primaryWidth: PaneRuntimePrimaryWidth;
-  extraWidthPx: number;
+  fixedPrimaryChromeWidthPx: number;
 }
 ```
 
@@ -336,21 +351,22 @@ Rules:
 - `kind: "workspace"` means the pane uses the universal non-PDF floor.
 - `kind: "intrinsic"` means the pane owns a measured primary width.
 - PDF is the only shipped `intrinsic` publisher.
-- `extraWidthPx` is always outward rendered width.
-- `extraWidthPx` is finite and non-negative.
+- `fixedPrimaryChromeWidthPx` is always fixed primary-adjacent chrome width.
+- `fixedPrimaryChromeWidthPx` is finite and non-negative.
 - `intrinsic.widthPx` is finite and positive.
-- The runtime API is atomic: primary source and extra width publish together.
+- The runtime API is atomic: primary source and fixed primary chrome width
+  publish together.
 - There is no separate min-width setter.
-- There is no separate extra-width setter.
+- There is no separate fixed-chrome-width setter.
 - There is no nullable min-width sentinel.
 
-Default runtime sizing is:
+Default runtime layout is:
 
 ```ts
-const DEFAULT_PANE_RUNTIME_SIZING = {
+const DEFAULT_PANE_RUNTIME_LAYOUT = {
   primaryWidth: { kind: "workspace" },
-  extraWidthPx: 0,
-} satisfies PaneRuntimeSizing;
+  fixedPrimaryChromeWidthPx: 0,
+} satisfies PaneRuntimeLayout;
 ```
 
 ### Effective Sizing
@@ -373,12 +389,17 @@ primaryWidthPx = clamp(
   primaryMaxWidthPx,
 );
 
-renderedWidthPx = primaryWidthPx + extraWidthPx;
-renderedMinWidthPx = primaryMinWidthPx + extraWidthPx;
-renderedMaxWidthPx = primaryMaxWidthPx + extraWidthPx;
+renderedWidthPx = primaryWidthPx + fixedPrimaryChromeWidthPx + sidecarWidthPx;
+renderedMinWidthPx =
+  primaryMinWidthPx + fixedPrimaryChromeWidthPx + sidecarMinWidthPx;
+renderedMaxWidthPx =
+  primaryMaxWidthPx + fixedPrimaryChromeWidthPx + sidecarMaxWidthPx;
 ```
 
-Mobile short-circuits to viewport width and does not use runtime sizing.
+Mobile short-circuits to viewport width and does not use runtime layout.
+
+`sidecarWidthPx`, `sidecarMinWidthPx`, and `sidecarMaxWidthPx` come from the
+sidecar sizing contract, not from pane body runtime layout.
 
 ### Route Width Policy
 
@@ -427,7 +448,8 @@ Workspace state shape remains:
 interface WorkspacePaneState {
   id: string;
   href: string;
-  widthPx: number;
+  primaryWidthPx: number;
+  sidecar: WorkspaceSidecarState | null;
   visibility: "visible" | "minimized";
   history: WorkspacePaneHistory;
 }
@@ -435,7 +457,7 @@ interface WorkspacePaneState {
 
 Rules:
 
-- `widthPx` is always primary width.
+- `primaryWidthPx` is always primary width.
 - New panes use `workspacePrimaryMetrics.primaryDefaultWidthPx`.
 - State sanitization clamps using current width policy.
 - Pane navigation preserves width only when it is still valid for the next pane.
@@ -452,7 +474,7 @@ Rules:
 - workspace state
 - route width policy
 - workspace primary metrics
-- runtime sizing records
+- runtime layout records
 - mobile viewport status
 
 It builds host pane descriptors with `resolveEffectivePaneSizing`.
@@ -462,24 +484,28 @@ It owns the existing correction behavior:
 - visible desktop pane below effective primary floor is resized upward
 - invisible/minimized pane is not force-resized until visible
 - correction writes primary width only
-- extra width never writes to workspace state
+- fixed chrome never writes to workspace state
+- sidecar width writes only to sidecar state
 - stale runtime records are ignored by `paneId + resourceKey`
 
 ### Pane Runtime
 
-`PaneRuntimeProvider` exposes one runtime sizing command:
+`PaneRuntimeProvider` exposes one runtime layout command:
 
 ```ts
-setPaneSizing(sizing: PaneRuntimeSizing): void;
+setPaneLayout(layout: PaneRuntimeLayout): void;
 ```
 
 Publishers:
 
-- PDF media pane publishes intrinsic PDF width plus reader extras.
-- Reflowable media pane publishes workspace primary width plus reader extras.
-- Transcript media pane publishes workspace primary width plus reader extras.
-- Conversation panes publish workspace primary width plus references rail extra.
-- Panes with no outward chrome do not publish sizing.
+- PDF media pane publishes intrinsic PDF width plus fixed primary chrome.
+- Reflowable media pane publishes workspace primary width plus fixed primary
+  chrome.
+- Transcript media pane publishes workspace primary width plus fixed primary
+  chrome.
+- Conversation panes do not publish secondary-surface width through runtime
+  sizing.
+- Panes with no fixed primary chrome do not publish sizing.
 
 ### Reader Text Floor Measurement
 
@@ -529,30 +555,26 @@ Rules:
 - It reads actual `.page.getBoundingClientRect().width` where possible.
 - It may fall back to pdf.js viewport width only inside PDF measurement code.
 - It does not call pane runtime directly.
-- `MediaPaneBody` composes PDF width with overview and rail extra width and
-  publishes one atomic runtime sizing object.
+- `MediaPaneBody` composes PDF width with fixed primary chrome width and
+  publishes one atomic runtime layout object.
 
-### Outward Width Constants
+### Fixed Chrome Constants
 
-All outward fixed widths should live in one module.
+All fixed primary chrome widths should live in one module.
 
-Current secondary rail constants live in:
+The current implementation stores fixed primary chrome ownership in:
 
 ```text
-apps/web/src/components/secondaryRail/railSizing.ts
+apps/web/src/lib/workspace/fixedPrimaryChrome.ts
 ```
 
-Cutover options:
+Target ownership after the sidecar cutover:
 
-- move `OVERVIEW_RULER_WIDTH_PX` into `railSizing.ts`, or
-- rename the module to a broader outward-chrome sizing owner.
+- overview ruler width lives with fixed primary chrome sizing
+- sidecar width policies live in `apps/web/src/lib/workspace/sidecarSizing.ts`
 
-The final state must have one import source for:
-
-- overview ruler width
-- reader expanded rail width
-- reader collapsed rail width
-- conversation references rail width
+The final state must not keep fixed secondary width constants as product
+policy.
 
 ## Composition With Other Systems
 
@@ -591,10 +613,10 @@ intrinsic content. Overflow, wrapping, or internal layout is transcript-owned.
 
 Conversation panes use the universal non-PDF floor.
 
-Conversation reference rails publish only extra width.
+Conversation references render as sidecar surfaces.
 
-Existing and new conversation panes should share one small rail sizing hook or
-component if that removes duplication without introducing a hollow abstraction.
+Existing and new conversation panes should share one sidecar surface component
+if that removes duplication without introducing a hollow abstraction.
 
 ### Libraries, Browse, Search, Notes, Settings, Pages, Authors, Podcasts
 
@@ -617,7 +639,8 @@ resized wider, the workspace does not shrink them.
 
 ### Workspace URL And Session State
 
-Workspace URL/session state continues to store `widthPx` as primary width.
+Workspace URL/session state stores primary width and sidecar width as separate
+fields.
 
 Schema version increments because old width semantics are removed.
 
@@ -630,7 +653,7 @@ workspace state created under the new width contract.
 Mobile ignores this desktop width system.
 
 Reader profile can still be measured, but mobile rendering does not apply
-desktop primary or extra widths.
+desktop primary, fixed chrome, or sidecar widths.
 
 ## Final Architecture
 
@@ -647,36 +670,40 @@ pixel values.
 - current workspace primary metrics
 - stored primary width
 - runtime intrinsic primary width
-- runtime extra width
+- fixed primary chrome width
+- sidecar sizing state
 - mobile status
 
 No other module computes effective pane width.
 
-### One Runtime Sizing API
+### One Runtime Layout API
 
-`PaneRuntimeSizing` is the only body-to-shell sizing capability.
+`PaneRuntimeLayout` is the only body-to-shell sizing capability.
 
 It publishes:
 
 - primary source: workspace or intrinsic
-- extra width
+- fixed primary chrome width
 
-It does not publish separate min and extra values through independent paths.
+It does not publish separate min and fixed chrome values through independent
+paths. It does not publish secondary-surface width.
 
-### One Outward Width Model
+### One Fixed Chrome Model
 
-Overview ruler and secondary rails are fixed outward chrome.
+Overview ruler is fixed primary-adjacent chrome.
 
-They are accumulated into `extraWidthPx`.
+It is accumulated into `fixedPrimaryChromeWidthPx`.
 
-They are never persisted as primary width.
+It is never persisted as primary width.
+
+Secondary surfaces are sidecar panes and are persisted through sidecar state.
 
 ### One PDF Intrinsic Path
 
 PDF measurement lives in the PDF reader.
 
 PDF pane sizing publication lives in the media pane, where PDF measurement and
-reader outward chrome are composed into one runtime sizing publication.
+fixed primary chrome are composed into one runtime layout publication.
 
 No route-level PDF special case is added.
 
@@ -711,8 +738,10 @@ No route-level PDF special case is added.
 - `apps/web/src/components/workspace/useResizeHandle.ts`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
 - `apps/web/src/components/reader/ReaderOverviewRuler.tsx`
-- `apps/web/src/components/secondaryRail/railSizing.ts`
-- `apps/web/src/components/secondaryRail/SecondaryRail.tsx`
+- fixed primary chrome sizing owner
+- `apps/web/src/lib/workspace/sidecarSizing.ts`
+- `apps/web/src/components/workspace/PaneSidecar.tsx`
+- `apps/web/src/components/workspace/SidecarPaneShell.tsx`
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/components/PdfReader.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
@@ -783,24 +812,26 @@ Increment workspace schema version.
 
 Delete old width default expectations.
 
-### 4. Replace Runtime Sizing API
+### 4. Replace Runtime Layout API
 
-Replace `PaneRuntimeSizing` with explicit primary source plus extra width.
+Replace `PaneRuntimeLayout` with explicit primary source plus fixed primary
+chrome width.
 
 Update all publishers in one change:
 
 - media panes
-- conversation panes
-- new conversation pane
 
 Delete nullable min-width semantics in tests and implementation.
 
-### 5. Move Overview Ruler To Extra Width
+Conversation panes and new conversation panes participate through sidecar state
+instead of fixed runtime layout.
 
-Centralize overview ruler width with other outward width constants.
+### 5. Move Overview Ruler To Fixed Primary Chrome
 
-Make media panes add overview ruler width to `extraWidthPx` whenever the ruler
-is rendered on desktop.
+Centralize overview ruler width with other fixed primary chrome constants.
+
+Make media panes add overview ruler width to `fixedPrimaryChromeWidthPx`
+whenever the ruler is rendered on desktop.
 
 Remove overview ruler width from reader primary floors and related assertions.
 
@@ -823,7 +854,7 @@ Make `MediaPaneBody` publish:
 ```ts
 {
   primaryWidth: { kind: "intrinsic", widthPx: measuredPdfPageWidthPx },
-  extraWidthPx: overviewRulerWidthPx + secondaryRailWidthPx,
+  fixedPrimaryChromeWidthPx: overviewRulerWidthPx,
 }
 ```
 
@@ -848,13 +879,13 @@ Rewrite tests around the new observable contract:
 - default equals minimum
 - route categories no longer change default width
 - web/EPUB still cannot shrink below text floor
-- overview ruler adds rendered extra width
-- secondary rails add rendered extra width
-- extra width does not mutate stored primary width
+- overview ruler adds fixed primary chrome width
+- sidecar panes add rendered sidecar width
+- fixed chrome and sidecar width do not mutate stored primary width
 - PDF pane auto-corrects to measured page width
 - PDF cannot shrink below measured page width
 - PDF width updates when rendered page width changes
-- mobile ignores desktop primary and extra widths
+- mobile ignores desktop primary, fixed chrome, and sidecar widths
 
 ## Acceptance Criteria
 
@@ -877,12 +908,13 @@ Rewrite tests around the new observable contract:
   measure.
 - Reader overview ruler increases rendered width but does not increase primary
   width.
-- Reader secondary rail increases rendered width but does not increase primary
+- Reader sidecar increases rendered width but does not increase primary
   width.
-- Conversation reference rail increases rendered width but does not increase
+- Conversation reference sidecar increases rendered width but does not increase
   primary width.
-- Closing outward chrome removes only its extra rendered width.
-- Opening/closing outward chrome does not mutate stored primary `widthPx`.
+- Closing a sidecar removes only its sidecar rendered width.
+- Opening/closing fixed chrome or a sidecar does not mutate stored primary
+  `primaryWidthPx`.
 - PDF panes auto-correct to measured rendered PDF page width once PDF geometry is
   known.
 - PDF panes cannot be shrunk below measured rendered PDF page width.
@@ -894,14 +926,13 @@ Rewrite tests around the new observable contract:
 - One workspace-wide reader text floor measurement exists.
 - `paneRouteModel.ts` does not define route-specific default/min widths.
 - `paneSizing.ts` is the only effective sizing calculation.
-- `PaneRuntimeSizing` has one atomic API.
+- `PaneRuntimeLayout` has one atomic API.
 - Runtime sizing uses explicit `workspace` vs `intrinsic` primary source.
-- Overview ruler width is imported from the same outward-width owner as rail
-  widths.
+- Overview ruler width is imported from the fixed primary chrome width owner.
 - `MediaPaneBody` does not measure reader text floor.
 - `PdfReader` does not import pane runtime.
 - PDF intrinsic measurement flows through a narrow callback to `MediaPaneBody`.
-- `WorkspaceHost` remains the only runtime sizing record owner.
+- `WorkspaceHost` remains the only runtime layout record owner.
 - `PaneShell` consumes resolved sizing and does not recompute width policy.
 - `useResizeHandle` clamps against resolved primary bounds only.
 
@@ -925,7 +956,7 @@ shell sizing.
 
 - Reader docs state that the reader text floor is workspace-wide for non-PDF
   panes.
-- Reader docs state that overview ruler width is runtime extra width.
+- Reader docs state that overview ruler width is fixed primary-adjacent chrome.
 - Reader docs state that PDF panes publish intrinsic page width.
 - No doc states as target behavior that PDF panes keep generic media width or
   transcript panes bypass the universal non-PDF floor.
@@ -982,11 +1013,10 @@ makes all non-PDF panes predictable and removes route-specific defaults.
 New panes should not consume more horizontal space than their minimum. If the
 user wants a wider pane, resizing remains explicit and persisted.
 
-### Overview Ruler Is Outward Chrome
+### Overview Ruler Is Fixed Primary Chrome
 
-The overview ruler is not primary content width. It behaves like a rail: it is
-visible desktop chrome appended beside content. It belongs in runtime extra
-width.
+The overview ruler is not primary content width. It is visible desktop chrome
+appended beside primary content. It belongs in fixed primary chrome width.
 
 ### PDFs Are Intrinsic
 
@@ -1000,10 +1030,11 @@ Allowing runtime width to silently raise or lower a generic min width makes
 exceptions hard to audit. The runtime API states whether primary width comes
 from the workspace floor or intrinsic content.
 
-### Store Primary Width Only
+### Store Primary Width Separately
 
-Persisting outward chrome width would make transient tools change the user's
-content width preference. The store persists primary width only.
+Persisting fixed primary chrome width would make built-in reader instruments
+change the user's content width preference. The store persists primary width and
+sidecar width as separate fields.
 
 ### No Compatibility Width Layer
 
@@ -1027,10 +1058,10 @@ must move to the new contract in the same cutover.
 
 ## Out Of Scope Until After Cutover
 
-- User-resizable rails.
+- User-resizable surfaces outside the sidecar pane contract.
 - Per-document reader width overrides.
 - Visual regression screenshot baseline system.
 - Nested panes.
 - Arbitrary split panes.
-- Persisted secondary rail state.
+- Persisted arbitrary child-panel state outside the sidecar pane contract.
 - Persisted overview ruler width.

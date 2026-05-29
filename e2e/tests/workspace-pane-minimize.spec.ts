@@ -17,8 +17,8 @@ test.describe("workspace pane minimize", () => {
       schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
-        makeWorkspacePane("pane-libraries", "/libraries", { widthPx: 480 }),
-        makeWorkspacePane("pane-search", "/search", { widthPx: 480 }),
+        makeWorkspacePane("pane-libraries", "/libraries", { primaryWidthPx: 480 }),
+        makeWorkspacePane("pane-search", "/search", { primaryWidthPx: 480 }),
       ],
     });
 

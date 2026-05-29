@@ -156,7 +156,11 @@ describe("ActionMenu", () => {
       shiftKey: true,
     });
 
-    expect(openInNewPane).toHaveBeenCalledWith("/settings/reader", "Reader settings");
+    expect(openInNewPane).toHaveBeenCalledWith(
+      "/settings/reader",
+      "Reader settings",
+      undefined,
+    );
     expect(navigatePane).not.toHaveBeenCalled();
   });
 

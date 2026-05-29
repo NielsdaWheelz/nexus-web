@@ -18,16 +18,10 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { createRandomId } from "@/lib/createRandomId";
-import { PanelRightOpen } from "lucide-react";
-import Button from "@/components/ui/Button";
+import { Link2 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
-import {
-  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/railSizing";
+import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -57,6 +51,7 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import {
   FeedbackNotice,
   toFeedback,
@@ -75,7 +70,7 @@ type Conversation = ConversationSummary;
 type ChatRunData = ChatRunResponse["data"];
 
 // ============================================================================
-// ConversationPaneBody — chat view with inline references rail
+// ConversationPaneBody — chat view with inline references sidecar
 // ============================================================================
 
 const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
@@ -164,7 +159,6 @@ function ChatView({
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [referencesRailExpanded, setReferencesRailExpanded] = useState(true);
   const retryingAssistantMessageIds = useStringIdSet();
   useSetPaneTitle(
     loading ? null : conversation ? `Chat: ${conversation.title}` : "Chat",
@@ -702,30 +696,48 @@ function ChatView({
     [paneRuntime],
   );
 
-  usePaneChromeOverride({
-    options: conversationResourceOptions({
-      deleting,
-      onDelete: () => {
-        void handleDeleteConversation();
+  const paneOptions = useMemo(
+    () => [
+      {
+        id: "open-references",
+        label: "References",
+        onSelect: () => paneRuntime?.openSidecar("conversation-references"),
       },
+      ...conversationResourceOptions({
+        deleting,
+        onDelete: () => {
+          void handleDeleteConversation();
+        },
+      }),
+    ],
+    [deleting, handleDeleteConversation, paneRuntime],
+  );
+  usePaneChromeOverride({ options: paneOptions });
+  const sidecarDescriptor = useMemo(
+    () => ({
+      groupId: "conversation-context" as const,
+      defaultSurfaceId: "conversation-references" as const,
+      surfaces: [
+        {
+          id: "conversation-references" as const,
+          groupId: "conversation-context" as const,
+          title: "References",
+          icon: Link2,
+          body: (
+            <div className={styles.chatSidecarBody}>
+              <ConversationReferencesSidecar
+                references={references}
+                removeReference={removeReference}
+                onOpenResource={handleOpenResource}
+              />
+            </div>
+          ),
+        },
+      ],
     }),
-  });
-
-  useEffect(() => {
-    if (!paneRuntime) return;
-    paneRuntime.setPaneSizing({
-      primaryWidth: { kind: "workspace" },
-      extraWidthPx: referencesRailExpanded
-        ? CONVERSATION_REFERENCES_RAIL_WIDTH_PX
-        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-    });
-    return () => {
-      paneRuntime.setPaneSizing({
-        primaryWidth: { kind: "workspace" },
-        extraWidthPx: 0,
-      });
-    };
-  }, [paneRuntime, referencesRailExpanded]);
+    [handleOpenResource, references, removeReference],
+  );
+  usePaneSidecar(sidecarDescriptor);
 
   // --------------------------------------------------------------------------
   // Render
@@ -782,31 +794,6 @@ function ChatView({
         </div>
       </div>
 
-      <SecondaryRail
-        ariaLabel="References"
-        expanded={referencesRailExpanded}
-        onExpandedChange={setReferencesRailExpanded}
-        expandedWidthPx={CONVERSATION_REFERENCES_RAIL_WIDTH_PX}
-        bodyClassName={styles.chatSecondaryRailBody}
-        collapsed={
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            className={styles.chatSecondaryRailCollapsedButton}
-            aria-label="Expand references"
-            onClick={() => setReferencesRailExpanded(true)}
-          >
-            <PanelRightOpen size={15} aria-hidden="true" />
-          </Button>
-        }
-      >
-        <ConversationReferencesRail
-          references={references}
-          removeReference={removeReference}
-          onOpenResource={handleOpenResource}
-        />
-      </SecondaryRail>
     </div>
   );
 }

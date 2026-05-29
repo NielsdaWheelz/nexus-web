@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-export const WORKSPACE_E2E_SCHEMA_VERSION = 7;
+export const WORKSPACE_E2E_SCHEMA_VERSION = 8;
 
 export interface WorkspacePaneHistory {
   back: string[];
@@ -12,7 +12,8 @@ export interface WorkspacePaneHistory {
 export interface WorkspacePaneState {
   id: string;
   href: string;
-  widthPx: number;
+  primaryWidthPx: number;
+  sidecar: null;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
 }
@@ -27,7 +28,7 @@ export function makeWorkspacePane(
   id: string,
   href: string,
   options?: {
-    widthPx?: number;
+    primaryWidthPx?: number;
     visibility?: WorkspacePaneVisibility;
     history?: WorkspacePaneHistory;
   },
@@ -35,7 +36,8 @@ export function makeWorkspacePane(
   return {
     id,
     href,
-    widthPx: options?.widthPx ?? 560,
+    primaryWidthPx: options?.primaryWidthPx ?? 560,
+    sidecar: null,
     visibility: options?.visibility ?? "visible",
     history: options?.history ?? { back: [], forward: [] },
   };
@@ -57,20 +59,25 @@ export function workspaceUrlForState(
 
 export function singlePaneWorkspaceState(
   href: string,
-  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistory },
+  options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
   const paneId = options?.paneId ?? "pane-e2e-primary";
-  const widthPx = options?.widthPx ?? 684;
+  const primaryWidthPx = options?.primaryWidthPx ?? 684;
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: paneId,
-    panes: [makeWorkspacePane(paneId, href, { widthPx, history: options?.history })],
+    panes: [
+      makeWorkspacePane(paneId, href, {
+        primaryWidthPx,
+        history: options?.history,
+      }),
+    ],
   };
 }
 
 export function workspaceUrlForSinglePane(
   href: string,
-  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistory },
+  options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): string {
   return workspaceUrlForState(href, singlePaneWorkspaceState(href, options));
 }
@@ -88,7 +95,7 @@ export function workspacePaneButton(page: Page, name: RegExp | string): Locator 
 export async function gotoSinglePaneWorkspace(
   page: Page,
   href: string,
-  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistory },
+  options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): Promise<void> {
   await page.goto(workspaceUrlForSinglePane(href, options));
   await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });

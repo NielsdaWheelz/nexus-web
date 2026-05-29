@@ -12,6 +12,7 @@ import {
   makeWorkspacePane,
   type WorkspaceState,
 } from "./workspace";
+import { stateChangingApiHeaders } from "./api";
 
 const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
@@ -51,7 +52,7 @@ function trivialWorkspaceSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-chrome-default",
-    panes: [makeWorkspacePane("pane-chrome-default", "/libraries", { widthPx: 480 })],
+    panes: [makeWorkspacePane("pane-chrome-default", "/libraries", { primaryWidthPx: 480 })],
   };
 }
 
@@ -74,6 +75,7 @@ async function putWorkspaceSession(
   state: WorkspaceState
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
+    headers: stateChangingApiHeaders(),
     data: { device_id: paneChromeDeviceId(testInfo), state },
   });
   expect(response.ok()).toBeTruthy();

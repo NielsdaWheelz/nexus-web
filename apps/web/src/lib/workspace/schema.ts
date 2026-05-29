@@ -9,8 +9,17 @@ import {
 } from "@/lib/workspace/workspaceHref";
 import { clampPaneWidth, getDefaultPaneWidthPx } from "@/lib/workspace/paneWidth";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import { paneRouteAllowsSidecarGroup } from "@/lib/panes/paneRouteModel";
+import {
+  getSidecarGroupForSurface,
+  getSidecarWidthPolicy,
+  isWorkspaceSidecarGroupId,
+  isWorkspaceSidecarSurfaceId,
+  resolveEffectiveSidecarSizing,
+  type WorkspaceSidecarState,
+} from "@/lib/workspace/sidecarSizing";
 
-export const WORKSPACE_SCHEMA_VERSION = 7;
+export const WORKSPACE_SCHEMA_VERSION = 8;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
 
@@ -29,7 +38,8 @@ export interface WorkspacePaneHistory {
 export interface WorkspacePaneState {
   id: string;
   href: string;
-  widthPx: number;
+  primaryWidthPx: number;
+  sidecar: WorkspaceSidecarState | null;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
 }
@@ -102,7 +112,7 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
 export function createDefaultWorkspaceState(
   primaryHref: string,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-  widthPx?: number
+  primaryWidthPx?: number
 ): WorkspaceState {
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const id = createPaneId();
@@ -113,14 +123,51 @@ export function createDefaultWorkspaceState(
       {
         id,
         href,
-        widthPx:
-          widthPx != null
-            ? clampPaneWidth(widthPx, workspacePrimaryMetrics)
+        primaryWidthPx:
+          primaryWidthPx != null
+            ? clampPaneWidth(primaryWidthPx, workspacePrimaryMetrics)
             : getDefaultPaneWidthPx(workspacePrimaryMetrics),
+        sidecar: null,
         visibility: "visible",
         history: createEmptyPaneHistory(),
       },
     ],
+  };
+}
+
+function sanitizePaneSidecar(value: unknown, href: string): WorkspaceSidecarState | null {
+  if (value == null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    !isWorkspaceSidecarGroupId(value.groupId) ||
+    !isWorkspaceSidecarSurfaceId(value.activeSurfaceId)
+  ) {
+    return null;
+  }
+  if (getSidecarGroupForSurface(value.activeSurfaceId) !== value.groupId) {
+    return null;
+  }
+  if (!paneRouteAllowsSidecarGroup(href, value.groupId)) {
+    return null;
+  }
+  if (value.visibility !== "visible" && value.visibility !== "collapsed") {
+    return null;
+  }
+  if (typeof value.widthPx !== "number") {
+    return null;
+  }
+  return {
+    groupId: value.groupId,
+    activeSurfaceId: value.activeSurfaceId,
+    widthPx: resolveEffectiveSidecarSizing({
+      storedWidthPx: value.widthPx,
+      policy: getSidecarWidthPolicy(value.groupId),
+    }).widthPx,
+    visibility: value.visibility,
   };
 }
 
@@ -182,12 +229,22 @@ function sanitizePane(
   }
   seenIds.add(id);
 
-  const widthPx =
-    typeof value.widthPx === "number"
-      ? clampPaneWidth(value.widthPx, workspacePrimaryMetrics)
-      : getDefaultPaneWidthPx(workspacePrimaryMetrics);
+  if (typeof value.primaryWidthPx !== "number") {
+    return null;
+  }
+  const primaryWidthPx = clampPaneWidth(
+    value.primaryWidthPx,
+    workspacePrimaryMetrics,
+  );
 
-  return { id, href, widthPx, visibility, history };
+  return {
+    id,
+    href,
+    primaryWidthPx,
+    sidecar: sanitizePaneSidecar(value.sidecar, href),
+    visibility,
+    history,
+  };
 }
 
 export function sanitizeWorkspaceState(

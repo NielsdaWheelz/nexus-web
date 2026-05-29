@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openReaderSecondaryRail } from "./reader";
+import { openReaderSidecar } from "./reader";
 import { activeWorkspacePane, gotoSinglePaneWorkspace } from "./workspace";
 
 interface MediaSeed {
@@ -39,7 +39,7 @@ async function waitForReflowableReader(activePane: Locator): Promise<void> {
 }
 
 async function expectReflowableFloor(page: Page, mediaId: string): Promise<void> {
-  await gotoSinglePaneWorkspace(page, `/media/${mediaId}`, { widthPx: 320 });
+  await gotoSinglePaneWorkspace(page, `/media/${mediaId}`, { primaryWidthPx: 320 });
   const activePane = activeWorkspacePane(page);
   await waitForReflowableReader(activePane);
 
@@ -59,7 +59,7 @@ async function expectReflowableFloor(page: Page, mediaId: string): Promise<void>
   const closedWidth = await paneShell(activePane).evaluate((element) =>
     Math.round(element.getBoundingClientRect().width),
   );
-  await openReaderSecondaryRail(page);
+  await openReaderSidecar(page);
   await expect
     .poll(() =>
       paneShell(activePane).evaluate((element) =>
@@ -68,7 +68,7 @@ async function expectReflowableFloor(page: Page, mediaId: string): Promise<void>
     )
     .toBeGreaterThanOrEqual(closedWidth + 300);
 
-  await activePane.getByRole("button", { name: "Collapse secondary rail" }).click();
+  await activePane.getByRole("button", { name: "Close Highlights" }).click();
   await expect
     .poll(() =>
       paneShell(activePane).evaluate((element) =>
@@ -95,7 +95,7 @@ test.describe("reader pane width floor", () => {
     page,
   }) => {
     const pdf = readSeed("pdf-media.json");
-    await gotoSinglePaneWorkspace(page, `/media/${pdf.media_id}`, { widthPx: 320 });
+    await gotoSinglePaneWorkspace(page, `/media/${pdf.media_id}`, { primaryWidthPx: 320 });
     let activePane = activeWorkspacePane(page);
     await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible({
       timeout: 20_000,
@@ -109,7 +109,7 @@ test.describe("reader pane width floor", () => {
       .toBe(pdfFloor);
 
     const youtube = readSeed("youtube-media.json");
-    await gotoSinglePaneWorkspace(page, `/media/${youtube.media_id}`, { widthPx: 320 });
+    await gotoSinglePaneWorkspace(page, `/media/${youtube.media_id}`, { primaryWidthPx: 320 });
     activePane = activeWorkspacePane(page);
     await expect(activePane.getByTestId("document-viewport")).toBeVisible({
       timeout: 20_000,
@@ -131,7 +131,7 @@ test.describe("reader pane width floor", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await gotoSinglePaneWorkspace(page, `/media/${readSeed("non-pdf-media.json").media_id}`, {
-      widthPx: 320,
+      primaryWidthPx: 320,
     });
 
     const activePane = activeWorkspacePane(page);

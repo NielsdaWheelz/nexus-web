@@ -923,8 +923,8 @@ export async function createFragmentHighlightThroughVisibleSelection(
           const viewport = document.querySelector<HTMLElement>(
             '[data-testid="document-viewport"]',
           );
-          const rail = document.querySelector<HTMLElement>(
-            '[data-testid="reader-secondary-rail"]',
+          const sidecar = document.querySelector<HTMLElement>(
+            '[data-testid="workspace-sidecar-pane"]',
           );
           return {
             targetCount: targets.length,
@@ -947,7 +947,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
                   clientHeight: viewport.clientHeight,
                 }
               : null,
-            railText: rail?.textContent?.slice(0, 500) ?? null,
+            sidecarText: sidecar?.textContent?.slice(0, 500) ?? null,
             selectedText,
           };
         },
@@ -958,7 +958,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
         },
       );
       throw new Error(
-        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights rail. Projection debug: ${JSON.stringify(debug)}`,
+        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights sidecar. Projection debug: ${JSON.stringify(debug)}`,
         { cause: error },
       );
     }
@@ -980,16 +980,14 @@ export async function createFragmentHighlightThroughVisibleSelection(
 }
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
-  const rail = page.getByTestId("reader-secondary-rail");
-  if ((await rail.getAttribute("data-expanded")) === "true") {
-    await rail.getByRole("tab", { name: "Highlights" }).click();
+  const sidecar = page.getByTestId("workspace-sidecar-pane");
+  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
+    await sidecar.getByRole("tab", { name: "Highlights" }).click();
   } else {
     await page.getByRole("button", { name: "Open highlights pane" }).click();
   }
-  await expect(rail).toHaveAttribute("data-expanded", "true", {
-    timeout: 10_000,
-  });
-  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

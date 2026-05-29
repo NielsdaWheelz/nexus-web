@@ -108,7 +108,7 @@ test.describe("workspace pane history", () => {
       activePaneId: "pane-wide-media",
       panes: [
         makeWorkspacePane("pane-wide-media", mediaHref, {
-          widthPx: WIDE_MEDIA_PANE_WIDTH_PX,
+          primaryWidthPx: WIDE_MEDIA_PANE_WIDTH_PX,
           history: { back: ["/libraries"], forward: [] },
         }),
       ],
@@ -132,7 +132,7 @@ test.describe("workspace pane history", () => {
       .poll(async () => {
         const state = await workspaceStateFromUrl(page);
         const pane = state.panes[0];
-        return [pane?.href, pane?.widthPx, pane?.history.forward[0]];
+        return [pane?.href, pane?.primaryWidthPx, pane?.history.forward[0]];
       })
       .toEqual(["/libraries", workspacePrimaryWidthPx, mediaHref]);
     await expectRouteShellFillsBody(page, "pane-wide-media");

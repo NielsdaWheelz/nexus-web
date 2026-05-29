@@ -21,7 +21,8 @@ const emptyHistory = () => ({ back: [], forward: [] });
 const librariesPane: WorkspacePaneState = {
   id: "pane-1",
   href: "/libraries",
-  widthPx: 684,
+  primaryWidthPx: 684,
+  sidecar: null,
   visibility: "visible" as const,
   history: emptyHistory(),
 };
@@ -29,7 +30,8 @@ const librariesPane: WorkspacePaneState = {
 const mediaPane: WorkspacePaneState = {
   id: "pane-2",
   href: "/media/123",
-  widthPx: 720,
+  primaryWidthPx: 720,
+  sidecar: null,
   visibility: "visible" as const,
   history: emptyHistory(),
 };
@@ -67,6 +69,25 @@ describe("isNonTrivialSession", () => {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [{ ...librariesPane, history: { back: ["/media/123"], forward: [] } }],
+    };
+    expect(isNonTrivialSession(state)).toBe(true);
+  });
+
+  it("treats a single /libraries pane with sidecar state as non-trivial", () => {
+    const state: WorkspaceState = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      activePaneId: "pane-1",
+      panes: [
+        {
+          ...librariesPane,
+          sidecar: {
+            groupId: "library-tools",
+            activeSurfaceId: "library-chat",
+            widthPx: 420,
+            visibility: "collapsed",
+          },
+        },
+      ],
     };
     expect(isNonTrivialSession(state)).toBe(true);
   });
@@ -157,7 +178,7 @@ describe("workspaceStatesEqual", () => {
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 
-  it("returns false when a pane widthPx differs", () => {
+  it("returns false when a pane primaryWidthPx differs", () => {
     const a: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
@@ -166,7 +187,40 @@ describe("workspaceStatesEqual", () => {
     const b: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
-      panes: [{ ...mediaPane, widthPx: 900 }],
+      panes: [{ ...mediaPane, primaryWidthPx: 900 }],
+    };
+    expect(workspaceStatesEqual(a, b)).toBe(false);
+  });
+
+  it("returns false when a pane sidecar differs", () => {
+    const a: WorkspaceState = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      activePaneId: "pane-2",
+      panes: [
+        {
+          ...mediaPane,
+          sidecar: {
+            groupId: "reader-tools",
+            activeSurfaceId: "reader-highlights",
+            widthPx: 360,
+            visibility: "visible",
+          },
+        },
+      ],
+    };
+    const b: WorkspaceState = {
+      ...a,
+      panes: [
+        {
+          ...a.panes[0]!,
+          sidecar: {
+            groupId: "reader-tools",
+            activeSurfaceId: "reader-doc-chat",
+            widthPx: 360,
+            visibility: "visible",
+          },
+        },
+      ],
     };
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });

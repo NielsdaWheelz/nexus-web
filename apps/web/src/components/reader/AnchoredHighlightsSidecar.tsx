@@ -30,12 +30,12 @@ import {
   useAnchoredHighlightProjection,
   type AnchoredHighlightRow,
 } from "./useAnchoredHighlightProjection";
-import styles from "./AnchoredHighlightsRail.module.css";
+import styles from "./AnchoredHighlightsSidecar.module.css";
 
 const COLLAPSED_ROW_HEIGHT = 44;
 const ROW_GAP = 4;
 
-interface AnchoredHighlightsRailProps {
+interface AnchoredHighlightsSidecarProps {
   title?: string;
   description?: string;
   pdfActivePage?: number | null;
@@ -68,7 +68,7 @@ interface AnchoredHighlightsRailProps {
   onOpenConversation: (conversationId: string, title: string) => void;
 }
 
-export default function AnchoredHighlightsRail({
+export default function AnchoredHighlightsSidecar({
   title = "Visible highlights",
   description = "Showing highlights visible in the reader viewport.",
   pdfActivePage = null,
@@ -89,7 +89,7 @@ export default function AnchoredHighlightsRail({
   onNoteSave,
   onNoteDelete,
   onOpenConversation,
-}: AnchoredHighlightsRailProps) {
+}: AnchoredHighlightsSidecarProps) {
   const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -99,7 +99,7 @@ export default function AnchoredHighlightsRail({
   >([]);
   const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [overflowCount, setOverflowCount] = useState(0);
-  const [railLayoutVersion, setRailLayoutVersion] = useState(0);
+  const [sidecarLayoutVersion, setSidecarLayoutVersion] = useState(0);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
   const [changingColor, setChangingColor] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -294,7 +294,7 @@ export default function AnchoredHighlightsRail({
     }
 
     const observer = new ResizeObserver(() => {
-      setRailLayoutVersion((version) => version + 1);
+      setSidecarLayoutVersion((version) => version + 1);
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
@@ -305,7 +305,7 @@ export default function AnchoredHighlightsRail({
       return;
     }
     alignRows();
-  }, [alignRows, isMobile, projections, railLayoutVersion]);
+  }, [alignRows, isMobile, projections, sidecarLayoutVersion]);
 
   const mobileHighlightsState = useMemo(() => {
     if (!isMobile) {
