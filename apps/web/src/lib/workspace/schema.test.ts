@@ -1,23 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_PANES,
+  MAX_PANE_HISTORY_STACK_LENGTH,
+  MAX_TOTAL_PANE_HISTORY_ENTRIES,
+  WORKSPACE_SCHEMA_VERSION,
+  createDefaultWorkspaceState,
+  sanitizeWorkspaceState,
+} from "@/lib/workspace/schema";
+import {
   DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
   DEFAULT_DOCUMENT_PANE_WIDTH_PX,
   DEFAULT_MEDIA_PANE_WIDTH_PX,
   DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
   DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
-  MAX_PANES,
-  MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_STANDARD_PANE_WIDTH_PX,
-  MAX_TOTAL_PANE_HISTORY_ENTRIES,
   MIN_PANE_WIDTH_PX,
-  WORKSPACE_SCHEMA_VERSION,
-  createDefaultWorkspaceState,
-  normalizeWorkspaceHref,
-  resolvePaneTransitionWidth,
-  resolvePaneWidthContract,
-  sanitizeWorkspaceState,
-} from "@/lib/workspace/schema";
+  resolvePaneRouteWidthContract,
+} from "@/lib/panes/paneRouteModel";
+import { resolvePaneTransitionWidth } from "@/lib/workspace/paneWidth";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 describe("workspace schema", () => {
   it("creates a default workspace with a single pane", () => {
@@ -188,7 +190,7 @@ describe("workspace schema", () => {
       "/authors",
       "/authors/a/b",
     ]) {
-      expect(resolvePaneWidthContract(href)).toMatchObject({
+      expect(resolvePaneRouteWidthContract(href)).toMatchObject({
         defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
         minWidthPx: MIN_PANE_WIDTH_PX,
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -198,23 +200,23 @@ describe("workspace schema", () => {
   });
 
   it("declares semantic layout kinds in route width contracts", () => {
-    expect(resolvePaneWidthContract("/media/1")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/media/1")).toMatchObject({
       defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
       layoutKind: "media-reader",
     });
-    expect(resolvePaneWidthContract("/podcasts/p1")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/podcasts/p1")).toMatchObject({
       defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
       layoutKind: "podcast-detail",
     });
-    expect(resolvePaneWidthContract("/pages/page-1")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/pages/page-1")).toMatchObject({
       defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
       layoutKind: "document",
     });
-    expect(resolvePaneWidthContract("/libraries")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/libraries")).toMatchObject({
       defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
       layoutKind: "dense-list",
     });
-    expect(resolvePaneWidthContract("/settings")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/settings")).toMatchObject({
       defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
       layoutKind: "standard",
     });

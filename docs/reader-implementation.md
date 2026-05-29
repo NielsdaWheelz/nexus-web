@@ -48,6 +48,23 @@ the reader has two right-side highlight surfaces with distinct scopes.
   reader menu or by tapping an existing highlight; the drawer is the same
   `AnchoredHighlightsRail` component on the same visible-only model.
 
+### workspace pane sizing
+
+Desktop web article and EPUB panes publish a protected primary width based on
+the configured reader measure, not live content intrinsic width. The protected
+floor is measured with an offscreen probe using the active reader font family,
+font size, line height, and `column_width_ch`, then the overview ruler width is
+added to that primary floor.
+
+The reader secondary rail is outward extra width. Opening it increases the
+rendered pane width without changing the stored primary pane width; closing it
+removes only that extra width.
+
+PDF and transcript panes do not publish the reflowable text floor. They keep
+the media route width contract and may publish only legitimate rail extra
+width. Mobile panes ignore desktop runtime pane sizing and render at viewport
+width.
+
 ### overview ruler positioning
 
 the ruler positions each highlight as a fraction `0..1` through the whole
@@ -230,8 +247,9 @@ pure black/white to reduce halation under long sessions.
 - active epub content loads from
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`
-- the frontend canonical deep-link is `#loc-{section_id}` (one-shot hash
-  consumed by `useReaderTarget`)
+- one-shot reader target hashes use `#loc-{section_id}` and are consumed by
+  `useReaderTarget`; pane-local EPUB section navigation uses the `?loc=`
+  search parameter for active-section history
 - legacy `chapters` and `toc` reader routes are removed from the client surface
 - pane titles are driven by media metadata, not by navigation section title or
   active section content. navigation and section loading are content-level

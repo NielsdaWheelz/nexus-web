@@ -1,14 +1,16 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-  DEFAULT_MEDIA_PANE_WIDTH_PX,
-  MAX_MEDIA_PANE_WIDTH_PX,
-  MAX_STANDARD_PANE_WIDTH_PX,
   WORKSPACE_SCHEMA_VERSION,
   type WorkspacePaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
+import {
+  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+  DEFAULT_MEDIA_PANE_WIDTH_PX,
+  MAX_MEDIA_PANE_WIDTH_PX,
+  MAX_STANDARD_PANE_WIDTH_PX,
+} from "@/lib/panes/paneRouteModel";
 import {
   mergeRestoredWorkspaceWithUrlIntent,
   resolveWorkspacePaneTitle,

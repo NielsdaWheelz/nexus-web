@@ -13,7 +13,6 @@ import {
   useCallback,
   useRef,
   useMemo,
-  useLayoutEffect,
   type CSSProperties,
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
@@ -29,9 +28,10 @@ import {
   toTextAnchoredHighlightRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
-import SecondaryRail, {
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import {
   SECONDARY_RAIL_EXPANDED_WIDTH_PX,
-} from "@/components/secondaryRail/SecondaryRail";
+} from "@/components/secondaryRail/railSizing";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderControlActions,
@@ -178,6 +178,7 @@ import {
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
+import { useReflowableReaderPaneSizing } from "./useReflowableReaderPaneSizing";
 import styles from "./page.module.css";
 
 // =============================================================================
@@ -781,7 +782,8 @@ export default function MediaPaneBody({
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
-  const hasProtectedReaderTextWidth = canRead;
+  const isReflowableReaderPaneSizingEnabled =
+    !isMobileViewport && canRead && (media?.kind === "web_article" || isEpub);
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia) {
@@ -3311,14 +3313,6 @@ export default function MediaPaneBody({
   ]);
 
   const readerRootRef = useRef<HTMLDivElement | null>(null);
-  const protectedReaderWidthRef = useRef<HTMLDivElement | null>(null);
-  const [protectedReaderWidthPx, setProtectedReaderWidthPx] = useState(0);
-  const readerColumnStyle: CSSProperties = {
-    position: "relative",
-    ...(protectedReaderWidthPx > 0 && !isMobileViewport
-      ? { "--reader-protected-width-px": `${protectedReaderWidthPx}px` }
-      : {}),
-  };
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
   const { chromeRevealed } = useFocusModeTracking(
@@ -3326,74 +3320,31 @@ export default function MediaPaneBody({
     readerRootRef,
     renderedHtml,
   );
-
-  useLayoutEffect(() => {
-    if (isMobileViewport || !hasProtectedReaderTextWidth) {
-      setProtectedReaderWidthPx(0);
-      return;
-    }
-
-    const node = protectedReaderWidthRef.current;
-    if (!node) {
-      setProtectedReaderWidthPx(0);
-      return;
-    }
-
-    const updateProtectedWidth = () => {
-      setProtectedReaderWidthPx(Math.ceil(node.getBoundingClientRect().width));
-    };
-
-    updateProtectedWidth();
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    const observer = new ResizeObserver(updateProtectedWidth);
-    observer.observe(node);
-    return () => {
-      observer.disconnect();
-    };
-  }, [
-    hasProtectedReaderTextWidth,
-    isMobileViewport,
-    readerProfile.column_width_ch,
-    readerProfile.font_family,
-    readerProfile.font_size_px,
-    readerProfile.line_height,
-  ]);
+  const { protectedWidthProbe, readerColumnStyle } =
+    useReflowableReaderPaneSizing({
+      enabled: isReflowableReaderPaneSizingEnabled,
+      readerSurfaceStyle,
+      overviewRulerWidthPx: desktopOverviewRulerWidthPx,
+      secondaryRailWidthPx: desktopSecondaryRailWidthPx,
+    });
 
   useEffect(() => {
-    if (!paneRuntime) {
+    if (!paneRuntime || isReflowableReaderPaneSizingEnabled) {
       return;
     }
-
-    if (
-      isMobileViewport ||
-      !hasProtectedReaderTextWidth ||
-      protectedReaderWidthPx <= 0
-    ) {
-      paneRuntime.setPaneMinWidth(null);
-      paneRuntime.setPaneExtraWidth(0);
-      return;
-    }
-
-    // Protected text + always-on overview ruler are the pane's floor; the
-    // secondary rail is added outward, so closing it shrinks the pane back.
-    paneRuntime.setPaneMinWidth(
-      protectedReaderWidthPx + desktopOverviewRulerWidthPx,
-    );
-    paneRuntime.setPaneExtraWidth(desktopSecondaryRailWidthPx);
+    paneRuntime.setPaneSizing({
+      minWidthPx: null,
+      extraWidthPx: !isMobileViewport && canRead ? desktopSecondaryRailWidthPx : 0,
+    });
     return () => {
-      paneRuntime.setPaneMinWidth(null);
-      paneRuntime.setPaneExtraWidth(0);
+      paneRuntime.setPaneSizing({ minWidthPx: null, extraWidthPx: 0 });
     };
   }, [
-    desktopOverviewRulerWidthPx,
+    canRead,
     desktopSecondaryRailWidthPx,
-    hasProtectedReaderTextWidth,
+    isReflowableReaderPaneSizingEnabled,
     isMobileViewport,
     paneRuntime,
-    protectedReaderWidthPx,
   ]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
@@ -4476,14 +4427,7 @@ export default function MediaPaneBody({
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
       >
-        {!isMobileViewport && hasProtectedReaderTextWidth ? (
-          <div
-            ref={protectedReaderWidthRef}
-            className={styles.readerProtectedWidthProbe}
-            style={readerSurfaceStyle}
-            aria-hidden="true"
-          />
-        ) : null}
+        {protectedWidthProbe}
         <div className={styles.readerColumn} style={readerColumnStyle}>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>

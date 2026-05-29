@@ -2,8 +2,8 @@
 
 import {
   normalizePaneTitle,
-  normalizeWorkspaceHref,
 } from "@/lib/workspace/schema";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
 export const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";

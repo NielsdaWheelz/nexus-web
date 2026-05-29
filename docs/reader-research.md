@@ -123,9 +123,10 @@ changes.
 
 ### layered epub/web/pdf resume
 
-- epub resolves in this order:
-  `?loc` deep link -> saved exact target snapshot -> coarse fallback ->
-  first section
+- epub resolves one-shot hash targets such as `#loc-<section_id>` first,
+  then saved exact target snapshots, then coarse fallback, then first section.
+  Pane-local section navigation uses `?loc={section_id}` for active-section
+  history.
 - once the section is open, epub restores by exact text offset,
   then quote context, then progression, then coarse publication fallback,
   then anchor fallback
@@ -142,7 +143,8 @@ changes.
 - epub section content is sourced from
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is path-encoded and may contain `/`
-- `?loc={section_id}` is the canonical deep-link shape
+- `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
+  remains the pane-local active-section URL state
 - the reader no longer depends on legacy chapter manifests or toc fetches
 
 ## regression strategy

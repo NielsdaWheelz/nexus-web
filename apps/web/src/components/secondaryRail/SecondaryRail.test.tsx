@@ -4,6 +4,11 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FileText, Highlighter, Library } from "lucide-react";
 import SecondaryRail, { type SecondaryRailTab } from "./SecondaryRail";
+import {
+  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+  SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+} from "./railSizing";
 
 function readerTabs(): SecondaryRailTab[] {
   return [
@@ -42,8 +47,42 @@ describe("SecondaryRail", () => {
     expect(
       screen.getByRole("complementary", { name: "Reader tools" }),
     ).toHaveAttribute("data-expanded", "false");
+    expect(
+      screen.getByRole("complementary", { name: "Reader tools" }),
+    ).toHaveStyle({ width: `${SECONDARY_RAIL_COLLAPSED_WIDTH_PX}px` });
     expect(screen.getByRole("button", { name: "Open rail" })).toBeTruthy();
     expect(screen.queryByText("Highlights body")).toBeNull();
+  });
+
+  it("uses default and custom expanded widths from rail sizing", () => {
+    const { rerender } = render(
+      <SecondaryRail
+        ariaLabel="Reader tools"
+        expanded
+        onExpandedChange={() => {}}
+      >
+        Reader rail
+      </SecondaryRail>,
+    );
+
+    expect(
+      screen.getByRole("complementary", { name: "Reader tools" }),
+    ).toHaveStyle({ width: `${SECONDARY_RAIL_EXPANDED_WIDTH_PX}px` });
+
+    rerender(
+      <SecondaryRail
+        ariaLabel="Reader tools"
+        expanded
+        expandedWidthPx={CONVERSATION_REFERENCES_RAIL_WIDTH_PX}
+        onExpandedChange={() => {}}
+      >
+        Reader rail
+      </SecondaryRail>,
+    );
+
+    expect(
+      screen.getByRole("complementary", { name: "Reader tools" }),
+    ).toHaveStyle({ width: `${CONVERSATION_REFERENCES_RAIL_WIDTH_PX}px` });
   });
 
   it("renders three icon-only tab triggers in order with the spec tooltips", () => {

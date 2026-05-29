@@ -6,6 +6,7 @@ import PaneShell, {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
+import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 
 const disabledNavigation = {
   canGoBack: false,
@@ -13,6 +14,29 @@ const disabledNavigation = {
   onBack: vi.fn(),
   onForward: vi.fn(),
 };
+
+function paneSizing(input: {
+  widthPx: number;
+  minWidthPx: number;
+  maxWidthPx: number;
+  extraWidthPx?: number;
+}): EffectivePaneSizing {
+  const extraWidthPx = input.extraWidthPx ?? 0;
+  const primaryWidthPx = Math.min(
+    input.maxWidthPx,
+    Math.max(input.minWidthPx, input.widthPx)
+  );
+  return {
+    primaryWidthPx,
+    primaryMinWidthPx: input.minWidthPx,
+    primaryMaxWidthPx: input.maxWidthPx,
+    renderedWidthPx: primaryWidthPx + extraWidthPx,
+    renderedMinWidthPx: input.minWidthPx + extraWidthPx,
+    renderedMaxWidthPx: input.maxWidthPx + extraWidthPx,
+    extraWidthPx,
+    storedWidthCorrectionPx: null,
+  };
+}
 
 describe("PaneShell", () => {
   it("delegates keyboard resize to the focused resize handle", () => {
@@ -22,10 +46,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         title="Libraries"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={onResizePane}
       >
@@ -61,10 +82,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         title="Libraries"
         navigation={navigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -86,10 +104,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         title="Reader"
         navigation={disabledNavigation}
-        widthPx={500}
-        minWidthPx={684}
-        maxWidthPx={2400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 500, minWidthPx: 684, maxWidthPx: 2400 })}
         bodyMode="document"
         onResizePane={onResizePane}
       >
@@ -105,7 +120,7 @@ describe("PaneShell", () => {
       key: "ArrowRight",
     });
 
-    expect(onResizePane).toHaveBeenCalledWith("pane-a", 684);
+    expect(onResizePane).toHaveBeenCalledWith("pane-a", 700);
   });
 
   it("supports pointer drag resize on desktop", () => {
@@ -115,10 +130,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         title="Libraries"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={onResizePane}
       >
@@ -143,10 +155,7 @@ describe("PaneShell", () => {
         href="/media/media-1"
         title="Designing Data-Intensive Applications"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
         options={[
@@ -188,10 +197,7 @@ describe("PaneShell", () => {
         paneId="pane-standard"
         title="Libraries"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
         isMobile
@@ -220,10 +226,7 @@ describe("PaneShell", () => {
         paneId="pane-contained"
         title="Chat"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="contained"
         onResizePane={() => {}}
         isMobile
@@ -260,10 +263,7 @@ describe("PaneShell", () => {
         paneId="pane-doc"
         title="Reader"
         navigation={disabledNavigation}
-        widthPx={920}
-        minWidthPx={420}
-        maxWidthPx={1800}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -319,10 +319,7 @@ describe("PaneShell", () => {
         paneId="pane-doc"
         title="Reader"
         navigation={disabledNavigation}
-        widthPx={920}
-        minWidthPx={420}
-        maxWidthPx={1800}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -363,10 +360,7 @@ describe("PaneShell", () => {
         paneId="pane-doc"
         title="Reader"
         navigation={disabledNavigation}
-        widthPx={920}
-        minWidthPx={420}
-        maxWidthPx={1800}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -426,10 +420,7 @@ describe("PaneShell", () => {
           paneId="pane-doc"
           title="Reader"
           navigation={disabledNavigation}
-          widthPx={920}
-          minWidthPx={420}
-          maxWidthPx={1800}
-          extraWidthPx={0}
+          sizing={paneSizing({ widthPx: 920, minWidthPx: 420, maxWidthPx: 1800 })}
           bodyMode="document"
           onResizePane={() => {}}
           isMobile
@@ -468,10 +459,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -491,10 +479,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -518,10 +503,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -541,10 +523,7 @@ describe("PaneShell", () => {
         navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -569,10 +548,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         title="Libraries"
         navigation={disabledNavigation}
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        extraWidthPx={0}
+        sizing={paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 })}
         bodyMode="standard"
         onResizePane={() => {}}
         isMobile
@@ -597,15 +573,15 @@ describe("PaneShell", () => {
     const props = {
       paneId: "pane-a",
       title: "Reader",
-      widthPx: 700,
-      minWidthPx: 684,
-      maxWidthPx: 2400,
       bodyMode: "document" as const,
       onResizePane: () => {},
       navigation: disabledNavigation,
     };
     const { rerender } = render(
-      <PaneShell {...props} extraWidthPx={0}>
+      <PaneShell
+        {...props}
+        sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
+      >
         <div>Body content</div>
       </PaneShell>
     );
@@ -616,7 +592,15 @@ describe("PaneShell", () => {
     expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "700");
 
     rerender(
-      <PaneShell {...props} extraWidthPx={360}>
+      <PaneShell
+        {...props}
+        sizing={paneSizing({
+          widthPx: 700,
+          minWidthPx: 684,
+          maxWidthPx: 2400,
+          extraWidthPx: 360,
+        })}
+      >
         <div>Body content</div>
       </PaneShell>
     );
@@ -626,7 +610,10 @@ describe("PaneShell", () => {
     expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "1060");
 
     rerender(
-      <PaneShell {...props} extraWidthPx={0}>
+      <PaneShell
+        {...props}
+        sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
+      >
         <div>Body content</div>
       </PaneShell>
     );

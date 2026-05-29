@@ -3,6 +3,10 @@ import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import {
+  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+} from "@/components/secondaryRail/railSizing";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import ConversationNewPaneBody from "./ConversationNewPaneBody";
 
@@ -164,14 +168,14 @@ describe("ConversationNewPaneBody", () => {
     );
   });
 
-  it("publishes chat context rail width as pane extra width", async () => {
+  it("publishes chat context rail width as pane sizing", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 1200,
       writable: true,
     });
     const user = userEvent.setup();
-    const onSetPaneExtraWidth = vi.fn();
+    const onSetPaneSizing = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -200,7 +204,7 @@ describe("ConversationNewPaneBody", () => {
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
         onSetPaneTitle={vi.fn()}
-        onSetPaneExtraWidth={onSetPaneExtraWidth}
+        onSetPaneSizing={onSetPaneSizing}
       >
         <ConversationNewPaneBody />
       </PaneRuntimeProvider>,
@@ -210,27 +214,33 @@ describe("ConversationNewPaneBody", () => {
       await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+      expect(onSetPaneSizing).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey,
-        widthPx: 320,
+        sizing: {
+          minWidthPx: null,
+          extraWidthPx: CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
+        },
       });
     });
 
     await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+      expect(onSetPaneSizing).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey,
-        widthPx: 36,
+        sizing: {
+          minWidthPx: null,
+          extraWidthPx: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+        },
       });
     });
 
     unmount();
-    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith({
+    expect(onSetPaneSizing).toHaveBeenLastCalledWith({
       paneId: "pane-1",
       resourceKey,
-      widthPx: 0,
+      sizing: { minWidthPx: null, extraWidthPx: 0 },
     });
   });
 });

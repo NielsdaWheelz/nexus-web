@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { SECONDARY_RAIL_EXPANDED_WIDTH_PX } from "@/components/secondaryRail/SecondaryRail";
+import { SECONDARY_RAIL_EXPANDED_WIDTH_PX } from "@/components/secondaryRail/railSizing";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import MediaPaneBody from "./MediaPaneBody";
 
@@ -142,8 +142,7 @@ function fragmentResponse() {
 function renderMediaPane() {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
-  const onSetPaneMinWidth = vi.fn();
-  const onSetPaneExtraWidth = vi.fn();
+  const onSetPaneSizing = vi.fn();
 
   render(
     <FeedbackProvider>
@@ -161,8 +160,7 @@ function renderMediaPane() {
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onSetPaneMinWidth={onSetPaneMinWidth}
-        onSetPaneExtraWidth={onSetPaneExtraWidth}
+        onSetPaneSizing={onSetPaneSizing}
       >
         <MediaPaneBody />
       </PaneRuntimeProvider>
@@ -170,8 +168,7 @@ function renderMediaPane() {
   );
 
   return {
-    onSetPaneMinWidth,
-    onSetPaneExtraWidth,
+    onSetPaneSizing,
     resourceKey: identity.resourceKey,
   };
 }
@@ -244,6 +241,13 @@ describe("MediaPaneBody pane sizing", () => {
       }
       throw new Error(`Unexpected API call: ${path}`);
     });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class ResizeObserverMock {
+        observe = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       () =>
         ({
@@ -260,40 +264,35 @@ describe("MediaPaneBody pane sizing", () => {
     );
   });
 
-  it.each(["pdf", "web_article", "epub"] as const)(
+  it.each(["web_article", "epub"] as const)(
     "publishes protected primary width and appended rail width for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneMinWidth, onSetPaneExtraWidth, resourceKey } =
-        renderMediaPane();
+      const { onSetPaneSizing, resourceKey } = renderMediaPane();
       const expectedMinWidthPx = PROTECTED_READER_WIDTH_PX + OVERVIEW_RULER_WIDTH_PX;
 
       await waitFor(() => {
-        expect(onSetPaneMinWidth).toHaveBeenCalledWith({
+        expect(onSetPaneSizing).toHaveBeenCalledWith({
           paneId: "pane-1",
           resourceKey,
-          widthPx: expectedMinWidthPx,
+          sizing: {
+            minWidthPx: expectedMinWidthPx,
+            extraWidthPx: 0,
+          },
         });
-      });
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        widthPx: 0,
       });
 
       fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
 
       await waitFor(() => {
-        expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        expect(onSetPaneSizing).toHaveBeenCalledWith({
           paneId: "pane-1",
           resourceKey,
-          widthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+          sizing: {
+            minWidthPx: expectedMinWidthPx,
+            extraWidthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+          },
         });
-      });
-      expect(onSetPaneMinWidth).toHaveBeenCalledWith({
-        paneId: "pane-1",
-        resourceKey,
-        widthPx: expectedMinWidthPx,
       });
 
       fireEvent.click(
@@ -301,14 +300,43 @@ describe("MediaPaneBody pane sizing", () => {
       );
 
       await waitFor(() => {
-        expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        expect(onSetPaneSizing).toHaveBeenCalledWith({
           paneId: "pane-1",
           resourceKey,
-          widthPx: 0,
+          sizing: {
+            minWidthPx: expectedMinWidthPx,
+            extraWidthPx: 0,
+          },
         });
       });
     },
   );
+
+  it("publishes rail extra width without a reflowable floor for PDF", async () => {
+    testState.mediaKind = "pdf";
+    const { onSetPaneSizing, resourceKey } = renderMediaPane();
+
+    await waitFor(() => {
+      expect(onSetPaneSizing).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        sizing: { minWidthPx: null, extraWidthPx: 0 },
+      });
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
+
+    await waitFor(() => {
+      expect(onSetPaneSizing).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        sizing: {
+          minWidthPx: null,
+          extraWidthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+        },
+      });
+    });
+  });
 
   it.each(["epub", "web_article"] as const)(
     "renders readable %s text content",

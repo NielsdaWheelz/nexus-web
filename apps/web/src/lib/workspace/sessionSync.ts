@@ -3,7 +3,6 @@
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import {
-  WORKSPACE_DEFAULT_FALLBACK_HREF,
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   createDefaultWorkspaceState,
@@ -11,6 +10,7 @@ import {
   sanitizeWorkspaceState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
+import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 

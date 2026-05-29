@@ -19,7 +19,8 @@ import SurfaceHeader, {
 } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
-import type { PaneBodyMode } from "@/lib/panes/paneRouteRegistry";
+import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
+import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -122,10 +123,7 @@ interface PaneShellProps {
   actions?: React.ReactNode;
   options?: SurfaceHeaderOption[];
   navigation: SurfaceHeaderNavigation;
-  widthPx: number;
-  minWidthPx: number;
-  maxWidthPx: number;
-  extraWidthPx: number;
+  sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
   onResizePane: (paneId: string, widthPx: number) => void;
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
@@ -145,10 +143,7 @@ export default function PaneShell({
   actions,
   options,
   navigation,
-  widthPx,
-  minWidthPx,
-  maxWidthPx,
-  extraWidthPx,
+  sizing,
   bodyMode,
   onResizePane,
   onChromeMouseDown,
@@ -159,9 +154,9 @@ export default function PaneShell({
 }: PaneShellProps) {
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     paneId,
-    widthPx,
-    minWidthPx,
-    maxWidthPx,
+    primaryWidthPx: sizing.primaryWidthPx,
+    primaryMinWidthPx: sizing.primaryMinWidthPx,
+    primaryMaxWidthPx: sizing.primaryMaxWidthPx,
     onResizePane,
   });
   const chromeRef = useRef<HTMLDivElement>(null);
@@ -389,19 +384,13 @@ export default function PaneShell({
     ? `${styles.paneShell} ${styles.mobileChromeHidden}`
     : styles.paneShell;
 
-  const renderedPrimaryWidthPx = Math.min(maxWidthPx, Math.max(minWidthPx, widthPx));
-  const renderedWidthPx = renderedPrimaryWidthPx + extraWidthPx;
-  const renderedMinWidthPx = minWidthPx + extraWidthPx;
-  const renderedMaxWidthPx = maxWidthPx + extraWidthPx;
   const bodyId = `${paneId}-body`;
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
     : {
-        // extraWidthPx is reserved outward of the resizable width; add it to
-        // width and the min/max bounds so the rail extends the pane, not eats it.
-        width: `${renderedWidthPx}px`,
-        minWidth: `${renderedMinWidthPx}px`,
-        maxWidth: `${renderedMaxWidthPx}px`,
+        width: `${sizing.renderedWidthPx}px`,
+        minWidth: `${sizing.renderedMinWidthPx}px`,
+        maxWidth: `${sizing.renderedMaxWidthPx}px`,
       };
   if (isMobile && mobileChromeHeight > 0) {
     shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
@@ -530,9 +519,9 @@ export default function PaneShell({
         aria-label={`Resize pane ${title}`}
         aria-controls={bodyId}
         aria-orientation="vertical"
-        aria-valuemin={renderedMinWidthPx}
-        aria-valuemax={renderedMaxWidthPx}
-        aria-valuenow={renderedWidthPx}
+        aria-valuemin={sizing.renderedMinWidthPx}
+        aria-valuemax={sizing.renderedMaxWidthPx}
+        aria-valuenow={sizing.renderedWidthPx}
         tabIndex={0}
         onMouseDown={handleResizeMouseDown}
         onKeyDown={handleResizeKeyDown}

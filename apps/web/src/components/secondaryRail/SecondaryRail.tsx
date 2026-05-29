@@ -8,6 +8,10 @@ import {
 } from "react";
 import { PanelRightClose } from "lucide-react";
 import Button from "@/components/ui/Button";
+import {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+  SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+} from "./railSizing";
 import styles from "./SecondaryRail.module.css";
 
 export interface SecondaryRailTab {
@@ -30,9 +34,6 @@ interface SecondaryRailProps {
   bodyClassName?: string;
   testId?: string;
 }
-
-export const SECONDARY_RAIL_EXPANDED_WIDTH_PX = 360;
-export const SECONDARY_RAIL_COLLAPSED_WIDTH_PX = 36;
 
 export default function SecondaryRail({
   ariaLabel,

@@ -21,9 +21,11 @@ import { PanelRightOpen } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
-import SecondaryRail, {
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import {
+  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
   SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/SecondaryRail";
+} from "@/components/secondaryRail/railSizing";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
@@ -45,8 +47,6 @@ import type {
   ConversationMessage,
 } from "@/lib/conversations/types";
 import styles from "../page.module.css";
-
-const CHAT_REFERENCES_RAIL_WIDTH_PX = 320;
 
 // ============================================================================
 // Component
@@ -130,13 +130,14 @@ export default function ConversationNewPaneBody() {
 
   useEffect(() => {
     if (!paneRuntime) return;
-    paneRuntime.setPaneExtraWidth(
-      referencesRailExpanded
-        ? CHAT_REFERENCES_RAIL_WIDTH_PX
+    paneRuntime.setPaneSizing({
+      minWidthPx: null,
+      extraWidthPx: referencesRailExpanded
+        ? CONVERSATION_REFERENCES_RAIL_WIDTH_PX
         : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-    );
+    });
     return () => {
-      paneRuntime.setPaneExtraWidth(0);
+      paneRuntime.setPaneSizing({ minWidthPx: null, extraWidthPx: 0 });
     };
   }, [paneRuntime, referencesRailExpanded]);
 
@@ -217,7 +218,7 @@ export default function ConversationNewPaneBody() {
         ariaLabel="References"
         expanded={referencesRailExpanded}
         onExpandedChange={setReferencesRailExpanded}
-        expandedWidthPx={CHAT_REFERENCES_RAIL_WIDTH_PX}
+        expandedWidthPx={CONVERSATION_REFERENCES_RAIL_WIDTH_PX}
         bodyClassName={styles.chatSecondaryRailBody}
         collapsed={
           <Button

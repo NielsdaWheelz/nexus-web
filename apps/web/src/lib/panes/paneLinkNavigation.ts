@@ -3,7 +3,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
-import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 type PaneLinkRuntime = {
   router: PaneScopedRouter;

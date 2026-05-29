@@ -12,20 +12,24 @@ import {
 } from "react";
 import {
   MAX_PANES,
-  WORKSPACE_DEFAULT_FALLBACK_HREF,
   WORKSPACE_SCHEMA_VERSION,
-  clampPaneWidth,
   createDefaultWorkspaceState,
   createEmptyPaneHistory,
   createPaneId,
-  getDefaultPaneWidthPx,
   normalizePaneTitle,
-  normalizeWorkspaceHref,
-  resolvePaneTransitionWidth,
   trimWorkspacePaneHistory,
   type WorkspacePaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
+import {
+  clampPaneWidth,
+  getDefaultPaneWidthPx,
+  resolvePaneTransitionWidth,
+} from "@/lib/workspace/paneWidth";
+import {
+  WORKSPACE_DEFAULT_FALLBACK_HREF,
+  normalizeWorkspaceHref,
+} from "@/lib/workspace/workspaceHref";
 import {
   buildWorkspaceUrl,
   decodeWorkspaceStateFromUrl,

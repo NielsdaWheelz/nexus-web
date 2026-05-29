@@ -33,6 +33,25 @@ function OpenInNewPaneOnMount() {
   return null;
 }
 
+function PublishSizingOnMount() {
+  const runtime = usePaneRuntime();
+  useEffect(() => {
+    if (!runtime) {
+      throw new Error("Pane runtime missing");
+    }
+    runtime.setPaneSizing({ minWidthPx: 640, extraWidthPx: 36 });
+  }, [runtime]);
+  return null;
+}
+
+function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
+  const runtime = usePaneRuntime();
+  useEffect(() => {
+    onValue(runtime);
+  }, [onValue, runtime]);
+  return null;
+}
+
 function GoBackForwardOnMount() {
   const router = usePaneRouter();
   useEffect(() => {
@@ -205,5 +224,62 @@ describe("PaneRuntimeProvider", () => {
     const state = screen.getByTestId("router-navigation-state");
     expect(state).toHaveAttribute("data-can-go-back", "true");
     expect(state).toHaveAttribute("data-can-go-forward", "true");
+  });
+
+  it("publishes pane sizing with pane and resource identity", async () => {
+    const onSetPaneSizing = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/library-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneSizing={onSetPaneSizing}
+      >
+        <PublishSizingOnMount />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(onSetPaneSizing).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey: identity.resourceKey,
+        sizing: { minWidthPx: 640, extraWidthPx: 36 },
+      });
+    });
+  });
+
+  it("does not expose legacy pane width setters", async () => {
+    const onValue = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/library-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <RuntimeShapeProbe onValue={onValue} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(onValue).toHaveBeenCalled());
+    const runtimeValue = onValue.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(runtimeValue.setPaneSizing).toEqual(expect.any(Function));
+    expect(runtimeValue[`setPane${"Min"}Width`]).toBeUndefined();
+    expect(runtimeValue[`setPane${"Extra"}Width`]).toBeUndefined();
   });
 });

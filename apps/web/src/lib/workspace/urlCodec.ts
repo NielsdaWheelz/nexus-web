@@ -1,16 +1,18 @@
 "use client";
 
 import {
-  parseWorkspaceHref,
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   WORKSPACE_VERSION_PARAM,
-  WORKSPACE_DEFAULT_FALLBACK_HREF,
   hasPaneHistory,
   type WorkspaceState,
   sanitizeWorkspaceState,
   trimWorkspacePaneHistory,
 } from "@/lib/workspace/schema";
+import {
+  WORKSPACE_DEFAULT_FALLBACK_HREF,
+  parseWorkspaceHref,
+} from "@/lib/workspace/workspaceHref";
 
 export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 

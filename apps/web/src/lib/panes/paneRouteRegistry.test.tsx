@@ -6,8 +6,8 @@ import {
   DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
-  resolvePaneWidthContract,
-} from "@/lib/workspace/schema";
+  resolvePaneRouteWidthContract,
+} from "@/lib/panes/paneRouteModel";
 import { resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
@@ -97,7 +97,7 @@ describe("pane route registry", () => {
       defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
       layoutKind: "standard",
     });
-    expect(resolvePaneWidthContract("/oracle")).toMatchObject({
+    expect(resolvePaneRouteWidthContract("/oracle")).toMatchObject({
       defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
       layoutKind: "standard",
     });
@@ -131,7 +131,7 @@ describe("pane route registry", () => {
       "/settings/keybindings",
     ]) {
       const route = resolvePaneRoute(href);
-      expect(route.definition).toMatchObject(resolvePaneWidthContract(href));
+      expect(route.definition).toMatchObject(resolvePaneRouteWidthContract(href));
     }
   });
 });

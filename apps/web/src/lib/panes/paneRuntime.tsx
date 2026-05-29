@@ -1,11 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { normalizePaneTitle } from "@/lib/workspace/schema";
 import {
-  normalizePaneTitle,
   normalizeWorkspaceHref,
   parseWorkspaceHref,
-} from "@/lib/workspace/schema";
+} from "@/lib/workspace/workspaceHref";
+import type { PaneRuntimeSizing } from "@/lib/workspace/paneSizing";
 
 export interface PaneScopedRouter {
   canGoBack: boolean;
@@ -16,10 +17,10 @@ export interface PaneScopedRouter {
   forward: () => void;
 }
 
-export interface PaneRuntimeWidthPublication {
+export interface PaneRuntimeSizingPublication {
   paneId: string;
   resourceKey: string;
-  widthPx: number | null;
+  sizing: PaneRuntimeSizing;
 }
 
 interface PaneRuntimeContextValue {
@@ -34,10 +35,7 @@ interface PaneRuntimeContextValue {
   router: PaneScopedRouter;
   openInNewPane: (href: string, titleHint?: string) => void;
   setPaneTitle: (title: string | null) => void;
-  setPaneMinWidth: (widthPx: number | null) => void;
-  // Width reserved outward of the resizable pane width (e.g. the reader
-  // highlights rail). Added to the rendered pane width, never persisted into it.
-  setPaneExtraWidth: (widthPx: number) => void;
+  setPaneSizing: (sizing: PaneRuntimeSizing) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -69,8 +67,7 @@ interface PaneRuntimeProviderProps {
     resourceKey: string;
     title: string | null;
   }) => void;
-  onSetPaneMinWidth?: (input: PaneRuntimeWidthPublication) => void;
-  onSetPaneExtraWidth?: (input: PaneRuntimeWidthPublication) => void;
+  onSetPaneSizing?: (input: PaneRuntimeSizingPublication) => void;
   children: React.ReactNode;
 }
 
@@ -103,8 +100,7 @@ export function PaneRuntimeProvider({
   onGoBackPane,
   onGoForwardPane,
   onSetPaneTitle,
-  onSetPaneMinWidth,
-  onSetPaneExtraWidth,
+  onSetPaneSizing,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -152,11 +148,8 @@ export function PaneRuntimeProvider({
       setPaneTitle: (title: string | null) => {
         onSetPaneTitle?.({ paneId, resourceKey, title });
       },
-      setPaneMinWidth: (widthPx: number | null) => {
-        onSetPaneMinWidth?.({ paneId, resourceKey, widthPx });
-      },
-      setPaneExtraWidth: (widthPx: number) => {
-        onSetPaneExtraWidth?.({ paneId, resourceKey, widthPx });
+      setPaneSizing: (sizing: PaneRuntimeSizing) => {
+        onSetPaneSizing?.({ paneId, resourceKey, sizing });
       },
     }),
     [
@@ -169,8 +162,7 @@ export function PaneRuntimeProvider({
       onOpenInNewPane,
       onReplacePane,
       onSetPaneTitle,
-      onSetPaneMinWidth,
-      onSetPaneExtraWidth,
+      onSetPaneSizing,
       paneId,
       parsed.pathname,
       parsed.searchParams,

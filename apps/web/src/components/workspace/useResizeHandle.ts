@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef } from "react";
 
 interface UseResizeHandleInput {
   paneId: string;
-  widthPx: number;
-  minWidthPx: number;
-  maxWidthPx: number;
+  primaryWidthPx: number;
+  primaryMinWidthPx: number;
+  primaryMaxWidthPx: number;
   onResizePane: (paneId: string, widthPx: number) => void;
 }
 
@@ -17,15 +17,15 @@ interface UseResizeHandleReturn {
 
 export function useResizeHandle({
   paneId,
-  widthPx,
-  minWidthPx,
-  maxWidthPx,
+  primaryWidthPx,
+  primaryMinWidthPx,
+  primaryMaxWidthPx,
   onResizePane,
 }: UseResizeHandleInput): UseResizeHandleReturn {
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const clamp = useCallback(
-    (value: number) => Math.min(maxWidthPx, Math.max(minWidthPx, value)),
-    [maxWidthPx, minWidthPx]
+    (value: number) => Math.min(primaryMaxWidthPx, Math.max(primaryMinWidthPx, value)),
+    [primaryMaxWidthPx, primaryMinWidthPx]
   );
 
   useEffect(
@@ -44,7 +44,7 @@ export function useResizeHandle({
       resizeCleanupRef.current?.();
 
       const startX = event.clientX;
-      const startWidth = widthPx;
+      const startWidth = primaryWidthPx;
       const doc = event.currentTarget.ownerDocument;
       const cleanup = () => {
         doc.body.style.cursor = "";
@@ -67,26 +67,33 @@ export function useResizeHandle({
       doc.addEventListener("mouseup", handleMouseUp);
       resizeCleanupRef.current = cleanup;
     },
-    [clamp, onResizePane, paneId, widthPx]
+    [clamp, onResizePane, paneId, primaryWidthPx]
   );
 
   const handleResizeKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        onResizePane(paneId, clamp(widthPx - 16));
+        onResizePane(paneId, clamp(primaryWidthPx - 16));
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        onResizePane(paneId, clamp(widthPx + 16));
+        onResizePane(paneId, clamp(primaryWidthPx + 16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        onResizePane(paneId, minWidthPx);
+        onResizePane(paneId, primaryMinWidthPx);
       } else if (event.key === "End") {
         event.preventDefault();
-        onResizePane(paneId, maxWidthPx);
+        onResizePane(paneId, primaryMaxWidthPx);
       }
     },
-    [clamp, maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
+    [
+      clamp,
+      onResizePane,
+      paneId,
+      primaryMaxWidthPx,
+      primaryMinWidthPx,
+      primaryWidthPx,
+    ]
   );
 
   return { handleResizeMouseDown, handleResizeKeyDown };

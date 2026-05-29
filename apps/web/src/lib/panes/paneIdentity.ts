@@ -1,19 +1,19 @@
 import {
-  resolvePaneRoute,
-  type ResolvedPaneRoute,
-} from "@/lib/panes/paneRouteRegistry";
-import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
+  resolvePaneRouteModel,
+  type ResolvedPaneRouteModel,
+} from "@/lib/panes/paneRouteModel";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface PaneRouteIdentity {
   href: string;
-  routeId: ResolvedPaneRoute["id"];
+  routeId: ResolvedPaneRouteModel["id"];
   resourceRef: string | null;
   resourceKey: string;
 }
 
 export function resolvePaneRouteIdentity(href: string): PaneRouteIdentity {
   const normalizedHref = normalizeWorkspaceHref(href) ?? "/";
-  const route = resolvePaneRoute(normalizedHref);
+  const route = resolvePaneRouteModel(normalizedHref);
   return {
     href: normalizedHref,
     routeId: route.id,

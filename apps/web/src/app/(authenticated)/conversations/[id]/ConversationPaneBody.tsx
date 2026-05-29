@@ -23,9 +23,11 @@ import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
-import SecondaryRail, {
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import {
+  CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
   SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/SecondaryRail";
+} from "@/components/secondaryRail/railSizing";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -87,8 +89,6 @@ const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
   conversation: "conversation",
   message: "message",
 };
-
-const CHAT_REFERENCES_RAIL_WIDTH_PX = 320;
 
 export default function ConversationPaneBody() {
   const id = usePaneParam("id");
@@ -713,13 +713,14 @@ function ChatView({
 
   useEffect(() => {
     if (!paneRuntime) return;
-    paneRuntime.setPaneExtraWidth(
-      referencesRailExpanded
-        ? CHAT_REFERENCES_RAIL_WIDTH_PX
+    paneRuntime.setPaneSizing({
+      minWidthPx: null,
+      extraWidthPx: referencesRailExpanded
+        ? CONVERSATION_REFERENCES_RAIL_WIDTH_PX
         : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-    );
+    });
     return () => {
-      paneRuntime.setPaneExtraWidth(0);
+      paneRuntime.setPaneSizing({ minWidthPx: null, extraWidthPx: 0 });
     };
   }, [paneRuntime, referencesRailExpanded]);
 
@@ -782,7 +783,7 @@ function ChatView({
         ariaLabel="References"
         expanded={referencesRailExpanded}
         onExpandedChange={setReferencesRailExpanded}
-        expandedWidthPx={CHAT_REFERENCES_RAIL_WIDTH_PX}
+        expandedWidthPx={CONVERSATION_REFERENCES_RAIL_WIDTH_PX}
         bodyClassName={styles.chatSecondaryRailBody}
         collapsed={
           <Button
