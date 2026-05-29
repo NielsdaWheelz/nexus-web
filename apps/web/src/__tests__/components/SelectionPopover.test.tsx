@@ -135,54 +135,54 @@ describe("SelectionPopover", () => {
 
   it("shows icon-only chat destination actions when callbacks are provided", () => {
     const onCreateHighlight = vi.fn();
-    const onAddToDocChat = vi.fn();
-    const onAddToLibraryChat = vi.fn();
+    const onQuoteToNewChat = vi.fn();
+    const onQuoteToExtantChat = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onAddToDocChat={onAddToDocChat}
-        onAddToLibraryChat={onAddToLibraryChat}
+        onQuoteToNewChat={onQuoteToNewChat}
+        onQuoteToExtantChat={onQuoteToExtantChat}
         onDismiss={vi.fn()}
       />
     );
 
-    const docButton = screen.getByRole("button", { name: "Add to document chat" });
-    const libraryButton = screen.getByRole("button", { name: "Add to library chat" });
-    expect(docButton).not.toHaveTextContent("Add to document chat");
-    expect(libraryButton).not.toHaveTextContent("Add to library chat");
+    const docButton = screen.getByRole("button", { name: "Quote to new chat" });
+    const libraryButton = screen.getByRole("button", { name: "Quote to existing chat" });
+    expect(docButton).not.toHaveTextContent("Quote to new chat");
+    expect(libraryButton).not.toHaveTextContent("Quote to existing chat");
 
     fireEvent.click(docButton);
     fireEvent.click(libraryButton);
 
-    expect(onAddToDocChat).toHaveBeenCalledTimes(1);
-    expect(onAddToDocChat).toHaveBeenCalledWith();
-    expect(onAddToLibraryChat).toHaveBeenCalledTimes(1);
-    expect(onAddToLibraryChat).toHaveBeenCalledWith();
+    expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+    expect(onQuoteToNewChat).toHaveBeenCalledWith();
+    expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
+    expect(onQuoteToExtantChat).toHaveBeenCalledWith();
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
   it("keeps highlight color selection separate from chat destination actions", () => {
     const onCreateHighlight = vi.fn();
-    const onAddToDocChat = vi.fn();
+    const onQuoteToNewChat = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onAddToDocChat={onAddToDocChat}
+        onQuoteToNewChat={onQuoteToNewChat}
         onDismiss={vi.fn()}
       />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Blue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add to document chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onAddToDocChat).toHaveBeenCalledWith();
+    expect(onQuoteToNewChat).toHaveBeenCalledWith();
   });
 
   it("hides chat destination actions when callbacks are not provided", () => {
@@ -196,10 +196,10 @@ describe("SelectionPopover", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Add to document chat" })
+      screen.queryByRole("button", { name: "Quote to new chat" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Add to library chat" })
+      screen.queryByRole("button", { name: "Quote to existing chat" })
     ).not.toBeInTheDocument();
   });
 
@@ -209,15 +209,15 @@ describe("SelectionPopover", () => {
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={vi.fn()}
-        onAddToDocChat={vi.fn()}
-        onAddToLibraryChat={vi.fn()}
+        onQuoteToNewChat={vi.fn()}
+        onQuoteToExtantChat={vi.fn()}
         onDismiss={vi.fn()}
       />
     );
 
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to document chat" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to library chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quote to new chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quote to existing chat" })).toBeInTheDocument();
     expect(screen.queryByText("Ask in new chat")).not.toBeInTheDocument();
     expect(screen.queryByText("Ask in this document")).not.toBeInTheDocument();
     expect(screen.queryByText("Ask in library...")).not.toBeInTheDocument();

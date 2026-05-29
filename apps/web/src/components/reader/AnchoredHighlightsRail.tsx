@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import { FileText, Library, MessageSquare } from "lucide-react";
+import { MessageSquare, MessageSquarePlus, MessagesSquare } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -46,11 +46,9 @@ interface AnchoredHighlightsRailProps {
   measureKey?: string | number;
   isMobile: boolean;
   isEditingBounds: boolean;
-  canSendToChat: boolean;
-  onSendToChat: (
-    highlightId: string,
-    destination: "doc-chat" | "library-chat",
-  ) => void;
+  canQuoteToChat: boolean;
+  onQuoteToNewChat: (highlightId: string) => void;
+  onQuoteToExtantChat: (highlightId: string) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
   onStartEditBounds: () => void;
@@ -81,8 +79,9 @@ export default function AnchoredHighlightsRail({
   measureKey = 0,
   isMobile,
   isEditingBounds,
-  canSendToChat,
-  onSendToChat,
+  canQuoteToChat,
+  onQuoteToNewChat,
+  onQuoteToExtantChat,
   onColorChange,
   onDelete,
   onStartEditBounds,
@@ -604,27 +603,27 @@ export default function AnchoredHighlightsRail({
             </button>
 
             <div className={styles.rowActions}>
-              {canSendToChat ? (
+              {canQuoteToChat ? (
                 <>
                   <Button
                     variant="secondary"
                     size="sm"
                     iconOnly
                     className={styles.chatButton}
-                    aria-label="Add highlight to document chat"
-                    onClick={() => onSendToChat(highlight.id, "doc-chat")}
+                    aria-label="Quote highlight to new chat"
+                    onClick={() => onQuoteToNewChat(highlight.id)}
                   >
-                    <FileText size={14} aria-hidden="true" />
+                    <MessageSquarePlus size={14} aria-hidden="true" />
                   </Button>
                   <Button
                     variant="secondary"
                     size="sm"
                     iconOnly
                     className={styles.chatButton}
-                    aria-label="Add highlight to library chat"
-                    onClick={() => onSendToChat(highlight.id, "library-chat")}
+                    aria-label="Quote highlight to existing chat"
+                    onClick={() => onQuoteToExtantChat(highlight.id)}
                   >
-                    <Library size={14} aria-hidden="true" />
+                    <MessagesSquare size={14} aria-hidden="true" />
                   </Button>
                 </>
               ) : null}
@@ -705,7 +704,7 @@ export default function AnchoredHighlightsRail({
       );
     },
     [
-      canSendToChat,
+      canQuoteToChat,
       changingColor,
       deleting,
       focusedId,
@@ -721,7 +720,8 @@ export default function AnchoredHighlightsRail({
       onFocusHighlight,
       onNoteDelete,
       onOpenConversation,
-      onSendToChat,
+      onQuoteToNewChat,
+      onQuoteToExtantChat,
       onStartEditBounds,
       scheduleNoteLayoutMeasure,
       setRowRef,

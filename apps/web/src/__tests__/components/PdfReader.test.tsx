@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import PdfReader, {
-  type PdfReaderSelectionQuote,
-} from "@/components/PdfReader";
+import PdfReader from "@/components/PdfReader";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
@@ -13,6 +11,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   viewerHost: null as HTMLDivElement | null,
   textNode: null as Text | null,
   pageHighlights: [] as unknown[],
+  createdHighlightId: "created-highlight-1",
 }));
 
 function rectList(rects: DOMRect[]): DOMRectList {
@@ -49,6 +48,31 @@ vi.mock("@/lib/api/client", () => ({
         data: {
           page_number: 1,
           highlights: pdfRuntimeState.pageHighlights,
+        },
+      };
+    }
+
+    if (
+      path === "/api/media/media-1/pdf-highlights" &&
+      init?.method === "POST"
+    ) {
+      return {
+        data: {
+          id: pdfRuntimeState.createdHighlightId,
+          anchor: {
+            type: "pdf_page_geometry",
+            media_id: "media-1",
+            page_number: 1,
+            quads: [],
+          },
+          color: "yellow",
+          exact: "selected quote",
+          prefix: "",
+          suffix: "",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          author_user_id: "user-1",
+          is_owner: true,
         },
       };
     }
@@ -206,12 +230,14 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.viewerHost = null;
     pdfRuntimeState.textNode = null;
     pdfRuntimeState.pageHighlights = [];
+    pdfRuntimeState.createdHighlightId = "created-highlight-1";
+    vi.mocked(apiFetch).mockClear();
   });
 
-  it("emits a transient reader-selection quote without creating a saved PDF highlight", async () => {
-    const onAddSelectionToChat = vi.fn<
-      (destination: "doc-chat" | "library-chat", selection: PdfReaderSelectionQuote) => void
-    >();
+  it("creates a PDF highlight and quotes it to a new chat", async () => {
+    pdfRuntimeState.createdHighlightId = "created-highlight-42";
+    const onQuoteToNewChat = vi.fn<(highlightId: string) => void>();
+    const onQuoteToExtantChat = vi.fn<(highlightId: string) => void>();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(110, 140, 160, 20),
     );
@@ -222,7 +248,8 @@ describe("PdfReader selection chat destinations", () => {
     render(
       <PdfReader
         mediaId="media-1"
-        onAddSelectionToChat={onAddSelectionToChat}
+        onQuoteToNewChat={onQuoteToNewChat}
+        onQuoteToExtantChat={onQuoteToExtantChat}
       />,
     );
 
@@ -241,69 +268,39 @@ describe("PdfReader selection chat destinations", () => {
     selection?.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
-    const docChatButton = await screen.findByRole("button", {
-      name: "Add to document chat",
+    const newChatButton = await screen.findByRole("button", {
+      name: "Quote to new chat",
     });
     expect(
-      screen.getByRole("button", { name: "Add to library chat" }),
+      screen.getByRole("button", { name: "Quote to existing chat" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
 
-    fireEvent.click(docChatButton);
+    fireEvent.click(newChatButton);
 
-    expect(onAddSelectionToChat).toHaveBeenCalledTimes(1);
-    expect(onAddSelectionToChat.mock.calls[0]![0]).toBe("doc-chat");
-    expect(onAddSelectionToChat.mock.calls[0]![1]).toMatchObject({
-      kind: "reader_selection",
-      media_id: "media-1",
+    await waitFor(() => {
+      expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+    });
+    expect(onQuoteToNewChat).toHaveBeenCalledWith("created-highlight-42");
+    expect(onQuoteToExtantChat).not.toHaveBeenCalled();
+
+    const postCalls = vi
+      .mocked(apiFetch)
+      .mock.calls.filter(
+        ([path, init]) =>
+          path === "/api/media/media-1/pdf-highlights" &&
+          init?.method === "POST",
+      );
+    expect(postCalls).toHaveLength(1);
+    const postBody = JSON.parse(String(postCalls[0]![1]!.body)) as {
+      page_number: number;
+      color: string;
+      exact: string;
+    };
+    expect(postBody).toMatchObject({
+      page_number: 1,
       color: "yellow",
       exact: "selected quote",
-      prefix: "Alpha",
-      suffix: "Omega",
-      preview: "selected quote",
-      locator: {
-        type: "pdf_page_geometry",
-        media_id: "media-1",
-        page_number: 1,
-        exact: "selected quote",
-        prefix: "Alpha",
-        suffix: "Omega",
-        text_quote_selector: {
-          exact: "selected quote",
-          prefix: "Alpha",
-          suffix: "Omega",
-        },
-        quads: [
-          {
-            x1: 70,
-            y1: 60,
-            x2: 230,
-            y2: 60,
-            x3: 230,
-            y3: 80,
-            x4: 70,
-            y4: 80,
-          },
-        ],
-      },
     });
-    expect(onAddSelectionToChat.mock.calls[0]![1].locator).not.toHaveProperty(
-      "page_text_start_offset",
-    );
-    expect(onAddSelectionToChat.mock.calls[0]![1].locator).not.toHaveProperty(
-      "page_text_end_offset",
-    );
-    expect(onAddSelectionToChat.mock.calls[0]![1].client_context_id).toEqual(
-      expect.any(String),
-    );
-    expect(
-      vi
-        .mocked(apiFetch)
-        .mock.calls.some(
-          ([path, init]) =>
-            String(path).includes("/pdf-highlights") && init?.method === "POST",
-        ),
-    ).toBe(false);
   });
 
   it("pulses only the requested PDF highlight", async () => {

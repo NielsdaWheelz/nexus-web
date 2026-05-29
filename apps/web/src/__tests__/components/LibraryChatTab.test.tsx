@@ -22,8 +22,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 interface LibraryChatTabFetchOptions {
   conversations?: Array<{
     id: string;
-    title: string | null;
-    first_user_message_excerpt: string;
+    title: string;
     message_count: number;
     updated_at: string;
   }>;
@@ -46,7 +45,8 @@ function stubLibraryChatFetch({
       ) {
         if (url.searchParams.get("has_reference") === RESOURCE_URI) {
           return jsonResponse({
-            data: { conversations, next_offset: null },
+            data: conversations,
+            page: { next_cursor: null },
           });
         }
       }
@@ -85,8 +85,7 @@ describe("LibraryChatTab", () => {
       conversations: [
         {
           id: "conversation-a",
-          title: null,
-          first_user_message_excerpt: "Across the whole library.",
+          title: "Across the whole library.",
           message_count: 5,
           updated_at: "2026-05-25T10:00:00Z",
         },
@@ -110,8 +109,7 @@ describe("LibraryChatTab", () => {
       conversations: [
         {
           id: "conversation-a",
-          title: null,
-          first_user_message_excerpt: "Row to open.",
+          title: "Row to open.",
           message_count: 2,
           updated_at: "2026-05-25T10:00:00Z",
         },

@@ -80,9 +80,15 @@ function highlight(
 function AnchoredHighlightsRailHarness({
   focusedId = null,
   onFocusHighlight = () => {},
+  canQuoteToChat = true,
+  onQuoteToNewChat = () => {},
+  onQuoteToExtantChat = () => {},
 }: {
   focusedId?: string | null;
   onFocusHighlight?: (highlightId: string) => void;
+  canQuoteToChat?: boolean;
+  onQuoteToNewChat?: (highlightId: string) => void;
+  onQuoteToExtantChat?: (highlightId: string) => void;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -126,8 +132,9 @@ function AnchoredHighlightsRailHarness({
           measureKey="test"
           isMobile={false}
           isEditingBounds={false}
-          canSendToChat
-          onSendToChat={() => {}}
+          canQuoteToChat={canQuoteToChat}
+          onQuoteToNewChat={onQuoteToNewChat}
+          onQuoteToExtantChat={onQuoteToExtantChat}
           onColorChange={async () => {}}
           onDelete={async () => {}}
           onStartEditBounds={() => {}}
@@ -191,8 +198,9 @@ function StableNoteKeyHarness({
           measureKey="stable-note-key-test"
           isMobile={false}
           isEditingBounds={false}
-          canSendToChat
-          onSendToChat={() => {}}
+          canQuoteToChat
+          onQuoteToNewChat={() => {}}
+          onQuoteToExtantChat={() => {}}
           onColorChange={async () => {}}
           onDelete={async () => {}}
           onStartEditBounds={() => {}}
@@ -260,12 +268,12 @@ describe("AnchoredHighlightsRail", () => {
     ).toBeNull();
     expect(
       within(row).getByRole("button", {
-        name: "Add highlight to document chat",
+        name: "Quote highlight to new chat",
       }),
     ).toBeVisible();
     expect(
       within(row).getByRole("button", {
-        name: "Add highlight to library chat",
+        name: "Quote highlight to existing chat",
       }),
     ).toBeVisible();
     expect(within(row).getByRole("button", { name: "Actions" })).toBeVisible();
@@ -281,6 +289,50 @@ describe("AnchoredHighlightsRail", () => {
 
     await user.click(await screen.findByTestId("anchored-highlight-row-h1"));
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
+  });
+
+  it("quotes the highlight to a new or existing chat from the row buttons", async () => {
+    const user = userEvent.setup();
+    const onQuoteToNewChat = vi.fn();
+    const onQuoteToExtantChat = vi.fn();
+    render(
+      <AnchoredHighlightsRailHarness
+        onQuoteToNewChat={onQuoteToNewChat}
+        onQuoteToExtantChat={onQuoteToExtantChat}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+
+    await user.click(
+      within(row).getByRole("button", { name: "Quote highlight to new chat" }),
+    );
+    expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+    expect(onQuoteToNewChat).toHaveBeenCalledWith("h1");
+    expect(onQuoteToExtantChat).not.toHaveBeenCalled();
+
+    await user.click(
+      within(row).getByRole("button", {
+        name: "Quote highlight to existing chat",
+      }),
+    );
+    expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
+    expect(onQuoteToExtantChat).toHaveBeenCalledWith("h1");
+    expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the quote-to-chat buttons when quoting is disabled", async () => {
+    render(<AnchoredHighlightsRailHarness canQuoteToChat={false} />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    expect(
+      within(row).queryByRole("button", { name: "Quote highlight to new chat" }),
+    ).toBeNull();
+    expect(
+      within(row).queryByRole("button", {
+        name: "Quote highlight to existing chat",
+      }),
+    ).toBeNull();
   });
 
   it("keeps the note editor key stable after a first linked-note save", async () => {

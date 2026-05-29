@@ -3,14 +3,14 @@
  *
  * Appears when user selects text in the content area. Positioned relative
  * to the selection bounding box. Selecting a color creates the highlight
- * immediately, and chat icons emit destination intent for the active selection.
- * Dismisses on Escape, click outside, or selection collapse.
+ * immediately, and the chat icons quote the selection into a new or an
+ * existing chat. Dismisses on Escape, click outside, or selection collapse.
  */
 
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FileText, Library } from "lucide-react";
+import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import { clamp } from "@/lib/clamp";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -23,8 +23,8 @@ interface SelectionPopoverProps {
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
-  onAddToDocChat?: () => void | Promise<void>;
-  onAddToLibraryChat?: () => void | Promise<void>;
+  onQuoteToNewChat?: () => void | Promise<void>;
+  onQuoteToExtantChat?: () => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -75,8 +75,8 @@ export default function SelectionPopover({
   selectionLineRects,
   containerRef,
   onCreateHighlight,
-  onAddToDocChat,
-  onAddToLibraryChat,
+  onQuoteToNewChat,
+  onQuoteToExtantChat,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
@@ -284,17 +284,17 @@ export default function SelectionPopover({
     [isCreating, onCreateHighlight]
   );
 
-  const handleAddToDocChat = useCallback(() => {
+  const handleQuoteToNewChat = useCallback(() => {
     if (!isCreating) {
-      void onAddToDocChat?.();
+      void onQuoteToNewChat?.();
     }
-  }, [isCreating, onAddToDocChat]);
+  }, [isCreating, onQuoteToNewChat]);
 
-  const handleAddToLibraryChat = useCallback(() => {
+  const handleQuoteToExtantChat = useCallback(() => {
     if (!isCreating) {
-      void onAddToLibraryChat?.();
+      void onQuoteToExtantChat?.();
     }
-  }, [isCreating, onAddToLibraryChat]);
+  }, [isCreating, onQuoteToExtantChat]);
 
   const handlePopoverPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -321,34 +321,34 @@ export default function SelectionPopover({
         disabled={isCreating}
         className={styles.colorPicker}
       />
-      {onAddToDocChat || onAddToLibraryChat ? (
-        <div className={styles.chatActions} role="group" aria-label="Chat destinations">
-          {onAddToDocChat ? (
+      {onQuoteToNewChat || onQuoteToExtantChat ? (
+        <div className={styles.chatActions} role="group" aria-label="Quote to chat">
+          {onQuoteToNewChat ? (
             <Button
               variant="secondary"
               size="sm"
               iconOnly
               className={styles.chatButton}
-              onClick={handleAddToDocChat}
+              onClick={handleQuoteToNewChat}
               disabled={isCreating}
-              aria-label="Add to document chat"
-              title="Add to document chat"
+              aria-label="Quote to new chat"
+              title="Quote to new chat"
             >
-              <FileText size={14} aria-hidden="true" />
+              <MessageSquarePlus size={14} aria-hidden="true" />
             </Button>
           ) : null}
-          {onAddToLibraryChat ? (
+          {onQuoteToExtantChat ? (
             <Button
               variant="secondary"
               size="sm"
               iconOnly
               className={styles.chatButton}
-              onClick={handleAddToLibraryChat}
+              onClick={handleQuoteToExtantChat}
               disabled={isCreating}
-              aria-label="Add to library chat"
-              title="Add to library chat"
+              aria-label="Quote to existing chat"
+              title="Quote to existing chat"
             >
-              <Library size={14} aria-hidden="true" />
+              <MessagesSquare size={14} aria-hidden="true" />
             </Button>
           ) : null}
         </div>

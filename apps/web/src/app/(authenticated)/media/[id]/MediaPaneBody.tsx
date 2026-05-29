@@ -659,6 +659,9 @@ export default function MediaPaneBody({
   const [secondaryRailMode, setSecondaryRailMode] = useState<
     "highlights" | "doc-chat"
   >("highlights");
+  // A highlight URI parked for "quote to existing chat": the next chat the user
+  // picks (or creates) in the doc-chat list gets this attached as a reference.
+  const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
   // Whether the secondary rail (highlights/chat tabs) is open. The reader rail
   // is open-or-absent — there is no collapsed strip.
   const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
@@ -3042,6 +3045,7 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   const openDocChat = useCallback(() => {
+    setPendingQuoteUri(null);
     setSecondaryRailMode("doc-chat");
     setHighlightsRailOpen(true);
     setMobileHighlightsDrawerOpen(false);
@@ -3563,6 +3567,40 @@ export default function MediaPaneBody({
     [paneRuntime],
   );
 
+  // Quote a highlight into a brand-new conversation, also referencing the
+  // document so the chat appears in this document's chat list.
+  const quoteHighlightToNewChat = useCallback(
+    async (highlightId: string) => {
+      const created = await apiFetch<{ data: { id: string } }>(
+        "/api/conversations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            initial_references: [`media:${id}`, `highlight:${highlightId}`],
+          }),
+        },
+      );
+      handleOpenFullChat(created.data.id);
+    },
+    [id, handleOpenFullChat],
+  );
+
+  // Quote a highlight into an existing chat: park the URI and reveal the
+  // doc-chat list so the user can pick which conversation to attach it to.
+  const quoteHighlightToExtantChat = useCallback((highlightId: string) => {
+    setPendingQuoteUri(`highlight:${highlightId}`);
+    setSecondaryRailMode("doc-chat");
+    setHighlightsRailOpen(true);
+    setMobileHighlightsDrawerOpen(false);
+  }, []);
+
+  // Drop the parked quote once the doc-chat list is no longer the visible surface.
+  useEffect(() => {
+    if (!isHighlightsRailOpen || secondaryRailMode !== "doc-chat") {
+      setPendingQuoteUri(null);
+    }
+  }, [isHighlightsRailOpen, secondaryRailMode]);
+
   useEffect(() => {
     const handleChatShortcut = (event: KeyboardEvent) => {
       if (
@@ -3933,31 +3971,6 @@ export default function MediaPaneBody({
       play();
     },
     [media?.kind, play, seekToMs],
-  );
-
-  const handleReaderSourceActivate = useCallback(
-    (target: ReaderSourceTarget) => {
-      if (target.media_id !== id) {
-        const route = target.href || `/media/${target.media_id}`;
-        const titleHint = target.label ?? "Source";
-        paneRuntime?.openInNewPane(route, titleHint);
-        return;
-      }
-
-      setReaderSourceTarget(target);
-
-      if (target.locator?.type === "transcript_time_range") {
-        const timestampMs = target.locator.t_start_ms;
-        if (
-          typeof timestampMs === "number" &&
-          Number.isInteger(timestampMs) &&
-          timestampMs >= 0
-        ) {
-          handleTranscriptSeek(timestampMs);
-        }
-      }
-    },
-    [handleTranscriptSeek, id, paneRuntime],
   );
 
   useEffect(() => {
@@ -4334,8 +4347,9 @@ export default function MediaPaneBody({
       measureKey={anchoredHighlightsMeasureKey}
       isMobile={isMobileViewport}
       isEditingBounds={focusState.editingBounds}
-      canSendToChat={false}
-      onSendToChat={() => {}}
+      canQuoteToChat={media?.capabilities?.can_quote ?? false}
+      onQuoteToNewChat={quoteHighlightToNewChat}
+      onQuoteToExtantChat={quoteHighlightToExtantChat}
       onColorChange={handleColorChange}
       onDelete={handleDelete}
       onStartEditBounds={startEditBounds}
@@ -4530,6 +4544,16 @@ export default function MediaPaneBody({
                   onPageHighlightsChange={handlePdfPageHighlightsChange}
                   onHighlightsMutated={refreshMediaHighlights}
                   onHighlightTap={handlePdfHighlightTap}
+                  onQuoteToNewChat={
+                    media?.capabilities?.can_quote
+                      ? quoteHighlightToNewChat
+                      : undefined
+                  }
+                  onQuoteToExtantChat={
+                    media?.capabilities?.can_quote
+                      ? quoteHighlightToExtantChat
+                      : undefined
+                  }
                   temporaryHighlight={temporaryPdfHighlight}
                   onControlsStateChange={setPdfControlsState}
                   onControlsReady={(controls) => {
@@ -4656,6 +4680,8 @@ export default function MediaPaneBody({
                   <DocChatTab
                     mediaId={media.id}
                     onOpenChat={handleOpenFullChat}
+                    pendingQuoteUri={pendingQuoteUri}
+                    onPendingQuoteResolved={() => setPendingQuoteUri(null)}
                   />
                 ),
               },
@@ -4729,6 +4755,8 @@ export default function MediaPaneBody({
               <DocChatTab
                 mediaId={media.id}
                 onOpenChat={handleOpenFullChat}
+                pendingQuoteUri={pendingQuoteUri}
+                onPendingQuoteResolved={() => setPendingQuoteUri(null)}
               />
             </div>
           </aside>
@@ -4744,6 +4772,22 @@ export default function MediaPaneBody({
             selectionLineRects={selection.lineRects}
             containerRef={contentRef}
             onCreateHighlight={handleCreateHighlight}
+            onQuoteToNewChat={
+              media?.capabilities?.can_quote
+                ? async () => {
+                    const highlightId = await handleCreateHighlight("yellow");
+                    if (highlightId) await quoteHighlightToNewChat(highlightId);
+                  }
+                : undefined
+            }
+            onQuoteToExtantChat={
+              media?.capabilities?.can_quote
+                ? async () => {
+                    const highlightId = await handleCreateHighlight("yellow");
+                    if (highlightId) quoteHighlightToExtantChat(highlightId);
+                  }
+                : undefined
+            }
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />

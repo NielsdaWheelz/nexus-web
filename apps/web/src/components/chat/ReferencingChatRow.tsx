@@ -36,13 +36,11 @@ export default function ReferencingChatRow({
   item,
   onTap,
 }: ReferencingChatRowProps) {
-  const excerpt =
-    item.first_user_message_excerpt || item.title || "Untitled chat";
   const subtitle = `${item.message_count} ${item.message_count === 1 ? "message" : "messages"} • ${formatRelativeTime(item.updated_at)}`;
 
   return (
     <button type="button" className={styles.row} onClick={onTap}>
-      <span className={styles.title}>{excerpt}</span>
+      <span className={styles.title}>{item.title}</span>
       <span className={styles.subtitle}>{subtitle}</span>
     </button>
   );

@@ -5,27 +5,19 @@ import { apiFetch } from "@/lib/api/client";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 interface ChatsByReferenceResponse {
-  data: {
-    conversations: ConversationListItem[];
-    next_offset: number | null;
-  };
+  data: ConversationListItem[];
 }
 
-interface ChatsByReference {
+export function useChatsByReference(resourceUri: string | null): {
   conversations: ConversationListItem[];
-  nextOffset: number | null;
   isLoading: boolean;
-}
-
-export function useChatsByReference(resourceUri: string | null): ChatsByReference {
+} {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!resourceUri) {
       setConversations([]);
-      setNextOffset(null);
       return;
     }
     let cancelled = false;
@@ -35,13 +27,11 @@ export function useChatsByReference(resourceUri: string | null): ChatsByReferenc
     )
       .then((response) => {
         if (cancelled) return;
-        setConversations(response.data.conversations);
-        setNextOffset(response.data.next_offset);
+        setConversations(response.data);
       })
       .catch(() => {
         if (cancelled) return;
         setConversations([]);
-        setNextOffset(null);
       })
       .finally(() => {
         if (cancelled) return;
@@ -52,5 +42,5 @@ export function useChatsByReference(resourceUri: string | null): ChatsByReferenc
     };
   }, [resourceUri]);
 
-  return { conversations, nextOffset, isLoading };
+  return { conversations, isLoading };
 }

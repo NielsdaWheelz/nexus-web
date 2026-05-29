@@ -48,13 +48,7 @@ import {
   deriveViewportTransformFromPageView,
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
-import { createRandomId } from "@/lib/createRandomId";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import type { QuoteSelector } from "@/lib/api/sse/locators";
-import {
-  buildQuoteSelector,
-  readPdfQuoteTextWindow,
-} from "@/lib/highlights/quoteText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -123,23 +117,6 @@ export interface PdfReaderControlsState {
   isBusy: boolean;
 }
 
-export interface PdfReaderSelectionQuote extends QuoteSelector {
-  kind: "reader_selection";
-  client_context_id: string;
-  media_id: string;
-  color: HighlightColor;
-  preview: string;
-  locator: QuoteSelector & {
-    type: "pdf_page_geometry";
-    media_id: string;
-    page_number: number;
-    quads: PdfHighlightQuad[];
-    text_quote_selector: QuoteSelector;
-  };
-}
-
-type PdfReaderChatDestination = "doc-chat" | "library-chat";
-
 export interface PdfReaderControlActions {
   goToPreviousPage: () => void;
   goToNextPage: () => void;
@@ -180,10 +157,8 @@ interface PdfReaderProps {
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
-  onAddSelectionToChat?: (
-    destination: PdfReaderChatDestination,
-    selection: PdfReaderSelectionQuote,
-  ) => void;
+  onQuoteToNewChat?: (highlightId: string) => void | Promise<void>;
+  onQuoteToExtantChat?: (highlightId: string) => void | Promise<void>;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -461,7 +436,8 @@ export default function PdfReader({
   onHighlightsMutated,
   onHighlightTap,
   temporaryHighlight = null,
-  onAddSelectionToChat,
+  onQuoteToNewChat,
+  onQuoteToExtantChat,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -2176,75 +2152,6 @@ export default function PdfReader({
     setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
   }, []);
 
-  const handleAddSelectionToChat = useCallback(
-    (destination: PdfReaderChatDestination) => {
-      if (!onAddSelectionToChat) {
-        return;
-      }
-      if (!textLayerUsable || !textGeometryReliable) {
-        setSelectionError("Chat requires a text-backed PDF selection.");
-        return;
-      }
-
-      const activeSelection = selection ?? selectionSnapshotRef.current;
-      if (!activeSelection) {
-        setSelectionError("Select text in the PDF before adding to chat.");
-        return;
-      }
-
-      const textLayerRoot = getTextLayerRootForPage(activeSelection.pageNumber);
-      const quoteText = readPdfQuoteTextWindow(
-        activeSelection.range,
-        textLayerRoot,
-      );
-      if (quoteText.exact.length === 0) {
-        setSelectionError("Select text in the PDF before adding to chat.");
-        return;
-      }
-
-      const quads = buildSelectionQuads(
-        activeSelection.range,
-        activeSelection.pageNumber,
-      );
-      if (quads.length === 0) {
-        setSelectionError(
-          "No selectable text geometry was found for this selection.",
-        );
-        return;
-      }
-
-      const selector = buildQuoteSelector(quoteText);
-
-      onAddSelectionToChat(destination, {
-        kind: "reader_selection",
-        client_context_id: createRandomId("pdf-selection"),
-        media_id: mediaId,
-        color: "yellow",
-        ...selector,
-        preview: quoteText.exact.slice(0, 120),
-        locator: {
-          type: "pdf_page_geometry",
-          media_id: mediaId,
-          page_number: activeSelection.pageNumber,
-          quads,
-          ...selector,
-          text_quote_selector: selector,
-        },
-      });
-      clearSelection();
-    },
-    [
-      buildSelectionQuads,
-      clearSelection,
-      getTextLayerRootForPage,
-      mediaId,
-      onAddSelectionToChat,
-      selection,
-      textGeometryReliable,
-      textLayerUsable,
-    ],
-  );
-
   useEffect(() => {
     if (!onControlsReady) {
       return;
@@ -2367,14 +2274,20 @@ export default function PdfReader({
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
-          onAddToDocChat={
-            onAddSelectionToChat && textGeometryReliable
-              ? () => handleAddSelectionToChat("doc-chat")
+          onQuoteToNewChat={
+            onQuoteToNewChat && textGeometryReliable
+              ? async () => {
+                  const highlightId = await handleCreateHighlight("yellow");
+                  if (highlightId) await onQuoteToNewChat(highlightId);
+                }
               : undefined
           }
-          onAddToLibraryChat={
-            onAddSelectionToChat && textGeometryReliable
-              ? () => handleAddSelectionToChat("library-chat")
+          onQuoteToExtantChat={
+            onQuoteToExtantChat && textGeometryReliable
+              ? async () => {
+                  const highlightId = await handleCreateHighlight("yellow");
+                  if (highlightId) await onQuoteToExtantChat(highlightId);
+                }
               : undefined
           }
           onDismiss={clearSelection}

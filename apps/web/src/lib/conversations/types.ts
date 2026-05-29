@@ -31,8 +31,7 @@ export interface ConversationSummary {
 
 export interface ConversationListItem {
   id: string;
-  title: string | null;
-  first_user_message_excerpt: string;
+  title: string;
   message_count: number;
   updated_at: string;
 }

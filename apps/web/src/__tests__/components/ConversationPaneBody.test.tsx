@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type {
   ChatRunResponse,
   ConversationMessage,
