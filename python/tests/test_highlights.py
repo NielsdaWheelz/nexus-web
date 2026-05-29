@@ -13,8 +13,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.conversation import MessageContextRef
-from nexus.services import contexts as contexts_service
 from tests.factories import (
     add_media_to_library as add_media_entry_to_library,
 )
@@ -2058,7 +2056,6 @@ class TestListMediaHighlights:
         note_id = note_resp.json()["data"]["id"]
 
         conversation_id = uuid4()
-        message_id = uuid4()
         with direct_db.session() as session:
             session.execute(
                 text("""
@@ -2069,25 +2066,16 @@ class TestListMediaHighlights:
             )
             session.execute(
                 text("""
-                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conversation_id, 1, 'user', 'hello', 'complete')
+                    INSERT INTO conversation_references (conversation_id, resource_uri)
+                    VALUES (:conversation_id, :resource_uri)
                 """),
-                {"id": message_id, "conversation_id": conversation_id},
-            )
-            context = contexts_service.insert_context(
-                db=session,
-                message_id=message_id,
-                ordinal=0,
-                context=MessageContextRef(
-                    kind="object_ref",
-                    type="highlight",
-                    id=UUID(highlight_id),
-                ),
+                {
+                    "conversation_id": conversation_id,
+                    "resource_uri": f"highlight:{highlight_id}",
+                },
             )
             session.commit()
-            context_id = context.id
-        direct_db.register_cleanup("message_context_items", "id", context_id)
-        direct_db.register_cleanup("messages", "id", message_id)
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         resp = auth_client.get(

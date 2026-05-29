@@ -15,24 +15,17 @@ import {
   useMemo,
   useLayoutEffect,
 } from "react";
-import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
-import { type ContextItem } from "@/lib/api/sse/requests";
 import { createRandomId } from "@/lib/createRandomId";
-import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
-import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import PinnedSourcesTray from "@/components/chat/PinnedSourcesTray";
+import ConversationReferencesRail from "@/components/chat/ConversationReferencesRail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
-import ConversationContextPane from "@/components/ConversationContextPane";
-import SecondaryRail, {
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
-} from "@/components/secondaryRail/SecondaryRail";
-import Button from "@/components/ui/Button";
+import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
+import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import type {
   BranchDraft,
   BranchGraph,
@@ -42,21 +35,17 @@ import type {
   ChatRunResponse,
   ConversationSummary,
   ForkOption,
-  MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import {
   activeBranchGraphForPath,
   activeForkOptionsForPath,
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useStringIdSet } from "@/lib/useStringIdSet";
-import { usePinnedSources } from "@/lib/conversations/usePinnedSources";
 import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
-  usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
@@ -77,36 +66,34 @@ type Conversation = ConversationSummary;
 
 type ChatRunData = ChatRunResponse["data"];
 
-const CHAT_CONTEXT_RAIL_WIDTH_PX = 320;
+// ============================================================================
+// ConversationPaneBody — chat view with inline references rail
+// ============================================================================
 
-// ============================================================================
-// ConversationPaneBody — chat view with inline linked-context surface
-// ============================================================================
+const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
+  media: "media",
+  span: "evidence_span",
+  highlight: "highlight",
+  chunk: "content_chunk",
+  fragment: "fragment",
+  page: "page",
+  note_block: "note_block",
+  conversation: "conversation",
+  message: "message",
+};
 
 export default function ConversationPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("conversation route requires an id");
 
   const router = usePaneRouter();
-  const searchParams = usePaneSearchParams();
-  const {
-    attachedContexts,
-    removeContext,
-    clearContexts,
-    stripAttachState,
-  } = useAttachedContextsFromUrl(searchParams);
-  const runIdFromUrl = searchParams.get("run");
-
-  const clearAttachState = useCallback(() => {
-    clearContexts();
-    const cleaned = stripAttachState();
-    const qs = cleaned.toString();
-    router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
-  }, [clearContexts, stripAttachState, router, id]);
+  const paneRuntime = usePaneRuntime();
+  const runIdFromUrl = paneRuntime?.searchParams.get("run") ?? null;
 
   const clearRunParam = useCallback(
     (runId: string) => {
-      if (searchParams.get("run") !== runId) return;
+      const searchParams = paneRuntime?.searchParams;
+      if (!searchParams || searchParams.get("run") !== runId) return;
       const cleaned = new URLSearchParams(searchParams);
       cleaned.delete("run");
       const qs = cleaned.toString();
@@ -114,16 +101,13 @@ export default function ConversationPaneBody() {
         qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`,
       );
     },
-    [id, router, searchParams],
+    [id, paneRuntime, router],
   );
 
   return (
     <ChatView
       id={id}
       runIdFromUrl={runIdFromUrl}
-      attachedContexts={attachedContexts}
-      onRemoveContext={removeContext}
-      onMessageSent={clearAttachState}
       onRunFinished={clearRunParam}
     />
   );
@@ -137,21 +121,15 @@ export default function ConversationPaneBody() {
 function ChatView({
   id,
   runIdFromUrl,
-  attachedContexts,
-  onRemoveContext,
-  onMessageSent,
   onRunFinished,
 }: {
   id: string;
   runIdFromUrl: string | null;
-  attachedContexts: ContextItem[];
-  onRemoveContext: (index: number) => void;
-  onMessageSent: () => void;
   onRunFinished: (runId: string) => void;
 }) {
-  const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const { mutate: mutateReferences } = useConversationReferences(id);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
@@ -175,8 +153,6 @@ function ChatView({
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const retryingAssistantMessageIds = useStringIdSet();
-  const { pinned: pinnedSources } = usePinnedSources(id);
-  const [contextRailExpanded, setContextRailExpanded] = useState(true);
   useSetPaneTitle(
     loading ? null : conversation ? `Chat: ${conversation.title}` : "Chat",
   );
@@ -217,15 +193,11 @@ function ChatView({
     setForkOptionsByParentId,
     shouldScrollRef,
     onRunFinished,
+    onReferenceAdded: () => {
+      void mutateReferences();
+    },
     shouldApplyRun: shouldApplyRunToSelectedPath,
   });
-  const selectedPathIds = useMemo(() => {
-    const ids = selectedPathMessageIds(messages);
-    if (activeLeafMessageId) {
-      ids.add(activeLeafMessageId);
-    }
-    return ids;
-  }, [activeLeafMessageId, messages]);
   const switchableLeafIds = useMemo(
     () => new Set(Object.keys(pathCacheByLeafId)),
     [pathCacheByLeafId],
@@ -245,7 +217,10 @@ function ChatView({
       : `branch:${branchDraft.parentMessageId}:message`
     : `path:${activeLeafMessageId ?? activeReplyParentMessageId ?? id}`;
 
-  selectedPathIdsRef.current = selectedPathIds;
+  selectedPathIdsRef.current = useMemo(
+    () => messageIdsForPath(messages, activeLeafMessageId),
+    [activeLeafMessageId, messageIdsForPath, messages],
+  );
 
   useEffect(() => {
     if (!activeLeafMessageId || messages.length === 0) return;
@@ -254,32 +229,6 @@ function ChatView({
       return { ...prev, [activeLeafMessageId]: messages };
     });
   }, [activeLeafMessageId, messages]);
-  const persistedRows = useMemo(() => {
-    const rows: Array<{
-      context: MessageContextSnapshot;
-      messageId: string;
-      messageSeq: number;
-    }> = [];
-
-    for (const message of messages) {
-      if (
-        message.role !== "user" ||
-        !message.contexts ||
-        message.contexts.length === 0
-      ) {
-        continue;
-      }
-      for (const context of message.contexts) {
-        rows.push({
-          context,
-          messageId: message.id,
-          messageSeq: message.seq,
-        });
-      }
-    }
-
-    return rows;
-  }, [messages]);
 
   const applyConversationTree = useCallback(
     (tree: ConversationTreeResponse) => {
@@ -637,23 +586,6 @@ function ChatView({
     [switchToLeaf],
   );
 
-  const switchToGraphLeaf = useCallback(
-    async (leafMessageId: string) => {
-      const graphNode =
-        branchGraph.nodes.find(
-          (node) => node.leaf && node.leaf_message_id === leafMessageId,
-        ) ??
-        branchGraph.nodes.find(
-          (node) => node.leaf_message_id === leafMessageId,
-        );
-      await switchToLeaf(
-        leafMessageId,
-        graphNode?.parent_message_id ?? graphNode?.message_id ?? null,
-      );
-    },
-    [branchGraph.nodes, switchToLeaf],
-  );
-
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget, event?: React.MouseEvent) => {
       const href =
@@ -673,6 +605,30 @@ function ChatView({
     [paneRuntime, router],
   );
 
+  const handleOpenResource = useCallback(
+    async (uri: string) => {
+      const [scheme, identifier] = uri.split(":");
+      if (!scheme || !identifier) return;
+      if (scheme === "library") {
+        paneRuntime?.openInNewPane(`/libraries/${identifier}`);
+        return;
+      }
+      const objectType = URI_SCHEME_TO_OBJECT_TYPE[scheme];
+      if (!objectType || !isObjectType(objectType)) return;
+      try {
+        const [resolved] = await resolveObjectRefs([
+          { objectType, objectId: identifier },
+        ]);
+        const href = resolved?.route;
+        if (!href) return;
+        paneRuntime?.openInNewPane(href);
+      } catch (err) {
+        console.error("Failed to open reference:", err);
+      }
+    },
+    [paneRuntime],
+  );
+
   usePaneChromeOverride({
     options: conversationResourceOptions({
       deleting,
@@ -681,22 +637,6 @@ function ChatView({
       },
     }),
   });
-
-  useEffect(() => {
-    if (!paneRuntime) return;
-    if (isMobileViewport) {
-      paneRuntime.setPaneExtraWidth(0);
-      return;
-    }
-    paneRuntime.setPaneExtraWidth(
-      contextRailExpanded
-        ? CHAT_CONTEXT_RAIL_WIDTH_PX
-        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
-    );
-    return () => {
-      paneRuntime.setPaneExtraWidth(0);
-    };
-  }, [contextRailExpanded, isMobileViewport, paneRuntime]);
 
   // --------------------------------------------------------------------------
   // Render
@@ -717,120 +657,45 @@ function ChatView({
   }
 
   return (
-    <>
-      <div className={styles.chatSplitLayout}>
-        <div className={styles.chatPrimaryColumn}>
-          <div className={styles.paneContentChat}>
-            {error ? <FeedbackNotice feedback={error} /> : null}
-            <PinnedSourcesTray conversationId={id} />
-            <ChatSurface
-              messages={messages}
-              pinnedSources={pinnedSources}
-              onReaderSourceActivate={handleReaderSourceActivate}
-              forkOptionsByParentId={forkOptionsByParentId}
-              switchableLeafIds={switchableLeafIds}
-              onSelectFork={(fork) => {
-                void switchToFork(fork);
-              }}
-              onReplyToAssistant={handleReplyToAssistant}
-              onRetryAssistantResponse={handleRetryAssistantResponse}
-              retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
-              scrollportRef={scrollportRef}
-              onScroll={handleChatScroll}
-              olderCursor={olderCursor}
-              onLoadOlder={loadOlder}
-              composer={
-                <ChatComposer
-                  conversationId={id}
-                  attachedContexts={attachedContexts}
-                  draftKey={composerDraftKey}
-                  branchDraft={branchDraft}
-                  parentMessageId={activeReplyParentMessageId}
-                  onClearBranchDraft={() => setBranchDraft(null)}
-                  onJumpToBranchParent={jumpToMessage}
-                  onRemoveContext={onRemoveContext}
-                  onChatRunCreated={handleChatRunCreated}
-                  onMessageSent={onMessageSent}
-                  autoFocus={Boolean(branchDraft)}
-                  focusKey={branchFocusKey}
-                />
-              }
-            />
-          </div>
-        </div>
-
-        {!isMobileViewport ? (
-          <SecondaryRail
-            ariaLabel="Chat context"
-            expanded={contextRailExpanded}
-            onExpandedChange={setContextRailExpanded}
-            expandedWidthPx={CHAT_CONTEXT_RAIL_WIDTH_PX}
-            bodyClassName={styles.chatSecondaryRailBody}
-            collapsed={
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                className={styles.chatSecondaryRailCollapsedButton}
-                aria-label="Expand chat context"
-                onClick={() => setContextRailExpanded(true)}
-              >
-                <PanelRightOpen size={15} aria-hidden="true" />
-              </Button>
+    <div className={styles.chatSplitLayout}>
+      <div className={styles.chatPrimaryColumn}>
+        <div className={styles.paneContentChat}>
+          {error ? <FeedbackNotice feedback={error} /> : null}
+          <ConversationReferencesRail
+            conversationId={id}
+            onOpenResource={handleOpenResource}
+          />
+          <ChatSurface
+            messages={messages}
+            onReaderSourceActivate={handleReaderSourceActivate}
+            forkOptionsByParentId={forkOptionsByParentId}
+            switchableLeafIds={switchableLeafIds}
+            onSelectFork={(fork) => {
+              void switchToFork(fork);
+            }}
+            onReplyToAssistant={handleReplyToAssistant}
+            onRetryAssistantResponse={handleRetryAssistantResponse}
+            retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
+            scrollportRef={scrollportRef}
+            onScroll={handleChatScroll}
+            olderCursor={olderCursor}
+            onLoadOlder={loadOlder}
+            composer={
+              <ChatComposer
+                conversationId={id}
+                draftKey={composerDraftKey}
+                branchDraft={branchDraft}
+                parentMessageId={activeReplyParentMessageId}
+                onClearBranchDraft={() => setBranchDraft(null)}
+                onJumpToBranchParent={jumpToMessage}
+                onChatRunCreated={handleChatRunCreated}
+                autoFocus={Boolean(branchDraft)}
+                focusKey={branchFocusKey}
+              />
             }
-          >
-            <ConversationContextPane
-              conversationId={id}
-              singleton={conversation.singleton}
-              memory={conversation?.memory}
-              messages={messages}
-              contexts={attachedContexts}
-              persistedRows={persistedRows}
-              forkOptionsByParentId={forkOptionsByParentId}
-              branchGraph={branchGraph}
-              switchableLeafIds={switchableLeafIds}
-              activeLeafMessageId={activeLeafMessageId}
-              selectedPathMessageIds={selectedPathIds}
-              onSelectFork={(fork) => {
-                void switchToFork(fork);
-              }}
-              onSelectGraphLeaf={(leafMessageId) => {
-                void switchToGraphLeaf(leafMessageId);
-              }}
-              onForksChanged={() => {
-                void loadConversationTree();
-              }}
-              onRemoveContext={onRemoveContext}
-            />
-          </SecondaryRail>
-        ) : null}
+          />
+        </div>
       </div>
-
-      {isMobileViewport ? (
-        <ChatContextDrawer
-          conversationId={id}
-          singleton={conversation.singleton}
-          memory={conversation?.memory}
-          messages={messages}
-          contexts={attachedContexts}
-          persistedRows={persistedRows}
-          forkOptionsByParentId={forkOptionsByParentId}
-          branchGraph={branchGraph}
-          switchableLeafIds={switchableLeafIds}
-          activeLeafMessageId={activeLeafMessageId}
-          selectedPathMessageIds={selectedPathIds}
-          onSelectFork={(fork) => {
-            void switchToFork(fork);
-          }}
-          onSelectGraphLeaf={(leafMessageId) => {
-            void switchToGraphLeaf(leafMessageId);
-          }}
-          onForksChanged={() => {
-            void loadConversationTree();
-          }}
-          onRemoveContext={onRemoveContext}
-        />
-      ) : null}
-    </>
+    </div>
   );
 }

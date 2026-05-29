@@ -13,14 +13,10 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    field_serializer,
-    field_validator,
     model_serializer,
     model_validator,
 )
 
-from nexus.evidence_span_ids import trusted_evidence_span_ids
-from nexus.schemas.context_memory import ConversationMemoryInspectionOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 
 # Valid sharing modes - must match DB constraint
@@ -31,27 +27,6 @@ MESSAGE_ROLES = Literal["user", "assistant", "system"]
 
 # Valid message statuses - must match DB constraint
 MESSAGE_STATUSES = Literal["pending", "complete", "error"]
-
-# Valid context object types - must match message_context_items.object_type
-MESSAGE_CONTEXT_TYPES = Literal[
-    "page",
-    "note_block",
-    "media",
-    "highlight",
-    "conversation",
-    "message",
-    "podcast",
-    "content_chunk",
-    "fragment",
-    "contributor",
-    "evidence_span",
-]
-
-MESSAGE_CONTEXT_KINDS = Literal["object_ref", "reader_selection"]
-
-
-# Valid highlight colors surfaced on context snapshots
-HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 # Valid assistant app-search result types - must match message_retrievals.result_type
 APP_SEARCH_RESULT_TYPES = Literal[
@@ -86,8 +61,8 @@ CHAT_RUN_EVENT_TYPES = Literal[
     "meta",
     "tool_call",
     "retrieval_result",
-    "source_manifest_delta",
     "citation_index",
+    "reference_added",
     "delta",
     "done",
 ]
@@ -108,62 +83,6 @@ CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retri
 # =============================================================================
 
 
-class ConversationSingletonOut(BaseModel):
-    """Pinned-target metadata for a singleton conversation."""
-
-    kind: Literal["media", "library"]
-    target_id: UUID
-    target_title: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
-PINNED_SOURCE_KINDS = Literal["media", "library", "reader_selection"]
-
-
-class ConversationPinnedSourceOut(BaseModel):
-    """Persistent source scope for a conversation."""
-
-    id: UUID
-    ordinal: int = Field(ge=0)
-    kind: PINNED_SOURCE_KINDS
-    target_id: UUID | None = None
-    locator: RetrievalLocator | None = None
-    source_version: str | None = None
-    exact: str | None = None
-    title: str
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class AddPinnedSourceRequest(BaseModel):
-    """Request to add a pinned source to a conversation."""
-
-    kind: PINNED_SOURCE_KINDS
-    target_id: UUID | None = None
-    locator: RetrievalLocator | None = None
-    source_version: str | None = None
-    exact: str | None = None
-    title: str = Field(min_length=1, max_length=200)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def _validate_kind_fields(self) -> "AddPinnedSourceRequest":
-        if self.kind in ("media", "library"):
-            if self.target_id is None:
-                raise ValueError(f"target_id required for kind={self.kind}")
-        else:
-            if self.target_id is not None:
-                raise ValueError("target_id must be null for reader_selection")
-            if self.locator is None or self.exact is None or self.source_version is None:
-                raise ValueError(
-                    "reader_selection requires locator + exact + source_version",
-                )
-        return self
-
-
 class ConversationOut(BaseModel):
     """Response schema for a conversation.
 
@@ -177,66 +96,17 @@ class ConversationOut(BaseModel):
     owner_user_id: UUID
     is_owner: bool
     sharing: str  # "private" | "library" | "public"
-    singleton: ConversationSingletonOut | None = None
-    pinned_sources: list[ConversationPinnedSourceOut] = Field(default_factory=list)
     message_count: int
-    memory: ConversationMemoryInspectionOut | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
-class ConversationReferenceOut(BaseModel):
-    """Reader-pane row for a non-singleton conversation referencing a media.
-
-    Used by GET /api/chat-references/media/{media_id} (§7.4). The `is_singleton`
-    field is always false: the underlying query excludes the viewer's singleton
-    for the requested media. The field is kept in the response shape so the
-    client renders this list with the same row component as other chat-tab
-    lists where singleton rows may appear.
-    """
-
-    id: UUID
-    title: str | None
-    first_user_message_excerpt: str
-    message_count: int
-    updated_at: datetime
-    is_singleton: bool
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class MessageDocumentTextBlock(BaseModel):
     type: Literal["text"]
     format: Literal["plain", "markdown"]
     text: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageDocumentSourceManifestBlock(BaseModel):
-    type: Literal["source_manifest"]
-    assistant_message_id: UUID
-    tool_call_id: UUID | None = None
-    tool_name: Literal["app_search", "web_search"]
-    tool_call_index: int = Field(ge=0)
-    query_hash: str | None = None
-    scope: str | None = None
-    filters: dict[str, Any] = Field(default_factory=dict)
-    requested_types: list[str] = Field(default_factory=list)
-    candidate_count: int = Field(ge=0)
-    result_count: int = Field(ge=0)
-    selected_count: int = Field(ge=0)
-    included_in_prompt_count: int = Field(ge=0)
-    excluded_by_budget_count: int = Field(ge=0)
-    excluded_by_scope_count: int = Field(ge=0)
-    stale_count: int = Field(ge=0)
-    unreadable_count: int = Field(ge=0)
-    index_versions: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    latency_ms: int | None = Field(default=None, ge=0)
-    status: MESSAGE_TOOL_STATUSES
 
     model_config = ConfigDict(extra="forbid")
 
@@ -300,9 +170,7 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
 
 
 MessageDocumentBlock = Annotated[
-    MessageDocumentTextBlock
-    | MessageDocumentSourceManifestBlock
-    | MessageDocumentRetrievalResultBlock,
+    MessageDocumentTextBlock | MessageDocumentRetrievalResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -330,7 +198,6 @@ class MessageOut(BaseModel):
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
-    contexts: list["MessageContextSnapshotOut"] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     can_retry_response: bool = False
@@ -446,33 +313,6 @@ class ChatRunRetrievalResultEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunSourceManifestDeltaEventPayload(BaseModel):
-    """Strict SSE payload for the visible source-manifest ledger."""
-
-    assistant_message_id: UUID
-    tool_call_id: UUID | None = None
-    tool_name: Literal["app_search", "web_search"]
-    tool_call_index: int = Field(ge=0)
-    query_hash: str | None = None
-    scope: str = Field(min_length=1)
-    filters: dict[str, Any]
-    requested_types: list[str]
-    candidate_count: int = Field(ge=0)
-    result_count: int = Field(ge=0)
-    selected_count: int = Field(ge=0)
-    included_in_prompt_count: int = Field(ge=0)
-    excluded_by_budget_count: int = Field(ge=0)
-    excluded_by_scope_count: int = Field(ge=0)
-    stale_count: int = Field(ge=0)
-    unreadable_count: int = Field(ge=0)
-    index_versions: list[str]
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    latency_ms: int | None = Field(default=None, ge=0)
-    status: MESSAGE_TOOL_STATUSES
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ChatRunDeltaEventPayload(BaseModel):
     """Strict SSE payload for assistant text deltas."""
 
@@ -510,6 +350,17 @@ class ChatRunCitationIndexEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatRunReferenceAddedEventPayload(BaseModel):
+    """Strict SSE payload emitted when a new conversation reference is inserted."""
+
+    reference_id: UUID
+    conversation_id: UUID
+    resource_uri: str = Field(min_length=1)
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
 def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate strict chat-run SSE payloads before storage/replay."""
 
@@ -519,12 +370,10 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
         return ChatRunToolCallEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "retrieval_result":
         return ChatRunRetrievalResultEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "source_manifest_delta":
-        return ChatRunSourceManifestDeltaEventPayload.model_validate(payload).model_dump(
-            mode="json"
-        )
     if event_type == "citation_index":
         return ChatRunCitationIndexEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "reference_added":
+        return ChatRunReferenceAddedEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "delta":
         return ChatRunDeltaEventPayload.model_validate(payload).model_dump(mode="json")
     if event_type == "done":
@@ -577,7 +426,6 @@ REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high",
 
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
-MAX_CONTEXTS = 10
 
 
 class MessageRetrievalCandidateLedgerListResponse(BaseModel):
@@ -610,61 +458,6 @@ class PageInfo(BaseModel):
 # =============================================================================
 # Chat-run request schemas
 # =============================================================================
-
-
-class MessageContextRef(BaseModel):
-    """Canonical typed object reference for chat-run inputs."""
-
-    kind: Literal["object_ref"] = "object_ref"
-    type: MESSAGE_CONTEXT_TYPES
-    id: UUID
-    evidence_span_ids: list[UUID] = Field(default_factory=list)
-    source_version: str | None = Field(default=None, min_length=1, max_length=256)
-    locator: RetrievalLocator | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("evidence_span_ids")
-    @classmethod
-    def validate_evidence_span_ids(cls, value: list[UUID]) -> list[UUID]:
-        return trusted_evidence_span_ids(value)
-
-
-class ReaderSelectionContext(BaseModel):
-    """Transient reader quote selection attached to a chat-run input."""
-
-    kind: Literal["reader_selection"]
-    client_context_id: UUID
-    media_id: UUID
-    media_kind: str = Field(..., min_length=1, max_length=80)
-    media_title: str = Field(..., min_length=1, max_length=500)
-    exact: str = Field(..., min_length=1, max_length=20000)
-    prefix: str | None = Field(default=None, max_length=1000)
-    suffix: str | None = Field(default=None, max_length=1000)
-    locator: RetrievalLocator
-    source_version: str = Field(min_length=1, max_length=256)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_reader_selection(self) -> "ReaderSelectionContext":
-        if not self.media_kind.strip():
-            raise ValueError("reader_selection media_kind cannot be blank")
-        if not self.media_title.strip():
-            raise ValueError("reader_selection media_title cannot be blank")
-        if not self.exact.strip():
-            raise ValueError("reader_selection exact quote cannot be blank")
-        if not self.locator:
-            raise ValueError("reader_selection locator must be a non-empty object")
-        return self
-
-
-ChatContextInput = Annotated[
-    MessageContextRef | ReaderSelectionContext,
-    Field(discriminator="kind"),
-]
-
-ContextItem = ChatContextInput
 
 
 class NoBranchAnchorRequest(BaseModel):
@@ -796,107 +589,6 @@ class RenameBranchRequest(BaseModel):
         return self
 
 
-class MessageContextSnapshot(BaseModel):
-    """Hydrated message-context snapshot returned on message reads."""
-
-    kind: MESSAGE_CONTEXT_KINDS = "object_ref"
-    type: MESSAGE_CONTEXT_TYPES | None = None
-    id: UUID | None = None
-    evidence_span_ids: list[UUID] = Field(default_factory=list)
-    client_context_id: UUID | None = None
-    color: HIGHLIGHT_COLORS | None = None
-    preview: str | None = None
-    exact: str | None = None
-    prefix: str | None = None
-    suffix: str | None = None
-    media_id: UUID | None = None
-    source_media_id: UUID | None = None
-    media_title: str | None = None
-    media_kind: str | None = None
-    locator: RetrievalLocator | None = None
-    source_version: str | None = None
-    title: str | None = None
-    route: str | None = None
-
-    @model_validator(mode="after")
-    def validate_hydrated_snapshot(self) -> "MessageContextSnapshot":
-        if self.kind == "object_ref":
-            missing: list[str] = []
-            if self.type is None:
-                missing.append("type")
-            if self.id is None:
-                missing.append("id")
-            if self.title is None or not self.title.strip():
-                missing.append("title")
-            if missing:
-                raise ValueError(
-                    "object_ref message context snapshots require " + ", ".join(missing)
-                )
-            return self
-
-        missing = []
-        if self.client_context_id is None:
-            missing.append("client_context_id")
-        if self.media_id is None:
-            missing.append("media_id")
-        if self.source_media_id is None:
-            missing.append("source_media_id")
-        if self.media_title is None or not self.media_title.strip():
-            missing.append("media_title")
-        if self.media_kind is None or not self.media_kind.strip():
-            missing.append("media_kind")
-        if self.exact is None or not self.exact.strip():
-            missing.append("exact")
-        if self.locator is None:
-            missing.append("locator")
-        if self.source_version is None or not self.source_version.strip():
-            missing.append("source_version")
-        if missing:
-            raise ValueError(
-                "reader_selection message context snapshots require " + ", ".join(missing)
-            )
-        return self
-
-    @field_serializer("id", when_used="json")
-    def serialize_context_id(self, value: UUID | None) -> str | None:
-        if value is None:
-            return None
-        if self.type == "contributor" and self.route:
-            prefix = "/authors/"
-            if self.route.startswith(prefix):
-                handle = self.route[len(prefix) :].split("/", 1)[0].strip()
-                if handle:
-                    return handle
-        return str(value)
-
-    @model_serializer(mode="wrap")
-    def serialize_snapshot(self, handler: Any) -> dict[str, Any]:
-        data = handler(self)
-        serialized = {key: value for key, value in data.items() if value is not None}
-        if (
-            serialized.get("kind") == "reader_selection"
-            and serialized.get("evidence_span_ids") == []
-        ):
-            serialized.pop("evidence_span_ids")
-        if isinstance(serialized.get("locator"), dict):
-            serialized["locator"] = {
-                key: value for key, value in serialized["locator"].items() if value is not None
-            }
-        return serialized
-
-
-MessageContextSnapshotOut = MessageContextSnapshot
-
-
-class SingletonTarget(BaseModel):
-    """Pinned singleton conversation target supplied by the client."""
-
-    kind: Literal["media", "library"]
-    target_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ReaderContextHint(BaseModel):
     """Optional model-prompt hint identifying the doc/library the viewer is reading."""
 
@@ -909,24 +601,16 @@ class ReaderContextHint(BaseModel):
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run."""
 
-    conversation_id: UUID | None = None
-    singleton: SingletonTarget | None = None
+    conversation_id: UUID
     parent_message_id: UUID | None = None
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
     model_id: UUID
     reasoning: REASONING_MODES = "default"
     key_mode: KEY_MODES = "auto"
-    contexts: list[ChatContextInput] = Field(default_factory=list)
     reader_context: ReaderContextHint | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_conversation_or_singleton(self) -> "ChatRunCreateRequest":
-        if (self.conversation_id is None) == (self.singleton is None):
-            raise ValueError("exactly one of conversation_id or singleton must be set")
-        return self
 
 
 class ChatRunOut(BaseModel):

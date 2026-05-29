@@ -16,11 +16,8 @@ import {
   useLayoutEffect,
   type CSSProperties,
 } from "react";
-import ChatDetailSlideIn from "@/components/chat/ChatDetailSlideIn";
 import DocChatTab from "@/components/chat/DocChatTab";
-import LibraryChatTab from "@/components/chat/LibraryChatTab";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
 import ReaderOverviewRuler, {
   OVERVIEW_RULER_WIDTH_PX,
@@ -36,7 +33,6 @@ import SecondaryRail, {
 } from "@/components/secondaryRail/SecondaryRail";
 import PdfReader, {
   type PdfHighlightOut,
-  type PdfReaderSelectionQuote,
   type PdfReaderControlActions,
   type PdfReaderControlsState,
   type PdfTemporaryHighlight,
@@ -51,8 +47,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
-import type { ContextItem } from "@/lib/api/sse/requests";
-import { createRandomId } from "@/lib/createRandomId";
 import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
@@ -120,7 +114,6 @@ import {
 } from "./paneTextAnchor";
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import {
   isReadableStatus,
   type MediaNavigationResponse,
@@ -174,7 +167,6 @@ import {
   ChevronRight,
   FileText,
   Highlighter,
-  Library,
   ListTree,
   RefreshCw,
 } from "lucide-react";
@@ -276,8 +268,6 @@ interface SelectionState {
   lineRects: DOMRect[];
 }
 
-type ReaderChatDestination = "doc-chat" | "library-chat";
-
 interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
@@ -337,7 +327,6 @@ const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
-const READER_SELECTION_CONTEXT_CP = 160;
 
 const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
   activePage: 1,
@@ -668,34 +657,13 @@ export default function MediaPaneBody({
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
   const [secondaryRailMode, setSecondaryRailMode] = useState<
-    "highlights" | "doc-chat" | "library-chat"
+    "highlights" | "doc-chat"
   >("highlights");
   // Whether the secondary rail (highlights/chat tabs) is open. The reader rail
   // is open-or-absent — there is no collapsed strip.
   const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
   const [isMobileHighlightsDrawerOpen, setMobileHighlightsDrawerOpen] =
     useState(false);
-  const [chatDetail, setChatDetail] = useState<
-    | null
-    | {
-        kind: "doc";
-        /** When true, first send materializes the doc singleton. */
-        isSingleton: boolean;
-        conversationId: string | null;
-        attachedContexts: ContextItem[];
-      }
-    | {
-        kind: "library";
-        libraryId: string;
-        libraryName: string;
-        conversationId: string | null;
-        attachedContexts: ContextItem[];
-      }
-  >(null);
-  const [pendingSelectionContext, setPendingSelectionContext] = useState<{
-    destination: ReaderChatDestination;
-    contexts: ContextItem[];
-  } | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -2201,7 +2169,7 @@ export default function MediaPaneBody({
         return null;
       }
       return {
-        id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.context_id ?? readerSourceTarget.evidence_id ?? "target"}`,
+        id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
         start_offset: startOffset,
         end_offset: endOffset,
         color: "blue",
@@ -2229,7 +2197,7 @@ export default function MediaPaneBody({
       return null;
     }
     return {
-      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.context_id ?? readerSourceTarget.evidence_id ?? "target"}`,
+      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
       start_offset: matchedOffset,
       end_offset: matchedOffset + canonicalCpLength(exact),
       color: "blue",
@@ -2309,7 +2277,7 @@ export default function MediaPaneBody({
       return null;
     }
     return {
-      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.context_id ?? readerSourceTarget.evidence_id ?? "target"}`,
+      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
       pageNumber,
       quads,
       color: "blue",
@@ -3070,90 +3038,10 @@ export default function MediaPaneBody({
   );
 
   // ==========================================================================
-  // Quote-to-Chat
+  // Chat rail
   // ==========================================================================
 
-  const activeChatHighlights = isPdf ? pdfDocumentHighlights : highlights;
-
-  const buildHighlightChatContext = useCallback(
-    (highlightId: string): ContextItem => {
-      const highlight = activeChatHighlights.find(
-        (item) => item.id === highlightId,
-      );
-      const exact = highlight?.exact;
-      return {
-        kind: "object_ref",
-        type: "highlight",
-        id: highlightId,
-        color: highlight?.color,
-        preview: exact ? exact.slice(0, 120) : undefined,
-        exact,
-        mediaId: media?.id,
-        mediaTitle: media?.title,
-        mediaKind: media?.kind,
-      };
-    },
-    [activeChatHighlights, media?.id, media?.kind, media?.title],
-  );
-
-  const attachContextsToChatDestination = useCallback(
-    (destination: ReaderChatDestination, contexts: ContextItem[]) => {
-      if (contexts.length === 0) {
-        return;
-      }
-
-      if (destination === "doc-chat" && chatDetail?.kind === "doc") {
-        // The detail owns local draft/removal state; this prop is only the new
-        // incoming context event.
-        setChatDetail({
-          ...chatDetail,
-          attachedContexts: mergeContextItems([], contexts),
-        });
-        setPendingSelectionContext(null);
-        setSecondaryRailMode("doc-chat");
-        setHighlightsRailOpen(true);
-        setMobileHighlightsDrawerOpen(false);
-        return;
-      }
-
-      if (destination === "library-chat" && chatDetail?.kind === "library") {
-        setChatDetail({
-          ...chatDetail,
-          attachedContexts: mergeContextItems([], contexts),
-        });
-        setPendingSelectionContext(null);
-        setSecondaryRailMode("library-chat");
-        setHighlightsRailOpen(true);
-        setMobileHighlightsDrawerOpen(false);
-        return;
-      }
-
-      setChatDetail(null);
-      setPendingSelectionContext((current) => ({
-        destination,
-        contexts: current
-          ? mergeContextItems(current.contexts, contexts)
-          : mergeContextItems([], contexts),
-      }));
-      setSecondaryRailMode(destination);
-      setHighlightsRailOpen(true);
-      setMobileHighlightsDrawerOpen(false);
-    },
-    [chatDetail],
-  );
-
   const openDocChat = useCallback(() => {
-    setPendingSelectionContext(null);
-    setChatDetail((current) =>
-      current && current.kind === "doc"
-        ? current
-        : {
-            kind: "doc",
-            isSingleton: true,
-            conversationId: null,
-            attachedContexts: [],
-          },
-    );
     setSecondaryRailMode("doc-chat");
     setHighlightsRailOpen(true);
     setMobileHighlightsDrawerOpen(false);
@@ -3320,8 +3208,7 @@ export default function MediaPaneBody({
       ? styles.readerThemeDark
       : styles.readerThemeLight
   }`;
-  const showDesktopSecondaryRail =
-    !isMobileViewport && (isHighlightsRailOpen || chatDetail !== null);
+  const showDesktopSecondaryRail = !isMobileViewport && isHighlightsRailOpen;
   const desktopSecondaryRailWidthPx = showDesktopSecondaryRail
     ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
     : 0;
@@ -3668,211 +3555,12 @@ export default function MediaPaneBody({
     [paneMobileChrome],
   );
 
-  const buildSelectionChatContexts = useCallback((): ContextItem[] | null => {
-    if (!media || !activeContent) {
-      return null;
-    }
-    const activeSelection = selection ?? selectionSnapshotRef.current;
-    if (
-      !activeSelection ||
-      activeSelection.fragmentId !== activeContent.fragmentId
-    ) {
-      feedback.show({
-        severity: "warning",
-        title: "Selection changed. Select text again.",
-      });
-      clearRetainedSelection(false);
-      return null;
-    }
-
-    const exact = activeSelection.selectedText.trim();
-    if (!exact) {
-      return null;
-    }
-
-    const chars = [...activeContent.canonicalText];
-    const prefix = chars
-      .slice(
-        Math.max(0, activeSelection.startOffset - READER_SELECTION_CONTEXT_CP),
-        activeSelection.startOffset,
-      )
-      .join("");
-    const suffix = chars
-      .slice(
-        activeSelection.endOffset,
-        Math.min(
-          chars.length,
-          activeSelection.endOffset + READER_SELECTION_CONTEXT_CP,
-        ),
-      )
-      .join("");
-
-    const selector = buildQuoteSelector({ exact, prefix, suffix });
-
-    if (isTranscriptMedia) {
-      const startMs = activeTranscriptFragment?.t_start_ms;
-      const endMs = activeTranscriptFragment?.t_end_ms;
-      const sourceVersion = activeTranscriptFragment?.source_version;
-      if (
-        typeof startMs !== "number" ||
-        typeof endMs !== "number" ||
-        endMs <= startMs
-      ) {
-        feedback.show({
-          severity: "warning",
-          title:
-            "Transcript timing unavailable. Select another transcript segment.",
-        });
-        clearRetainedSelection(false);
-        return null;
-      }
-      if (!sourceVersion) {
-        feedback.show({
-          severity: "warning",
-          title:
-            "Source version unavailable. Refresh this source before adding to chat.",
-        });
-        clearRetainedSelection(false);
-        return null;
-      }
-      return [
-        {
-          kind: "reader_selection",
-          client_context_id: createRandomId(),
-          media_id: media.id,
-          media_kind: media.kind,
-          media_title: media.title,
-          ...selector,
-          preview: exact.slice(0, 120),
-          source_version: sourceVersion,
-          locator: {
-            type: "transcript_time_range",
-            media_id: media.id,
-            t_start_ms: startMs,
-            t_end_ms: endMs,
-            text_quote_selector: selector,
-          },
-          color: "yellow",
-        },
-      ];
-    }
-
-    if (!activeContent.sourceVersion) {
-      feedback.show({
-        severity: "warning",
-        title:
-          "Source version unavailable. Refresh this source before adding to chat.",
-      });
-      clearRetainedSelection(false);
-      return null;
-    }
-    return [
-      {
-        kind: "reader_selection",
-        client_context_id: createRandomId(),
-        media_id: media.id,
-        media_kind: media.kind,
-        media_title: media.title,
-        ...selector,
-        preview: exact.slice(0, 120),
-        source_version: activeContent.sourceVersion,
-        locator: {
-          type: isEpub ? "epub_fragment_offsets" : "web_text_offsets",
-          media_id: media.id,
-          media_kind: media.kind,
-          ...(isEpub && activeEpubSection?.section_id
-            ? { section_id: activeEpubSection.section_id }
-            : {}),
-          fragment_id: activeSelection.fragmentId,
-          start_offset: activeSelection.startOffset,
-          end_offset: activeSelection.endOffset,
-          text_quote_selector: selector,
-        },
-        color: "yellow",
-      },
-    ];
-  }, [
-      activeContent,
-      clearRetainedSelection,
-      feedback,
-      media,
-      selection,
-      isEpub,
-      isTranscriptMedia,
-      activeTranscriptFragment,
-      activeEpubSection?.section_id,
-    ]);
-
-  const handleAddSelectionToChat = useCallback(
-    (destination: ReaderChatDestination) => {
-      const contexts = buildSelectionChatContexts();
-      if (!contexts) {
-        return;
-      }
-      attachContextsToChatDestination(destination, contexts);
-      clearRetainedSelection(true);
-    },
-    [
-      attachContextsToChatDestination,
-      buildSelectionChatContexts,
-      clearRetainedSelection,
-    ],
-  );
-
-  const handleAddSelectionToDocChat = useCallback(() => {
-    handleAddSelectionToChat("doc-chat");
-  }, [handleAddSelectionToChat]);
-
-  const handleAddSelectionToLibraryChat = useCallback(() => {
-    handleAddSelectionToChat("library-chat");
-  }, [handleAddSelectionToChat]);
-
-  const handlePdfAddSelectionToChat = useCallback(
-    (
-      destination: ReaderChatDestination,
-      selectionQuote: PdfReaderSelectionQuote,
-    ) => {
-      if (!media) {
-        return;
-      }
-      if (!media.source_version) {
-        feedback.show({
-          severity: "warning",
-          title:
-            "Source version unavailable. Refresh this source before adding to chat.",
-        });
-        return;
-      }
-      attachContextsToChatDestination(destination, [
-        {
-          ...selectionQuote,
-          media_kind: media.kind,
-          media_title: media.title,
-          source_version: media.source_version,
-        },
-      ]);
-    },
-    [attachContextsToChatDestination, feedback, media],
-  );
-
   const handleOpenFullChat = useCallback(
     (conversationId: string) => {
-      if (isMobileViewport) {
-        setChatDetail(null);
-      }
       const route = `/conversations/${conversationId}`;
       paneRuntime?.openInNewPane(route, "Chat");
     },
-    [isMobileViewport, paneRuntime],
-  );
-
-  const handleExistingHighlightSendToChat = useCallback(
-    (highlightId: string, destination: ReaderChatDestination) => {
-      attachContextsToChatDestination(destination, [
-        buildHighlightChatContext(highlightId),
-      ]);
-    },
-    [attachContextsToChatDestination, buildHighlightChatContext],
+    [paneRuntime],
   );
 
   useEffect(() => {
@@ -4222,30 +3910,8 @@ export default function MediaPaneBody({
       return;
     }
     setMobileHighlightsDrawerOpen(false);
-    if (chatDetail) {
-      setSecondaryRailMode(chatDetail.kind === "library" ? "library-chat" : "doc-chat");
-      return;
-    }
     setHighlightsRailOpen(false);
-  }, [chatDetail, showHighlightsPane]);
-
-  useEffect(() => {
-    setPendingSelectionContext(null);
-  }, [media?.id]);
-
-  // Switching to a different tab closes any open chat detail so the user
-  // returns to the list on next visit. Highlights tab has its own body.
-  useEffect(() => {
-    if (!chatDetail) {
-      return;
-    }
-    if (
-      (chatDetail.kind === "doc" && secondaryRailMode !== "doc-chat") ||
-      (chatDetail.kind === "library" && secondaryRailMode !== "library-chat")
-    ) {
-      setChatDetail(null);
-    }
-  }, [chatDetail, secondaryRailMode]);
+  }, [showHighlightsPane]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -4279,9 +3945,6 @@ export default function MediaPaneBody({
       }
 
       setReaderSourceTarget(target);
-      if (isMobileViewport) {
-        setChatDetail(null);
-      }
 
       if (target.locator?.type === "transcript_time_range") {
         const timestampMs = target.locator.t_start_ms;
@@ -4294,7 +3957,7 @@ export default function MediaPaneBody({
         }
       }
     },
-    [handleTranscriptSeek, id, isMobileViewport, paneRuntime],
+    [handleTranscriptSeek, id, paneRuntime],
   );
 
   useEffect(() => {
@@ -4564,98 +4227,6 @@ export default function MediaPaneBody({
     setHighlightsRailOpen(true);
   }, []);
 
-  const handleRemovePendingSelectionContext = useCallback((index: number) => {
-    setPendingSelectionContext((current) => {
-      if (!current) {
-        return null;
-      }
-      const contexts = current.contexts.filter(
-        (_, itemIndex) => itemIndex !== index,
-      );
-      return contexts.length > 0 ? { ...current, contexts } : null;
-    });
-  }, []);
-
-  const handleOpenDocChatFromTab = useCallback(
-    async (
-      target:
-        | {
-            kind: "singleton";
-            conversationId: string | null;
-            attachedContexts?: ContextItem[];
-          }
-        | {
-            kind: "reference";
-            conversationId: string;
-            attachedContexts?: ContextItem[];
-          }
-        | { kind: "new"; attachedContexts?: ContextItem[] },
-    ) => {
-      const attachedContexts = target.attachedContexts ?? [];
-      setPendingSelectionContext(null);
-      if (target.kind === "singleton") {
-        setChatDetail({
-          kind: "doc",
-          isSingleton: true,
-          conversationId: target.conversationId,
-          attachedContexts,
-        });
-        return;
-      }
-      if (target.kind === "reference") {
-        setChatDetail({
-          kind: "doc",
-          isSingleton: false,
-          conversationId: target.conversationId,
-          attachedContexts,
-        });
-        return;
-      }
-      if (!media) return;
-      const created = await apiFetch<{ data: { id: string } }>(
-        "/api/conversations",
-        { method: "POST" },
-      );
-      await apiFetch(
-        `/api/conversations/${created.data.id}/pinned-sources`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            kind: "media",
-            target_id: media.id,
-            title: media.title,
-          }),
-        },
-      );
-      setChatDetail({
-        kind: "doc",
-        isSingleton: false,
-        conversationId: created.data.id,
-        attachedContexts,
-      });
-    },
-    [media],
-  );
-
-  const handleOpenLibraryChatFromTab = useCallback(
-    (
-      conversationId: string | null,
-      libraryId: string,
-      libraryName: string,
-      attachedContexts: ContextItem[] = [],
-    ) => {
-      setPendingSelectionContext(null);
-      setChatDetail({
-        kind: "library",
-        libraryId,
-        libraryName,
-        conversationId,
-        attachedContexts,
-      });
-    },
-    [],
-  );
-
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
       [
@@ -4763,8 +4334,8 @@ export default function MediaPaneBody({
       measureKey={anchoredHighlightsMeasureKey}
       isMobile={isMobileViewport}
       isEditingBounds={focusState.editingBounds}
-      canSendToChat={Boolean(media.capabilities?.can_quote)}
-      onSendToChat={handleExistingHighlightSendToChat}
+      canSendToChat={false}
+      onSendToChat={() => {}}
       onColorChange={handleColorChange}
       onDelete={handleDelete}
       onStartEditBounds={startEditBounds}
@@ -4775,19 +4346,10 @@ export default function MediaPaneBody({
     />
   ) : null;
 
-  const docChatPendingContexts =
-    pendingSelectionContext?.destination === "doc-chat"
-      ? pendingSelectionContext.contexts
-      : [];
-  const libraryChatPendingContexts =
-    pendingSelectionContext?.destination === "library-chat"
-      ? pendingSelectionContext.contexts
-      : [];
   const showMobileChatListDrawer =
     isMobileViewport &&
     isHighlightsRailOpen &&
-    !chatDetail &&
-    (secondaryRailMode === "doc-chat" || secondaryRailMode === "library-chat");
+    secondaryRailMode === "doc-chat";
 
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
@@ -4969,11 +4531,6 @@ export default function MediaPaneBody({
                   onHighlightsMutated={refreshMediaHighlights}
                   onHighlightTap={handlePdfHighlightTap}
                   temporaryHighlight={temporaryPdfHighlight}
-                  onAddSelectionToChat={
-                    media.capabilities?.can_quote
-                      ? handlePdfAddSelectionToChat
-                      : undefined
-                  }
                   onControlsStateChange={setPdfControlsState}
                   onControlsReady={(controls) => {
                     pdfControlsRef.current = controls;
@@ -5074,12 +4631,8 @@ export default function MediaPaneBody({
             ariaLabel="Reader tools"
             expanded={true}
             onExpandedChange={(next) => {
-              // The reader rail is open-or-absent; its header close control
-              // dismisses the rail entirely (both highlights and chat tabs).
               if (!next) {
                 setHighlightsRailOpen(false);
-                setChatDetail(null);
-                setPendingSelectionContext(null);
               }
             }}
             bodyClassName={styles.readerSecondaryRailBody}
@@ -5099,87 +4652,21 @@ export default function MediaPaneBody({
                 id: "doc-chat",
                 icon: FileText,
                 tooltip: "Chat about this document",
-                body:
-                  chatDetail && chatDetail.kind === "doc" ? (
-                    <ChatDetailSlideIn
-                      title={
-                        chatDetail.isSingleton
-                          ? `Chat about ${media.title}`
-                          : "New chat"
-                      }
-                      conversationId={chatDetail.conversationId}
-                      singletonTarget={
-                        chatDetail.isSingleton &&
-                        chatDetail.conversationId === null
-                          ? { kind: "media", target_id: media.id }
-                          : null
-                      }
-                      readerContext={{ media_id: media.id, library_id: null }}
-                      attachedContexts={chatDetail.attachedContexts}
-                      onBack={() => setChatDetail(null)}
-                      onOpenFullChat={
-                        chatDetail.conversationId
-                          ? () => handleOpenFullChat(chatDetail.conversationId!)
-                          : undefined
-                      }
-                      onReaderSourceActivate={handleReaderSourceActivate}
-                    />
-                  ) : (
-                    <DocChatTab
-                      mediaId={media.id}
-                      pendingContexts={docChatPendingContexts}
-                      onRemovePendingContext={handleRemovePendingSelectionContext}
-                      onOpenChat={handleOpenDocChatFromTab}
-                    />
-                  ),
-              },
-              {
-                id: "library-chat",
-                icon: Library,
-                tooltip: "Chat about this library",
-                body:
-                  chatDetail && chatDetail.kind === "library" ? (
-                    <ChatDetailSlideIn
-                      title={`Chat about ${chatDetail.libraryName}`}
-                      conversationId={chatDetail.conversationId}
-                      singletonTarget={
-                        chatDetail.conversationId === null
-                          ? {
-                              kind: "library",
-                              target_id: chatDetail.libraryId,
-                            }
-                          : null
-                      }
-                      readerContext={{
-                        media_id: media.id,
-                        library_id: chatDetail.libraryId,
-                      }}
-                      attachedContexts={chatDetail.attachedContexts}
-                      onBack={() => setChatDetail(null)}
-                      onOpenFullChat={
-                        chatDetail.conversationId
-                          ? () => handleOpenFullChat(chatDetail.conversationId!)
-                          : undefined
-                      }
-                      onReaderSourceActivate={handleReaderSourceActivate}
-                    />
-                  ) : (
-                    <LibraryChatTab
-                      mediaId={media.id}
-                      pendingContexts={libraryChatPendingContexts}
-                      onRemovePendingContext={handleRemovePendingSelectionContext}
-                      onOpenChat={handleOpenLibraryChatFromTab}
-                    />
-                  ),
+                body: (
+                  <DocChatTab
+                    mediaId={media.id}
+                    onOpenChat={handleOpenFullChat}
+                  />
+                ),
               },
             ]}
             activeTabId={secondaryRailMode}
             onActiveTabIdChange={(tabId) => {
+              if (tabId !== "highlights" && tabId !== "doc-chat") {
+                return;
+              }
               setSecondaryRailMode(tabId);
-              if (tabId !== "highlights") {
-                setPendingSelectionContext((current) =>
-                  current ? { ...current, destination: tabId } : null,
-                );
+              if (tabId === "doc-chat") {
                 setHighlightsRailOpen(true);
               }
             }}
@@ -5219,107 +4706,33 @@ export default function MediaPaneBody({
         <div
           className={styles.highlightsBackdrop}
           data-testid="mobile-reader-chat-list-backdrop"
-          onClick={() => {
-            setHighlightsRailOpen(false);
-            setPendingSelectionContext(null);
-          }}
+          onClick={() => setHighlightsRailOpen(false)}
         >
           <aside
             className={styles.highlightsDrawer}
             role="dialog"
             aria-modal="true"
-            aria-label={
-              secondaryRailMode === "doc-chat"
-                ? "Document chat"
-                : "Library chat"
-            }
+            aria-label="Document chat"
             onClick={(event) => event.stopPropagation()}
           >
             <header className={styles.highlightsDrawerHeader}>
-              <h2>
-                {secondaryRailMode === "doc-chat"
-                  ? "Document chat"
-                  : "Library chat"}
-              </h2>
+              <h2>Document chat</h2>
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  setHighlightsRailOpen(false);
-                  setPendingSelectionContext(null);
-                }}
+                onClick={() => setHighlightsRailOpen(false)}
               >
                 Close
               </Button>
             </header>
             <div className={styles.highlightsDrawerBody}>
-              {secondaryRailMode === "doc-chat" ? (
-                <DocChatTab
-                  mediaId={media.id}
-                  pendingContexts={docChatPendingContexts}
-                  onRemovePendingContext={handleRemovePendingSelectionContext}
-                  onOpenChat={handleOpenDocChatFromTab}
-                />
-              ) : (
-                <LibraryChatTab
-                  mediaId={media.id}
-                  pendingContexts={libraryChatPendingContexts}
-                  onRemovePendingContext={handleRemovePendingSelectionContext}
-                  onOpenChat={handleOpenLibraryChatFromTab}
-                />
-              )}
+              <DocChatTab
+                mediaId={media.id}
+                onOpenChat={handleOpenFullChat}
+              />
             </div>
           </aside>
         </div>
-      ) : null}
-
-      {isMobileViewport && chatDetail && chatDetail.kind === "doc" ? (
-        <QuoteChatSheet
-          title={
-            chatDetail.isSingleton
-              ? `Chat about ${media.title}`
-              : "New chat"
-          }
-          contexts={chatDetail.attachedContexts}
-          conversationId={chatDetail.conversationId}
-          singletonTarget={
-            chatDetail.isSingleton && chatDetail.conversationId === null
-              ? { kind: "media", target_id: media.id }
-              : null
-          }
-          readerContext={{ media_id: media.id, library_id: null }}
-          onClose={() => setChatDetail(null)}
-          onOpenFullChat={
-            chatDetail.conversationId
-              ? () => handleOpenFullChat(chatDetail.conversationId!)
-              : undefined
-          }
-          onReaderSourceActivate={handleReaderSourceActivate}
-        />
-      ) : null}
-
-      {isMobileViewport && chatDetail && chatDetail.kind === "library" ? (
-        <QuoteChatSheet
-          title={`Chat about ${chatDetail.libraryName}`}
-          contexts={chatDetail.attachedContexts}
-          conversationId={chatDetail.conversationId}
-          singletonTarget={
-            chatDetail.conversationId === null
-              ? { kind: "library", target_id: chatDetail.libraryId }
-              : null
-          }
-          readerContext={{
-            media_id: media.id,
-            library_id: chatDetail.libraryId,
-          }}
-          onClose={() => setChatDetail(null)}
-          onOpenFullChat={
-            chatDetail.conversationId
-              ? () => handleOpenFullChat(chatDetail.conversationId!)
-              : undefined
-          }
-          onReaderSourceActivate={handleReaderSourceActivate}
-        />
       ) : null}
 
       {!isPdf &&
@@ -5331,16 +4744,6 @@ export default function MediaPaneBody({
             selectionLineRects={selection.lineRects}
             containerRef={contentRef}
             onCreateHighlight={handleCreateHighlight}
-            onAddToDocChat={
-              media.capabilities?.can_quote
-                ? handleAddSelectionToDocChat
-                : undefined
-            }
-            onAddToLibraryChat={
-              media.capabilities?.can_quote
-                ? handleAddSelectionToLibraryChat
-                : undefined
-            }
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />

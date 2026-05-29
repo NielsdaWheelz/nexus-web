@@ -430,12 +430,6 @@ def search_object_refs(
                     WHERE ol.user_id = :viewer_id
                       AND ol.b_type = 'contributor'
                 ),
-                visible_contributor_context_items AS (
-                    SELECT mci.object_id AS contributor_id
-                    FROM message_context_items mci
-                    WHERE mci.user_id = :viewer_id
-                      AND mci.object_type = 'contributor'
-                ),
                 visible_contributors AS (
                     SELECT contributor_id
                     FROM visible_contributor_credits
@@ -444,11 +438,6 @@ def search_object_refs(
 
                     SELECT contributor_id
                     FROM visible_contributor_object_links
-
-                    UNION
-
-                    SELECT contributor_id
-                    FROM visible_contributor_context_items
                 ),
                 alias_text AS (
                     SELECT contributor_id, string_agg(alias, ' ') AS aliases

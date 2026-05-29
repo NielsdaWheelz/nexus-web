@@ -2,14 +2,11 @@ import type { ReaderCitationData } from "@/components/ui/MarkdownMessage";
 import type { ReaderCitationColor } from "@/components/ui/ReaderCitation";
 import {
   hrefForReaderTarget,
-  hrefFromPinned,
-  readerTargetFromPinned,
   readerTargetFromRetrieval,
 } from "./readerTarget";
 import type {
   CitationIndexEntry,
   ConversationMessage,
-  ConversationPinnedSource,
   MessageRetrieval,
 } from "./types";
 
@@ -57,35 +54,21 @@ function citationIndexFromBlocks(retrievals: MessageRetrieval[]): CitationIndexE
 
 export function buildCitations(
   message: ConversationMessage,
-  pinnedSources: ConversationPinnedSource[] = [],
 ): ReaderCitationData[] {
-  const citations: ReaderCitationData[] = [];
-  for (const pin of pinnedSources) {
-    citations.push({
-      index: pin.ordinal,
-      color: citationColor(pin.ordinal),
-      preview: {
-        title: pin.title,
-        excerpt: pin.exact ?? "",
-        meta: [pin.kind],
-      },
-      target: readerTargetFromPinned(pin),
-      href: hrefFromPinned(pin),
-    });
-  }
   const retrievals = message.retrievals?.length
     ? message.retrievals
     : retrievalBlocksOf(message);
   const index = message.citation_index?.length
     ? message.citation_index
     : citationIndexFromBlocks(retrievals);
-  if (!index.length) return citations;
+  if (!index.length) return [];
   const byKey = new Map<string, MessageRetrieval>();
   for (const retrieval of retrievals) {
     if (retrieval.tool_call_id != null && retrieval.ordinal != null) {
       byKey.set(`${retrieval.tool_call_id}:${retrieval.ordinal}`, retrieval);
     }
   }
+  const citations: ReaderCitationData[] = [];
   for (const entry of index) {
     const retrieval = byKey.get(`${entry.tool_call_id}:${entry.ordinal}`);
     if (!retrieval) continue;

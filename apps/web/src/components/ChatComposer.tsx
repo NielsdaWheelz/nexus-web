@@ -1,5 +1,5 @@
 /**
- * ChatComposer - message input with model picker, context chips, and chat-run send.
+ * ChatComposer - message input with model picker and chat-run send.
  *
  * Security:
  * - Never console.log API key material.
@@ -13,14 +13,11 @@ import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
-  toWireContextItem,
   type ChatRunCreateRequest,
-  type ContextItem,
   type ReaderContextHintInput,
   type SingletonTargetInput,
 } from "@/lib/api/sse/requests";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
-import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
@@ -42,10 +39,6 @@ import styles from "./ChatComposer.module.css";
 interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
-  /** Attached context items (from quote-to-chat). */
-  attachedContexts?: ContextItem[];
-  /** Remove a context chip. */
-  onRemoveContext?: (index: number) => void;
   /** Called when the chat run has been created. */
   onChatRunCreated?: (data: ChatRunResponse["data"]) => void;
   /** Called after message sent (for refreshing lists). */
@@ -79,8 +72,6 @@ interface ChatComposerProps {
 type ComposerModel = ConversationModel;
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
 
-/** Max contexts per message. */
-const MAX_CONTEXTS = 10;
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
 const DEFAULT_REASONING: ReasoningMode = "default";
 const REASONING_LABELS = {
@@ -158,8 +149,6 @@ function reasoningOptionsForModel(model: ComposerModel | undefined): ReasoningMo
 
 export default function ChatComposer({
   conversationId,
-  attachedContexts = [],
-  onRemoveContext,
   onChatRunCreated,
   onMessageSent,
   onSendStarted,
@@ -356,10 +345,6 @@ export default function ChatComposer({
       branch_anchor: branchAnchor,
       singleton: conversationId ? null : singletonTarget,
       reader_context: readerContext,
-      contexts:
-        attachedContexts.length > 0
-          ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
-          : undefined,
     };
 
     let sent = false;
@@ -381,7 +366,6 @@ export default function ChatComposer({
     selectedModelId,
     selectedReasoning,
     onlyUseMyKeys,
-    attachedContexts,
     conversationId,
     singletonTarget,
     readerContext,
@@ -464,11 +448,6 @@ export default function ChatComposer({
             onJumpToParent={onJumpToBranchParent}
           />
         ) : null}
-
-        <ComposerContextRail
-          attachedContexts={attachedContexts}
-          onRemoveContext={(index) => onRemoveContext?.(index)}
-        />
 
         <Textarea
           ref={textareaRef}

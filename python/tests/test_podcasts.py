@@ -8677,24 +8677,6 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             assert original_fragment_row is not None
             assert original_fragment_row[1] == first_version_id
 
-            from nexus.schemas.conversation import MessageContextRef
-            from nexus.services.context_rendering import render_context_blocks
-
-            rendered_context, _ = render_context_blocks(
-                session,
-                [
-                    MessageContextRef(
-                        type="highlight",
-                        id=highlight_id,
-                        source_version="captured-transcript-source:v1",
-                    )
-                ],
-            )
-
-        assert rendered_context
-        assert "<timestamp>00:00:00</timestamp>" in rendered_context
-        assert "<speaker>SpeakerA</speaker>" in rendered_context
-
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}",
             headers=auth_headers(user_id),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -10,7 +9,6 @@ from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 from llm_calling.types import LLMRequest, Turn
-from pydantic import ValidationError
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -18,23 +16,16 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
     ChatRun,
-    Contributor,
     Conversation,
-    ConversationPinnedSource,
+    ConversationReference,
     Library,
     Media,
     Message,
-    MessageContextItem,
     MessageRetrieval,
     Model,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import (
-    MESSAGE_CONTEXT_TYPES,
-    ContextItem,
-    MessageContextRef,
-    ReaderContextHint,
-)
+from nexus.schemas.conversation import ReaderContextHint
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
     PromptPlan,
@@ -44,41 +35,18 @@ from nexus.services.chat_prompt import (
     validate_prompt_plan_budget,
     validate_prompt_size,
 )
-from nexus.services.context_lookup import (
-    ContextLookupError,
-    ContextLookupResult,
-    hydrate_context_ref,
-    hydrate_source_ref,
-)
-from nexus.services.context_rendering import (
-    PROMPT_VERSION,
-    render_context_blocks,
-    safe_retrieval_locator_json,
-)
-from nexus.services.contexts import reader_selection_context_from_row
-from nexus.services.conversation_branches import load_message_path
-from nexus.services.conversation_memory import (
-    ConversationMemoryItem,
-    ConversationStateSnapshot,
-    collect_memory_source_refs,
-    load_active_memory_items,
-)
-from nexus.services.message_context_snapshots import (
-    trusted_content_chunk_context_snapshot_fields,
-    trusted_context_snapshot,
-    trusted_object_ref_context_snapshot_payload,
-)
+from nexus.services.chat_run_finalize import PROMPT_VERSION
 from nexus.services.prompt_budget import (
     BudgetItem,
-    BudgetLane,
     BudgetSelection,
     PromptBlock,
     allocate_budget,
     build_prompt_budget,
     make_prompt_block,
 )
+from nexus.services.resource_resolver import ResolvedResource, resolve_batch
 
-ASSEMBLER_VERSION = "chat-context-memory-v1"
+ASSEMBLER_VERSION = "chat-context-references-v1"
 CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
 
 
@@ -121,7 +89,6 @@ class ContextAssembly:
     history: tuple[Turn, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
-    lookup_results: tuple[ContextLookupResult, ...]
     tool_call_events: tuple[Mapping[str, object], ...]
     retrieval_result_events: tuple[Mapping[str, object], ...]
     ledger: AssemblyLedger
@@ -147,35 +114,23 @@ def assemble_chat_context(
     if not can_read_conversation(db, run.owner_user_id, conversation.id):
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
-    attached_context_refs = load_message_context_refs(db, run.user_message_id)
+    from nexus.services.conversation_branches import load_message_path
+
     path_messages = load_message_path(
         db,
         conversation_id=conversation.id,
         leaf_message_id=user_message.id,
     )
     path_message_ids = [message.id for message in path_messages if message.id != user_message.id]
-    snapshot = None
-    after_seq = None
-    memory_items = load_active_memory_items(
-        db,
-        conversation_id=conversation.id,
-        after_seq=after_seq,
-        prompt_version=PROMPT_VERSION,
-        allowed_message_ids=set(path_message_ids),
-    )
-    memory_source_refs = collect_memory_source_refs(memory_items=memory_items, snapshot=snapshot)
 
     history_units = load_recent_history_units(
         db,
         conversation_id=conversation.id,
         before_seq=user_message.seq,
-        after_seq=after_seq,
         path_message_ids=path_message_ids,
     )
-    attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
 
-    lookup_results: list[ContextLookupResult] = []
-    context_types = {_context_type_name(ref) for ref in attached_context_refs}
+    context_types: set[str] = set()
     system_block = make_prompt_block(
         block_id=f"system:{SYSTEM_PROMPT_VERSION}",
         role="system",
@@ -194,64 +149,6 @@ def assemble_chat_context(
                 "reader_context_hint",
                 reader_context_block,
                 {"hint": "reader_context"},
-            )
-        )
-
-    pinned_sources = list(conversation.pinned_sources)
-    if pinned_sources:
-        mandatory_blocks.append(
-            (
-                "pinned_sources",
-                make_prompt_block(
-                    block_id=f"pinned_sources:{conversation.id}",
-                    role="system",
-                    lane="attached_context",
-                    text=_render_pinned_sources_block(pinned_sources),
-                    source_version=f"pinned_sources:{conversation.id}:{len(pinned_sources)}",
-                ),
-                {"type": "pinned_sources", "id": str(conversation.id)},
-            )
-        )
-
-    for ref, context_ref in zip(
-        attached_context_refs,
-        attached_context_ref_payloads,
-        strict=True,
-    ):
-        if ref.kind == "reader_selection":
-            rendered_context, _ = render_context_blocks(db, [ref])
-            mandatory_blocks.append(
-                (
-                    _context_block_key(ref),
-                    make_prompt_block(
-                        block_id=_context_block_key(ref),
-                        role="system",
-                        lane="attached_context",
-                        text=rendered_context,
-                        source_refs=[context_ref],
-                        source_version=_context_source_version(ref, context_ref),
-                    ),
-                    context_ref,
-                )
-            )
-            continue
-
-        result = hydrate_context_ref(db, viewer_id=run.owner_user_id, context_ref=context_ref)
-        lookup_results.append(result)
-        if not result.resolved:
-            raise ContextLookupError(result)
-        mandatory_blocks.append(
-            (
-                _context_block_key(ref),
-                make_prompt_block(
-                    block_id=_context_block_key(ref),
-                    role="system",
-                    lane="attached_context",
-                    text=result.evidence_text,
-                    source_refs=[context_ref],
-                    source_version=_context_source_version(ref, context_ref),
-                ),
-                context_ref,
             )
         )
 
@@ -277,33 +174,10 @@ def assemble_chat_context(
             )
         )
 
-    raw_retrieval_blocks, retrieval_lookup_results = _load_selected_retrieval_blocks(
-        db,
-        viewer_id=run.owner_user_id,
-        assistant_message_id=run.assistant_message_id,
+    resources_block, resources_metadata = _build_resources_block(
+        db, conversation_id=conversation.id, viewer_id=run.owner_user_id
     )
-    retrieval_blocks = [
-        (
-            retrieval_id,
-            make_prompt_block(
-                block_id=f"{_retrieval_lane(metadata)}:{retrieval_id}",
-                role="system",
-                lane=_retrieval_lane(metadata),
-                text=text_block,
-                source_refs=[
-                    {
-                        "type": "message_retrieval",
-                        "id": str(retrieval_id),
-                        "retrieval_id": str(retrieval_id),
-                    }
-                ],
-                source_version=f"message_retrieval:{retrieval_id}",
-            ),
-            metadata,
-        )
-        for retrieval_id, text_block, metadata in raw_retrieval_blocks
-    ]
-    lookup_results.extend(retrieval_lookup_results)
+
     tool_call_events, retrieval_result_events = _load_tool_events(
         db,
         assistant_message_id=run.assistant_message_id,
@@ -315,48 +189,6 @@ def assemble_chat_context(
         elif tool_name == "web_search":
             context_types.add("web_search")
 
-    snapshot_block = (
-        make_prompt_block(
-            block_id=f"snapshot:{snapshot.id}",
-            role="system",
-            lane="state_snapshot",
-            text=_render_snapshot_block(snapshot),
-            source_refs=[{"type": "conversation_state_snapshot", "id": str(snapshot.id)}],
-            source_version=f"{PROMPT_VERSION}:snapshot:{snapshot.id}",
-            cache_policy=CACHE_POLICY_5M,
-            required_provider_capability="prompt_cache",
-        )
-        if snapshot is not None
-        else None
-    )
-    memory_block = (
-        make_prompt_block(
-            block_id="memory:active",
-            role="system",
-            lane="memory",
-            text=_render_memory_block(memory_items),
-            source_refs=[
-                {"type": "conversation_memory_item", "id": str(item.id)} for item in memory_items
-            ],
-            source_version=PROMPT_VERSION,
-            cache_policy=CACHE_POLICY_5M,
-            required_provider_capability="prompt_cache",
-        )
-        if memory_items
-        else None
-    )
-    pointer_block = (
-        make_prompt_block(
-            block_id="pointer_refs",
-            role="system",
-            lane="pointer_refs",
-            text=_render_pointer_refs_block(memory_source_refs),
-            source_refs=[_safe_source_ref(ref) for ref in memory_source_refs],
-            source_version=PROMPT_VERSION,
-        )
-        if memory_source_refs
-        else None
-    )
     current_user_block = make_prompt_block(
         block_id=f"current_user:{user_message.id}",
         role="user",
@@ -391,35 +223,14 @@ def assemble_chat_context(
                 key=key, lane="attached_context", blocks=(block,), mandatory=True, metadata=metadata
             )
         )
-    for index, (retrieval_id, block, metadata) in enumerate(retrieval_blocks):
+    if resources_block is not None:
         budget_items.append(
             BudgetItem(
-                key=f"retrieved_evidence:{retrieval_id}",
-                lane=block.lane,
-                blocks=(block,),
-                mandatory=False,
-                priority=100 - index,
-                metadata=metadata,
-            )
-        )
-    if snapshot is not None and snapshot_block is not None:
-        budget_items.append(
-            BudgetItem(
-                key=f"snapshot:{snapshot.id}",
-                lane="state_snapshot",
-                blocks=(snapshot_block,),
-                mandatory=False,
-                metadata={"snapshot_id": str(snapshot.id)},
-            )
-        )
-    if memory_block is not None:
-        budget_items.append(
-            BudgetItem(
-                key="memory:active",
-                lane="memory",
-                blocks=(memory_block,),
-                mandatory=False,
-                metadata={"memory_item_ids": [str(item.id) for item in memory_items]},
+                key="resources",
+                lane="attached_context",
+                blocks=(resources_block,),
+                mandatory=True,
+                metadata=resources_metadata,
             )
         )
     history_count = len(history_units)
@@ -449,45 +260,20 @@ def assemble_chat_context(
                 },
             )
         )
-    if pointer_block is not None:
-        budget_items.append(
-            BudgetItem(
-                key="pointer_refs",
-                lane="pointer_refs",
-                blocks=(pointer_block,),
-                mandatory=False,
-                metadata={"source_ref_count": len(memory_source_refs)},
-            )
-        )
 
     selection = allocate_budget(budget_items, budget)
     included_keys = selection.included_keys()
     context_blocks = _selected_context_blocks(
         selection,
         mandatory_blocks=mandatory_blocks,
-        retrieval_blocks=retrieval_blocks,
-        snapshot_block=snapshot_block,
-        memory_block=memory_block,
-        pointer_block=pointer_block,
+        resources_block=resources_block,
     )
     selected_history_units = [unit for unit in history_units if unit.key in included_keys]
-    included_retrieval_ids = tuple(
-        retrieval_id
-        for retrieval_id, _text_block, _metadata in retrieval_blocks
-        if f"retrieved_evidence:{retrieval_id}" in included_keys
-    )
-    included_memory_items = memory_items if "memory:active" in included_keys else []
     history = _history_turns_from_units(selected_history_units)
-    stable_blocks = _stable_blocks(
-        system_block=system_block,
-        snapshot_block=snapshot_block,
-        memory_block=memory_block,
-        included_keys=included_keys,
-    )
+    stable_blocks = (system_block,)
     dynamic_system_blocks = _dynamic_system_blocks(
         mandatory_blocks=mandatory_blocks,
-        retrieval_blocks=retrieval_blocks,
-        pointer_block=pointer_block,
+        resources_block=resources_block,
         included_keys=included_keys,
     )
     history_blocks = _history_blocks(selected_history_units, selection)
@@ -522,10 +308,7 @@ def assemble_chat_context(
         prompt_plan=prompt_plan,
         estimated_input_tokens=estimated_input_tokens,
         model=model,
-        snapshot=snapshot,
-        memory_items=included_memory_items,
         included_history_units=selected_history_units,
-        included_retrieval_ids=included_retrieval_ids,
         included_context_refs=[
             metadata for key, _text, metadata in mandatory_blocks if key in included_keys
         ],
@@ -536,7 +319,6 @@ def assemble_chat_context(
         history=tuple(history),
         context_blocks=tuple(context_blocks),
         context_types=frozenset(context_types),
-        lookup_results=tuple(lookup_results),
         tool_call_events=tuple(tool_call_events),
         retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
@@ -660,13 +442,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     raise ValueError("prompt assembly already persisted with different provider request hash")
 
 
-def message_context_ref_payloads(
-    db: Session,
-    refs: Sequence[ContextItem],
-) -> list[dict[str, object]]:
-    return [_context_ref_payload(db, ref) for ref in refs]
-
-
 def _build_reader_context_block(
     db: Session,
     reader_context: ReaderContextHint | None,
@@ -717,141 +492,56 @@ def _build_reader_context_block(
     )
 
 
-def _context_type_name(ref: ContextItem) -> str:
-    if ref.kind == "reader_selection":
-        return "reader_selection"
-    return ref.type
-
-
-def _context_block_key(ref: ContextItem) -> str:
-    if ref.kind == "reader_selection":
-        return f"attached_context:reader_selection:{ref.client_context_id}"
-    return f"attached_context:{ref.type}:{ref.id}"
-
-
-def _context_source_version(
-    ref: ContextItem,
-    payload: Mapping[str, object] | None = None,
-) -> str:
-    if payload is not None:
-        source_version = payload.get("source_version")
-        if isinstance(source_version, str) and source_version:
-            return source_version
-    if ref.kind == "reader_selection":
-        return ref.source_version
-    return f"{ref.type}:{ref.id}"
-
-
-def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
-    if ref.kind == "reader_selection":
-        locator = safe_retrieval_locator_json(ref.locator)
-        payload = ref.model_dump(mode="json", exclude_none=True)
-        payload["type"] = "reader_selection"
-        payload["id"] = str(ref.client_context_id)
-        payload["source_media_id"] = str(ref.media_id)
-        payload["locator"] = locator
-        payload["source_version"] = ref.source_version
-        payload["exact_snippet"] = ref.exact
-        if ref.prefix is not None:
-            payload["snippet_prefix"] = ref.prefix
-        if ref.suffix is not None:
-            payload["snippet_suffix"] = ref.suffix
-        return payload
-
-    if ref.type == "contributor":
-        contributor_handle = db.scalar(
-            select(Contributor.handle).where(
-                Contributor.id == ref.id,
-                Contributor.status.in_(("unverified", "verified")),
-            )
-        )
-        if contributor_handle is not None:
-            return {
-                "type": "contributor",
-                "id": contributor_handle,
-                "contributor_handle": contributor_handle,
-            }
-
-    payload: dict[str, object] = {"type": ref.type, "id": str(ref.id)}
-    if ref.type == "content_chunk" and ref.evidence_span_ids:
-        payload["evidence_span_ids"] = [str(span_id) for span_id in ref.evidence_span_ids]
-    if ref.source_version is not None:
-        payload["source_version"] = ref.source_version
-    if ref.locator is not None:
-        payload["locator"] = ref.locator.model_dump(mode="json")
-    return payload
-
-
-def load_message_context_refs(db: Session, user_message_id: UUID) -> list[ContextItem]:
-    rows = (
-        db.execute(
-            select(MessageContextItem)
-            .where(MessageContextItem.message_id == user_message_id)
-            .order_by(MessageContextItem.ordinal.asc())
-        )
-        .scalars()
-        .all()
+def _build_resources_block(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    viewer_id: UUID,
+) -> tuple[PromptBlock | None, Mapping[str, object]]:
+    rows = db.execute(
+        select(ConversationReference.resource_uri, ConversationReference.id)
+        .where(ConversationReference.conversation_id == conversation_id)
+        .order_by(ConversationReference.created_at.asc(), ConversationReference.id.asc())
+    ).all()
+    if not rows:
+        return None, {}
+    uris = [row[0] for row in rows]
+    resolved = resolve_batch(db, uris, viewer_id=viewer_id)
+    lines = ["<resources>"]
+    for resource in resolved:
+        lines.append(_render_resource(resource))
+    lines.append("</resources>")
+    source_refs = [
+        {"type": "conversation_reference", "id": str(row[1]), "resource_uri": row[0]}
+        for row in rows
+    ]
+    block = make_prompt_block(
+        block_id=f"resources:{conversation_id}",
+        role="system",
+        lane="attached_context",
+        text="\n".join(lines),
+        source_refs=source_refs,
+        source_version=f"resources:{conversation_id}:{len(uris)}",
+        cache_policy=None,
     )
-    refs: list[ContextItem] = []
-    for row in rows:
-        if row.context_kind == "reader_selection":
-            try:
-                refs.append(reader_selection_context_from_row(row))
-            except (KeyError, TypeError, ValueError, ValidationError) as exc:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc
-            continue
-
-        if row.object_type is None or row.object_id is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-        try:
-            snapshot = trusted_context_snapshot(row.context_snapshot_json)
-            object_payload = trusted_object_ref_context_snapshot_payload(
-                object_type=row.object_type,
-                object_id=row.object_id,
-                payload=snapshot,
-            )
-            payload: dict[str, object] = {
-                "kind": "object_ref",
-                "type": cast(MESSAGE_CONTEXT_TYPES, row.object_type),
-                "id": row.object_id,
-                "evidence_span_ids": object_payload["evidence_span_ids"],
-            }
-            if row.object_type == "content_chunk":
-                payload.update(
-                    trusted_content_chunk_context_snapshot_fields(
-                        object_type=row.object_type,
-                        object_id=row.object_id,
-                        payload=snapshot,
-                    )
-                )
-            else:
-                source_version = object_payload["source_version"]
-                if source_version is not None:
-                    payload["source_version"] = source_version
-                locator = object_payload["locator"]
-                if locator is not None:
-                    payload["locator"] = locator
-            refs.append(MessageContextRef.model_validate(payload))
-        except (ValueError, ValidationError) as exc:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc
-    return refs
+    return block, {"resource_count": len(uris), "resource_uris": uris}
 
 
-def _render_pinned_sources_block(pinned: Sequence[ConversationPinnedSource]) -> str:
-    lines = ["<pinned_sources>"]
-    for pin in pinned:
-        attrs = f'n="{pin.ordinal}" kind="{pin.kind}" title="{xml_escape(pin.title)}"'
-        if pin.target_id is not None:
-            attrs += f' target_id="{pin.target_id}"'
-        if pin.kind == "reader_selection":
-            lines.append(f"<pinned_source {attrs}>")
-            if pin.exact:
-                lines.append(f"<exact>{xml_escape(pin.exact)}</exact>")
-            lines.append("</pinned_source>")
-        else:
-            lines.append(f"<pinned_source {attrs} />")
-    lines.append("</pinned_sources>")
-    return "\n".join(lines)
+def _render_resource(resource: ResolvedResource) -> str:
+    uri_attr = xml_escape(resource.uri, {'"': "&quot;"})
+    if resource.missing:
+        return f'<resource uri="{uri_attr}" missing="true">resource unavailable</resource>'
+    label_attr = xml_escape(resource.label, {'"': "&quot;"})
+    summary_attr = xml_escape(resource.summary, {'"': "&quot;"})
+    fetch_attr = xml_escape(resource.fetch_hint, {'"': "&quot;"})
+    open_tag = (
+        f'<resource uri="{uri_attr}" label="{label_attr}" '
+        f'summary="{summary_attr}" fetch_hint="{fetch_attr}">'
+    )
+    if resource.inline_body is None:
+        return f"{open_tag}</resource>"
+    body = xml_escape(resource.inline_body)
+    return f"{open_tag}\n<body>{body}</body>\n</resource>"
 
 
 def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:
@@ -879,7 +569,6 @@ def load_recent_history_units(
     *,
     conversation_id: UUID,
     before_seq: int,
-    after_seq: int | None = None,
     path_message_ids: Sequence[UUID] | None = None,
 ) -> list[HistoryUnit]:
     """Load completed recent history as pair-aware units in chronological order."""
@@ -891,9 +580,6 @@ def load_recent_history_units(
         "seq < :before_seq",
     ]
     params: dict[str, object] = {"conversation_id": conversation_id, "before_seq": before_seq}
-    if after_seq is not None:
-        filters.append("seq > :after_seq")
-        params["after_seq"] = after_seq
     if path_message_ids is not None:
         if not path_message_ids:
             return []
@@ -943,50 +629,6 @@ def load_recent_history_units(
         )
         index += 1
     return units
-
-
-def _load_selected_retrieval_blocks(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_id: UUID,
-) -> tuple[list[tuple[UUID, str, Mapping[str, object]]], list[ContextLookupResult]]:
-    rows = db.execute(
-        text(
-            """
-            SELECT mr.id
-            FROM message_retrievals mr
-            JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-            WHERE mtc.assistant_message_id = :assistant_message_id
-              AND mr.selected = true
-            ORDER BY mtc.tool_call_index ASC, mr.ordinal ASC
-            """
-        ),
-        {"assistant_message_id": assistant_message_id},
-    ).fetchall()
-    blocks: list[tuple[UUID, str, Mapping[str, object]]] = []
-    lookup_results: list[ContextLookupResult] = []
-    for row in rows:
-        retrieval_id = row[0]
-        result = hydrate_source_ref(
-            db,
-            viewer_id=viewer_id,
-            source_ref={"type": "message_retrieval", "retrieval_id": str(retrieval_id)},
-        )
-        lookup_results.append(result)
-        if not result.resolved:
-            continue
-        blocks.append(
-            (
-                retrieval_id,
-                result.evidence_text,
-                {
-                    "retrieval_id": str(retrieval_id),
-                    "context_ref": dict(result.context_ref or {}),
-                },
-            )
-        )
-    return blocks, lookup_results
 
 
 def _load_tool_events(
@@ -1067,57 +709,30 @@ def _selected_context_blocks(
     selection: BudgetSelection,
     *,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
-    retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
-    snapshot_block: PromptBlock | None,
-    memory_block: PromptBlock | None,
-    pointer_block: PromptBlock | None,
+    resources_block: PromptBlock | None,
 ) -> list[str]:
     included_keys = selection.included_keys()
     blocks: list[str] = []
     for key, block, _metadata in mandatory_blocks:
         if key in included_keys and block.lane == "attached_context":
             blocks.append(block.text)
-    for retrieval_id, block, _metadata in retrieval_blocks:
-        if f"retrieved_evidence:{retrieval_id}" in included_keys:
-            blocks.append(block.text)
-    if memory_block is not None and "memory:active" in included_keys:
-        blocks.append(memory_block.text)
-    if pointer_block is not None and "pointer_refs" in included_keys:
-        blocks.append(pointer_block.text)
+    if resources_block is not None and "resources" in included_keys:
+        blocks.append(resources_block.text)
     return blocks
-
-
-def _stable_blocks(
-    *,
-    system_block: PromptBlock,
-    snapshot_block: PromptBlock | None,
-    memory_block: PromptBlock | None,
-    included_keys: set[str],
-) -> tuple[PromptBlock, ...]:
-    blocks = [system_block]
-    if snapshot_block is not None and any(key.startswith("snapshot:") for key in included_keys):
-        blocks.append(snapshot_block)
-    if memory_block is not None and "memory:active" in included_keys:
-        blocks.append(memory_block)
-    return tuple(blocks)
 
 
 def _dynamic_system_blocks(
     *,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
-    retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
-    pointer_block: PromptBlock | None,
+    resources_block: PromptBlock | None,
     included_keys: set[str],
 ) -> tuple[PromptBlock, ...]:
     blocks: list[PromptBlock] = []
     for key, block, _metadata in mandatory_blocks:
         if key in included_keys:
             blocks.append(block)
-    for retrieval_id, block, _metadata in retrieval_blocks:
-        if f"retrieved_evidence:{retrieval_id}" in included_keys:
-            blocks.append(block)
-    if pointer_block is not None and "pointer_refs" in included_keys:
-        blocks.append(pointer_block)
+    if resources_block is not None and "resources" in included_keys:
+        blocks.append(resources_block)
     return tuple(blocks)
 
 
@@ -1139,32 +754,6 @@ def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[Turn]:
     for unit in sorted(units, key=lambda candidate: candidate.first_seq):
         turns.extend(unit.turns)
     return turns
-
-
-def _retrieval_lane(metadata: Mapping[str, object]) -> BudgetLane:
-    context_ref = metadata.get("context_ref")
-    if isinstance(context_ref, Mapping) and context_ref.get("type") == "web_result":
-        return "web_evidence"
-    return "retrieved_evidence"
-
-
-def _safe_source_ref(source_ref: Mapping[str, object]) -> Mapping[str, object]:
-    ref_type = source_ref.get("type")
-    ref_id = source_ref.get("id") or source_ref.get("message_id") or source_ref.get("retrieval_id")
-    safe: dict[str, object] = {}
-    if isinstance(ref_type, str):
-        safe["type"] = ref_type
-    if isinstance(ref_id, str):
-        safe["id"] = ref_id
-    context_ref = source_ref.get("context_ref")
-    if isinstance(context_ref, Mapping):
-        nested_type = context_ref.get("type")
-        nested_id = context_ref.get("id")
-        safe["context_ref"] = {
-            "type": nested_type,
-            "id": nested_id,
-        }
-    return safe
 
 
 def _cache_identity(
@@ -1189,48 +778,13 @@ def _cache_identity(
     }
 
 
-def _render_snapshot_block(snapshot: ConversationStateSnapshot) -> str:
-    lines = [
-        f'<conversation_state_snapshot covered_through_seq="{snapshot.covered_through_seq}">',
-        f"<state>{xml_escape(snapshot.state_text)}</state>",
-        "</conversation_state_snapshot>",
-    ]
-    return "\n".join(lines)
-
-
-def _render_memory_block(memory_items: Sequence[ConversationMemoryItem]) -> str:
-    lines = ["<conversation_memory>"]
-    for item in memory_items:
-        lines.append(
-            f'<memory_item id="{item.id}" kind="{xml_escape(item.kind)}" '
-            f'source_required="{str(item.source_required).lower()}">'
-        )
-        lines.append(f"<body>{xml_escape(item.body)}</body>")
-        lines.append("</memory_item>")
-    lines.append("</conversation_memory>")
-    return "\n".join(lines)
-
-
-def _render_pointer_refs_block(source_refs: Sequence[Mapping[str, object]]) -> str:
-    lines = ['<source_refs pointers_only="true">']
-    for source_ref in source_refs:
-        lines.append(
-            f"<source_ref>{xml_escape(json.dumps(source_ref, sort_keys=True))}</source_ref>"
-        )
-    lines.append("</source_refs>")
-    return "\n".join(lines)
-
-
 def _build_ledger(
     selection: BudgetSelection,
     *,
     prompt_plan: PromptPlan,
     estimated_input_tokens: int,
     model: Model,
-    snapshot: ConversationStateSnapshot | None,
-    memory_items: Sequence[ConversationMemoryItem],
     included_history_units: Sequence[HistoryUnit],
-    included_retrieval_ids: Sequence[UUID],
     included_context_refs: Sequence[Mapping[str, object]],
 ) -> AssemblyLedger:
     return AssemblyLedger(
@@ -1249,10 +803,10 @@ def _build_ledger(
         included_message_ids=tuple(
             message_id for unit in included_history_units for message_id in unit.message_ids
         ),
-        included_memory_item_ids=tuple(item.id for item in memory_items),
-        included_retrieval_ids=tuple(included_retrieval_ids),
+        included_memory_item_ids=(),
+        included_retrieval_ids=(),
         included_context_refs=tuple(included_context_refs),
         dropped_items=tuple(item.to_json() for item in selection.dropped),
         budget_breakdown=selection.breakdown,
-        snapshot_id=snapshot.id if snapshot is not None else None,
+        snapshot_id=None,
     )

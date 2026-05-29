@@ -10,7 +10,6 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { SINGLETON_KIND_ICONS } from "@/lib/conversations/display";
 import type { ConversationSummary } from "@/lib/conversations/types";
 import styles from "./ConversationsPaneBody.module.css";
 
@@ -111,27 +110,15 @@ function ConversationListItem({
   conversation: Conversation;
   onDelete: (conversationId: string) => Promise<void>;
 }) {
-  const singleton = conversation.singleton;
-  const Icon = singleton ? SINGLETON_KIND_ICONS[singleton.kind] : null;
-  const description = singleton
-    ? singleton.target_title
-    : `${conversation.message_count} messages`;
-
   return (
     <AppListItem
       href={`/conversations/${conversation.id}`}
       title={conversation.title}
       paneTitleHint={conversation.title}
-      description={description}
       meta={new Date(conversation.updated_at).toLocaleDateString()}
-      icon={Icon ? <Icon size={16} aria-hidden="true" /> : undefined}
-      options={
-        singleton
-          ? undefined
-          : conversationResourceOptions({
-              onDelete: () => void onDelete(conversation.id),
-            })
-      }
+      options={conversationResourceOptions({
+        onDelete: () => void onDelete(conversation.id),
+      })}
     />
   );
 }

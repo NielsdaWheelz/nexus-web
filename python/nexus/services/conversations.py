@@ -28,12 +28,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
     ChatRun,
-    ChatSingleton,
     Conversation,
-    Library,
-    Media,
     Message,
-    MessageContextItem,
     MessageRerankLedger,
     MessageRetrieval,
     MessageRetrievalCandidateLedger,
@@ -42,7 +38,6 @@ from nexus.db.models import (
 from nexus.errors import (
     CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
     ApiErrorCode,
-    ConflictError,
     InvalidRequestError,
     NotFoundError,
 )
@@ -50,22 +45,11 @@ from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
     ConversationOut,
-    ConversationReferenceOut,
-    ConversationSingletonOut,
-    MessageContextSnapshot,
-    MessageContextSnapshotOut,
     MessageDocument,
     MessageOut,
     MessageRerankLedgerOut,
     MessageRetrievalCandidateLedgerOut,
     PageInfo,
-)
-from nexus.services.contexts import reader_selection_message_snapshot_from_row
-from nexus.services.conversation_memory import conversation_memory_inspection
-from nexus.services.message_context_snapshots import (
-    trusted_content_chunk_context_snapshot_fields,
-    trusted_context_snapshot,
-    trusted_object_ref_context_snapshot_payload,
 )
 
 logger = get_logger(__name__)
@@ -81,12 +65,6 @@ MIN_LIMIT = 1
 MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
-
-# Reference-list pagination (§7.4): higher cap for tab-list use.
-DEFAULT_REFERENCE_LIMIT = 50
-MAX_REFERENCE_LIMIT = 200
-# Truncation for the row preview text shown in reader-pane lists.
-REFERENCE_EXCERPT_MAX_LENGTH = 200
 
 
 # =============================================================================
@@ -214,39 +192,6 @@ def get_message_count(db: Session, conversation_id: UUID) -> int:
     return result or 0
 
 
-def _singleton_for_conversation(
-    db: Session, viewer_id: UUID | None, conversation_id: UUID
-) -> ConversationSingletonOut | None:
-    """Return the viewer's singleton pin for this conversation, or None.
-
-    Single SQL roundtrip: left-outer-joins `media` and `libraries` to surface
-    the joined title (`media.title` for kind='media', `libraries.name` for
-    kind='library') alongside the singleton row.
-    """
-    if viewer_id is None:
-        return None
-    row = db.execute(
-        select(
-            ChatSingleton.kind,
-            ChatSingleton.target_id,
-            func.coalesce(Media.title, Library.name).label("target_title"),
-        )
-        .outerjoin(Media, (ChatSingleton.kind == "media") & (Media.id == ChatSingleton.target_id))
-        .outerjoin(
-            Library, (ChatSingleton.kind == "library") & (Library.id == ChatSingleton.target_id)
-        )
-        .where(
-            ChatSingleton.conversation_id == conversation_id,
-            ChatSingleton.user_id == viewer_id,
-        )
-    ).first()
-    if row is None or row.target_title is None:
-        return None
-    return ConversationSingletonOut(
-        kind=row.kind, target_id=row.target_id, target_title=row.target_title
-    )
-
-
 def conversation_to_out(
     db: Session,
     conversation: Conversation,
@@ -254,23 +199,13 @@ def conversation_to_out(
     viewer_id: UUID | None = None,
 ) -> ConversationOut:
     """Convert Conversation ORM model to ConversationOut schema."""
-    from nexus.services.pinned_sources import list_pinned_sources
-
-    pinned = (
-        list_pinned_sources(db, viewer_id=viewer_id, conversation_id=conversation.id)
-        if viewer_id is not None and conversation.owner_user_id == viewer_id
-        else []
-    )
     return ConversationOut(
         id=conversation.id,
         title=conversation.title,
         owner_user_id=conversation.owner_user_id,
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
         sharing=conversation.sharing,
-        singleton=_singleton_for_conversation(db, viewer_id, conversation.id),
-        pinned_sources=pinned,
         message_count=message_count,
-        memory=conversation_memory_inspection(db, conversation_id=conversation.id),
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -278,7 +213,6 @@ def conversation_to_out(
 
 def message_to_out(
     message: Message,
-    contexts: list[MessageContextSnapshotOut] | None = None,
     can_retry_response: bool = False,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
@@ -292,7 +226,6 @@ def message_to_out(
         branch_root_message_id=message.branch_root_message_id,
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
         branch_anchor=branch_anchor,
-        contexts=contexts or [],
         status=message.status,
         error_code=message.error_code,
         can_retry_response=can_retry_response,
@@ -325,51 +258,6 @@ def retryable_assistant_message_ids(
     return set(rows)
 
 
-def load_message_context_snapshots_for_message_ids(
-    db: Session,
-    message_ids: list[UUID],
-) -> dict[UUID, list[MessageContextSnapshotOut]]:
-    """Load typed context snapshots for the given messages."""
-
-    if not message_ids:
-        return {}
-
-    snapshots_by_message_id: dict[UUID, list[MessageContextSnapshotOut]] = {
-        message_id: [] for message_id in message_ids
-    }
-    context_rows = db.scalars(
-        select(MessageContextItem)
-        .where(MessageContextItem.message_id.in_(message_ids))
-        .order_by(MessageContextItem.message_id.asc(), MessageContextItem.ordinal.asc())
-    ).all()
-    for row in context_rows:
-        if row.context_kind == "reader_selection":
-            snapshots_by_message_id.setdefault(row.message_id, []).append(
-                reader_selection_message_snapshot_from_row(row)
-            )
-            continue
-
-        stored = trusted_context_snapshot(row.context_snapshot_json)
-        payload = trusted_object_ref_context_snapshot_payload(
-            object_type=row.object_type,
-            object_id=row.object_id,
-            payload=stored,
-        )
-        if row.object_type == "content_chunk":
-            payload.update(
-                trusted_content_chunk_context_snapshot_fields(
-                    object_type=row.object_type,
-                    object_id=row.object_id,
-                    payload=stored,
-                )
-            )
-        snapshots_by_message_id.setdefault(row.message_id, []).append(
-            MessageContextSnapshot.model_validate(payload)
-        )
-
-    return snapshots_by_message_id
-
-
 # =============================================================================
 # Service Functions
 # =============================================================================
@@ -379,8 +267,7 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
     """Create a new empty private conversation.
 
     The caller commits the surrounding transaction. This lets callers compose
-    creation with additional inserts (e.g. singleton resolution) inside a
-    single SERIALIZABLE transaction.
+    creation with additional inserts inside a single SERIALIZABLE transaction.
 
     Args:
         db: Database session.
@@ -490,22 +377,6 @@ def list_conversations(
         return _list_conversations_visible(db, viewer_id, limit, cursor, scope)
 
 
-_LIST_SINGLETON_JOIN_SQL = """
-    LEFT JOIN chat_singletons cs
-        ON cs.conversation_id = c.id AND cs.user_id = :viewer_id
-    LEFT JOIN media sm
-        ON cs.kind = 'media' AND sm.id = cs.target_id
-    LEFT JOIN libraries sl
-        ON cs.kind = 'library' AND sl.id = cs.target_id
-"""
-
-_LIST_SINGLETON_SELECT_SQL = (
-    "cs.kind AS singleton_kind, "
-    "cs.target_id AS singleton_target_id, "
-    "COALESCE(sm.title, sl.name) AS singleton_target_title"
-)
-
-
 def _list_conversations_mine(
     db: Session,
     viewer_id: UUID,
@@ -520,10 +391,8 @@ def _list_conversations_mine(
     result = db.execute(
         text(f"""
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
-                   {_LIST_SINGLETON_SELECT_SQL}
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
-            {_LIST_SINGLETON_JOIN_SQL}
             WHERE c.owner_user_id = :viewer_id
               {cursor_clause}
             ORDER BY c.updated_at DESC, c.id DESC
@@ -561,11 +430,9 @@ def _list_conversations_visible(
         text(f"""
             WITH {cte}
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
-                   {_LIST_SINGLETON_SELECT_SQL}
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             JOIN visible_conversations vc ON vc.id = c.id
-            {_LIST_SINGLETON_JOIN_SQL}
             WHERE true
               {scope_filter}
               {cursor_clause}
@@ -584,8 +451,7 @@ def _build_conversation_page(
     """Build paginated response from raw rows.
 
     Row columns (in order): id, owner_user_id, title, sharing, created_at,
-    updated_at, message_count, singleton_kind, singleton_target_id,
-    singleton_target_title.
+    updated_at, message_count.
     """
     has_more = len(rows) > limit
     if has_more:
@@ -601,11 +467,6 @@ def _build_conversation_page(
             created_at=row[4],
             updated_at=row[5],
             message_count=row[6],
-            singleton=(
-                ConversationSingletonOut(kind=row[7], target_id=row[8], target_title=row[9])
-                if row[7] is not None and row[9] is not None
-                else None
-            ),
         )
         for row in rows
     ]
@@ -619,12 +480,7 @@ def _build_conversation_page(
 
 
 def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
-    """Delete a conversation.
-
-    Cleans conversation-owned context memory, then deletes the conversation.
-
-    Singletons are not user-deletable: a `chat_singletons` row pinning this
-    conversation refuses deletion with `E_SINGLETON_UNDELETABLE` (409).
+    """Delete a conversation and its owned rows.
 
     Args:
         db: Database session.
@@ -634,24 +490,9 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
     Raises:
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
-        ConflictError(E_SINGLETON_UNDELETABLE): If the conversation is a
-            singleton (doc-chat or library-chat).
     """
     # Verify ownership (write = owner-only)
     get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
-
-    if (
-        db.scalar(
-            select(ChatSingleton.conversation_id).where(
-                ChatSingleton.conversation_id == conversation_id
-            )
-        )
-        is not None
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_SINGLETON_UNDELETABLE,
-            "Singleton conversations cannot be deleted.",
-        )
 
     delete_conversation_rows_without_commit(db, conversation_id)
     db.commit()
@@ -697,7 +538,6 @@ def list_messages(
         rows = rows[:limit]
 
     message_ids = [row[0] for row in rows]
-    contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
     retryable_message_ids = retryable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
@@ -713,7 +553,6 @@ def list_messages(
             branch_root_message_id=row[9],
             branch_anchor_kind=row[10],
             branch_anchor={"kind": row[10], **(row[11] or {})},
-            contexts=contexts_by_message_id.get(row[0], []),
             status=row[4],
             error_code=row[5],
             can_retry_response=row[0] in retryable_message_ids,
@@ -968,8 +807,6 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
-    db.execute(delete(ChatSingleton).where(ChatSingleton.conversation_id == conversation_id))
-
     message_ids = _message_ids_for_conversation(db, conversation_id)
     delete_message_rows_without_commit(db, message_ids)
 
@@ -982,19 +819,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
         {"conversation_id": conversation_id},
     )
 
-    memory_item_ids = _conversation_memory_item_ids(db, conversation_id)
-    if memory_item_ids:
-        db.execute(
-            text("""
-                DELETE FROM conversation_memory_item_sources
-                WHERE memory_item_id = ANY(:memory_item_ids)
-            """),
-            {"memory_item_ids": memory_item_ids},
-        )
-    db.execute(
-        text("DELETE FROM conversation_memory_items WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
     db.execute(
         text("DELETE FROM conversation_state_snapshots WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
@@ -1013,6 +837,10 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     )
     db.execute(
         text("DELETE FROM conversation_shares WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_references WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
@@ -1040,10 +868,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
 
     chat_run_ids = _chat_run_ids_for_messages(db, message_ids)
     if chat_run_ids:
-        db.execute(
-            text("DELETE FROM source_manifests WHERE chat_run_id = ANY(:chat_run_ids)"),
-            {"chat_run_ids": chat_run_ids},
-        )
         db.execute(
             text("DELETE FROM chat_run_events WHERE run_id = ANY(:chat_run_ids)"),
             {"chat_run_ids": chat_run_ids},
@@ -1089,10 +913,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
         )
 
     db.execute(
-        text("DELETE FROM message_context_items WHERE message_id = ANY(:message_ids)"),
-        {"message_ids": list(message_ids)},
-    )
-    db.execute(
         text("""
             DELETE FROM object_links
             WHERE (a_type = 'message' AND a_id = ANY(:message_ids))
@@ -1102,14 +922,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
     )
     db.execute(
         text("DELETE FROM message_llm WHERE message_id = ANY(:message_ids)"),
-        {"message_ids": list(message_ids)},
-    )
-    db.execute(
-        text("""
-            UPDATE conversation_memory_items
-            SET created_by_message_id = NULL
-            WHERE created_by_message_id = ANY(:message_ids)
-        """),
         {"message_ids": list(message_ids)},
     )
     db.execute(delete(Message).where(Message.id.in_(message_ids)))
@@ -1153,19 +965,6 @@ def _message_subtree_ids(db: Session, conversation_id: UUID, message_id: UUID) -
     )
 
 
-def _conversation_memory_item_ids(db: Session, conversation_id: UUID) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        SELECT id
-        FROM conversation_memory_items
-        WHERE conversation_id = :conversation_id
-        ORDER BY created_at ASC, id ASC
-        """,
-        {"conversation_id": conversation_id},
-    )
-
-
 def _chat_run_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
     return _query_uuid_ids(
         db,
@@ -1194,110 +993,3 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
     )
 
 
-# =============================================================================
-# Reference-list (reader-pane "Other chats")
-# =============================================================================
-
-
-def list_referencing_conversations_for_media(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    limit: int,
-    offset: int,
-) -> tuple[list[ConversationReferenceOut], int | None]:
-    """List non-singleton conversations that reference this media (§4.6, §7.4).
-
-    A conversation appears iff:
-    - It is visible to the viewer (owner / public / library-shared), AND
-    - At least one of its messages has a `message_context_items` row referencing
-      this media (either an `object_ref` of type 'media' with `object_id=media_id`,
-      or any context row with `source_media_id=media_id` — covering quotes and
-      citable child objects), AND
-    - It is not the viewer's doc-chat singleton for this media.
-
-    Ordered by `updated_at` desc, then `id` desc for stability under ties.
-
-    Returns:
-        Tuple of (items, next_offset). `next_offset` is the offset that would
-        return the next page, or None if this is the last page.
-    """
-    page_size = max(1, min(limit, MAX_REFERENCE_LIMIT))
-    starting_offset = max(0, offset)
-    fetch_count = page_size + 1  # one extra row signals "more pages exist"
-
-    rows = db.execute(
-        text(f"""
-            WITH {_build_visibility_cte(viewer_id)},
-            referencing_conversations AS (
-                SELECT DISTINCT c.id, c.title, c.updated_at
-                FROM conversations c
-                JOIN visible_conversations vc ON vc.id = c.id
-                JOIN messages m ON m.conversation_id = c.id
-                JOIN message_context_items mci ON mci.message_id = m.id
-                WHERE (
-                    (mci.context_kind = 'object_ref'
-                     AND mci.object_type = 'media'
-                     AND mci.object_id = :media_id)
-                    OR mci.source_media_id = :media_id
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM chat_singletons cs
-                    WHERE cs.user_id = :viewer_id
-                      AND cs.kind = 'media'
-                      AND cs.target_id = :media_id
-                      AND cs.conversation_id = c.id
-                )
-            )
-            SELECT
-                rc.id,
-                rc.title,
-                rc.updated_at,
-                (SELECT COUNT(*) FROM messages mc WHERE mc.conversation_id = rc.id)
-                    AS message_count,
-                (SELECT mf.content
-                 FROM messages mf
-                 WHERE mf.conversation_id = rc.id AND mf.role = 'user'
-                 ORDER BY mf.seq ASC
-                 LIMIT 1) AS first_user_message
-            FROM referencing_conversations rc
-            ORDER BY rc.updated_at DESC, rc.id DESC
-            LIMIT :fetch_count OFFSET :starting_offset
-        """),
-        {
-            "viewer_id": viewer_id,
-            "media_id": media_id,
-            "fetch_count": fetch_count,
-            "starting_offset": starting_offset,
-        },
-    ).all()
-
-    has_more = len(rows) > page_size
-    page_rows = rows[:page_size]
-
-    items = [
-        ConversationReferenceOut(
-            id=row[0],
-            title=row[1],
-            updated_at=row[2],
-            message_count=int(row[3]),
-            first_user_message_excerpt=_excerpt(row[4]),
-            is_singleton=False,
-        )
-        for row in page_rows
-    ]
-
-    next_offset = starting_offset + page_size if has_more else None
-    return items, next_offset
-
-
-def _excerpt(content: str | None) -> str:
-    """Return a trimmed excerpt of message content for row previews."""
-    if not content:
-        return ""
-    text_value = content.strip()
-    if len(text_value) <= REFERENCE_EXCERPT_MAX_LENGTH:
-        return text_value
-    return text_value[:REFERENCE_EXCERPT_MAX_LENGTH]

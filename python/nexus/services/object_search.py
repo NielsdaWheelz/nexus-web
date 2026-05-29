@@ -398,30 +398,20 @@ def _scope_filter_sql(scope_type: str) -> str:
         """
     if scope_type == "conversation":
         return """
-            AND (
-                EXISTS (
-                    SELECT 1
-                    FROM message_context_items mci
-                    JOIN messages msg ON msg.id = mci.message_id
-                    WHERE mci.object_type = osd.object_type
-                      AND mci.object_id = osd.object_id
-                      AND msg.conversation_id = :scope_id
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM object_links ol
-                    JOIN messages msg
-                      ON (
-                            (ol.a_type = 'message' AND msg.id = ol.a_id)
-                         OR (ol.b_type = 'message' AND msg.id = ol.b_id)
-                      )
-                    WHERE ol.relation_type = 'used_as_context'
-                      AND (
-                            (ol.a_type = osd.object_type AND ol.a_id = osd.object_id)
-                         OR (ol.b_type = osd.object_type AND ol.b_id = osd.object_id)
-                      )
-                      AND msg.conversation_id = :scope_id
-                )
+            AND EXISTS (
+                SELECT 1
+                FROM object_links ol
+                JOIN messages msg
+                  ON (
+                        (ol.a_type = 'message' AND msg.id = ol.a_id)
+                     OR (ol.b_type = 'message' AND msg.id = ol.b_id)
+                  )
+                WHERE ol.relation_type = 'used_as_context'
+                  AND (
+                        (ol.a_type = osd.object_type AND ol.a_id = osd.object_id)
+                     OR (ol.b_type = osd.object_type AND ol.b_id = osd.object_id)
+                  )
+                  AND msg.conversation_id = :scope_id
             )
         """
     raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")

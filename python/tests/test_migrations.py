@@ -877,7 +877,7 @@ class TestMigrationUpgradeDowngrade:
                 assert message_document["type"] == "message_document"
                 assert message_document["blocks"][0]["text"] == "find sources"
 
-                for seq, event_type in enumerate(("source_manifest_delta", "claim"), start=2):
+                for seq, event_type in enumerate(("reference_added", "claim"), start=2):
                     session.execute(
                         text(
                             """
@@ -7469,37 +7469,106 @@ class TestPodcastSubscriptionLibrariesMigration0113:
         assert remaining == 0, f"deleting a library must cascade-delete join rows; got {remaining}"
 
 
-class TestChatSingletonsAndScopeDropMigration0114:
-    """Schema assertions for migration 0114 (chat_singletons + drop scope columns)."""
+class TestConversationReferencesCutoverMigration0121:
+    """Schema assertions for migration 0121 (conversation_references cutover).
 
-    def test_0114_upgrade_applies_chat_singletons_and_drops_scope_columns(self, migrated_engine):
-        """After upgrade head:
-        - ``chat_singletons`` exists with the PK/unique/check spec'd in §5.1.
-        - ``conversations`` no longer has ``scope_type`` / ``scope_id`` /
-          ``scope_media_id`` / ``scope_library_id``.
-        - ``assistant_message_evidence_summaries`` no longer has ``scope_type``.
-        """
+    Migration 0121 drops the five fragmented chat-context tables
+    (``conversation_memory_items``, ``conversation_memory_item_sources``,
+    ``conversation_pinned_sources``, ``chat_singletons``,
+    ``message_context_items``) plus ``source_manifests``, and creates the
+    polymorphic ``conversation_references`` table. The pre-existing
+    ``scope_*`` columns on ``conversations`` were already dropped by 0114
+    and stay dropped at HEAD.
+    """
+
+    def test_0121_drops_fragmented_chat_context_tables(self, migrated_engine):
         with Session(migrated_engine) as session:
-            singleton_columns = session.execute(
-                text(
-                    """
-                    SELECT column_name, data_type, is_nullable
-                    FROM information_schema.columns
-                    WHERE table_name = 'chat_singletons'
-                    ORDER BY ordinal_position
-                    """
-                )
-            ).fetchall()
-            singleton_constraints = session.execute(
-                text(
-                    """
-                    SELECT conname, contype
-                    FROM pg_constraint
-                    WHERE conrelid = 'chat_singletons'::regclass
-                    ORDER BY conname
-                    """
-                )
-            ).fetchall()
+            tables = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        """
+                    )
+                ).fetchall()
+            }
+        dropped = {
+            "conversation_memory_items",
+            "conversation_memory_item_sources",
+            "conversation_pinned_sources",
+            "chat_singletons",
+            "message_context_items",
+            "source_manifests",
+        }
+        leftover = dropped & tables
+        assert leftover == set(), (
+            f"Migration 0121 should have dropped these tables, but they remain at HEAD: "
+            f"{leftover}"
+        )
+
+    def test_0121_creates_conversation_references_with_unique_and_index(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = {
+                row[0]: (row[1], row[2])
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, data_type, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_name = 'conversation_references'
+                        """
+                    )
+                ).fetchall()
+            }
+            constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'conversation_references'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+            indexes = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE tablename = 'conversation_references'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        for required in ("id", "conversation_id", "resource_uri", "created_at"):
+            assert required in columns, (
+                f"conversation_references must have column '{required}'; "
+                f"got {set(columns)}"
+            )
+        for col in ("id", "conversation_id", "resource_uri", "created_at"):
+            assert columns[col][1] == "NO", (
+                f"conversation_references.{col} must be NOT NULL; got {columns[col]}"
+            )
+        assert "uq_conversation_references_conversation_uri" in constraints, (
+            "conversation_references must declare UNIQUE on (conversation_id, resource_uri); "
+            f"got {constraints}"
+        )
+        assert "ix_conversation_references_resource_uri" in indexes, (
+            f"conversation_references must declare ix_conversation_references_resource_uri; "
+            f"got {indexes}"
+        )
+
+    def test_0121_conversations_has_no_scope_columns(self, migrated_engine):
+        """Scope columns were dropped by 0114 and stay dropped through 0121."""
+        with Session(migrated_engine) as session:
             conversations_columns = {
                 row[0]
                 for row in session.execute(
@@ -7512,63 +7581,19 @@ class TestChatSingletonsAndScopeDropMigration0114:
                     )
                 ).fetchall()
             }
-            evidence_columns = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'assistant_message_evidence_summaries'
-                        """
-                    )
-                ).fetchall()
-            }
-
-        singleton_column_by_name = {row[0]: (row[1], row[2]) for row in singleton_columns}
-        for required in ("user_id", "kind", "target_id", "conversation_id", "created_at"):
-            assert required in singleton_column_by_name, (
-                f"chat_singletons must have column '{required}'; got {set(singleton_column_by_name)}"
-            )
-        # All non-nullable per spec §5.1.
-        for col in ("user_id", "kind", "target_id", "conversation_id", "created_at"):
-            assert singleton_column_by_name[col][1] == "NO", (
-                f"chat_singletons.{col} must be NOT NULL; got {singleton_column_by_name[col]}"
-            )
-
-        constraint_names = {row[0] for row in singleton_constraints}
-        assert "pk_chat_singletons" in constraint_names, (
-            f"chat_singletons must declare PK pk_chat_singletons; got {constraint_names}"
-        )
-        assert "uq_chat_singletons_conversation_id" in constraint_names, (
-            "chat_singletons must declare UNIQUE on conversation_id "
-            f"(uq_chat_singletons_conversation_id); got {constraint_names}"
-        )
-        assert "ck_chat_singletons_kind" in constraint_names, (
-            "chat_singletons must declare the kind CHECK constraint "
-            f"(ck_chat_singletons_kind); got {constraint_names}"
-        )
-
         for legacy_col in ("scope_type", "scope_id", "scope_media_id", "scope_library_id"):
             assert legacy_col not in conversations_columns, (
-                f"conversations.{legacy_col} must be dropped after 0114; "
+                f"conversations.{legacy_col} must remain dropped at HEAD; "
                 f"got columns {conversations_columns}"
             )
 
-        assert "scope_type" not in evidence_columns, (
-            "assistant_message_evidence_summaries.scope_type must be dropped after 0114; "
-            f"got columns {evidence_columns}"
-        )
-
-    def test_0114_downgrade_raises(self, migrated_engine):
-        """Per spec §6.1 / §11, the cutover is irreversible by policy.
-        Running ``alembic downgrade -1`` from head (0114→0113) raises
-        ``NotImplementedError`` (or fails with a non-zero alembic exit code
-        carrying that message)."""
+    def test_0121_downgrade_raises(self):
+        """Per spec, the references cutover is irreversible by policy.
+        ``alembic downgrade -1`` from HEAD raises ``NotImplementedError``."""
         result = run_alembic_command("downgrade -1")
 
         assert result.returncode != 0, (
-            "Expected alembic downgrade from 0114 to fail; "
+            "Expected alembic downgrade from 0121 to fail; "
             f"got returncode={result.returncode}, stderr={result.stderr}"
         )
         combined = (result.stdout or "") + (result.stderr or "")

@@ -10,25 +10,22 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from llm_calling.errors import LLMError
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
-from sqlalchemy import func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
-from nexus.auth.permissions import can_read_media, is_library_member
 from nexus.config import get_settings
 from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
-    ConversationPinnedSource,
     Message,
     Model,
 )
@@ -36,8 +33,6 @@ from nexus.errors import (
     LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
-    ForbiddenError,
-    InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
@@ -46,14 +41,17 @@ from nexus.schemas.conversation import (
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunResponse,
-    ContextItem,
     ReaderContextHint,
-    SingletonTarget,
 )
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_TOOL_DEFINITION,
     APP_SEARCH_TOOL_NAME,
     execute_app_search,
+)
+from nexus.services.agent_tools.read_resource import (
+    READ_RESOURCE_TOOL_DEFINITION,
+    READ_RESOURCE_TOOL_NAME,
+    execute_read_resource,
 )
 from nexus.services.agent_tools.web_search import (
     WEB_SEARCH_TOOL_DEFINITION,
@@ -65,9 +63,7 @@ from nexus.services.api_key_resolver import (
     resolve_api_key,
 )
 from nexus.services.chat_run_access import (
-    copy_context_rows,
     get_run_for_owner,
-    load_context_rows_for_message,
     load_retryable_failed_assistant_message,
     load_source_run_for_retry,
 )
@@ -105,24 +101,17 @@ from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_response import build_chat_run_response
-from nexus.services.chat_run_singletons import resolve_singleton_conversation
 from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
     persist_prompt_assembly,
 )
-from nexus.services.context_lookup import (
-    ContextLookupError,
-)
-from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.conversation_branches import (
     ensure_branch_metadata,
     persist_active_leaf,
 )
-from nexus.services.conversation_memory import (
-    refresh_conversation_memory,
-)
+from nexus.services.conversation_references import insert_reference_if_absent
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
@@ -146,6 +135,11 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         description=WEB_SEARCH_TOOL_DEFINITION["description"],
         parameters=WEB_SEARCH_TOOL_DEFINITION["parameters"],
     ),
+    ToolSpec(
+        name=READ_RESOURCE_TOOL_NAME,
+        description=READ_RESOURCE_TOOL_DEFINITION["description"],
+        parameters=READ_RESOURCE_TOOL_DEFINITION["parameters"],
+    ),
 )
 
 
@@ -164,22 +158,6 @@ def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
     if model.provider == "openai" and reasoning in {"default", "low", "medium", "high", "max"}:
         return min(REASONING_OUTPUT_TOKENS, model.max_context_tokens)
     return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
-
-
-def _pinned_search_scope(db: Session, conversation_id: UUID) -> tuple[UUID | None, UUID | None]:
-    """If the conversation has exactly one pinned media or library, return it as a default scope."""
-    rows = db.execute(
-        select(ConversationPinnedSource.kind, ConversationPinnedSource.target_id).where(
-            ConversationPinnedSource.conversation_id == conversation_id,
-            ConversationPinnedSource.kind.in_(("media", "library")),
-        )
-    ).all()
-    media_ids = [r[1] for r in rows if r[0] == "media"]
-    library_ids = [r[1] for r in rows if r[0] == "library"]
-    return (
-        media_ids[0] if len(media_ids) == 1 else None,
-        library_ids[0] if len(library_ids) == 1 else None,
-    )
 
 
 def _assign_citation_ordinals(db: Session, *, tool_call_id: UUID | None, start_ordinal: int) -> int:
@@ -253,11 +231,85 @@ def _web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
     )
 
 
+def _persist_read_resource_tool_call(
+    db: Session,
+    *,
+    run: ChatRun,
+    tool_call_index: int,
+    args: dict[str, Any],
+    result: Any,
+) -> None:
+    """Persist a read_resource invocation as a message_tool_calls row.
+
+    No message_retrievals are written: read_resource returns a single body,
+    not a list of search candidates. ``result`` is a ``ReadResourceResult``
+    from :mod:`nexus.services.agent_tools.read_resource`.
+    """
+    payload = {
+        "uri": result.uri,
+        "status": result.status,
+        "error_code": result.error_code,
+        "args": {"uri": str(args.get("uri") or "")},
+        "body_chars": len(result.body or ""),
+    }
+    db.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                conversation_id,
+                user_message_id,
+                assistant_message_id,
+                tool_name,
+                tool_call_index,
+                scope,
+                semantic,
+                result_refs,
+                selected_context_refs,
+                provider_request_ids,
+                status,
+                error_code
+            )
+            VALUES (
+                :conversation_id,
+                :user_message_id,
+                :assistant_message_id,
+                :tool_name,
+                :tool_call_index,
+                'conversation_references',
+                false,
+                CAST(:payload AS JSONB),
+                '[]'::jsonb,
+                '[]'::jsonb,
+                :status,
+                :error_code
+            )
+            """
+        ),
+        {
+            "conversation_id": run.conversation_id,
+            "user_message_id": run.user_message_id,
+            "assistant_message_id": run.assistant_message_id,
+            "tool_name": READ_RESOURCE_TOOL_NAME,
+            "tool_call_index": tool_call_index,
+            "payload": json.dumps([payload]),
+            "status": "error" if result.is_error else "complete",
+            "error_code": result.error_code,
+        },
+    )
+
+
 def _emit_citation_index(db: Session, run: ChatRun) -> None:
     rows = db.execute(
         text(
             """
-            SELECT mr.citation_ordinal, mr.id, mr.tool_call_id, mr.ordinal
+            SELECT mr.citation_ordinal,
+                   mr.id,
+                   mr.tool_call_id,
+                   mr.ordinal,
+                   mr.result_type,
+                   mr.evidence_span_id,
+                   mr.media_id,
+                   mr.result_ref
             FROM message_retrievals mr
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :amid
@@ -286,14 +338,94 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
             ],
         },
     )
+    for row in rows:
+        uri = _retrieval_row_to_uri(
+            result_type=row[4],
+            evidence_span_id=row[5],
+            media_id=row[6],
+            result_ref=row[7] or {},
+        )
+        if uri is None:
+            continue
+        new_row = insert_reference_if_absent(db, run.conversation_id, uri)
+        if new_row is None:
+            continue
+        append_run_event(
+            db,
+            run,
+            "reference_added",
+            {
+                "reference_id": str(new_row.id),
+                "conversation_id": str(run.conversation_id),
+                "resource_uri": uri,
+                "created_at": new_row.created_at.isoformat(),
+            },
+        )
+
+
+def _retrieval_row_to_uri(
+    *,
+    result_type: str,
+    evidence_span_id: UUID | None,
+    media_id: UUID | None,
+    result_ref: dict[str, Any],
+) -> str | None:
+    """Derive a conversation_reference URI from a cited MessageRetrieval row.
+
+    Returns ``None`` for retrieval types that have no persistent URI (e.g.
+    ``web_result``) or when required identifiers are missing.
+    """
+    if result_type == "evidence_span":
+        if evidence_span_id is None:
+            return None
+        return f"span:{evidence_span_id}"
+    if result_type == "content_chunk":
+        chunk_id = result_ref.get("id")
+        if not chunk_id:
+            return None
+        return f"chunk:{chunk_id}"
+    if result_type == "highlight":
+        highlight_id = result_ref.get("id")
+        if not highlight_id:
+            return None
+        return f"highlight:{highlight_id}"
+    if result_type == "page":
+        page_id = result_ref.get("id")
+        if not page_id:
+            return None
+        return f"page:{page_id}"
+    if result_type == "note_block":
+        block_id = result_ref.get("id")
+        if not block_id:
+            return None
+        return f"note_block:{block_id}"
+    if result_type == "media":
+        if media_id is None:
+            return None
+        return f"media:{media_id}"
+    if result_type == "conversation":
+        conversation_id = result_ref.get("id")
+        if not conversation_id:
+            return None
+        return f"conversation:{conversation_id}"
+    if result_type == "message":
+        message_id = result_ref.get("id")
+        if not message_id:
+            return None
+        return f"message:{message_id}"
+    if result_type == "fragment":
+        fragment_id = result_ref.get("id")
+        if not fragment_id:
+            return None
+        return f"fragment:{fragment_id}"
+    return None
 
 
 def create_chat_run(
     db: Session,
     *,
     viewer_id: UUID,
-    conversation_id: UUID | None,
-    singleton: SingletonTarget | None,
+    conversation_id: UUID,
     reader_context: ReaderContextHint | None,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
@@ -301,28 +433,8 @@ def create_chat_run(
     model_id: UUID,
     reasoning: str,
     key_mode: str,
-    contexts: Sequence[ContextItem],
     idempotency_key: str | None,
 ) -> ChatRunResponse:
-    if (conversation_id is None) == (singleton is None):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Exactly one of conversation_id or singleton must be set",
-        )
-
-    if singleton is not None:
-        _check_singleton_target_access(db, viewer_id, singleton)
-        conversation_id = _resolve_singleton_with_retry(
-            db,
-            viewer_id=viewer_id,
-            kind=singleton.kind,
-            target_id=singleton.target_id,
-        )
-    assert (
-        conversation_id is not None
-    )  # justify-service-invariant-check: mutex above guarantees it.
-
-    contexts = list(contexts)
     normalized_key = normalize_idempotency_key(idempotency_key)
 
     payload_hash = compute_payload_hash(
@@ -330,7 +442,6 @@ def create_chat_run(
         model_id,
         reasoning,
         key_mode,
-        contexts,
         conversation_id,
         parent_message_id,
         branch_anchor,
@@ -367,7 +478,6 @@ def create_chat_run(
         model_id,
         reasoning,
         key_mode,
-        contexts,
         use_platform_key,
     )
 
@@ -387,7 +497,6 @@ def create_chat_run(
             branch_anchor,
             content,
             model_id,
-            contexts,
         )
         run = ChatRun(
             owner_user_id=viewer_id,
@@ -431,54 +540,6 @@ def create_chat_run(
         raise
 
     return build_chat_run_response(db, viewer_id, run)
-
-
-def _check_singleton_target_access(
-    db: Session,
-    viewer_id: UUID,
-    target: SingletonTarget,
-) -> None:
-    if target.kind == "media":
-        allowed = can_read_media(db, viewer_id, target.target_id)
-    else:
-        allowed = is_library_member(db, viewer_id, target.target_id)
-    if not allowed:
-        raise ForbiddenError(
-            ApiErrorCode.E_SINGLETON_TARGET_FORBIDDEN,
-            "Cannot create a singleton chat for this target",
-        )
-
-
-def _resolve_singleton_with_retry(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    kind: Literal["media", "library"],
-    target_id: UUID,
-) -> UUID:
-    """Run resolve_singleton_conversation under SERIALIZABLE with bounded retry.
-
-    Concurrent first-sends to the same (viewer, kind, target) either commit one
-    winner or hit a serialization failure that this loop retries (taking the
-    SELECT branch on the second pass per docs/rules/database.md).
-    """
-    for attempt in range(3):
-        bind = db.get_bind()
-        in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-        if not db.in_transaction() and not in_outer_transaction:
-            db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
-        try:
-            conversation_id = resolve_singleton_conversation(db, viewer_id, kind, target_id)
-            db.commit()
-            return conversation_id
-        except OperationalError as exc:
-            db.rollback()
-            sqlstate = getattr(exc.orig, "sqlstate", None)
-            if sqlstate != "40001" and "could not serialize access" not in str(exc.orig).lower():
-                raise
-            if attempt == 2:
-                raise
-    raise AssertionError("singleton resolve retry loop exhausted")
 
 
 def _chat_run_job_payload(
@@ -527,12 +588,10 @@ def retry_failed_assistant_response(
         source_user_message = db.get(Message, source_run.user_message_id)
         if source_user_message is None or source_user_message.role != "user":
             raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source prompt not found")
-        context_rows = load_context_rows_for_message(db, source_user_message.id)
         payload_hash = compute_retry_payload_hash(
             failed_assistant_message_id=assistant_message_id,
             source_run=source_run,
             source_user_message=source_user_message,
-            context_rows=context_rows,
         )
 
         existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
@@ -559,13 +618,6 @@ def retry_failed_assistant_response(
         )
         db.add(user_message)
         db.flush()
-        copy_context_rows(
-            db,
-            viewer_id=viewer_id,
-            source_message_id=source_user_message.id,
-            target_message_id=user_message.id,
-            rows=context_rows,
-        )
         if user_message.parent_message_id is not None:
             ensure_branch_metadata(
                 db,
@@ -901,26 +953,6 @@ async def _execute_chat_run(
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
             return {"status": "error", "error_code": error_code}
-        except ContextLookupError as exc:
-            failure = exc.result.failure
-            logger.warning(
-                "chat_run.context_lookup_failed",
-                run_id=str(run.id),
-                failure_code=failure.code if failure is not None else None,
-                failure_message=failure.message if failure is not None else str(exc),
-            )
-            error_code = ApiErrorCode.E_CONTEXT_TOO_LARGE.value
-            finalize_error(
-                db,
-                run_id=run.id,
-                error_code=error_code,
-                viewer_id=run.owner_user_id,
-                model=model,
-                resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=int((time.monotonic() - start_time) * 1000),
-            )
-            return {"status": "error", "error_code": error_code}
 
         llm_request = dataclasses.replace(assembly.llm_request, tools=_CHAT_TOOL_SPECS)
         turns: list[Turn] = list(llm_request.messages)
@@ -930,12 +962,7 @@ async def _execute_chat_run(
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
-        pin_count = db.scalar(
-            select(func.count())
-            .select_from(ConversationPinnedSource)
-            .where(ConversationPinnedSource.conversation_id == run.conversation_id)
-        )
-        citation_n_next = (pin_count or 0) + 1
+        citation_n_next = 1
         tool_call_index_next = 0
         llm_start = time.monotonic()
         llm_log_fields = safe_kv(
@@ -1015,8 +1042,9 @@ async def _execute_chat_run(
                     tool_call_index_next += 1
                     if tc.name == APP_SEARCH_TOOL_NAME:
                         args = tc.arguments or {}
-                        media_id, library_id = _pinned_search_scope(
-                            db, run.conversation_id
+                        raw_scopes = args.get("scopes")
+                        scopes: list[str] = (
+                            [str(s) for s in raw_scopes] if isinstance(raw_scopes, list) else []
                         )
                         run_result = execute_app_search(
                             db,
@@ -1024,8 +1052,7 @@ async def _execute_chat_run(
                             conversation_id=run.conversation_id,
                             user_message_id=run.user_message_id,
                             assistant_message_id=run.assistant_message_id,
-                            media_id=media_id,
-                            library_id=library_id,
+                            scopes=scopes,
                             planned_query=str(args.get("query") or ""),
                             planned_types=["content_chunk"],
                             planned_filters={},
@@ -1095,6 +1122,29 @@ async def _execute_chat_run(
                                 call_id=tc.id,
                                 output=_web_search_tool_output(run_result, start_n),
                                 is_error=run_result.status == "error",
+                            )
+                        )
+                    elif tc.name == READ_RESOURCE_TOOL_NAME:
+                        args = tc.arguments or {}
+                        read_result = execute_read_resource(
+                            db,
+                            viewer_id=run.owner_user_id,
+                            conversation_id=run.conversation_id,
+                            uri=str(args.get("uri") or ""),
+                        )
+                        _persist_read_resource_tool_call(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            args=args,
+                            result=read_result,
+                        )
+                        db.commit()
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=read_result.tool_output(),
+                                is_error=read_result.is_error,
                             )
                         )
                     else:
@@ -1240,11 +1290,6 @@ async def _execute_chat_run(
             usage=usage,
             provider_request_id=provider_request_id,
             viewer_id=run.owner_user_id,
-        )
-        refresh_conversation_memory(
-            db,
-            conversation_id=run.conversation_id,
-            prompt_version=PROMPT_VERSION,
         )
         db.commit()
         if resolved_key.mode == "platform":

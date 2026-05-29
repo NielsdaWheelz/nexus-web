@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import (
     DailyNotePage,
     Highlight,
-    MessageContextItem,
     NoteBlock,
     ObjectLink,
     Page,
@@ -45,7 +44,6 @@ from nexus.schemas.notes import (
     UpdatePageRequest,
 )
 from nexus.services import object_search
-from nexus.services.message_context_snapshots import object_ref_context_snapshot_from_hydrated
 from nexus.services.object_refs import hydrate_object_ref
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
@@ -1643,23 +1641,6 @@ def _transfer_note_block_relationships(
         link.b_id = b_id
         link.updated_at = func.now()
 
-    context_items = db.scalars(
-        select(MessageContextItem).where(
-            MessageContextItem.user_id == viewer_id,
-            MessageContextItem.object_type == "note_block",
-            MessageContextItem.object_id == source_block_id,
-        )
-    )
-    for item in context_items:
-        item.object_id = target_block_id
-        item.context_snapshot_json = object_ref_context_snapshot_from_hydrated(
-            hydrate_object_ref(
-                db,
-                viewer_id,
-                ObjectRef(object_type="note_block", object_id=target_block_id),
-            )
-        )
-
 
 def _replacement_link_endpoints(
     link: ObjectLink,
@@ -1882,12 +1863,6 @@ def _delete_object_edges(db: Session, object_type: str, object_id: UUID) -> None
         delete(ObjectLink).where(
             ((ObjectLink.a_type == object_type) & (ObjectLink.a_id == object_id))
             | ((ObjectLink.b_type == object_type) & (ObjectLink.b_id == object_id))
-        )
-    )
-    db.execute(
-        delete(MessageContextItem).where(
-            MessageContextItem.object_type == object_type,
-            MessageContextItem.object_id == object_id,
         )
     )
 

@@ -10,7 +10,11 @@ import {
   type SetStateAction,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { toChatSSEEvent, type SSEEvent } from "@/lib/api/sse/events";
+import {
+  toChatSSEEvent,
+  type SSEEvent,
+  type SSEReferenceAddedEvent,
+} from "@/lib/api/sse/events";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import type {
@@ -59,6 +63,7 @@ export function useChatRunTail({
   onFirstDelta,
   onRunDone,
   onConversationAvailable,
+  onReferenceAdded,
   shouldApplyRun,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
@@ -68,6 +73,7 @@ export function useChatRunTail({
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
+  onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
   shouldApplyRun?: (target: RunVisibilityTarget) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -79,11 +85,11 @@ export function useChatRunTail({
     handleDelta,
     handleToolCall,
     handleToolResult,
-    handleSourceManifestDelta,
     handleCitationIndex,
+    handleReferenceAdded,
     handleDone,
     flushDeltas,
-  } = useChatMessageUpdates({ setMessages, shouldScrollRef });
+  } = useChatMessageUpdates({ setMessages, shouldScrollRef, onReferenceAdded });
 
   const mergeRunMessages = useCallback(
     (
@@ -330,13 +336,12 @@ export function useChatRunTail({
                 if (!currentRunIsVisible()) break;
                 handleToolResult(currentAssistantId, event.data);
                 break;
-              case "source_manifest_delta":
-                if (!currentRunIsVisible()) break;
-                handleSourceManifestDelta(currentAssistantId, event.data);
-                break;
               case "citation_index":
                 if (!currentRunIsVisible()) break;
                 handleCitationIndex(currentAssistantId, event.data);
+                break;
+              case "reference_added":
+                handleReferenceAdded(event.data);
                 break;
               case "done":
                 if (currentRunIsVisible()) {
@@ -379,8 +384,8 @@ export function useChatRunTail({
       handleMetaReceived,
       handleToolCall,
       handleToolResult,
-      handleSourceManifestDelta,
       handleCitationIndex,
+      handleReferenceAdded,
       flushDeltas,
       mergeRunMessages,
       onFirstDelta,

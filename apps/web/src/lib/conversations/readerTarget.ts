@@ -1,10 +1,6 @@
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
-import type {
-  ConversationPinnedSource,
-  MessageContextSnapshot,
-  MessageRetrieval,
-} from "./types";
+import type { MessageRetrieval } from "./types";
 
 export function hrefForReaderTarget(input: {
   media_id: string;
@@ -29,75 +25,6 @@ export function hrefForReaderTarget(input: {
     return `${base}#t-${locator.t_start_ms}`;
   }
   return base;
-}
-
-export function readerTargetFromContext(
-  context: MessageContextSnapshot,
-  href: string | null,
-): ReaderSourceTarget | null {
-  if (context.kind !== "reader_selection") return null;
-  const mediaId = context.source_media_id ?? context.media_id;
-  if (!mediaId || !context.source_version || !isRetrievalLocator(context.locator)) {
-    return null;
-  }
-  return {
-    source: "message_context",
-    media_id: mediaId,
-    locator: context.locator,
-    snippet: context.exact ?? context.preview ?? null,
-    source_version: context.source_version,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
-    status: "attached_context",
-    label: context.title ?? context.media_title,
-    href,
-    context_id: context.client_context_id ?? null,
-  };
-}
-
-export function readerTargetFromPinned(
-  pin: ConversationPinnedSource,
-): ReaderSourceTarget | null {
-  if (
-    pin.kind !== "reader_selection" ||
-    !pin.target_id ||
-    !pin.source_version ||
-    !isRetrievalLocator(pin.locator)
-  ) {
-    return null;
-  }
-  return {
-    source: "message_context",
-    media_id: pin.target_id,
-    locator: pin.locator,
-    snippet: pin.exact ?? null,
-    source_version: pin.source_version,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
-    status: "attached_context",
-    label: pin.title,
-    href: hrefForReaderTarget({
-      media_id: pin.target_id,
-      locator: pin.locator,
-    }),
-    context_id: null,
-  };
-}
-
-export function hrefFromPinned(pin: ConversationPinnedSource): string | null {
-  if (pin.kind === "media" && pin.target_id) return `/media/${pin.target_id}`;
-  if (pin.kind === "library" && pin.target_id) return `/libraries/${pin.target_id}`;
-  if (
-    pin.kind === "reader_selection" &&
-    pin.target_id &&
-    isRetrievalLocator(pin.locator)
-  ) {
-    return hrefForReaderTarget({
-      media_id: pin.target_id,
-      locator: pin.locator,
-    });
-  }
-  return null;
 }
 
 export function readerTargetFromRetrieval(

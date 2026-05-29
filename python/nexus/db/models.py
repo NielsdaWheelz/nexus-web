@@ -21,7 +21,6 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
-    PrimaryKeyConstraint,
     SmallInteger,
     Text,
     UniqueConstraint,
@@ -3609,7 +3608,6 @@ class ChatRunEventType(str, PyEnum):
     meta = "meta"
     tool_call = "tool_call"
     retrieval_result = "retrieval_result"
-    source_manifest_delta = "source_manifest_delta"
     claim = "claim"
     claim_evidence = "claim_evidence"
     delta = "delta"
@@ -3685,47 +3683,6 @@ class RetrievalEvidenceStatus(str, PyEnum):
     web_result = "web_result"
 
 
-class ConversationMemoryKind(str, PyEnum):
-    """Typed conversation memory item classes."""
-
-    goal = "goal"
-    constraint = "constraint"
-    decision = "decision"
-    correction = "correction"
-    open_question = "open_question"
-    task = "task"
-    assistant_commitment = "assistant_commitment"
-    user_preference = "user_preference"
-    source_claim = "source_claim"
-
-
-class ConversationMemoryStatus(str, PyEnum):
-    """Lifecycle states for memory items and snapshots."""
-
-    active = "active"
-    superseded = "superseded"
-    invalid = "invalid"
-
-
-class ConversationMemoryInvalidReason(str, PyEnum):
-    """Finite invalidation reasons for memory items and snapshots."""
-
-    prompt_version_changed = "prompt_version_changed"
-    source_deleted = "source_deleted"
-    source_permission_changed = "source_permission_changed"
-    source_stale = "source_stale"
-    validation_failed = "validation_failed"
-
-
-class ConversationMemoryEvidenceRole(str, PyEnum):
-    """Evidence role for a memory source reference."""
-
-    supports = "supports"
-    contradicts = "contradicts"
-    supersedes = "supersedes"
-    context = "context"
-
-
 class Conversation(Base):
     """Conversation model - a thread of messages owned by one user."""
 
@@ -3785,12 +3742,6 @@ class Conversation(Base):
     conversation_media: Mapped[list["ConversationMedia"]] = relationship(
         "ConversationMedia", back_populates="conversation", cascade="all, delete-orphan"
     )
-    memory_items: Mapped[list["ConversationMemoryItem"]] = relationship(
-        "ConversationMemoryItem",
-        back_populates="conversation",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
     state_snapshots: Mapped[list["ConversationStateSnapshot"]] = relationship(
         "ConversationStateSnapshot",
         back_populates="conversation",
@@ -3803,18 +3754,18 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    pinned_sources: Mapped[list["ConversationPinnedSource"]] = relationship(
-        "ConversationPinnedSource",
+    references: Mapped[list["ConversationReference"]] = relationship(
+        "ConversationReference",
         back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="ConversationPinnedSource.ordinal",
+        order_by="ConversationReference.created_at",
     )
 
 
-class ConversationPinnedSource(Base):
-    """Persistent source scope pinned to a conversation."""
+class ConversationReference(Base):
+    """Pointer from a conversation to a resource via opaque URI."""
 
-    __tablename__ = "conversation_pinned_sources"
+    __tablename__ = "conversation_references"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -3826,13 +3777,7 @@ class ConversationPinnedSource(Base):
         ForeignKey("conversations.id"),
         nullable=False,
     )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    locator_json: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exact: Mapped[str | None] = mapped_column(Text, nullable=True)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
+    resource_uri: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3842,25 +3787,17 @@ class ConversationPinnedSource(Base):
     __table_args__ = (
         UniqueConstraint(
             "conversation_id",
-            "ordinal",
-            name="uix_pinned_sources_conversation_ordinal",
+            "resource_uri",
+            name="uq_conversation_references_conversation_uri",
         ),
-        CheckConstraint(
-            "kind IN ('media', 'library', 'reader_selection')",
-            name="ck_pinned_sources_kind",
-        ),
-        CheckConstraint("ordinal >= 0", name="ck_pinned_sources_ordinal_nonneg"),
-        CheckConstraint(
-            "(kind IN ('media', 'library') AND target_id IS NOT NULL)"
-            " OR (kind = 'reader_selection' AND target_id IS NULL"
-            " AND locator_json IS NOT NULL AND source_version IS NOT NULL"
-            " AND exact IS NOT NULL)",
-            name="ck_pinned_sources_kind_fields",
+        Index(
+            "ix_conversation_references_resource_uri",
+            "resource_uri",
         ),
     )
 
     conversation: Mapped["Conversation"] = relationship(
-        "Conversation", back_populates="pinned_sources"
+        "Conversation", back_populates="references"
     )
 
 
@@ -3888,42 +3825,6 @@ class ConversationShare(Base):
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="shares")
     library: Mapped["Library"] = relationship("Library")
-
-
-class ChatSingleton(Base):
-    """Maps a (user, kind, target) tuple to its singleton conversation."""
-
-    __tablename__ = "chat_singletons"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=False,
-    )
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=False,
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        ForeignKeyConstraint(["user_id"], ["users.id"]),
-        ForeignKeyConstraint(["conversation_id"], ["conversations.id"]),
-        PrimaryKeyConstraint("user_id", "kind", "target_id", name="pk_chat_singletons"),
-        UniqueConstraint("conversation_id", name="uq_chat_singletons_conversation_id"),
-        CheckConstraint(
-            "kind IN ('media', 'library')",
-            name="ck_chat_singletons_kind",
-        ),
-    )
 
 
 class Model(Base):
@@ -4071,12 +3972,6 @@ class Message(Base):
         back_populates="message",
         uselist=False,
         cascade="all, delete-orphan",
-    )
-    contexts: Mapped[list["MessageContextItem"]] = relationship(
-        "MessageContextItem",
-        back_populates="message",
-        cascade="all, delete-orphan",
-        order_by="MessageContextItem.ordinal",
     )
 
 
@@ -4568,161 +4463,6 @@ class MessageRetrieval(Base):
     media: Mapped["Media | None"] = relationship("Media")
 
 
-class SourceManifest(Base):
-    """Durable source manifest for one assistant retrieval tool call."""
-
-    __tablename__ = "source_manifests"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
-        nullable=False,
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    chat_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id"),
-        nullable=False,
-    )
-    tool_call_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id"),
-        nullable=True,
-    )
-    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    query_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scope: Mapped[str] = mapped_column(Text, nullable=False)
-    filters: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    requested_types: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    result_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    selected_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    included_in_prompt_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default="0",
-    )
-    excluded_by_budget_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default="0",
-    )
-    excluded_by_scope_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default="0",
-    )
-    stale_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    unreadable_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    index_versions: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(tool_name) BETWEEN 1 AND 128",
-            name="ck_source_manifests_tool_name_length",
-        ),
-        CheckConstraint(
-            "tool_call_index >= 0",
-            name="ck_source_manifests_tool_call_index",
-        ),
-        CheckConstraint(
-            "query_hash IS NULL OR char_length(query_hash) BETWEEN 1 AND 128",
-            name="ck_source_manifests_query_hash_length",
-        ),
-        CheckConstraint(
-            "char_length(scope) BETWEEN 1 AND 256",
-            name="ck_source_manifests_scope_length",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(filters) = 'object'",
-            name="ck_source_manifests_filters_object",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(requested_types) = 'array'",
-            name="ck_source_manifests_requested_types_array",
-        ),
-        CheckConstraint(
-            "candidate_count >= 0 AND result_count >= 0 AND selected_count >= 0 "
-            "AND included_in_prompt_count >= 0 AND excluded_by_budget_count >= 0 "
-            "AND excluded_by_scope_count >= 0 AND stale_count >= 0 AND unreadable_count >= 0",
-            name="ck_source_manifests_counts_non_negative",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(index_versions) = 'array'",
-            name="ck_source_manifests_index_versions_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(metadata) = 'object'",
-            name="ck_source_manifests_metadata_object",
-        ),
-        CheckConstraint(
-            "latency_ms IS NULL OR latency_ms >= 0",
-            name="ck_source_manifests_latency_non_negative",
-        ),
-        CheckConstraint(
-            "char_length(status) BETWEEN 1 AND 64",
-            name="ck_source_manifests_status_length",
-        ),
-        Index(
-            "idx_source_manifests_run_tool_call_created",
-            "chat_run_id",
-            "tool_call_index",
-            "created_at",
-            "id",
-        ),
-        UniqueConstraint(
-            "chat_run_id",
-            "tool_call_index",
-            name="uix_source_manifests_run_tool_call_index",
-        ),
-    )
-
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    assistant_message: Mapped["Message"] = relationship("Message")
-    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
-    tool_call: Mapped["MessageToolCall | None"] = relationship("MessageToolCall")
-
-
 class MessageRetrievalCandidateLedger(Base):
     """Durable ledger row for one retrieval candidate and its selection outcome."""
 
@@ -4873,230 +4613,6 @@ class MessageRerankLedger(Base):
     )
 
     tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
-
-
-class ConversationMemoryItem(Base):
-    """Durable typed conversation memory item."""
-
-    __tablename__ = "conversation_memory_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    source_required: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)
-    valid_from_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    valid_through_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    supersedes_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversation_memory_items.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    created_by_message_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
-    memory_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            """
-            kind IN (
-                'goal',
-                'constraint',
-                'decision',
-                'correction',
-                'open_question',
-                'task',
-                'assistant_commitment',
-                'user_preference',
-                'source_claim'
-            )
-            """,
-            name="ck_conversation_memory_items_kind",
-        ),
-        CheckConstraint(
-            "status IN ('active', 'superseded', 'invalid')",
-            name="ck_conversation_memory_items_status",
-        ),
-        CheckConstraint(
-            "char_length(btrim(body)) BETWEEN 1 AND 4000",
-            name="ck_conversation_memory_items_body_length",
-        ),
-        CheckConstraint(
-            "confidence >= 0 AND confidence <= 1",
-            name="ck_conversation_memory_items_confidence",
-        ),
-        CheckConstraint(
-            """
-            (valid_from_seq IS NULL OR valid_from_seq >= 1)
-            AND (valid_through_seq IS NULL OR valid_through_seq >= 1)
-            AND (
-                valid_from_seq IS NULL
-                OR valid_through_seq IS NULL
-                OR valid_from_seq <= valid_through_seq
-            )
-            """,
-            name="ck_conversation_memory_items_valid_seq",
-        ),
-        CheckConstraint(
-            "supersedes_id IS NULL OR supersedes_id != id",
-            name="ck_conversation_memory_items_not_self_supersedes",
-        ),
-        CheckConstraint(
-            "kind != 'source_claim' OR source_required",
-            name="ck_conversation_memory_items_source_claim_requires_source",
-        ),
-        CheckConstraint(
-            "char_length(prompt_version) BETWEEN 1 AND 128",
-            name="ck_conversation_memory_items_prompt_version_length",
-        ),
-        CheckConstraint(
-            "memory_version >= 1",
-            name="ck_conversation_memory_items_memory_version",
-        ),
-        CheckConstraint(
-            """
-            (
-                status = 'invalid'
-                AND invalid_reason IN (
-                    'prompt_version_changed',
-                    'source_deleted',
-                    'source_permission_changed',
-                    'source_stale',
-                    'validation_failed'
-                )
-            )
-            OR (
-                status != 'invalid'
-                AND invalid_reason IS NULL
-            )
-            """,
-            name="ck_conversation_memory_items_invalid_reason",
-        ),
-        Index(
-            "idx_conversation_memory_items_active",
-            "conversation_id",
-            "status",
-            "prompt_version",
-            "valid_from_seq",
-        ),
-    )
-
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation",
-        back_populates="memory_items",
-    )
-    supersedes: Mapped["ConversationMemoryItem | None"] = relationship(
-        "ConversationMemoryItem",
-        remote_side=[id],
-    )
-    created_by_message: Mapped["Message | None"] = relationship("Message")
-    sources: Mapped[list["ConversationMemoryItemSource"]] = relationship(
-        "ConversationMemoryItemSource",
-        back_populates="memory_item",
-        order_by="ConversationMemoryItemSource.ordinal",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-
-class ConversationMemoryItemSource(Base):
-    """Normalized source reference supporting a conversation memory item."""
-
-    __tablename__ = "conversation_memory_item_sources"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    memory_item_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversation_memory_items.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    evidence_role: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "ordinal >= 0",
-            name="ck_conversation_memory_item_sources_ordinal",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_conversation_memory_item_sources_source_ref_object",
-        ),
-        CheckConstraint(
-            """
-            source_ref ? 'type'
-            AND source_ref ->> 'type' IN (
-                'message',
-                'message_context',
-                'message_retrieval',
-                'app_context_ref',
-                'web_result'
-            )
-            """,
-            name="ck_conversation_memory_item_sources_source_ref_type",
-        ),
-        CheckConstraint(
-            """
-            source_ref ? 'id'
-            AND jsonb_typeof(source_ref -> 'id') = 'string'
-            AND char_length(source_ref ->> 'id') BETWEEN 1 AND 256
-            """,
-            name="ck_conversation_memory_item_sources_source_ref_id",
-        ),
-        CheckConstraint(
-            "evidence_role IN ('supports', 'contradicts', 'supersedes', 'context')",
-            name="ck_conversation_memory_item_sources_evidence_role",
-        ),
-        UniqueConstraint(
-            "memory_item_id",
-            "ordinal",
-            name="uix_conversation_memory_item_sources_item_ordinal",
-        ),
-    )
-
-    memory_item: Mapped["ConversationMemoryItem"] = relationship(
-        "ConversationMemoryItem",
-        back_populates="sources",
-    )
 
 
 class ConversationStateSnapshot(Base):
@@ -5507,7 +5023,7 @@ class ChatRunEvent(Base):
         CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
         CheckConstraint(
             "event_type IN ('meta', 'tool_call', 'retrieval_result', "
-            "'source_manifest_delta', 'claim', "
+            "'citation_index', 'reference_added', 'claim', "
             "'claim_evidence', 'delta', 'done')",
             name="ck_chat_run_events_event_type",
         ),
@@ -5902,116 +5418,6 @@ class AuthHandoffCode(Base):
     )
 
     user: Mapped["User"] = relationship("User")
-
-
-class MessageContextItem(Base):
-    """Universal context object attached to one message."""
-
-    __tablename__ = "message_context_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    context_kind: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="object_ref",
-    )
-    object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    object_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    source_media_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    locator_json: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    context_snapshot_json: Mapped[dict[str, object]] = mapped_column(
-        "context_snapshot",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "context_kind IN ('object_ref', 'reader_selection')",
-            name="ck_message_context_items_context_kind",
-        ),
-        CheckConstraint(
-            "object_type IS NULL OR object_type IN ('page', 'note_block', 'media', "
-            "'highlight', 'conversation', 'message', 'podcast', 'content_chunk', "
-            "'fragment', 'contributor', 'evidence_span')",
-            name="ck_message_context_items_object_type",
-        ),
-        CheckConstraint(
-            "((context_kind = 'object_ref' AND object_type IS NOT NULL "
-            "AND object_id IS NOT NULL AND locator_json IS NULL) OR "
-            "(context_kind = 'reader_selection' AND object_type IS NULL "
-            "AND object_id IS NULL AND source_media_id IS NOT NULL "
-            "AND locator_json IS NOT NULL))",
-            name="ck_message_context_items_kind_shape",
-        ),
-        CheckConstraint(
-            "locator_json IS NULL OR jsonb_typeof(locator_json) = 'object'",
-            name="ck_message_context_items_locator_json",
-        ),
-        CheckConstraint(
-            "ordinal >= 0",
-            name="ck_message_context_items_ordinal_non_negative",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(context_snapshot) = 'object'",
-            name="ck_message_context_items_snapshot",
-        ),
-        CheckConstraint(
-            "context_kind != 'object_ref' OR ("
-            "COALESCE(context_snapshot->>'kind', '') = 'object_ref' "
-            "AND context_snapshot->>'type' = object_type "
-            "AND context_snapshot->>'id' = object_id::text "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'title', ''))) > 0)",
-            name="ck_message_context_items_object_ref_snapshot",
-        ),
-        CheckConstraint(
-            "context_kind != 'reader_selection' OR ("
-            "COALESCE(context_snapshot->>'kind', '') = 'reader_selection' "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'client_context_id', ''))) > 0 "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'media_id', ''))) > 0 "
-            "AND context_snapshot->>'media_id' = source_media_id::text "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'source_media_id', ''))) > 0 "
-            "AND context_snapshot->>'source_media_id' = source_media_id::text "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'media_kind', ''))) > 0 "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'media_title', ''))) > 0 "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'exact', ''))) > 0 "
-            "AND char_length(btrim(COALESCE(context_snapshot->>'source_version', ''))) > 0 "
-            "AND context_snapshot ? 'locator' "
-            "AND jsonb_typeof(context_snapshot->'locator') = 'object')",
-            name="ck_message_context_items_reader_selection_snapshot",
-        ),
-        UniqueConstraint(
-            "message_id",
-            "ordinal",
-            name="uix_message_context_items_message_ordinal",
-        ),
-    )
-
-    # Relationships
-    message: Mapped["Message"] = relationship("Message", back_populates="contexts")
 
 
 class ConversationMedia(Base):

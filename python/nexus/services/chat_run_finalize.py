@@ -17,9 +17,12 @@ from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, append_ru
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_prompt_tracking import prompt_assembly_metadata
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
-from nexus.services.context_rendering import PROMPT_VERSION
 
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
+# Canonical prompt-text-format version. Recorded on every finalized assistant
+# message LLM row and used by the cache-key/manifest layer in
+# `nexus.services.context_assembler`.
+PROMPT_VERSION = "v2"
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 
 ERROR_CODE_TO_MESSAGE = {

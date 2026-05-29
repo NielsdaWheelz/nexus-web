@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -10,13 +9,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Conversation, Message
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import (
-    BranchAnchorRequest,
-    ContextItem,
-)
+from nexus.schemas.conversation import BranchAnchorRequest
 from nexus.services.chat_run_message_blocks import message_document
 from nexus.services.chat_run_validation import load_valid_parent_for_send
-from nexus.services.contexts import insert_contexts_batch
 from nexus.services.conversation_branches import (
     branch_anchor_for_message,
     ensure_branch_metadata,
@@ -44,7 +39,6 @@ def prepare_messages(
     branch_anchor: BranchAnchorRequest,
     content: str,
     model_id: UUID,
-    contexts: Sequence[ContextItem],
 ) -> PreparedMessages:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -80,8 +74,6 @@ def prepare_messages(
     db.add(user_message)
     db.flush()
 
-    insert_contexts_batch(db=db, message_id=user_message.id, contexts=contexts)
-    db.flush()
     if parent_message is not None:
         ensure_branch_metadata(
             db,

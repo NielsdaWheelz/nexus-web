@@ -1,19 +1,11 @@
 "use client";
 
 import { RefreshCcw } from "lucide-react";
-import ReaderCitation, {
-  type ReaderCitationColor,
-} from "@/components/ui/ReaderCitation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import type {
-  ConversationMessage,
-  MessageContextSnapshot,
-} from "@/lib/conversations/types";
+import type { ConversationMessage } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
-import { readerTargetFromContext } from "@/lib/conversations/readerTarget";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
-import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
 export default function UserMessage({
@@ -23,7 +15,6 @@ export default function UserMessage({
   retryAssistantMessageId,
   retrying,
   onRetryAssistantResponse,
-  onActivateTarget,
 }: {
   message: ConversationMessage;
   errorLabel: string;
@@ -31,9 +22,7 @@ export default function UserMessage({
   retryAssistantMessageId?: string;
   retrying: boolean;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
-  onActivateTarget: (target: ReaderSourceTarget) => void;
 }) {
-  const contexts = message.contexts ?? [];
   const text = conversationMessageText(message);
   const presentation = userPromptPresentation(text);
   const content = text || (message.status === "pending" ? "..." : "");
@@ -69,25 +58,6 @@ export default function UserMessage({
           ) : null}
           <span className={styles.userAttribution}>You</span>
         </div>
-        {contexts.length > 0 ? (
-          <span className={styles.userCitationRow}>
-            {contexts.map((context, index) => {
-              const href = contextHref(context);
-              return (
-                <ReaderCitation
-                  key={contextKey(context, index)}
-                  index={index + 1}
-                  color={citationColorFromContext(context)}
-                  preview={citationPreviewFromContext(context)}
-                  target={readerTargetFromContext(context, href)}
-                  href={href}
-                  onActivate={onActivateTarget}
-                  ariaLabel={`Open citation ${index + 1}`}
-                />
-              );
-            })}
-          </span>
-        ) : null}
         <span className={styles.userPromptBody}>{content}</span>
       </div>
       {message.status === "error" && errorLabel ? (
@@ -109,94 +79,4 @@ function userPromptPresentation(content: string): "compact" | "expanded" {
   if (content.includes("```") || content.includes("~~~")) return "expanded";
   if (/\S{81,}/.test(content)) return "expanded";
   return "compact";
-}
-
-function contextKey(context: MessageContextSnapshot, fallback: number): string {
-  if (context.kind === "reader_selection") {
-    return `reader-selection-${context.client_context_id ?? fallback}`;
-  }
-  return `${context.type ?? "ref"}-${context.id ?? fallback}`;
-}
-
-function citationColorFromContext(
-  context: MessageContextSnapshot,
-): ReaderCitationColor {
-  switch (context.color) {
-    case "yellow":
-    case "green":
-    case "blue":
-    case "pink":
-    case "purple":
-      return context.color;
-    case undefined:
-    case null:
-      return "neutral";
-  }
-  return "neutral";
-}
-
-function citationPreviewFromContext(context: MessageContextSnapshot) {
-  const title = context.title ?? context.media_title;
-  const excerpt = context.exact ?? context.preview;
-  const meta: string[] = [];
-  if (context.media_title && context.media_title !== title) {
-    meta.push(context.media_title);
-  }
-  if (context.route) meta.push(context.route);
-  return {
-    ...(title ? { title } : {}),
-    ...(excerpt ? { excerpt } : {}),
-    meta,
-  };
-}
-
-function contextHref(context: MessageContextSnapshot): string | null {
-  if (context.kind === "reader_selection") {
-    return context.route ?? null;
-  }
-  if (context.route) {
-    return context.route;
-  }
-  if (!context.id) {
-    return null;
-  }
-  const type = context.type;
-  switch (type) {
-    case "highlight":
-      return context.media_id
-        ? `/media/${context.media_id}#highlight-${context.id}`
-        : null;
-    case "content_chunk": {
-      const mediaId = context.media_id ?? context.source_media_id;
-      if (!mediaId) return null;
-      const evidenceSpanId = context.evidence_span_ids?.[0];
-      return evidenceSpanId
-        ? `/media/${mediaId}#evidence-${evidenceSpanId}`
-        : `/media/${mediaId}`;
-    }
-    case "media":
-      return `/media/${context.id}`;
-    case "podcast":
-      return `/podcasts/${context.id}`;
-    case "fragment":
-      return context.media_id || context.source_media_id
-        ? `/media/${context.media_id ?? context.source_media_id}#fragment-${context.id}`
-        : null;
-    case "evidence_span":
-      return context.media_id || context.source_media_id
-        ? `/media/${context.media_id ?? context.source_media_id}#evidence-${context.id}`
-        : null;
-    case "conversation":
-      return `/conversations/${context.id}`;
-    case "message":
-      return context.locator?.type === "message_offsets"
-        ? `/conversations/${context.locator.conversation_id}`
-        : null;
-    case "page":
-      return `/pages/${context.id}`;
-    case "note_block":
-      return `/notes/${context.id}`;
-    default:
-      return null;
-  }
 }

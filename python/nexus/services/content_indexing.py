@@ -1331,20 +1331,6 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM message_context_items
-            WHERE object_type = 'content_chunk'
-              AND object_id IN (
-                    SELECT id
-                    FROM content_chunks
-                    WHERE media_id = :media_id
-              )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
             DELETE FROM object_links
             WHERE (a_type = 'content_chunk' AND a_id IN (
                     SELECT id

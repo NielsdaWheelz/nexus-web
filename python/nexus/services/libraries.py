@@ -8,12 +8,11 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.db.models import ChatSingleton
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -239,12 +238,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         db.execute(
             text("DELETE FROM library_entries WHERE library_id = :library_id"),
             {"library_id": library_id},
-        )
-        db.execute(
-            delete(ChatSingleton).where(
-                ChatSingleton.kind == "library",
-                ChatSingleton.target_id == library_id,
-            )
         )
         db.execute(
             text("DELETE FROM libraries WHERE id = :library_id"),

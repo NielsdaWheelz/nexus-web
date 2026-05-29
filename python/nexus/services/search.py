@@ -2821,12 +2821,10 @@ def _search_highlights(
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
         scope_filter = """
-            AND h.id IN (
-                SELECT mci.object_id
-                FROM message_context_items mci
-                JOIN messages msg ON msg.id = mci.message_id
-                WHERE msg.conversation_id = :scope_id
-                  AND mci.object_type = 'highlight'
+            AND ('highlight:' || h.id::text) IN (
+                SELECT cr.resource_uri
+                FROM conversation_references cr
+                WHERE cr.conversation_id = :scope_id
             )
         """
         params["scope_id"] = scope_id

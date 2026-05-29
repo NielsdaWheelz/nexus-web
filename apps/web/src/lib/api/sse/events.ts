@@ -12,7 +12,6 @@
 import { isRecord } from "@/lib/validation";
 import {
   hasOnlyKeys,
-  isOptionalRecord,
   isOptionalString,
 } from "./guards";
 import {
@@ -93,32 +92,6 @@ export interface SSERetrievalResultEvent {
   };
 }
 
-export interface SSESourceManifestDeltaEvent {
-  type: "source_manifest_delta";
-  data: {
-    assistant_message_id: string;
-    tool_call_id?: string | null;
-    tool_name: "app_search" | "web_search";
-    tool_call_index: number;
-    query_hash?: string | null;
-    scope: string;
-    filters: Record<string, unknown>;
-    requested_types: string[];
-    candidate_count: number;
-    result_count: number;
-    selected_count: number;
-    included_in_prompt_count: number;
-    excluded_by_budget_count: number;
-    excluded_by_scope_count: number;
-    stale_count: number;
-    unreadable_count: number;
-    index_versions: string[];
-    metadata?: Record<string, unknown>;
-    latency_ms?: number | null;
-    status: ChatToolStatus;
-  };
-}
-
 export interface SSECitationIndexEvent {
   type: "citation_index";
   data: {
@@ -132,14 +105,24 @@ export interface SSECitationIndexEvent {
   };
 }
 
+export interface SSEReferenceAddedEvent {
+  type: "reference_added";
+  data: {
+    reference_id: string;
+    conversation_id: string;
+    resource_uri: string;
+    created_at: string;
+  };
+}
+
 export type SSEEvent =
   | SSEMetaEvent
   | SSEDeltaEvent
   | SSEDoneEvent
   | SSEToolCallEvent
   | SSERetrievalResultEvent
-  | SSESourceManifestDeltaEvent
-  | SSECitationIndexEvent;
+  | SSECitationIndexEvent
+  | SSEReferenceAddedEvent;
 
 function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   if (
@@ -270,43 +253,6 @@ function parseRetrievalResultData(
   return data as SSERetrievalResultEvent["data"];
 }
 
-function parseSourceManifestDeltaData(
-  data: unknown,
-): SSESourceManifestDeltaEvent["data"] {
-  if (
-    !isRecord(data) ||
-    typeof data.assistant_message_id !== "string" ||
-    !isOptionalString(data.tool_call_id) ||
-    (data.tool_name !== "app_search" && data.tool_name !== "web_search") ||
-    !Number.isInteger(data.tool_call_index) ||
-    !isOptionalString(data.query_hash) ||
-    typeof data.scope !== "string" ||
-    !isRecord(data.filters) ||
-    !Array.isArray(data.requested_types) ||
-    !data.requested_types.every((item) => typeof item === "string") ||
-    !Number.isInteger(data.candidate_count) ||
-    !Number.isInteger(data.result_count) ||
-    !Number.isInteger(data.selected_count) ||
-    !Number.isInteger(data.included_in_prompt_count) ||
-    !Number.isInteger(data.excluded_by_budget_count) ||
-    !Number.isInteger(data.excluded_by_scope_count) ||
-    !Number.isInteger(data.stale_count) ||
-    !Number.isInteger(data.unreadable_count) ||
-    !Array.isArray(data.index_versions) ||
-    !data.index_versions.every((item) => typeof item === "string") ||
-    !isOptionalRecord(data.metadata) ||
-    (data.latency_ms !== undefined &&
-      data.latency_ms !== null &&
-      !Number.isInteger(data.latency_ms)) ||
-    !isChatToolStatus(data.status)
-  ) {
-    throw new Error("Invalid SSE payload for source_manifest_delta");
-  }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the source_manifest_delta payload.
-  return data as SSESourceManifestDeltaEvent["data"];
-}
-
 function isChatToolStatus(value: unknown): value is ChatToolStatus {
   return (
     value === "pending" ||
@@ -337,6 +283,23 @@ function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   return data as SSECitationIndexEvent["data"];
 }
 
+function parseReferenceAddedData(
+  data: unknown,
+): SSEReferenceAddedEvent["data"] {
+  if (
+    !isRecord(data) ||
+    typeof data.reference_id !== "string" ||
+    typeof data.conversation_id !== "string" ||
+    typeof data.resource_uri !== "string" ||
+    typeof data.created_at !== "string"
+  ) {
+    throw new Error("Invalid SSE payload for reference_added");
+  }
+  // justify-type-assertion: the guard above exhaustively validated every
+  // field of the reference_added payload.
+  return data as SSEReferenceAddedEvent["data"];
+}
+
 export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
   switch (eventType) {
     case "meta":
@@ -349,13 +312,10 @@ export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
       return { type: "tool_call", data: parseToolCallData(data) };
     case "retrieval_result":
       return { type: "retrieval_result", data: parseRetrievalResultData(data) };
-    case "source_manifest_delta":
-      return {
-        type: "source_manifest_delta",
-        data: parseSourceManifestDeltaData(data),
-      };
     case "citation_index":
       return { type: "citation_index", data: parseCitationIndexData(data) };
+    case "reference_added":
+      return { type: "reference_added", data: parseReferenceAddedData(data) };
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }

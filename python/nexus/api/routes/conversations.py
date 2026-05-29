@@ -15,7 +15,9 @@ Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Body, Depends, Header, Query, Response
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -23,7 +25,6 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
-    AddPinnedSourceRequest,
     MessageRerankLedgerListResponse,
     MessageRetrievalCandidateLedgerListResponse,
     RenameBranchRequest,
@@ -32,8 +33,8 @@ from nexus.schemas.conversation import (
 )
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import conversation_branches as conversation_branches_service
+from nexus.services import conversation_references as conversation_references_service
 from nexus.services import conversations as conversations_service
-from nexus.services import pinned_sources as pinned_sources_service
 from nexus.services import shares as shares_service
 
 router = APIRouter(tags=["conversations"])
@@ -51,21 +52,37 @@ def list_conversations(
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results (1-100)"),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     scope: str | None = Query(default=None, description="Scope: mine|all|shared"),
+    has_reference: str | None = Query(
+        default=None,
+        description="Filter to conversations containing this URI in their references",
+    ),
 ) -> dict:
-    """List conversations with scope-based visibility.
+    """List conversations.
 
-    Scopes:
-    - mine (default): only owned conversations.
-    - all: all visible conversations (owned + shared + public).
-    - shared: visible but not owned.
+    When ``has_reference`` is supplied, returns conversations whose
+    ``conversation_references`` contains the given URI (single-user: viewer-owned
+    only). Otherwise lists by visibility scope (mine|all|shared).
 
     Returns conversations ordered by updated_at DESC, id DESC.
     Supports cursor-based pagination.
 
     Errors:
-        E_INVALID_REQUEST (400): Invalid scope value.
+        E_INVALID_REQUEST (400): Invalid scope value or malformed has_reference URI.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
+    if has_reference is not None:
+        conversations, page = conversation_references_service.list_conversations_with_reference(
+            db=db,
+            resource_uri=has_reference,
+            viewer_id=viewer.user_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        return {
+            "data": [c.model_dump(mode="json") for c in conversations],
+            "page": page.model_dump(mode="json"),
+        }
+
     # Explicit app-level scope validation (no framework enum/422 leakage)
     effective_scope = scope if scope is not None else "mine"
     if effective_scope not in ("mine", "all", "shared"):
@@ -89,12 +106,25 @@ def list_conversations(
     }
 
 
+class CreateConversationRequest(BaseModel):
+    """Request body for POST /api/conversations."""
+
+    initial_references: list[str] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.post("/conversations", status_code=201)
 def create_conversation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    body: Annotated[CreateConversationRequest | None, Body()] = None,
 ) -> dict:
     """Create an empty private conversation.
+
+    If ``initial_references`` is supplied, each URI is added as a conversation
+    reference in order (validation + insert via the references service). On
+    failure the surrounding request transaction rolls back.
 
     Returns 201 Created with the conversation object.
     """
@@ -102,6 +132,15 @@ def create_conversation(
         db=db,
         viewer_id=viewer.user_id,
     )
+    initial_references = body.initial_references if body is not None else None
+    if initial_references:
+        for uri in initial_references:
+            conversation_references_service.add_reference(
+                db=db,
+                conversation_id=result.id,
+                resource_uri=uri,
+                viewer_id=viewer.user_id,
+            )
     db.commit()
     return success_response(result.model_dump(mode="json"))
 
@@ -213,12 +252,18 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Cascades to messages, message_context_items, conversation_media, conversation_shares, and chat runs.
+    Cascades to conversation_references, messages, conversation_media,
+    conversation_shares, and chat runs.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
-        E_SINGLETON_UNDELETABLE (409): Conversation is a singleton (doc-chat or library-chat).
     """
+    # Per docs/rules/database.md the DB has no ON DELETE CASCADE; clean
+    # conversation_references rows explicitly inside the request transaction.
+    db.execute(
+        text("DELETE FROM conversation_references WHERE conversation_id = :cid"),
+        {"cid": conversation_id},
+    )
     conversations_service.delete_conversation(
         db=db,
         viewer_id=viewer.user_id,
@@ -278,53 +323,6 @@ def set_conversation_shares(
         library_ids=body.library_ids,
     )
     return success_response(result.model_dump(mode="json"))
-
-
-@router.get("/conversations/{conversation_id}/pinned-sources")
-def list_conversation_pinned_sources(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    rows = pinned_sources_service.list_pinned_sources(
-        db=db, viewer_id=viewer.user_id, conversation_id=conversation_id
-    )
-    return {"data": [row.model_dump(mode="json") for row in rows]}
-
-
-@router.post("/conversations/{conversation_id}/pinned-sources", status_code=201)
-def add_conversation_pinned_source(
-    conversation_id: UUID,
-    body: AddPinnedSourceRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    row = pinned_sources_service.add_pinned_source(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        request=body,
-    )
-    return success_response(row.model_dump(mode="json"))
-
-
-@router.delete(
-    "/conversations/{conversation_id}/pinned-sources/{ordinal}",
-    status_code=204,
-)
-def remove_conversation_pinned_source(
-    conversation_id: UUID,
-    ordinal: int,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    pinned_sources_service.remove_pinned_source(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        ordinal=ordinal,
-    )
-    return Response(status_code=204)
 
 
 # =============================================================================
@@ -428,7 +426,6 @@ def delete_message(
     """Delete a single message.
 
     If this is the last message in the conversation, deletes the conversation too.
-    Cascades to message_context_items.
 
     Errors:
         E_MESSAGE_NOT_FOUND (404): Message doesn't exist or viewer is not conversation owner.

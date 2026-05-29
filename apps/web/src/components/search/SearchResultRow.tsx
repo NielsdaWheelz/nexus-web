@@ -3,9 +3,6 @@
 import ContextRow from "@/components/ui/ContextRow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
-import { isObjectType } from "@/lib/objectRefs";
-import { setPendingContextParam } from "@/lib/conversations/attachedContext";
-import { isUuid } from "@/lib/validation";
 import styles from "./SearchResultRow.module.css";
 
 interface SearchResultRowProps {
@@ -32,41 +29,7 @@ function renderSnippetContent(row: SearchResultRowViewModel) {
   );
 }
 
-function buildAskHref(row: SearchResultRowViewModel): string | null {
-  if (!row.contextRef) {
-    return null;
-  }
-  if (!isObjectType(row.contextRef.type) || !isUuid(row.contextRef.id)) {
-    return null;
-  }
-  if (
-    row.contextRef.evidenceSpanIds.length > 0 &&
-    !row.contextRef.evidenceSpanIds.every(isUuid)
-  ) {
-    return null;
-  }
-  const params = new URLSearchParams();
-  if (
-    row.type === "content_chunk" &&
-    row.mediaId &&
-    isUuid(row.mediaId) &&
-    row.contextRef.evidenceSpanIds.length > 0
-  ) {
-    params.set("scope", `media:${row.mediaId}`);
-  }
-  const next = setPendingContextParam(params, {
-    type: row.contextRef.type,
-    id: row.contextRef.id,
-    ...(row.contextRef.evidenceSpanIds.length > 0
-      ? { evidence_span_ids: row.contextRef.evidenceSpanIds }
-      : {}),
-  });
-  return `/conversations/new?${next.toString()}`;
-}
-
 export default function SearchResultRow({ row }: SearchResultRowProps) {
-  const askHref = buildAskHref(row);
-
   return (
     <ContextRow
       className={styles.row}
@@ -80,21 +43,12 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
       metaClassName={styles.meta}
       trailing={<span className={styles.score}>{row.scoreLabel}</span>}
       actions={
-        row.contributorCredits.length > 0 || askHref ? (
-          <>
-            {askHref ? (
-              <a className={styles.askLink} href={askHref}>
-                {row.type === "content_chunk" ? "Ask with evidence" : "Ask with context"}
-              </a>
-            ) : null}
-            {row.contributorCredits.length > 0 ? (
-              <ContributorCreditList
-                credits={row.contributorCredits}
-                className={styles.contributors}
-                showRole
-              />
-            ) : null}
-          </>
+        row.contributorCredits.length > 0 ? (
+          <ContributorCreditList
+            credits={row.contributorCredits}
+            className={styles.contributors}
+            showRole
+          />
         ) : undefined
       }
       actionsClassName={styles.actions}

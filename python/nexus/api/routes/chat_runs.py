@@ -22,13 +22,10 @@ def create_chat_run(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    # Pydantic enforces (conversation_id XOR singleton) at parse time (422);
-    # the service re-enforces the same invariant as defense-in-depth.
     result = chat_runs_service.create_chat_run(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=body.conversation_id,
-        singleton=body.singleton,
         reader_context=body.reader_context,
         parent_message_id=body.parent_message_id,
         branch_anchor=body.branch_anchor,
@@ -36,7 +33,6 @@ def create_chat_run(
         model_id=body.model_id,
         reasoning=body.reasoning,
         key_mode=body.key_mode,
-        contexts=body.contexts,
         idempotency_key=idempotency_key,
     )
     return success_response(result.model_dump(mode="json"))

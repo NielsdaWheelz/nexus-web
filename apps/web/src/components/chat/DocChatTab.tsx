@@ -1,117 +1,62 @@
 "use client";
 
-import { FileText } from "lucide-react";
 import Button from "@/components/ui/Button";
-import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
-import SingletonChatRow from "@/components/chat/SingletonChatRow";
-import type { ContextItem } from "@/lib/api/sse/requests";
-import { useConversationSingleton } from "@/lib/conversations/useConversationSingleton";
-import { useDocReferencingChats } from "@/lib/conversations/useDocReferencingChats";
+import { apiFetch } from "@/lib/api/client";
+import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
 import styles from "./DocChatTab.module.css";
 
 interface DocChatTabProps {
   mediaId: string;
-  pendingContexts?: ContextItem[];
-  onRemovePendingContext?: (index: number) => void;
-  onOpenChat: (
-    target:
-      | {
-          kind: "singleton";
-          conversationId: string | null;
-          attachedContexts?: ContextItem[];
-        }
-      | {
-          kind: "reference";
-          conversationId: string;
-          attachedContexts?: ContextItem[];
-        }
-      | { kind: "new"; attachedContexts?: ContextItem[] },
-  ) => void;
+  onOpenChat: (conversationId: string) => void;
 }
 
-export default function DocChatTab({
-  mediaId,
-  pendingContexts = [],
-  onRemovePendingContext,
-  onOpenChat,
-}: DocChatTabProps) {
-  const { conversationId, messageCount } = useConversationSingleton("media", mediaId);
-  const { conversations } = useDocReferencingChats(mediaId);
-  const attachedContexts =
-    pendingContexts.length > 0 ? pendingContexts : undefined;
+export default function DocChatTab({ mediaId, onOpenChat }: DocChatTabProps) {
+  const resourceUri = `media:${mediaId}`;
+  const { conversations, isLoading } = useChatsByReference(resourceUri);
+
+  const handleStartNewChat = async () => {
+    const created = await apiFetch<{ data: { id: string } }>(
+      "/api/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({ initial_references: [resourceUri] }),
+      },
+    );
+    onOpenChat(created.data.id);
+  };
 
   return (
     <div className={styles.tab}>
       <div className={styles.scrollArea}>
-        {attachedContexts ? (
-          <div className={styles.pendingContextStrip}>
-            <span className={styles.pendingContextLabel}>Pending context</span>
-            <ComposerContextRail
-              attachedContexts={attachedContexts}
-              onRemoveContext={(index) => onRemovePendingContext?.(index)}
-            />
+        {isLoading ? null : conversations.length === 0 ? (
+          <div className={styles.emptyState}>
+            <p className={styles.emptyText}>
+              No chats reference this document yet.
+            </p>
+            <Button variant="primary" size="sm" onClick={handleStartNewChat}>
+              Start new chat about this document
+            </Button>
           </div>
-        ) : null}
-
-        <SingletonChatRow
-          icon={FileText}
-          title="Chat about this document"
-          subtitle={
-            messageCount > 0
-              ? `${messageCount} ${messageCount === 1 ? "message" : "messages"}`
-              : "No messages yet"
-          }
-          onTap={() =>
-            onOpenChat(
-              attachedContexts
-                ? { kind: "singleton", conversationId, attachedContexts }
-                : { kind: "singleton", conversationId },
-            )
-          }
-        />
-
-        {conversations.length > 0 ? (
-          <section className={styles.section}>
-            <h3 className={styles.sectionHeader}>Other chats</h3>
+        ) : (
+          <>
+            <div className={styles.inlineNewRow}>
+              <Button variant="secondary" size="sm" onClick={handleStartNewChat}>
+                + New chat
+              </Button>
+            </div>
             <ul className={styles.list}>
               {conversations.map((item) => (
                 <li key={item.id}>
                   <ReferencingChatRow
                     item={item}
-                    onTap={() =>
-                      onOpenChat(
-                        attachedContexts
-                          ? {
-                              kind: "reference",
-                              conversationId: item.id,
-                              attachedContexts,
-                            }
-                          : { kind: "reference", conversationId: item.id },
-                      )
-                    }
+                    onTap={() => onOpenChat(item.id)}
                   />
                 </li>
               ))}
             </ul>
-          </section>
-        ) : null}
-      </div>
-
-      <div className={styles.footer}>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() =>
-            onOpenChat(
-              attachedContexts
-                ? { kind: "new", attachedContexts }
-                : { kind: "new" },
-            )
-          }
-        >
-          Start new chat
-        </Button>
+          </>
+        )}
       </div>
     </div>
   );

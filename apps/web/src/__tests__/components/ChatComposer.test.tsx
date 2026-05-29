@@ -2,10 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatComposer from "@/components/ChatComposer";
-import type {
-  ChatRunCreateRequest,
-  ContextItem,
-} from "@/lib/api/sse/requests";
+import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { BranchDraft } from "@/lib/conversations/types";
 
 const MODELS = [
@@ -508,43 +505,6 @@ describe("ChatComposer", () => {
     );
 
     expect(message).toHaveValue("Draft during resolution");
-  });
-
-  it("removes attached context chips from the composer surface", async () => {
-    const user = userEvent.setup();
-    installChatComposerFetchMock();
-    const onRemoveContext = vi.fn();
-    const attachedContexts: ContextItem[] = [
-      {
-        kind: "object_ref",
-        type: "highlight",
-        id: "highlight-1",
-        color: "yellow",
-        exact: "A quoted passage",
-      },
-      {
-        kind: "object_ref",
-        type: "media",
-        id: "media-1",
-        preview: "Source item",
-      },
-    ];
-
-    render(
-      <ChatComposer
-        conversationId="conversation-1"
-        attachedContexts={attachedContexts}
-        onRemoveContext={onRemoveContext}
-      />,
-    );
-
-    expect(screen.getByText("A quoted passage")).toBeInTheDocument();
-    expect(screen.getByText("Source item")).toBeInTheDocument();
-
-    await user.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
-
-    expect(onRemoveContext).toHaveBeenCalledOnce();
-    expect(onRemoveContext).toHaveBeenCalledWith(0);
   });
 
   it("sends singleton + reader_context payload for a new doc-chat first message", async () => {

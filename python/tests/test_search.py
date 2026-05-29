@@ -25,8 +25,7 @@ from uuid import UUID, uuid4
 import pytest
 import respx
 from pydantic import ValidationError
-from sqlalchemy import bindparam, select, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select, text
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment, ObjectSearchDocument, ObjectSearchEmbedding, Page
@@ -40,7 +39,6 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from nexus.services.search import (
     _snippet_around_query,
     _truncate_snippet,
@@ -2072,136 +2070,6 @@ class TestSearchConversationScope:
         data = response.json()
         media_results = [r for r in data["results"] if r["type"] == "media"]
         assert any(r["id"] == str(media_id) for r in media_results)
-
-    def test_scope_conversation_searches_notes_attached_as_message_context(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        page_id = uuid4()
-        context_note_id = uuid4()
-        link_note_id = uuid4()
-
-        with direct_db.session() as session:
-            conversation_id = create_test_conversation(session, user_id)
-            message_id = create_test_message(
-                session,
-                conversation_id,
-                seq=1,
-                content="message with attached notes",
-            )
-            session.execute(
-                text("""
-                    INSERT INTO pages (id, user_id, title)
-                    VALUES (:page_id, :user_id, 'Conversation Context Notes')
-                """),
-                {"page_id": page_id, "user_id": user_id},
-            )
-            for note_id, order_key, body_text in (
-                (
-                    context_note_id,
-                    "0000000001",
-                    "message context item note block piccolo needle",
-                ),
-                (
-                    link_note_id,
-                    "0000000002",
-                    "canonical object link note block piccolo needle",
-                ),
-            ):
-                session.execute(
-                    text("""
-                        INSERT INTO note_blocks (
-                            id, user_id, page_id, order_key, block_kind,
-                            body_pm_json, body_markdown, body_text, collapsed
-                        )
-                        VALUES (
-                            :note_id, :user_id, :page_id, :order_key, 'bullet',
-                            jsonb_build_object('type', 'paragraph'),
-                            :body_text, :body_text, false
-                        )
-                    """),
-                    {
-                        "note_id": note_id,
-                        "user_id": user_id,
-                        "page_id": page_id,
-                        "order_key": order_key,
-                        "body_text": body_text,
-                    },
-                )
-            session.execute(
-                text("""
-                    INSERT INTO message_context_items (
-                        message_id,
-                        user_id,
-                        context_kind,
-                        object_type,
-                        object_id,
-                        ordinal,
-                        context_snapshot
-                    )
-                    VALUES (
-                        :message_id,
-                        :user_id,
-                        'object_ref',
-                        'note_block',
-                        :note_block_id,
-                        0,
-                        :context_snapshot
-                    )
-                """).bindparams(bindparam("context_snapshot", type_=JSONB)),
-                {
-                    "message_id": message_id,
-                    "user_id": user_id,
-                    "note_block_id": context_note_id,
-                    "context_snapshot": object_ref_context_snapshot(
-                        object_type="note_block",
-                        object_id=context_note_id,
-                        title="message context item note block piccolo needle",
-                        preview="message context item note block piccolo needle",
-                        route=f"/notes/{context_note_id}",
-                    ),
-                },
-            )
-            session.execute(
-                text("""
-                    INSERT INTO object_links (
-                        user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-                    )
-                    VALUES (
-                        :user_id, 'used_as_context', 'message', :message_id,
-                        'note_block', :note_block_id, '{}'::jsonb
-                    )
-                """),
-                {
-                    "user_id": user_id,
-                    "message_id": message_id,
-                    "note_block_id": link_note_id,
-                },
-            )
-            page = session.get(Page, page_id)
-            assert page is not None
-            object_search.project_page(session, user_id, page)
-            session.commit()
-
-        direct_db.register_cleanup("message_context_items", "message_id", message_id)
-        direct_db.register_cleanup("object_links", "a_id", message_id)
-        direct_db.register_cleanup("note_blocks", "id", context_note_id)
-        direct_db.register_cleanup("note_blocks", "id", link_note_id)
-        direct_db.register_cleanup("pages", "id", page_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-        direct_db.register_cleanup("conversations", "id", conversation_id)
-
-        response = auth_client.get(
-            f"/search?q=piccolo+needle&scope=conversation:{conversation_id}&types=note_block",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200
-        note_ids = {row["id"] for row in response.json()["results"] if row["type"] == "note_block"}
-        assert note_ids == {str(context_note_id), str(link_note_id)}
-
 
 class TestSearchNoteBlockOwnership:
     """Tests for note-block search under user-owned note visibility."""

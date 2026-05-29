@@ -1,62 +1,61 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DocChatTab from "@/components/chat/DocChatTab";
-import type { ContextItem } from "@/lib/api/sse/requests";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
-const PENDING_CONTEXTS: ContextItem[] = [
-  {
-    kind: "object_ref",
-    type: "highlight",
-    id: "22222222-2222-4222-8222-222222222222",
-    exact: "Pending quote text",
-    color: "yellow",
-  },
-];
+const RESOURCE_URI = `media:${MEDIA_ID}`;
 
-function pathOf(input: RequestInfo | URL): string {
+function urlOf(input: RequestInfo | URL): URL {
   if (input instanceof Request) {
-    return new URL(input.url).pathname;
+    return new URL(input.url);
   }
-  return new URL(String(input), "http://localhost").pathname;
+  return new URL(String(input), "http://localhost");
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
 
-interface ChatTabFetchOptions {
-  singleton?: { conversation_id: string | null; message_count: number };
+interface DocChatTabFetchOptions {
   conversations?: Array<{
     id: string;
     title: string | null;
     first_user_message_excerpt: string;
     message_count: number;
     updated_at: string;
-    is_singleton: boolean;
   }>;
+  createdConversationId?: string;
+  onCreate?: (body: unknown) => void;
 }
 
-function stubChatTabFetch({
-  singleton = { conversation_id: null, message_count: 0 },
+function stubDocChatFetch({
   conversations = [],
-}: ChatTabFetchOptions = {}) {
+  createdConversationId = "new-conversation-id",
+  onCreate,
+}: DocChatTabFetchOptions = {}) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const path = pathOf(input);
-      if (path === `/api/chat-singletons/media/${MEDIA_ID}`) {
-        return jsonResponse({ data: singleton });
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input);
+      if (
+        url.pathname === "/api/conversations" &&
+        (!init || !init.method || init.method === "GET")
+      ) {
+        if (url.searchParams.get("has_reference") === RESOURCE_URI) {
+          return jsonResponse({
+            data: { conversations, next_offset: null },
+          });
+        }
       }
-      if (path === `/api/chat-references/media/${MEDIA_ID}`) {
-        return jsonResponse({
-          data: { conversations, next_offset: null },
-        });
+      if (url.pathname === "/api/conversations" && init?.method === "POST") {
+        const body = init.body ? JSON.parse(String(init.body)) : null;
+        onCreate?.(body);
+        return jsonResponse({ data: { id: createdConversationId } }, 201);
       }
-      throw new Error(`Unexpected fetch call: ${path}`);
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
     }),
   );
 }
@@ -66,32 +65,23 @@ afterEach(() => {
 });
 
 describe("DocChatTab", () => {
-  it("renders the pinned singleton row with the empty subtitle and the Start new chat button", async () => {
-    stubChatTabFetch();
-    const onOpenChat = vi.fn();
-
-    render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={onOpenChat} />);
-
-    expect(
-      await screen.findByRole("button", { name: /chat about this document/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("No messages yet")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /start new chat/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides the Other chats section header when no referencing conversations exist", async () => {
-    stubChatTabFetch();
+  it("renders the empty-state CTA when no chats reference the document", async () => {
+    stubDocChatFetch();
 
     render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={vi.fn()} />);
 
-    await screen.findByRole("button", { name: /chat about this document/i });
-    expect(screen.queryByText("Other chats")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: /start new chat about this document/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no chats reference this document yet/i),
+    ).toBeInTheDocument();
   });
 
-  it("renders one row per referencing conversation under Other chats", async () => {
-    stubChatTabFetch({
+  it("renders one row per referencing chat plus an inline + New button", async () => {
+    stubDocChatFetch({
       conversations: [
         {
           id: "conversation-a",
@@ -99,7 +89,6 @@ describe("DocChatTab", () => {
           first_user_message_excerpt: "Why does this chapter matter?",
           message_count: 4,
           updated_at: "2026-05-25T10:00:00Z",
-          is_singleton: false,
         },
         {
           id: "conversation-b",
@@ -107,105 +96,39 @@ describe("DocChatTab", () => {
           first_user_message_excerpt: "Discuss the metaphor in chapter 2.",
           message_count: 7,
           updated_at: "2026-05-20T10:00:00Z",
-          is_singleton: false,
         },
       ],
     });
 
     render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={vi.fn()} />);
 
-    expect(await screen.findByText("Other chats")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /why does this chapter matter\?/i }),
+      await screen.findByRole("button", {
+        name: /why does this chapter matter\?/i,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /discuss the metaphor in chapter 2\./i }),
+      screen.getByRole("button", {
+        name: /discuss the metaphor in chapter 2\./i,
+      }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /\+ new chat/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no chats reference this document/i),
+    ).not.toBeInTheDocument();
   });
 
-  it("invokes onOpenChat with the singleton target when the pinned row is tapped", async () => {
-    stubChatTabFetch({
-      singleton: { conversation_id: "conversation-1", message_count: 12 },
-    });
-    const onOpenChat = vi.fn();
-
-    render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={onOpenChat} />);
-
-    const pinned = await screen.findByRole("button", {
-      name: /chat about this document/i,
-    });
-    await waitFor(() => {
-      expect(pinned).toHaveAccessibleName(/12 messages/);
-    });
-    fireEvent.click(pinned);
-
-    expect(onOpenChat).toHaveBeenCalledWith({
-      kind: "singleton",
-      conversationId: "conversation-1",
-    });
-  });
-
-  it("passes pending context to the selected singleton row", async () => {
-    stubChatTabFetch({
-      singleton: { conversation_id: "conversation-1", message_count: 12 },
-    });
-    const onOpenChat = vi.fn();
-
-    render(
-      <DocChatTab
-        mediaId={MEDIA_ID}
-        pendingContexts={PENDING_CONTEXTS}
-        onRemovePendingContext={vi.fn()}
-        onOpenChat={onOpenChat}
-      />,
-    );
-
-    expect(await screen.findByText("Pending context")).toBeInTheDocument();
-    expect(screen.getByText("Pending quote text")).toBeInTheDocument();
-    const pinned = screen.getByRole("button", {
-      name: /chat about this document/i,
-    });
-    await waitFor(() => {
-      expect(pinned).toHaveAccessibleName(/12 messages/);
-    });
-    fireEvent.click(pinned);
-
-    expect(onOpenChat).toHaveBeenCalledWith({
-      kind: "singleton",
-      conversationId: "conversation-1",
-      attachedContexts: PENDING_CONTEXTS,
-    });
-  });
-
-  it("removes pending context from the strip", async () => {
-    stubChatTabFetch();
-    const onRemovePendingContext = vi.fn();
-
-    render(
-      <DocChatTab
-        mediaId={MEDIA_ID}
-        pendingContexts={PENDING_CONTEXTS}
-        onRemovePendingContext={onRemovePendingContext}
-        onOpenChat={vi.fn()}
-      />,
-    );
-
-    await screen.findByText("Pending quote text");
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-
-    expect(onRemovePendingContext).toHaveBeenCalledWith(0);
-  });
-
-  it("invokes onOpenChat with a reference target when an Other chats row is tapped", async () => {
-    stubChatTabFetch({
+  it("invokes onOpenChat with the chat id when a referencing row is tapped", async () => {
+    stubDocChatFetch({
       conversations: [
         {
           id: "conversation-a",
           title: null,
-          first_user_message_excerpt: "Reference row to open.",
+          first_user_message_excerpt: "Row to open.",
           message_count: 3,
           updated_at: "2026-05-25T10:00:00Z",
-          is_singleton: false,
         },
       ],
     });
@@ -213,28 +136,64 @@ describe("DocChatTab", () => {
 
     render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={onOpenChat} />);
 
-    const row = await screen.findByRole("button", {
-      name: /reference row to open\./i,
-    });
+    const row = await screen.findByRole("button", { name: /row to open\./i });
     fireEvent.click(row);
 
-    await waitFor(() => {
-      expect(onOpenChat).toHaveBeenCalledWith({
-        kind: "reference",
-        conversationId: "conversation-a",
-      });
-    });
+    expect(onOpenChat).toHaveBeenCalledWith("conversation-a");
   });
 
-  it("invokes onOpenChat with the new-chat target when Start new chat is tapped", async () => {
-    stubChatTabFetch();
+  it("creates a new chat with the media reference and opens it on Start new chat", async () => {
+    const onCreate = vi.fn();
+    stubDocChatFetch({
+      createdConversationId: "created-id",
+      onCreate,
+    });
     const onOpenChat = vi.fn();
 
     render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={onOpenChat} />);
 
-    await screen.findByRole("button", { name: /chat about this document/i });
-    fireEvent.click(screen.getByRole("button", { name: /start new chat/i }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /start new chat about this document/i,
+      }),
+    );
 
-    expect(onOpenChat).toHaveBeenCalledWith({ kind: "new" });
+    await waitFor(() => {
+      expect(onOpenChat).toHaveBeenCalledWith("created-id");
+    });
+    expect(onCreate).toHaveBeenCalledWith({
+      initial_references: [RESOURCE_URI],
+    });
+  });
+
+  it("creates a new chat via the inline + New button when chats already exist", async () => {
+    const onCreate = vi.fn();
+    stubDocChatFetch({
+      conversations: [
+        {
+          id: "conversation-a",
+          title: null,
+          first_user_message_excerpt: "Existing chat.",
+          message_count: 1,
+          updated_at: "2026-05-25T10:00:00Z",
+        },
+      ],
+      createdConversationId: "created-id",
+      onCreate,
+    });
+    const onOpenChat = vi.fn();
+
+    render(<DocChatTab mediaId={MEDIA_ID} onOpenChat={onOpenChat} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /\+ new chat/i }),
+    );
+
+    await waitFor(() => {
+      expect(onOpenChat).toHaveBeenCalledWith("created-id");
+    });
+    expect(onCreate).toHaveBeenCalledWith({
+      initial_references: [RESOURCE_URI],
+    });
   });
 });

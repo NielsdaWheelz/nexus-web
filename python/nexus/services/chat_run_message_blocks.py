@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, SourceManifest
+from nexus.db.models import ChatRun
 
 
 def message_document(role: str, content: str) -> dict[str, object]:
@@ -44,57 +44,8 @@ def message_document_with_run_components(
             if run is not None
             else []
         ),
-        *source_manifest_blocks_for_run(db, run_id),
     ]
     return document
-
-
-def source_manifest_blocks_for_run(db: Session, run_id: UUID) -> list[dict[str, object]]:
-    rows = (
-        db.execute(
-            select(SourceManifest)
-            .where(SourceManifest.chat_run_id == run_id)
-            .order_by(
-                SourceManifest.tool_call_index.asc(),
-                SourceManifest.created_at.desc(),
-                SourceManifest.id.desc(),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    blocks: list[dict[str, object]] = []
-    seen_tool_call_indexes: set[int] = set()
-    for manifest in rows:
-        if manifest.tool_call_index in seen_tool_call_indexes:
-            continue
-        seen_tool_call_indexes.add(manifest.tool_call_index)
-        blocks.append(
-            {
-                "type": "source_manifest",
-                "assistant_message_id": str(manifest.assistant_message_id),
-                "tool_call_id": str(manifest.tool_call_id) if manifest.tool_call_id else None,
-                "tool_name": manifest.tool_name,
-                "tool_call_index": manifest.tool_call_index,
-                "query_hash": manifest.query_hash,
-                "scope": manifest.scope,
-                "filters": manifest.filters,
-                "requested_types": manifest.requested_types,
-                "candidate_count": manifest.candidate_count,
-                "result_count": manifest.result_count,
-                "selected_count": manifest.selected_count,
-                "included_in_prompt_count": manifest.included_in_prompt_count,
-                "excluded_by_budget_count": manifest.excluded_by_budget_count,
-                "excluded_by_scope_count": manifest.excluded_by_scope_count,
-                "stale_count": manifest.stale_count,
-                "unreadable_count": manifest.unreadable_count,
-                "index_versions": manifest.index_versions,
-                "metadata": manifest.metadata_json,
-                "latency_ms": manifest.latency_ms,
-                "status": manifest.status,
-            }
-        )
-    return blocks
 
 
 def _retrieval_result_blocks_for_message(

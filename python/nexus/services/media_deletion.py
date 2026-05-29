@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import delete, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import ChatSingleton, MediaKind
+from nexus.db.models import MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -330,30 +330,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
 
     db.execute(
         text("""
-            DELETE FROM message_context_items
-            WHERE (object_type = 'media' AND object_id = :media_id)
-               OR (context_kind = 'reader_selection' AND source_media_id = :media_id)
-               OR (object_type = 'highlight' AND object_id IN (
-                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
-               ))
-               OR (object_type = 'content_chunk' AND object_id IN (
-                    SELECT id FROM content_chunks WHERE media_id = :media_id
-               ))
-               OR id IN (
-                    SELECT mci.id
-                    FROM message_context_items mci
-                    JOIN object_links ol ON ol.a_type = 'message'
-                                        AND ol.a_id = mci.message_id
-                                        AND ol.b_type = mci.object_type
-                                        AND ol.b_id = mci.object_id
-                    WHERE ol.b_type = 'media'
-                      AND ol.b_id = :media_id
-               )
-        """),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("""
             DELETE FROM object_links
             WHERE (a_type = 'media' AND a_id = :media_id)
                OR (b_type = 'media' AND b_id = :media_id)
@@ -491,45 +467,11 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episodes WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    db.execute(
-        delete(ChatSingleton).where(
-            ChatSingleton.kind == "media",
-            ChatSingleton.target_id == media_id,
-        )
-    )
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
 
 
 def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    db.execute(
-        text("""
-            DELETE FROM message_context_items mci
-            USING messages msg, conversations c
-            WHERE mci.message_id = msg.id
-              AND msg.conversation_id = c.id
-              AND c.owner_user_id = :viewer_id
-              AND (
-                    (mci.object_type = 'media' AND mci.object_id = :media_id)
-                 OR (
-                        mci.context_kind = 'reader_selection'
-                        AND mci.source_media_id = :media_id
-                    )
-                 OR (mci.object_type = 'highlight' AND mci.object_id IN (
-                        SELECT id
-                        FROM highlights
-                        WHERE user_id = :viewer_id
-                          AND anchor_media_id = :media_id
-                    ))
-                 OR (mci.object_type = 'content_chunk' AND mci.object_id IN (
-                        SELECT id
-                        FROM content_chunks
-                        WHERE media_id = :media_id
-                    ))
-              )
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
     db.execute(
         text("""
             DELETE FROM object_links

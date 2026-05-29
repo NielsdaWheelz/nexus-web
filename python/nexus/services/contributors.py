@@ -16,7 +16,6 @@ from nexus.db.models import (
     ContributorCredit,
     ContributorExternalId,
     ContributorIdentityEvent,
-    MessageContextItem,
     ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
@@ -39,7 +38,6 @@ from nexus.services.contributor_credits import (
     normalize_contributor_role,
     unique_contributor_handle_for_name,
 )
-from nexus.services.message_context_snapshots import object_ref_context_snapshot
 
 ACTIVE_STATUSES = ("unverified", "verified")
 CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
@@ -365,7 +363,6 @@ def split_contributor(
         or request.alias_ids
         or request.external_id_ids
         or request.object_link_ids
-        or request.message_context_item_ids
     ):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Select contributor records to split")
 
@@ -382,12 +379,6 @@ def split_contributor(
         actor_user_id,
         source.id,
         request.object_link_ids,
-    )
-    selected_context_items = _load_selected_context_items_for_split(
-        db,
-        actor_user_id,
-        source.id,
-        request.message_context_item_ids,
     )
 
     new_contributor = Contributor(
@@ -429,10 +420,6 @@ def split_contributor(
         source.id,
         new_contributor.id,
     )
-    moved_context_count = _move_selected_context_items(
-        selected_context_items,
-        new_contributor,
-    )
 
     db_now = db.scalar(select(func.now()))
     assert (
@@ -453,7 +440,6 @@ def split_contributor(
                 "moved_alias_count": moved_alias_count,
                 "moved_external_id_count": moved_external_id_count,
                 "moved_link_count": moved_link_count,
-                "moved_context_count": moved_context_count,
             },
         )
     )
@@ -821,12 +807,6 @@ def _visible_contributor_ctes_sql() -> str:
                 WHERE ol.user_id = :viewer_id
                   AND ol.b_type = 'contributor'
             ),
-            visible_contributor_context_items AS (
-                SELECT mci.object_id AS contributor_id
-                FROM message_context_items mci
-                WHERE mci.user_id = :viewer_id
-                  AND mci.object_type = 'contributor'
-            ),
             visible_contributors AS (
                 SELECT contributor_id
                 FROM visible_contributor_credits
@@ -835,11 +815,6 @@ def _visible_contributor_ctes_sql() -> str:
 
                 SELECT contributor_id
                 FROM visible_contributor_object_links
-
-                UNION
-
-                SELECT contributor_id
-                FROM visible_contributor_context_items
             )
     """
 
@@ -1009,45 +984,6 @@ def _duplicate_unlocated_object_link_exists(
     )
 
 
-def _load_selected_context_items_for_split(
-    db: Session,
-    actor_user_id: UUID,
-    source_id: UUID,
-    item_ids: list[UUID],
-) -> list[MessageContextItem]:
-    if not item_ids:
-        return []
-    items = db.scalars(select(MessageContextItem).where(MessageContextItem.id.in_(item_ids))).all()
-    if len(items) != len(set(item_ids)):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split context selection is invalid")
-    for item in items:
-        if item.user_id != actor_user_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split context selection is invalid")
-        if item.object_type != "contributor" or item.object_id != source_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Split context selection is invalid")
-    return list(items)
-
-
-def _move_selected_context_items(
-    items: list[MessageContextItem],
-    target: Contributor,
-) -> int:
-    for item in items:
-        item.object_id = target.id
-        item.context_snapshot_json = _contributor_context_snapshot(target)
-    return len(items)
-
-
-def _contributor_context_snapshot(contributor: Contributor) -> dict[str, object]:
-    return object_ref_context_snapshot(
-        object_type="contributor",
-        object_id=contributor.id,
-        title=contributor.display_name,
-        preview=contributor.disambiguation or contributor.sort_name,
-        route=f"/authors/{contributor.handle}",
-    )
-
-
 def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:
     credit_id = db.scalar(
         select(ContributorCredit.id)
@@ -1069,17 +1005,6 @@ def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) 
     )
     if object_link_id is not None:
         return "object links"
-
-    context_item_id = db.scalar(
-        select(MessageContextItem.id)
-        .where(
-            MessageContextItem.object_type == "contributor",
-            MessageContextItem.object_id == contributor.id,
-        )
-        .limit(1)
-    )
-    if context_item_id is not None:
-        return "message context items"
 
     if _persisted_contributor_ref_exists(db, contributor):
         return "persisted references"

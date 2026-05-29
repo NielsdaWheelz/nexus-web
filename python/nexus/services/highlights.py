@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
     Conversation,
+    ConversationReference,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
@@ -16,8 +17,6 @@ from nexus.db.models import (
     LibraryEntry,
     Media,
     Membership,
-    Message,
-    MessageContextItem,
     ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -245,26 +244,32 @@ def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> Non
 def _batch_linked_conversations(
     db: Session, highlight_ids: list[UUID], viewer_id: UUID
 ) -> dict[UUID, list[LinkedConversationRef]]:
-    """Batch-fetch conversations that reference the given highlights via message context."""
+    """Batch-fetch conversations that reference the given highlights.
+
+    Walks `conversation_references` for each ``highlight:UUID`` URI; conversations
+    are returned only when owned by ``viewer_id``.
+    """
     if not highlight_ids:
         return {}
+    uri_by_id = {highlight_id: f"highlight:{highlight_id}" for highlight_id in highlight_ids}
     rows = db.execute(
         select(
-            MessageContextItem.object_id,
+            ConversationReference.resource_uri,
             Conversation.id,
             Conversation.title,
         )
-        .join(Message, Message.id == MessageContextItem.message_id)
-        .join(Conversation, Conversation.id == Message.conversation_id)
+        .join(Conversation, Conversation.id == ConversationReference.conversation_id)
         .where(
-            MessageContextItem.object_type == "highlight",
-            MessageContextItem.object_id.in_(highlight_ids),
+            ConversationReference.resource_uri.in_(list(uri_by_id.values())),
             Conversation.owner_user_id == viewer_id,
         )
-        .group_by(MessageContextItem.object_id, Conversation.id, Conversation.title)
     ).all()
+    id_by_uri = {uri: highlight_id for highlight_id, uri in uri_by_id.items()}
     result: dict[UUID, list[LinkedConversationRef]] = {}
-    for hl_id, conv_id, title in rows:
+    for resource_uri, conv_id, title in rows:
+        hl_id = id_by_uri.get(resource_uri)
+        if hl_id is None:
+            continue
         result.setdefault(hl_id, []).append(
             LinkedConversationRef(conversation_id=conv_id, title=title)
         )
@@ -753,12 +758,6 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
         delete(ObjectLink).where(
             ((ObjectLink.a_type == "highlight") & (ObjectLink.a_id == highlight_id))
             | ((ObjectLink.b_type == "highlight") & (ObjectLink.b_id == highlight_id))
-        )
-    )
-    db.execute(
-        delete(MessageContextItem).where(
-            MessageContextItem.object_type == "highlight",
-            MessageContextItem.object_id == highlight_id,
         )
     )
     db.execute(delete(Highlight).where(Highlight.id == highlight_id))

@@ -16,8 +16,8 @@ import {
 } from "@/lib/api/sse/citations";
 import type {
   SSECitationIndexEvent,
+  SSEReferenceAddedEvent,
   SSERetrievalResultEvent,
-  SSESourceManifestDeltaEvent,
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
 import { conversationMessageText } from "@/lib/conversations/types";
@@ -25,7 +25,6 @@ import type {
   ConversationMessage,
   MessageDocument,
   MessageRetrievalResultRef,
-  MessageSourceManifestDelta,
   MessageRetrieval,
   MessageToolCall,
 } from "@/lib/conversations/types";
@@ -157,33 +156,14 @@ function messageDocumentWithRetrievals(
   };
 }
 
-function messageDocumentWithSourceManifest(
-  message: ConversationMessage,
-  data: MessageSourceManifestDelta,
-): MessageDocument {
-  const existingBlocks = message.message_document?.blocks ?? [];
-  return {
-    type: "message_document",
-    version: message.message_document?.version ?? 1,
-    blocks: [
-      ...existingBlocks.filter(
-        (block) =>
-          block.type !== "source_manifest" || !sameToolBlock(block, data),
-      ),
-      {
-        type: "source_manifest" as const,
-        ...data,
-      },
-    ],
-  };
-}
-
 export function useChatMessageUpdates({
   setMessages,
   shouldScrollRef,
+  onReferenceAdded,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
   shouldScrollRef?: MutableRefObject<boolean>;
+  onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
 }) {
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
   const rafRef = useRef<number | null>(null);
@@ -354,19 +334,11 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
-  const handleSourceManifestDelta = useCallback(
-    (assistantId: string, data: SSESourceManifestDeltaEvent["data"]) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          return {
-            ...m,
-            message_document: messageDocumentWithSourceManifest(m, data),
-          };
-        }),
-      );
+  const handleReferenceAdded = useCallback(
+    (data: SSEReferenceAddedEvent["data"]) => {
+      onReferenceAdded?.(data);
     },
-    [setMessages],
+    [onReferenceAdded],
   );
 
   const handleDone = useCallback(
@@ -404,8 +376,8 @@ export function useChatMessageUpdates({
     handleDelta,
     handleToolCall,
     handleToolResult,
-    handleSourceManifestDelta,
     handleCitationIndex,
+    handleReferenceAdded,
     handleDone,
   };
 }

@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("ConversationsPaneBody", () => {
-  it("renders a doc-chat singleton row with the FileText icon and target title", async () => {
+  it("renders a conversation row with its title linking to the conversation", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -56,98 +56,49 @@ describe("ConversationsPaneBody", () => {
           return jsonResponse({
             data: [
               {
-                id: "conversation-doc",
-                title: "Chat about Moby-Dick",
-                sharing: "private",
-                message_count: 12,
-                singleton: {
-                  kind: "media",
-                  target_id: "media-1",
-                  target_title: "Moby-Dick",
-                },
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-25T12:00:00Z",
-              },
-            ],
-            page: { next_cursor: null },
-          });
-        }
-        throw new Error(`Unexpected fetch call: ${path}`);
-      }),
-    );
-
-    render(withPaneRuntime(<ConversationsPaneBody />));
-
-    expect(
-      await screen.findByRole("link", { name: /chat about moby-dick/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Moby-Dick")).toBeInTheDocument();
-  });
-
-  it("renders a library-chat singleton row with the Library icon and library name", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const path = pathOf(input);
-        if (path === "/api/conversations") {
-          return jsonResponse({
-            data: [
-              {
-                id: "conversation-lib",
-                title: "Chat about Research",
-                sharing: "private",
-                message_count: 4,
-                singleton: {
-                  kind: "library",
-                  target_id: "library-1",
-                  target_title: "Research",
-                },
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-25T12:00:00Z",
-              },
-            ],
-            page: { next_cursor: null },
-          });
-        }
-        throw new Error(`Unexpected fetch call: ${path}`);
-      }),
-    );
-
-    render(withPaneRuntime(<ConversationsPaneBody />));
-
-    expect(
-      await screen.findByRole("link", { name: /chat about research/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Research")).toBeInTheDocument();
-  });
-
-  it("does not render a delete affordance for singleton rows", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const path = pathOf(input);
-        if (path === "/api/conversations") {
-          return jsonResponse({
-            data: [
-              {
-                id: "conversation-singleton",
-                title: "Chat about Moby-Dick",
-                sharing: "private",
-                message_count: 12,
-                singleton: {
-                  kind: "media",
-                  target_id: "media-1",
-                  target_title: "Moby-Dick",
-                },
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-25T12:00:00Z",
-              },
-              {
-                id: "conversation-general",
+                id: "conversation-1",
                 title: "Untitled chat",
                 sharing: "private",
                 message_count: 2,
-                singleton: null,
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-05-25T12:00:00Z",
+              },
+            ],
+            page: { next_cursor: null },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    render(withPaneRuntime(<ConversationsPaneBody />));
+
+    const link = await screen.findByRole("link", { name: /untitled chat/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/conversations/conversation-1");
+  });
+
+  it("renders a delete affordance for every row", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations") {
+          return jsonResponse({
+            data: [
+              {
+                id: "conversation-a",
+                title: "First chat",
+                sharing: "private",
+                message_count: 12,
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-05-25T12:00:00Z",
+              },
+              {
+                id: "conversation-b",
+                title: "Second chat",
+                sharing: "private",
+                message_count: 2,
                 created_at: "2026-01-01T00:00:00Z",
                 updated_at: "2026-05-24T12:00:00Z",
               },
@@ -161,11 +112,10 @@ describe("ConversationsPaneBody", () => {
 
     render(withPaneRuntime(<ConversationsPaneBody />));
 
-    await screen.findByRole("link", { name: /chat about moby-dick/i });
-    await screen.findByRole("link", { name: /untitled chat/i });
+    await screen.findByRole("link", { name: /first chat/i });
+    await screen.findByRole("link", { name: /second chat/i });
 
-    // Non-singleton row has an Actions menu; singleton row does not.
     const actionTriggers = screen.getAllByRole("button", { name: "Actions" });
-    expect(actionTriggers).toHaveLength(1);
+    expect(actionTriggers).toHaveLength(2);
   });
 });

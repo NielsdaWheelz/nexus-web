@@ -6,9 +6,6 @@ import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import ConversationNewPaneBody from "./ConversationNewPaneBody";
 
-const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
-const SPAN_ID = "22222222-2222-4222-8222-222222222222";
-
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
@@ -157,84 +154,6 @@ describe("ConversationNewPaneBody", () => {
     expect(body).not.toHaveProperty("conversation_scope");
     expect(body).not.toHaveProperty("web_search");
     expect(body.singleton).toBeNull();
-    expect(onReplacePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/conversations/conversation-1?run=run-1",
-      undefined,
-    );
-  });
-
-  it("forwards attached context from the URL as the first chat-run contexts", async () => {
-    const user = userEvent.setup();
-    const onReplacePane = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/models") {
-        return jsonResponse(MODELS_RESPONSE);
-      }
-      if (path === "/api/chat-runs" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
-        return jsonResponse(buildChatRunResponse(body));
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const attachContextParam = encodeURIComponent(
-      `content_chunk:${MEDIA_ID}:${SPAN_ID}`,
-    );
-    const href = `/conversations/new?attach_context=${attachContextParam}`;
-    render(
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href={href}
-        routeId="conversation-new"
-        resourceRef={null}
-        resourceKey={resolvePaneRouteIdentity(href).resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-        onNavigatePane={vi.fn()}
-        onReplacePane={onReplacePane}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneTitle={vi.fn()}
-      >
-        <ConversationNewPaneBody />
-      </PaneRuntimeProvider>,
-    );
-
-    expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
-    ).toBeInTheDocument();
-
-    const message = screen.getByRole("textbox", { name: "Ask anything" });
-    await user.click(message);
-    await user.keyboard("Ask about this chunk");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(
-          ([input, init]) =>
-            pathOf(input) === "/api/chat-runs" && init?.method === "POST",
-        ),
-      ).toBe(true);
-    });
-    const chatRunCall = fetchMock.mock.calls.find(
-      ([input, init]) => pathOf(input) === "/api/chat-runs" && init?.method === "POST",
-    );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
-    expect(body.contexts).toEqual([
-      {
-        kind: "object_ref",
-        type: "content_chunk",
-        id: MEDIA_ID,
-        evidence_span_ids: [SPAN_ID],
-      },
-    ]);
-    expect(body).not.toHaveProperty("conversation_scope");
-    expect(body).not.toHaveProperty("web_search");
     expect(onReplacePane).toHaveBeenCalledWith(
       "pane-1",
       "/conversations/conversation-1?run=run-1",

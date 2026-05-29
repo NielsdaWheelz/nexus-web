@@ -28,14 +28,12 @@ from nexus.auth.permissions import (
 from nexus.coerce import parse_uuid
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.conversation import MessageContextRef
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
 from nexus.schemas.search import SearchResultOut
-from nexus.services.context_rendering import render_context_blocks
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.search import hash_query, parse_scope, search
@@ -51,15 +49,24 @@ APP_SEARCH_CONTEXT_CHARS = 16000
 APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
     "name": APP_SEARCH_TOOL_NAME,
     "description": (
-        "Retrieve passages from the user's saved articles, books, podcasts, and "
-        "PDFs. Pass just a query string; the backend scopes the search to the "
-        "pinned media of the current chat when present, or to everything the "
-        "user has saved otherwise."
+        "Search across your saved articles, books, podcasts, PDFs, highlights, "
+        "and notes. By default, searches within the conversation's referenced "
+        "media and libraries. Pass scopes=['media:UUID', 'library:UUID'] to "
+        "narrow further."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
+            "scopes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional URI scopes ('media:UUID' or 'library:UUID') "
+                    "from this conversation's references. Defaults to all "
+                    "media/library references."
+                ),
+            },
         },
         "required": ["query"],
     },
@@ -281,6 +288,10 @@ class AppSearchRun:
         }
 
 
+class InvalidScopeError(Exception):
+    """Raised when a caller-supplied scope URI is not a valid conversation reference."""
+
+
 def execute_app_search(
     db: Session,
     *,
@@ -288,8 +299,7 @@ def execute_app_search(
     conversation_id: UUID,
     user_message_id: UUID,
     assistant_message_id: UUID,
-    media_id: UUID | None,
-    library_id: UUID | None,
+    scopes: Sequence[str],
     planned_query: str,
     planned_types: Sequence[str],
     planned_filters: Mapping[str, object],
@@ -305,21 +315,21 @@ def execute_app_search(
     error_code = None
     empty_status: str | None = None
 
-    # Translate the model's per-call scope args to the `parse_scope` string.
-    # The four combinations of (media_id, library_id) are exhaustive.
-    if media_id is None and library_id is None:
-        scope = "all"
-    elif media_id is not None and library_id is None:
-        scope = f"media:{media_id}"
-    elif media_id is None and library_id is not None:
-        scope = f"library:{library_id}"
-    else:
-        # Mutually exclusive: surface a tool-result-level error to the model.
+    # Empty input → use conversation's media/library references; explicit
+    # input → validate each URI is a media/library reference of this
+    # conversation.
+    try:
+        resolved_scopes = _resolve_scope_uris(
+            db,
+            conversation_id=conversation_id,
+            scopes=scopes,
+        )
+    except InvalidScopeError as exc:
         error_code = ApiErrorCode.E_INVALID_REQUEST.value
         context_text = (
             '<app_search_results status="error" '
             f'code="{xml_escape(error_code)}" '
-            'message="media_id and library_id are mutually exclusive" />'
+            f'message="{xml_escape(str(exc))}" />'
         )
         latency_ms = int((time.monotonic() - start) * 1000)
         run = AppSearchRun(
@@ -344,38 +354,51 @@ def execute_app_search(
         persist_app_search_run(db, run)
         return run
 
+    # Persisted on MessageRetrieval rows as a comma-joined URI list for
+    # multiple scopes (e.g. "media:UUID-1,media:UUID-2"), the lone URI for
+    # one scope, or "all" when no scopes apply.
+    scope = ",".join(resolved_scopes) if resolved_scopes else "all"
+
     try:
-        response = search(
-            db=db,
-            viewer_id=viewer_id,
-            q=query,
-            scope=scope,
-            types=requested_types,
-            contributor_handles=filters["contributor_handles"],
-            roles=filters["roles"],
-            content_kinds=filters["content_kinds"],
-            semantic=semantic,
-            limit=APP_SEARCH_LIMIT,
-        )
-        result_rows = list(response.results)
-        citations = [
-            _citation_from_search_result(result, filters=filters) for result in result_rows
-        ]
+        if resolved_scopes:
+            citations = _search_across_scopes(
+                db,
+                viewer_id=viewer_id,
+                query=query,
+                scopes=resolved_scopes,
+                requested_types=requested_types,
+                filters=filters,
+                semantic=semantic,
+            )
+        else:
+            response = search(
+                db=db,
+                viewer_id=viewer_id,
+                q=query,
+                scope="all",
+                types=requested_types,
+                contributor_handles=filters["contributor_handles"],
+                roles=filters["roles"],
+                content_kinds=filters["content_kinds"],
+                semantic=semantic,
+                limit=APP_SEARCH_LIMIT,
+            )
+            citations = [
+                _citation_from_search_result(result, filters=filters)
+                for result in response.results
+            ]
         context_text, context_chars, selected = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
             citations=citations,
         )
         if not context_text and not citations:
-            result_status = (
-                _scoped_content_chunk_empty_status(
-                    db,
-                    viewer_id=viewer_id,
-                    scope=scope,
-                    filters=filters,
-                )
-                if scope != "all" and requested_types == ["content_chunk"]
-                else "no_results"
+            result_status = _empty_status_for_scopes(
+                db,
+                viewer_id=viewer_id,
+                scopes=resolved_scopes,
+                requested_types=requested_types,
+                filters=filters,
             )
             empty_status = result_status
             context_text = (
@@ -425,6 +448,125 @@ def execute_app_search(
     return run
 
 
+def _resolve_scope_uris(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    scopes: Sequence[str],
+) -> list[str]:
+    """Validate and return scope URIs for the search.
+
+    Empty input: returns the conversation's media/library reference URIs.
+    Non-empty input: validates each URI is a media:/library: reference of the
+    conversation; raises InvalidScopeError otherwise.
+    """
+    reference_rows = db.execute(
+        text(
+            """
+            SELECT resource_uri
+            FROM conversation_references
+            WHERE conversation_id = :conversation_id
+            """
+        ),
+        {"conversation_id": conversation_id},
+    ).fetchall()
+    reference_uris = {row[0] for row in reference_rows}
+
+    if not scopes:
+        return [
+            uri
+            for uri in reference_uris
+            if uri.startswith("media:") or uri.startswith("library:")
+        ]
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw in scopes:
+        uri = str(raw).strip()
+        if not uri or uri in seen:
+            continue
+        if not (uri.startswith("media:") or uri.startswith("library:")):
+            raise InvalidScopeError(
+                f"scope must be 'media:UUID' or 'library:UUID': {uri}"
+            )
+        if uri not in reference_uris:
+            raise InvalidScopeError(
+                f"scope must be in conversation references: {uri}"
+            )
+        seen.add(uri)
+        resolved.append(uri)
+    return resolved
+
+
+def _search_across_scopes(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    query: str,
+    scopes: Sequence[str],
+    requested_types: list[str],
+    filters: dict[str, Any],
+    semantic: bool,
+) -> list[AppSearchCitation]:
+    """Loop search() per scope and merge results.
+
+    `search.parse_scope` accepts only one scope at a time; for multi-scope
+    calls we union results across scopes, dedupe by `(result_type, id)`,
+    sort by score descending, and cap at `APP_SEARCH_LIMIT`.
+    """
+    merged: dict[tuple[str, str], AppSearchCitation] = {}
+    for scope_uri in scopes:
+        response = search(
+            db=db,
+            viewer_id=viewer_id,
+            q=query,
+            scope=scope_uri,
+            types=requested_types,
+            contributor_handles=filters["contributor_handles"],
+            roles=filters["roles"],
+            content_kinds=filters["content_kinds"],
+            semantic=semantic,
+            limit=APP_SEARCH_LIMIT,
+        )
+        for result in response.results:
+            citation = _citation_from_search_result(result, filters=filters)
+            key = (citation.result_type, citation.source_id)
+            existing = merged.get(key)
+            if existing is None or (
+                citation.score is not None
+                and (existing.score is None or citation.score > existing.score)
+            ):
+                merged[key] = citation
+    sorted_citations = sorted(
+        merged.values(),
+        key=lambda c: (-(c.score if c.score is not None else 0.0), c.source_id),
+    )
+    return sorted_citations[:APP_SEARCH_LIMIT]
+
+
+def _empty_status_for_scopes(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    scopes: Sequence[str],
+    requested_types: list[str],
+    filters: dict[str, Any],
+) -> str:
+    """Distinguish 'no_results' from 'no_indexed_evidence' across scopes."""
+    if requested_types != ["content_chunk"] or not scopes:
+        return "no_results"
+    for scope_uri in scopes:
+        status = _scoped_content_chunk_empty_status(
+            db,
+            viewer_id=viewer_id,
+            scope=scope_uri,
+            filters=filters,
+        )
+        if status == "no_results":
+            return "no_results"
+    return "no_indexed_evidence"
+
+
 def _scoped_content_chunk_empty_status(
     db: Session,
     *,
@@ -433,12 +575,11 @@ def _scoped_content_chunk_empty_status(
     filters: dict[str, Any],
 ) -> str:
     scope_type, scope_id = parse_scope(scope)
-    params: dict[str, Any] = {"viewer_id": viewer_id}
-    scope_filter = ""
+    params: dict[str, Any] = {"viewer_id": viewer_id, "scope_id": scope_id}
     if scope_type == "media":
         scope_filter = "AND cc.media_id = :scope_id"
-        params["scope_id"] = scope_id
-    elif scope_type == "library":
+    else:
+        # `scope_type == "library"`. Callers only pass media:/library: URIs.
         scope_filter = """
             AND cc.media_id IN (
                 SELECT media_id
@@ -447,18 +588,6 @@ def _scoped_content_chunk_empty_status(
                   AND media_id IS NOT NULL
             )
         """
-        params["scope_id"] = scope_id
-    elif scope_type == "conversation":
-        scope_filter = """
-            AND cc.media_id IN (
-                SELECT media_id
-                FROM conversation_media
-                WHERE conversation_id = :scope_id
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type != "all":
-        return "no_indexed_evidence"
 
     content_kind_filter = ""
     if filters["content_kinds"]:
@@ -1050,31 +1179,18 @@ def _render_single_retrieved_context(
     if context_type in {"media", "episode", "video"}:
         if not can_read_media(db, viewer_id, context_id):
             return None
-        return render_context_blocks(db, [MessageContextRef(type="media", id=context_id)])[0]
+        return _render_media_block(db, context_id)
 
-    if context_type in {"page", "note_block"}:
-        return render_context_blocks(db, [MessageContextRef(type=context_type, id=context_id)])[0]
+    if context_type == "page":
+        return _render_page_block(db, viewer_id, context_id)
+
+    if context_type == "note_block":
+        return _render_note_block_block(db, viewer_id, context_id)
 
     if context_type == "highlight":
         if not can_read_highlight(db, viewer_id, context_id):
             return None
-        source_version = citation.source_version
-        locator = retrieval_locator_json(citation.locator)
-        if not isinstance(source_version, str) or not source_version.strip() or locator is None:
-            return None
-        return render_context_blocks(
-            db,
-            [
-                MessageContextRef.model_validate(
-                    {
-                        "type": "highlight",
-                        "id": context_id,
-                        "source_version": source_version,
-                        "locator": locator,
-                    }
-                )
-            ],
-        )[0]
+        return _render_highlight_block(db, context_id)
 
     if context_type == "fragment":
         return _render_fragment_context(db, viewer_id, context_id, citation)
@@ -1091,23 +1207,121 @@ def _render_single_retrieved_context(
     if context_type == "conversation":
         if not can_read_conversation(db, viewer_id, context_id):
             return None
-        return render_context_blocks(db, [MessageContextRef(type="conversation", id=context_id)])[0]
+        return _render_conversation_block(db, context_id)
 
     if context_type == "evidence_span":
-        row = db.execute(
-            text("SELECT media_id FROM evidence_spans WHERE id = :evidence_span_id"),
-            {"evidence_span_id": context_id},
-        ).fetchone()
-        if row is None or not can_read_media(db, viewer_id, row[0]):
-            return None
-        return render_context_blocks(db, [MessageContextRef(type="evidence_span", id=context_id)])[
-            0
-        ]
+        return _render_evidence_span_block(db, viewer_id, context_id)
 
     if context_type == "podcast":
         return _render_podcast_context(db, viewer_id, context_id, citation)
 
     return None
+
+
+def _render_media_block(db: Session, media_id: UUID) -> str | None:
+    row = db.execute(
+        text("SELECT title, canonical_source_url FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if row is None:
+        return None
+    lines = ['<app_search_result type="media">', f"<source>{xml_escape(row[0] or '')}</source>"]
+    if row[1]:
+        lines.append(f"<url>{xml_escape(row[1])}</url>")
+    lines.append("</app_search_result>")
+    return "\n".join(lines)
+
+
+def _render_page_block(db: Session, viewer_id: UUID, page_id: UUID) -> str | None:
+    row = db.execute(
+        text("SELECT user_id, title, description FROM pages WHERE id = :page_id"),
+        {"page_id": page_id},
+    ).fetchone()
+    if row is None or row[0] != viewer_id:
+        return None
+    lines = [
+        '<app_search_result type="page">',
+        f"<title>{xml_escape(row[1] or '')}</title>",
+    ]
+    if row[2]:
+        lines.append(f"<description>{xml_escape(row[2])}</description>")
+    lines.append("</app_search_result>")
+    return "\n".join(lines)
+
+
+def _render_note_block_block(db: Session, viewer_id: UUID, block_id: UUID) -> str | None:
+    row = db.execute(
+        text(
+            "SELECT user_id, body_text, page_id FROM note_blocks WHERE id = :block_id"
+        ),
+        {"block_id": block_id},
+    ).fetchone()
+    if row is None or row[0] != viewer_id:
+        return None
+    lines = [
+        '<app_search_result type="note_block">',
+        f"<content>{xml_escape(row[1] or '')}</content>",
+        f"<page_id>{row[2]}</page_id>",
+        "</app_search_result>",
+    ]
+    return "\n".join(lines)
+
+
+def _render_highlight_block(db: Session, highlight_id: UUID) -> str | None:
+    row = db.execute(
+        text("SELECT exact, color FROM highlights WHERE id = :highlight_id"),
+        {"highlight_id": highlight_id},
+    ).fetchone()
+    if row is None:
+        return None
+    lines = [
+        '<app_search_result type="highlight">',
+        f"<exact>{xml_escape(row[0] or '')}</exact>",
+        f"<color>{xml_escape(row[1] or '')}</color>",
+        "</app_search_result>",
+    ]
+    return "\n".join(lines)
+
+
+def _render_conversation_block(db: Session, conversation_id: UUID) -> str | None:
+    row = db.execute(
+        text("SELECT title FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    ).fetchone()
+    if row is None:
+        return None
+    lines = [
+        '<app_search_result type="conversation">',
+        f"<title>{xml_escape(row[0] or '')}</title>",
+        "</app_search_result>",
+    ]
+    return "\n".join(lines)
+
+
+def _render_evidence_span_block(
+    db: Session, viewer_id: UUID, evidence_span_id: UUID
+) -> str | None:
+    row = db.execute(
+        text(
+            """
+            SELECT es.media_id, es.span_text, es.citation_label, m.title
+            FROM evidence_spans es
+            JOIN media m ON m.id = es.media_id
+            WHERE es.id = :evidence_span_id
+            """
+        ),
+        {"evidence_span_id": evidence_span_id},
+    ).fetchone()
+    if row is None or not can_read_media(db, viewer_id, row[0]):
+        return None
+    lines = [
+        '<app_search_result type="evidence_span">',
+        f"<source>{xml_escape(row[3] or '')}</source>",
+        f"<citation_label>{xml_escape(row[2] or '')}</citation_label>",
+        f"<evidence_span>{xml_escape(row[1] or '')}</evidence_span>",
+        "</app_search_result>",
+    ]
+    return "\n".join(lines)
 
 
 def _append_citation_source_xml(lines: list[str], citation: AppSearchCitation) -> None:

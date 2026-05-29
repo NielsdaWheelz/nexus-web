@@ -6,22 +6,17 @@ import type {
 } from "@/lib/api/sse/citations";
 import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
-import type {
-  ContextItemColor,
-  ContextItemType,
-} from "@/lib/api/sse/requests";
 
-export type SingletonKind = "media" | "library";
-
-export interface Singleton {
-  kind: SingletonKind;
-  target_id: string;
-}
-
-export interface ConversationSingleton {
-  kind: SingletonKind;
-  target_id: string;
-  target_title: string;
+export interface ConversationReference {
+  id: string;
+  conversation_id: string;
+  resource_uri: string;
+  label: string;
+  summary: string;
+  inline_body: string | null;
+  fetch_hint: string;
+  missing: boolean;
+  created_at: string;
 }
 
 export interface ConversationSummary {
@@ -29,7 +24,6 @@ export interface ConversationSummary {
   title: string;
   sharing: string;
   message_count: number;
-  singleton: ConversationSingleton | null;
   memory?: ConversationMemoryInspection | null;
   created_at: string;
   updated_at: string;
@@ -41,7 +35,6 @@ export interface ConversationListItem {
   first_user_message_excerpt: string;
   message_count: number;
   updated_at: string;
-  is_singleton: boolean;
 }
 
 export interface ConversationModel {
@@ -56,27 +49,6 @@ export interface ConversationModel {
   >;
   max_context_tokens: number;
   available_via: "byok" | "platform" | "both";
-}
-
-export interface MessageContextSnapshot {
-  kind: "object_ref" | "reader_selection";
-  type?: ContextItemType | null;
-  id?: string | null;
-  evidence_span_ids?: string[];
-  client_context_id?: string | null;
-  color?: ContextItemColor;
-  exact?: string;
-  preview?: string;
-  prefix?: string;
-  suffix?: string;
-  title?: string;
-  route?: string;
-  media_id?: string;
-  source_media_id?: string;
-  media_title?: string;
-  media_kind?: string;
-  locator?: RetrievalLocator | null;
-  source_version?: string | null;
 }
 
 export interface MessageRetrieval {
@@ -112,20 +84,6 @@ export interface CitationIndexEntry {
   retrieval_id: string;
   tool_call_id: string;
   ordinal: number;
-}
-
-export type ConversationPinnedSourceKind = "media" | "library" | "reader_selection";
-
-export interface ConversationPinnedSource {
-  id: string;
-  ordinal: number;
-  kind: ConversationPinnedSourceKind;
-  target_id: string | null;
-  locator: RetrievalLocator | null;
-  source_version: string | null;
-  exact: string | null;
-  title: string;
-  created_at: string;
 }
 
 export type MessageRetrievalResultRef =
@@ -260,29 +218,6 @@ export interface MessageToolCall {
   retrievals?: MessageRetrieval[];
 }
 
-export interface MessageSourceManifestDelta {
-  assistant_message_id: string;
-  tool_call_id?: string | null;
-  tool_name: "app_search" | "web_search";
-  tool_call_index: number;
-  query_hash?: string | null;
-  scope: string;
-  filters: Record<string, unknown>;
-  requested_types: string[];
-  candidate_count: number;
-  result_count: number;
-  selected_count: number;
-  included_in_prompt_count: number;
-  excluded_by_budget_count: number;
-  excluded_by_scope_count: number;
-  stale_count: number;
-  unreadable_count: number;
-  index_versions: string[];
-  metadata?: Record<string, unknown>;
-  latency_ms?: number | null;
-  status: ChatToolStatus;
-}
-
 export interface MessageRetrievalCandidateLedger {
   id: string;
   tool_call_id: string;
@@ -327,29 +262,6 @@ export interface MessageDocument {
         format: "plain" | "markdown";
         text: string;
       }
-    | {
-        type: "source_manifest";
-        assistant_message_id: string;
-        tool_call_id?: string | null;
-        tool_name: "app_search" | "web_search";
-        tool_call_index: number;
-        query_hash?: string | null;
-        scope?: string;
-        filters: Record<string, unknown>;
-        requested_types: string[];
-        candidate_count: number;
-        result_count: number;
-        selected_count: number;
-        included_in_prompt_count: number;
-        excluded_by_budget_count: number;
-        excluded_by_scope_count: number;
-        stale_count: number;
-        unreadable_count: number;
-        index_versions: string[];
-        metadata?: Record<string, unknown>;
-        latency_ms?: number | null;
-        status: "pending" | "running" | "complete" | "error" | "cancelled";
-      }
     | ({
         type: "retrieval_result";
       } & MessageRetrieval)
@@ -365,7 +277,6 @@ export interface ConversationMessage {
   branch_root_message_id?: string | null;
   branch_anchor_kind?: BranchAnchorKind;
   branch_anchor?: BranchAnchor | null;
-  contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
   retrievals?: MessageRetrieval[];
   citation_index?: CitationIndexEntry[];

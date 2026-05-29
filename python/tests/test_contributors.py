@@ -2,8 +2,7 @@ import threading
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import bindparam, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import text
 
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import (
@@ -31,7 +30,6 @@ from nexus.services.contributors import (
     split_contributor,
     tombstone_contributor,
 )
-from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from nexus.services.object_refs import search_object_refs
 from tests.factories import (
     add_media_to_library,
@@ -882,35 +880,6 @@ def test_contributor_pane_opens_from_user_object_link_with_no_visible_works(db_s
 
 
 @pytest.mark.integration
-def test_contributor_pane_opens_from_message_context_with_no_visible_works(db_session):
-    viewer_id = uuid4()
-    ensure_user_and_default_library(db_session, viewer_id)
-    media_id = create_test_media(db_session, title=f"Contributor Context Empty Works {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Context Empty Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    )
-    conversation_id = create_test_conversation(db_session, viewer_id)
-    message_id = create_test_message(db_session, conversation_id, seq=1)
-
-    _insert_contributor_context_item(
-        db_session,
-        message_id=message_id,
-        user_id=viewer_id,
-        contributor_id=contributor_id,
-    )
-
-    assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
-    assert list_contributor_works(db_session, viewer_id, handle) == []
-
-
-@pytest.mark.integration
 def test_project_gutenberg_catalog_credits_are_public_contributor_reads(db_session):
     viewer_id = uuid4()
     ensure_user_and_default_library(db_session, viewer_id)
@@ -1229,64 +1198,6 @@ def _credit_contributor(db_session, media_id):
     ).one()
 
 
-def _insert_contributor_context_item(
-    db_session,
-    *,
-    message_id: UUID,
-    user_id: UUID,
-    contributor_id: UUID,
-    ordinal: int = 0,
-) -> UUID:
-    contributor = db_session.execute(
-        text(
-            """
-            SELECT display_name, sort_name, disambiguation, handle
-            FROM contributors
-            WHERE id = :contributor_id
-            """
-        ),
-        {"contributor_id": contributor_id},
-    ).one()
-    return db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id,
-                user_id,
-                context_kind,
-                object_type,
-                object_id,
-                ordinal,
-                context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'object_ref',
-                'contributor',
-                :contributor_id,
-                :ordinal,
-                :context_snapshot
-            )
-            RETURNING id
-            """
-        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
-        {
-            "message_id": message_id,
-            "user_id": user_id,
-            "contributor_id": contributor_id,
-            "ordinal": ordinal,
-            "context_snapshot": object_ref_context_snapshot(
-                object_type="contributor",
-                object_id=contributor_id,
-                title=contributor.display_name,
-                preview=contributor.disambiguation or contributor.sort_name,
-                route=f"/authors/{contributor.handle}",
-            ),
-        },
-    ).scalar_one()
-
-
 @pytest.mark.integration
 def test_split_contributor_moves_selected_records_only(db_session):
     actor_user_id = uuid4()
@@ -1310,8 +1221,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
 
     source_id, source_handle, moved_credit_id = _credit_contributor(db_session, media_a)
     _same_source_id, _same_handle, kept_credit_id = _credit_contributor(db_session, media_b)
-    conversation_id = create_test_conversation(db_session, actor_user_id)
-    message_id = create_test_message(db_session, conversation_id, seq=1)
     link_id = db_session.execute(
         text(
             """
@@ -1326,12 +1235,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
         ),
         {"user_id": actor_user_id, "source_id": source_id, "media_id": media_a},
     ).scalar_one()
-    context_item_id = _insert_contributor_context_item(
-        db_session,
-        message_id=message_id,
-        user_id=actor_user_id,
-        contributor_id=source_id,
-    )
 
     split = split_contributor(
         db_session,
@@ -1342,7 +1245,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
             display_name="Separated Author",
             credit_ids=[moved_credit_id],
             object_link_ids=[link_id],
-            message_context_item_ids=[context_item_id],
         ),
     )
     split_id = db_session.execute(
@@ -1359,8 +1261,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
                 (SELECT contributor_id FROM contributor_credits WHERE id = :kept_credit_id)
                     AS kept_credit,
                 (SELECT a_id FROM object_links WHERE id = :link_id) AS moved_link,
-                (SELECT object_id FROM message_context_items WHERE id = :context_item_id)
-                    AS moved_context,
                 (
                     SELECT count(*)
                     FROM contributor_identity_events
@@ -1375,7 +1275,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
             "moved_credit_id": moved_credit_id,
             "kept_credit_id": kept_credit_id,
             "link_id": link_id,
-            "context_item_id": context_item_id,
             "source_id": source_id,
             "split_id": split_id,
         },
@@ -1384,7 +1283,6 @@ def test_split_contributor_moves_selected_records_only(db_session):
     assert rows.moved_credit == split_id
     assert rows.kept_credit == source_id
     assert rows.moved_link == split_id
-    assert rows.moved_context == split_id
     assert rows.split_events == 1
 
 
@@ -1445,62 +1343,6 @@ def test_split_contributor_rejects_other_users_object_links(db_session):
     ).one()
 
     assert rows.link_contributor_id == source_id
-    assert rows.credit_contributor_id == source_id
-    assert rows.moved_author_count == 0
-
-
-@pytest.mark.integration
-def test_split_contributor_rejects_other_users_context_items_before_mutation(db_session):
-    actor_user_id = uuid4()
-    other_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": other_user_id})
-    media_id = create_test_media(db_session, title=f"Split Context Ownership {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Shared Context Author", "role": "author", "source": "manual"}],
-    )
-    source_id, source_handle, credit_id = _credit_contributor(db_session, media_id)
-    conversation_id = create_test_conversation(db_session, other_user_id)
-    message_id = create_test_message(db_session, conversation_id, seq=1)
-    other_context_item_id = _insert_contributor_context_item(
-        db_session,
-        message_id=message_id,
-        user_id=other_user_id,
-        contributor_id=source_id,
-    )
-
-    with pytest.raises(ApiError) as error:
-        split_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=source_handle,
-            request=ContributorSplitRequest(
-                display_name="Moved Context Author",
-                credit_ids=[credit_id],
-                message_context_item_ids=[other_context_item_id],
-            ),
-        )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT object_id FROM message_context_items WHERE id = :context_item_id)
-                    AS context_contributor_id,
-                (SELECT contributor_id FROM contributor_credits WHERE id = :credit_id)
-                    AS credit_contributor_id,
-                (SELECT count(*) FROM contributors WHERE display_name = 'Moved Context Author')
-                    AS moved_author_count
-            """
-        ),
-        {"context_item_id": other_context_item_id, "credit_id": credit_id},
-    ).one()
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    assert rows.context_contributor_id == source_id
     assert rows.credit_contributor_id == source_id
     assert rows.moved_author_count == 0
 
@@ -1583,42 +1425,6 @@ def test_tombstone_rejects_object_link_references(db_session):
             """
         ),
         {"user_id": actor_user_id, "contributor_id": contributor_id, "media_id": media_id},
-    )
-
-    with pytest.raises(ApiError) as error:
-        tombstone_contributor(
-            db_session,
-            actor_user_id=actor_user_id,
-            actor_roles=CURATOR_ROLES,
-            contributor_handle=handle,
-        )
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
-    assert get_contributor_by_handle(db_session, handle).handle == handle
-
-
-@pytest.mark.integration
-def test_tombstone_rejects_message_context_references(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    media_id = create_test_media(db_session, title=f"Tombstone Context {uuid4()}")
-    replace_media_contributor_credits(
-        db_session,
-        media_id=media_id,
-        credits=[{"name": "Context Tombstone Author", "role": "author", "source": "manual"}],
-    )
-    contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
-    db_session.execute(
-        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
-        {"contributor_id": contributor_id},
-    )
-    conversation_id = create_test_conversation(db_session, actor_user_id)
-    message_id = create_test_message(db_session, conversation_id, seq=1)
-    _insert_contributor_context_item(
-        db_session,
-        message_id=message_id,
-        user_id=actor_user_id,
-        contributor_id=contributor_id,
     )
 
     with pytest.raises(ApiError) as error:

@@ -13,7 +13,6 @@ import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
   ConversationMessage,
-  ConversationPinnedSource,
   ForkOption,
 } from "@/lib/conversations/types";
 import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
@@ -21,7 +20,6 @@ import styles from "./ChatSurface.module.css";
 
 export default function ChatSurface({
   messages,
-  pinnedSources,
   scrollportRef,
   onScroll,
   olderCursor,
@@ -37,7 +35,6 @@ export default function ChatSurface({
   onReaderSourceActivate,
 }: {
   messages: ConversationMessage[];
-  pinnedSources?: ConversationPinnedSource[];
   scrollportRef?: RefObject<HTMLDivElement | null>;
   onScroll?: UIEventHandler<HTMLDivElement>;
   olderCursor?: string | null;
@@ -142,7 +139,6 @@ export default function ChatSurface({
             <MessageRow
               key={msg.id}
               message={msg}
-              pinnedSources={pinnedSources}
               forkOptions={forkOptionsByParentId[msg.id] ?? []}
               switchableLeafIds={switchableLeafIds}
               onSelectFork={onSelectFork}

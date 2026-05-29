@@ -2,32 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from uuid import UUID
 
 from llm_calling.errors import LLMError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight, can_read_media
-from nexus.db.models import Conversation, Media, Message, Model
+from nexus.db.models import Conversation, Message, Model
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
-    MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
     BranchAnchorRequest,
-    ContextItem,
 )
-from nexus.schemas.notes import ObjectRef
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     is_provider_enabled,
     resolve_api_key,
 )
-from nexus.services.contexts import validate_content_chunk_evidence_span_ids
 from nexus.services.conversation_branches import branch_anchor_for_message
 from nexus.services.models import get_model_catalog_metadata
-from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.rate_limit import get_rate_limiter
 
 
@@ -41,18 +34,12 @@ def validate_pre_phase(
     model_id: UUID,
     reasoning: str,
     key_mode: str,
-    contexts: Sequence[ContextItem],
     use_platform_key: bool,
 ) -> Model:
     if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
         raise ApiError(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
-        )
-    if len(contexts) > MAX_CONTEXTS:
-        raise ApiError(
-            ApiErrorCode.E_CONTEXT_TOO_LARGE,
-            f"Maximum {MAX_CONTEXTS} context items allowed",
         )
 
     model = get_model_by_id(db, model_id)
@@ -74,9 +61,6 @@ def validate_pre_phase(
         resolve_api_key(db, viewer_id, model.provider, key_mode)
     except LLMError as exc:
         raise ApiError(ApiErrorCode.E_LLM_NO_KEY, str(exc.message)) from exc
-
-    for ctx in contexts:
-        _validate_context_visibility(db, viewer_id, ctx)
 
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
@@ -121,29 +105,6 @@ def load_valid_parent_for_send(
             "parent_message_id must point to a complete assistant message",
         )
     return parent
-
-
-def _validate_context_visibility(db: Session, viewer_id: UUID, ctx: ContextItem) -> None:
-    if ctx.kind == "reader_selection":
-        media = db.get(Media, ctx.media_id)
-        if media is None or not can_read_media(db, viewer_id, ctx.media_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    if ctx.type == "media":
-        media = db.get(Media, ctx.id)
-        if media is None or not can_read_media(db, viewer_id, ctx.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    if ctx.type == "highlight":
-        if not can_read_highlight(db, viewer_id, ctx.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    hydrate_object_ref(db, viewer_id, ObjectRef(object_type=ctx.type, object_id=ctx.id))
-    if ctx.type == "content_chunk" and ctx.evidence_span_ids:
-        validate_content_chunk_evidence_span_ids(db, ctx.id, ctx.evidence_span_ids)
 
 
 def _validate_parent_anchor_for_existing_conversation(
