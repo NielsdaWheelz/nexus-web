@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: float = Field(
         default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS"
     )
+    database_statement_timeout_ms: int = Field(
+        default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS"
+    )
+    database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS")
+    # 60s, not aggressive: create_chat_run holds a transaction open across a
+    # BYOK key probe (an external call), so this must clear the slowest legit
+    # in-transaction wait while still reaping a leaked transaction (the recent
+    # pool-exhaustion deadlock idled for 180s+).
+    database_idle_in_tx_timeout_ms: int = Field(
+        default=60000, alias="DATABASE_IDLE_IN_TX_TIMEOUT_MS"
+    )
     nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
 
     # Supabase auth settings (required in all environments)
@@ -436,6 +447,12 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_MAX_OVERFLOW must be >= 0.")
         if self.database_pool_timeout_seconds <= 0:
             raise ValueError("DATABASE_POOL_TIMEOUT_SECONDS must be > 0.")
+        if self.database_statement_timeout_ms < 0:
+            raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be >= 0.")
+        if self.database_lock_timeout_ms < 0:
+            raise ValueError("DATABASE_LOCK_TIMEOUT_MS must be >= 0.")
+        if self.database_idle_in_tx_timeout_ms < 0:
+            raise ValueError("DATABASE_IDLE_IN_TX_TIMEOUT_MS must be >= 0.")
 
         # NEXUS_INTERNAL_SECRET is required only in staging/prod
         if self.nexus_env in (Environment.STAGING, Environment.PROD):

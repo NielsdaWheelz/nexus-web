@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
@@ -53,5 +54,8 @@ async def process_stripe_webhook(
     db: Annotated[Session, Depends(get_db)],
     stripe_signature: Annotated[str | None, Header(alias="stripe-signature")] = None,
 ) -> dict:
-    out = billing_service.process_stripe_webhook(db, await request.body(), stripe_signature)
+    body = await request.body()
+    out = await run_in_threadpool(
+        billing_service.process_stripe_webhook, db, body, stripe_signature
+    )
     return success_response(out)

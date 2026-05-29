@@ -76,13 +76,28 @@ def create_bootstrap_callback():
     It creates a fresh database session, runs the bootstrap, and closes it.
     """
     session_factory = get_session_factory()
+    # Process-local cache: user_id -> default_library_id. Bootstrap is first-login
+    # setup, so we run it once per user per process, not per request. The cache
+    # resets on restart and re-populates on first touch.
+    cache: dict[UUID, UUID] = {}
 
     def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
+        # No lock: bootstrap now runs in a threadpool (the middleware calls it via
+        # run_in_threadpool), so two threads could race for the same new user, but
+        # ensure_user_and_default_library is idempotent and the dict write is atomic
+        # under CPython's GIL, so a race merely repeats harmless idempotent work.
+        cached = cache.get(user_id)
+        if cached is not None:
+            return cached
+        # Email is synced inside ensure_user_and_default_library; with caching that
+        # sync now happens only on the first request per process per user.
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id, email=email)
+            library_id = ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
+        cache[user_id] = library_id
+        return library_id
 
     return bootstrap
 

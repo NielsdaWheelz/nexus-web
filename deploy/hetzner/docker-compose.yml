@@ -72,6 +72,12 @@ services:
     restart: unless-stopped
     env_file:
       - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
+    # The worker interleaves DB writes with long-running jobs
+    # (ingest/transcription/LLM), so it must not be killed by the API's
+    # web-request timeouts. These override env_file.
+    environment:
+      DATABASE_STATEMENT_TIMEOUT_MS: "0"
+      DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
     depends_on:
       postgres:
         condition: service_healthy

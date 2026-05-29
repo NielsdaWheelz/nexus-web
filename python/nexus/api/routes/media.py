@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_db
 from nexus.auth.extension import get_extension_viewer
@@ -219,10 +220,12 @@ async def create_captured_file(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "invalid x-nexus-library-ids header"
         ) from exc
-    result = media_service.create_captured_file(
+    body = await request.body()
+    result = await run_in_threadpool(
+        media_service.create_captured_file,
         db=db,
         viewer_id=viewer.user_id,
-        payload=await request.body(),
+        payload=body,
         filename=request.headers.get("x-nexus-filename") or "",
         content_type=request.headers.get("content-type") or "",
         library_ids=library_ids,

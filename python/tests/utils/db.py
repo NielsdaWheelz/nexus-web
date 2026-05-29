@@ -182,17 +182,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM source_manifests
-                            WHERE conversation_id IN (
-                                SELECT id FROM conversations WHERE owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM chat_run_events
                             WHERE run_id IN (
                                 SELECT cr.id
@@ -246,20 +235,6 @@ class DirectSessionManager:
                             DELETE FROM message_tool_calls
                             WHERE conversation_id IN (
                                 SELECT id FROM conversations WHERE owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_context_items
-                            WHERE message_id IN (
-                                SELECT m.id
-                                FROM messages m
-                                JOIN conversations c ON c.id = m.conversation_id
-                                WHERE c.owner_user_id = :value
                             )
                             """
                         ),
@@ -431,15 +406,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM source_manifests
-                            WHERE conversation_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM chat_run_events
                             WHERE run_id IN (
                                 SELECT id FROM chat_runs WHERE conversation_id = :value
@@ -471,17 +437,6 @@ class DirectSessionManager:
                         text("DELETE FROM message_tool_calls WHERE conversation_id = :value"),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_context_items
-                            WHERE message_id IN (
-                                SELECT id FROM messages WHERE conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
 
                 if table == "messages" and column == "id":
                     session.execute(
@@ -508,21 +463,6 @@ class DirectSessionManager:
                                 WHERE user_message_id = :value
                                    OR assistant_message_id = :value
                             )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM source_manifests
-                            WHERE assistant_message_id = :value
-                               OR tool_call_id IN (
-                                   SELECT id
-                                   FROM message_tool_calls
-                                   WHERE user_message_id = :value
-                                      OR assistant_message_id = :value
-                               )
                             """
                         ),
                         {"value": value},
@@ -611,15 +551,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM message_context_items
-                            WHERE message_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM message_retrieval_candidate_ledgers
                             WHERE tool_call_id IN (
                                 SELECT id
@@ -643,10 +574,6 @@ class DirectSessionManager:
                             )
                             """
                         ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM message_context_items WHERE message_id = :value"),
                         {"value": value},
                     )
 
@@ -673,15 +600,6 @@ class DirectSessionManager:
                                 FROM message_tool_calls mtc
                                 WHERE mtc.conversation_id = :value
                             )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM source_manifests
-                            WHERE conversation_id = :value
                             """
                         ),
                         {"value": value},
@@ -728,17 +646,6 @@ class DirectSessionManager:
                     )
                     session.execute(
                         text("DELETE FROM conversation_branches WHERE conversation_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_context_items
-                            WHERE message_id IN (
-                                SELECT id FROM messages WHERE conversation_id = :value
-                            )
-                            """
-                        ),
                         {"value": value},
                     )
 

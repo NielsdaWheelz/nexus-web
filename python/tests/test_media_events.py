@@ -54,12 +54,13 @@ def _update_processing_status(direct_db: DirectSessionManager, media_id: UUID, s
 
 @pytest.mark.asyncio
 async def test_media_events_emits_state_on_open_and_changes_then_done(
-    monkeypatch, direct_db: DirectSessionManager
+    direct_db: DirectSessionManager,
 ) -> None:
-    """Stream opens with current state, emits each change, terminates on ready."""
-    # Drive the poll loop fast so the test doesn't wait seconds between updates.
-    monkeypatch.setattr(media_events_route, "POLL_INTERVAL_SECONDS", 0.05)
+    """Stream opens with current state, emits each change, terminates on ready.
 
+    Push-driven: each committed ``media`` UPDATE fires the migration-0122
+    trigger's NOTIFY, which wakes the tail's LISTEN connection immediately.
+    """
     user_id = uuid4()
     with direct_db.session() as session:
         default_library_id = ensure_user_and_default_library(session, user_id)
