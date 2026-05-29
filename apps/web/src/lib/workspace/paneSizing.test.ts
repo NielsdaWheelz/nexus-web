@@ -1,20 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_MEDIA_PANE_WIDTH_PX,
-  MIN_PANE_WIDTH_PX,
   resolvePaneRouteWidthContract,
 } from "@/lib/panes/paneRouteModel";
 import {
   normalizePaneRuntimeSizing,
   resolveEffectivePaneSizing,
+  type WorkspacePrimaryMetrics,
 } from "@/lib/workspace/paneSizing";
 
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
+
 describe("pane sizing", () => {
-  it("clamps desktop primary width to a raised runtime minimum", () => {
+  it("clamps desktop primary width to the workspace floor", () => {
     const sizing = resolveEffectivePaneSizing({
       storedWidthPx: 500,
+      workspacePrimaryMetrics,
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
-      runtimeSizing: { minWidthPx: 684, extraWidthPx: 0 },
+      runtimeSizing: { primaryWidth: { kind: "workspace" }, extraWidthPx: 0 },
       isMobile: false,
     });
 
@@ -33,8 +39,9 @@ describe("pane sizing", () => {
   it("adds extra width to rendered bounds without changing primary width", () => {
     const sizing = resolveEffectivePaneSizing({
       storedWidthPx: 700,
+      workspacePrimaryMetrics,
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
-      runtimeSizing: { minWidthPx: 684, extraWidthPx: 360 },
+      runtimeSizing: { primaryWidth: { kind: "workspace" }, extraWidthPx: 360 },
       isMobile: false,
     });
 
@@ -49,31 +56,41 @@ describe("pane sizing", () => {
     });
   });
 
-  it("caps runtime minimum at the route maximum", () => {
+  it("expands the primary maximum to an allowed intrinsic floor", () => {
     const sizing = resolveEffectivePaneSizing({
-      storedWidthPx: 9999,
+      storedWidthPx: 999,
+      workspacePrimaryMetrics,
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
-      runtimeSizing: { minWidthPx: 9999, extraWidthPx: 36 },
+      runtimeSizing: {
+        primaryWidth: { kind: "intrinsic", widthPx: 2600 },
+        extraWidthPx: 36,
+      },
       isMobile: false,
     });
 
-    expect(sizing.primaryMinWidthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
-    expect(sizing.primaryWidthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
-    expect(sizing.renderedWidthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX + 36);
+    expect(sizing.primaryMinWidthPx).toBe(2600);
+    expect(sizing.primaryWidthPx).toBe(2600);
+    expect(sizing.primaryMaxWidthPx).toBe(2600);
+    expect(sizing.renderedWidthPx).toBe(2636);
+    expect(sizing.storedWidthCorrectionPx).toBe(2600);
   });
 
   it("ignores runtime sizing on mobile and emits no correction", () => {
     const sizing = resolveEffectivePaneSizing({
       storedWidthPx: 500,
+      workspacePrimaryMetrics,
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
-      runtimeSizing: { minWidthPx: 900, extraWidthPx: 360 },
+      runtimeSizing: {
+        primaryWidth: { kind: "intrinsic", widthPx: 900 },
+        extraWidthPx: 360,
+      },
       isMobile: true,
     });
 
     expect(sizing).toMatchObject({
-      primaryWidthPx: 500,
-      primaryMinWidthPx: MIN_PANE_WIDTH_PX,
-      renderedWidthPx: 500,
+      primaryWidthPx: 684,
+      primaryMinWidthPx: 684,
+      renderedWidthPx: 684,
       extraWidthPx: 0,
       storedWidthCorrectionPx: null,
     });
@@ -81,16 +98,28 @@ describe("pane sizing", () => {
 
   it("normalizes finite non-negative runtime values", () => {
     expect(
-      normalizePaneRuntimeSizing({ minWidthPx: 500.2, extraWidthPx: 35.1 })
-    ).toEqual({ minWidthPx: 501, extraWidthPx: 36 });
+      normalizePaneRuntimeSizing({
+        primaryWidth: { kind: "intrinsic", widthPx: 500.2 },
+        extraWidthPx: 35.1,
+      }),
+    ).toEqual({
+      primaryWidth: { kind: "intrinsic", widthPx: 501 },
+      extraWidthPx: 36,
+    });
   });
 
   it("rejects invalid runtime sizing values", () => {
     expect(() =>
-      normalizePaneRuntimeSizing({ minWidthPx: 0, extraWidthPx: 0 })
+      normalizePaneRuntimeSizing({
+        primaryWidth: { kind: "intrinsic", widthPx: 0 },
+        extraWidthPx: 0,
+      }),
     ).toThrow("positive");
     expect(() =>
-      normalizePaneRuntimeSizing({ minWidthPx: null, extraWidthPx: Number.NaN })
+      normalizePaneRuntimeSizing({
+        primaryWidth: { kind: "workspace" },
+        extraWidthPx: Number.NaN,
+      }),
     ).toThrow("non-negative");
   });
 });

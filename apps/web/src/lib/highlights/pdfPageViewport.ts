@@ -62,6 +62,33 @@ export function deriveViewportTransformFromPageView(
   };
 }
 
+function readPositiveNumber(value: unknown): number | null {
+  const numberValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : Number.NaN;
+  return isPositiveFinite(numberValue) ? numberValue : null;
+}
+
+export function measureMaxRenderedPdfPageWidthPx(root: ParentNode): number | null {
+  let maxWidthPx = 0;
+  for (const page of root.querySelectorAll<HTMLElement>(".page")) {
+    const rectWidthPx = readPositiveNumber(page.getBoundingClientRect().width);
+    const widthPx =
+      rectWidthPx ??
+      readPositiveNumber(page.scrollWidth) ??
+      readPositiveNumber(page.clientWidth) ??
+      readPositiveNumber(page.style.width) ??
+      readPositiveNumber(page.getAttribute("data-nexus-page-viewport-width"));
+    if (widthPx !== null) {
+      maxWidthPx = Math.max(maxWidthPx, widthPx);
+    }
+  }
+  return maxWidthPx > 0 ? Math.ceil(maxWidthPx) : null;
+}
+
 /**
  * Maximum relative drift between the text layer and canvas surface of a PDF
  * page element. Used to detect cases where pdf.js has rendered the two layers

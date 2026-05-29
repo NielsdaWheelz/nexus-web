@@ -11,6 +11,7 @@ import {
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
@@ -54,9 +55,13 @@ export function isColdOpen(): boolean {
   return !new URL(window.location.href).searchParams.has(WORKSPACE_STATE_PARAM);
 }
 
-export function prepareRestoredState(raw: unknown): WorkspaceState {
+export function prepareRestoredState(
+  raw: unknown,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceState {
   const sanitized = sanitizeWorkspaceState(raw, {
     fallbackHref: WORKSPACE_DEFAULT_FALLBACK_HREF,
+    workspacePrimaryMetrics,
   });
 
   const androidShell = isAndroidShell();
@@ -66,7 +71,10 @@ export function prepareRestoredState(raw: unknown): WorkspaceState {
 
   const visiblePanes = panes.filter((pane) => pane.visibility === "visible");
   if (visiblePanes.length === 0) {
-    return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+    return createDefaultWorkspaceState(
+      WORKSPACE_DEFAULT_FALLBACK_HREF,
+      workspacePrimaryMetrics,
+    );
   }
 
   const activePaneId = visiblePanes.some(

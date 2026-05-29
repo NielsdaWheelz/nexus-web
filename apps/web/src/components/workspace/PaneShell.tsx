@@ -519,9 +519,9 @@ export default function PaneShell({
         aria-label={`Resize pane ${title}`}
         aria-controls={bodyId}
         aria-orientation="vertical"
-        aria-valuemin={sizing.renderedMinWidthPx}
-        aria-valuemax={sizing.renderedMaxWidthPx}
-        aria-valuenow={sizing.renderedWidthPx}
+        aria-valuemin={sizing.primaryMinWidthPx}
+        aria-valuemax={sizing.primaryMaxWidthPx}
+        aria-valuenow={sizing.primaryWidthPx}
         tabIndex={0}
         onMouseDown={handleResizeMouseDown}
         onKeyDown={handleResizeKeyDown}

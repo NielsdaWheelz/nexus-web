@@ -607,7 +607,7 @@ describe("PaneShell", () => {
     expect(shell).toHaveStyle({ width: "1060px" });
     expect(shell).toHaveStyle({ minWidth: "1044px" });
     expect(shell).toHaveStyle({ maxWidth: "2760px" });
-    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "1060");
+    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "700");
 
     rerender(
       <PaneShell

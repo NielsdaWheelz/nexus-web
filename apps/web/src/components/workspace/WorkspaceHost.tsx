@@ -21,12 +21,13 @@ import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRouteWidthContract } from "@/lib/panes/paneRouteModel";
 import type { WorkspacePaneState } from "@/lib/workspace/schema";
 import {
-  EMPTY_PANE_RUNTIME_SIZING,
+  DEFAULT_PANE_RUNTIME_SIZING,
   isEmptyPaneRuntimeSizing,
   normalizePaneRuntimeSizing,
   resolveEffectivePaneSizing,
   type EffectivePaneSizing,
   type PaneRuntimeSizing,
+  type WorkspacePrimaryMetrics,
 } from "@/lib/workspace/paneSizing";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
@@ -270,7 +271,10 @@ function upsertOrDeletePaneSizingRecord(
   }
   if (
     existing?.resourceKey === input.resourceKey &&
-    existing.sizing.minWidthPx === sizing.minWidthPx &&
+    existing.sizing.primaryWidth.kind === sizing.primaryWidth.kind &&
+    (sizing.primaryWidth.kind === "workspace" ||
+      existing.sizing.primaryWidth.kind === "intrinsic" &&
+        existing.sizing.primaryWidth.widthPx === sizing.primaryWidth.widthPx) &&
     existing.sizing.extraWidthPx === sizing.extraWidthPx
   ) {
     return current;
@@ -288,7 +292,7 @@ function getRuntimePaneSizing(
   const record = records.get(paneId);
   return record?.resourceKey === resourceKey
     ? record.sizing
-    : EMPTY_PANE_RUNTIME_SIZING;
+    : DEFAULT_PANE_RUNTIME_SIZING;
 }
 
 function pruneRuntimePaneSizingRecords(
@@ -314,6 +318,7 @@ function buildHostPane(input: {
   isActive: boolean;
   runtimeSizing: PaneRuntimeSizing;
   isMobile: boolean;
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
 }): WorkspaceHostPane {
   const { chrome, resourceKey, route, title, titleState } = input.descriptor;
 
@@ -338,6 +343,7 @@ function buildHostPane(input: {
     bodyMode: route.definition?.bodyMode ?? "standard",
     sizing: resolveEffectivePaneSizing({
       storedWidthPx: input.pane.widthPx,
+      workspacePrimaryMetrics: input.workspacePrimaryMetrics,
       routeWidth,
       runtimeSizing: input.runtimeSizing,
       isMobile: input.isMobile,
@@ -367,6 +373,7 @@ export default function WorkspaceHost() {
     minimizePane,
     restorePane,
     publishPaneTitle,
+    workspacePrimaryMetrics,
   } = useWorkspaceStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
   const [runtimeSizingByPaneId, setRuntimeSizingByPaneId] = useState<
@@ -451,6 +458,7 @@ export default function WorkspaceHost() {
             descriptor.resourceKey,
           ),
           isMobile,
+          workspacePrimaryMetrics,
         })
       ),
     [
@@ -460,6 +468,7 @@ export default function WorkspaceHost() {
       goForwardPane,
       runtimeSizingByPaneId,
       isMobile,
+      workspacePrimaryMetrics,
     ]
   );
 

@@ -46,6 +46,7 @@ import {
   computePageLayerAlignmentDelta,
   deriveScaleFromPageView,
   deriveViewportTransformFromPageView,
+  measureMaxRenderedPdfPageWidthPx,
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -140,11 +141,16 @@ interface OpenedPdfDocument {
   loadingTask: PdfDocumentLoadingTaskLike;
 }
 
+export interface PdfReaderIntrinsicWidthState {
+  maxRenderedPageWidthPx: number | null;
+}
+
 interface PdfReaderProps {
   mediaId: string;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
+  onIntrinsicWidthChange?: (state: PdfReaderIntrinsicWidthState) => void;
   focusedHighlightId?: string | null;
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
@@ -427,6 +433,7 @@ export default function PdfReader({
   contentRef,
   onControlsStateChange,
   onControlsReady,
+  onIntrinsicWidthChange,
   focusedHighlightId = null,
   editingHighlightId = null,
   highlightRefreshToken = 0,
@@ -525,6 +532,9 @@ export default function PdfReader({
 
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   onResumeStateChangeRef.current = onResumeStateChange;
+  const onIntrinsicWidthChangeRef = useRef(onIntrinsicWidthChange);
+  onIntrinsicWidthChangeRef.current = onIntrinsicWidthChange;
+  const lastIntrinsicWidthPxRef = useRef<number | null>(null);
 
   const publishResumeLocator = useCallback(
     (
@@ -552,6 +562,26 @@ export default function PdfReader({
     },
     [contentRef],
   );
+
+  const publishIntrinsicWidth = useCallback((widthPx: number | null) => {
+    if (lastIntrinsicWidthPxRef.current === widthPx) {
+      return;
+    }
+    lastIntrinsicWidthPxRef.current = widthPx;
+    onIntrinsicWidthChangeRef.current?.({ maxRenderedPageWidthPx: widthPx });
+  }, []);
+
+  const scheduleIntrinsicWidthPublish = useCallback(() => {
+    const runId = runRef.current;
+    window.requestAnimationFrame(() => {
+      if (runId !== runRef.current || !internalContentRef.current) {
+        return;
+      }
+      publishIntrinsicWidth(
+        measureMaxRenderedPdfPageWidthPx(internalContentRef.current),
+      );
+    });
+  }, [publishIntrinsicWidth]);
 
   const handleViewerContainerScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -1024,11 +1054,12 @@ export default function PdfReader({
     pdfViewerRef.current = null;
     pendingViewerPageRef.current = null;
     pendingViewerScaleRef.current = null;
+    publishIntrinsicWidth(null);
     removeOverlayLayers();
     if (internalContentRef.current) {
       internalContentRef.current.innerHTML = "";
     }
-  }, [removeOverlayLayers]);
+  }, [publishIntrinsicWidth, removeOverlayLayers]);
 
   const recoverAndRenderRef = useRef<
     ((targetPage: number, runId: number) => Promise<void>) | null
@@ -1154,6 +1185,7 @@ export default function PdfReader({
               viewer?.getPageView?.(Math.max(0, index - 1)),
             );
           }
+          scheduleIntrinsicWidthPublish();
         });
       };
 
@@ -1172,6 +1204,7 @@ export default function PdfReader({
 
         markPageSurfaceForTesting(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
+        scheduleIntrinsicWidthPublish();
         evaluatePageGeometryReliability(renderedPage);
         void fetchPageHighlights(renderedPage)
           .then((highlights) => {
@@ -1280,6 +1313,7 @@ export default function PdfReader({
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
       rememberPageScale,
+      scheduleIntrinsicWidthPublish,
       scheduleTextLayerStateRefresh,
     ],
   );
@@ -1852,8 +1886,9 @@ export default function PdfReader({
       setTextGeometryReliable(
         evaluatePageGeometryReliability(pageNumberRef.current),
       );
+      scheduleIntrinsicWidthPublish();
     });
-  }, [evaluatePageGeometryReliability, zoom]);
+  }, [evaluatePageGeometryReliability, scheduleIntrinsicWidthPublish, zoom]);
 
   useEffect(() => {
     let active = true;

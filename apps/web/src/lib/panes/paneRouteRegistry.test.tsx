@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-  DEFAULT_MEDIA_PANE_WIDTH_PX,
-  DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
-  DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
-  MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+  MAX_STANDARD_PANE_WIDTH_PX,
   resolvePaneRouteWidthContract,
 } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRoute } from "./paneRouteRegistry";
@@ -78,28 +74,26 @@ describe("pane route registry", () => {
     expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
   });
 
-  it("declares width contracts on representative routes", () => {
+  it("declares max width policy on representative routes", () => {
     expect(resolvePaneRoute("/libraries").definition).toMatchObject({
-      defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-      layoutKind: "dense-list",
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      allowsIntrinsicPrimaryWidth: false,
     });
     expect(resolvePaneRoute("/media/media-1").definition).toMatchObject({
-      defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
       maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
-      layoutKind: "media-reader",
+      allowsIntrinsicPrimaryWidth: true,
     });
     expect(resolvePaneRoute("/podcasts/podcast-1").definition).toMatchObject({
-      defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
-      minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
-      layoutKind: "podcast-detail",
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      allowsIntrinsicPrimaryWidth: false,
     });
     expect(resolvePaneRoute("/settings").definition).toMatchObject({
-      defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-      layoutKind: "standard",
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      allowsIntrinsicPrimaryWidth: false,
     });
     expect(resolvePaneRouteWidthContract("/oracle")).toMatchObject({
-      defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-      layoutKind: "standard",
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      allowsIntrinsicPrimaryWidth: false,
     });
   });
 

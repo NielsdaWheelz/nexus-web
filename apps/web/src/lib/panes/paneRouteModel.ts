@@ -2,28 +2,12 @@
 
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
-export const MIN_PANE_WIDTH_PX = 320;
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
-export const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
-export const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
-export const DEFAULT_DOCUMENT_PANE_WIDTH_PX = 760;
-export const DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX = 960;
-export const MIN_PODCAST_DETAIL_PANE_WIDTH_PX = 760;
-export const DEFAULT_MEDIA_PANE_WIDTH_PX = 1280;
-
-export type PaneLayoutKind =
-  | "standard"
-  | "dense-list"
-  | "document"
-  | "podcast-detail"
-  | "media-reader";
 
 export interface PaneWidthContract {
-  defaultWidthPx: number;
-  minWidthPx: number;
   maxWidthPx: number;
-  layoutKind: PaneLayoutKind;
+  allowsIntrinsicPrimaryWidth: boolean;
 }
 
 export type PaneBodyMode = "standard" | "document" | "contained";
@@ -82,38 +66,13 @@ export interface ResolvedPaneRouteModel {
 }
 
 const STANDARD_WIDTH_CONTRACT: PaneWidthContract = {
-  defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-  minWidthPx: MIN_PANE_WIDTH_PX,
   maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-  layoutKind: "standard",
-};
-
-const DENSE_LIST_WIDTH_CONTRACT: PaneWidthContract = {
-  defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-  minWidthPx: MIN_PANE_WIDTH_PX,
-  maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-  layoutKind: "dense-list",
-};
-
-const DOCUMENT_WIDTH_CONTRACT: PaneWidthContract = {
-  defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
-  minWidthPx: MIN_PANE_WIDTH_PX,
-  maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-  layoutKind: "document",
-};
-
-const PODCAST_DETAIL_WIDTH_CONTRACT: PaneWidthContract = {
-  defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
-  minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
-  maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-  layoutKind: "podcast-detail",
+  allowsIntrinsicPrimaryWidth: false,
 };
 
 const MEDIA_READER_WIDTH_CONTRACT: PaneWidthContract = {
-  defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
-  minWidthPx: MIN_PANE_WIDTH_PX,
   maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
-  layoutKind: "media-reader",
+  allowsIntrinsicPrimaryWidth: true,
 };
 
 function route(
@@ -130,7 +89,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Libraries",
     titleMode: "static",
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "library",
@@ -139,7 +98,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `library:${params.id}` : null),
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "media",
@@ -156,7 +115,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Chats",
     titleMode: "static",
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "conversationNew",
@@ -164,7 +123,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "New chat",
     titleMode: "static",
     bodyMode: "contained",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "conversation",
@@ -173,7 +132,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `conversation:${params.id}` : null),
     bodyMode: "contained",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "browse",
@@ -189,7 +148,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Podcasts",
     titleMode: "static",
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "podcastDetail",
@@ -199,7 +158,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     resourceRef: (params) =>
       params.podcastId ? `podcast:${params.podcastId}` : null,
     bodyMode: "document",
-    ...PODCAST_DETAIL_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "search",
@@ -216,7 +175,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.handle ? `contributor:${params.handle}` : null),
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "notes",
@@ -224,7 +183,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Notes",
     titleMode: "static",
     bodyMode: "standard",
-    ...DENSE_LIST_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "page",
@@ -233,7 +192,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
     bodyMode: "document",
-    ...DOCUMENT_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "note",
@@ -243,7 +202,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     resourceRef: (params) =>
       params.blockId ? `note_block:${params.blockId}` : null,
     bodyMode: "document",
-    ...DOCUMENT_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "daily",
@@ -251,7 +210,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "Today",
     titleMode: "static",
     bodyMode: "document",
-    ...DOCUMENT_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "dailyDate",
@@ -260,7 +219,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
     bodyMode: "document",
-    ...DOCUMENT_WIDTH_CONTRACT,
+    ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settings",
@@ -401,9 +360,7 @@ export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {
     return STANDARD_WIDTH_CONTRACT;
   }
   return {
-    defaultWidthPx: definition.defaultWidthPx,
-    minWidthPx: definition.minWidthPx,
     maxWidthPx: definition.maxWidthPx,
-    layoutKind: definition.layoutKind,
+    allowsIntrinsicPrimaryWidth: definition.allowsIntrinsicPrimaryWidth,
   };
 }

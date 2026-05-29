@@ -7,7 +7,6 @@ import {
   type WorkspaceState,
 } from "./workspace";
 
-const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
 const WIDE_MEDIA_PANE_WIDTH_PX = 2200;
 
 function paneWrap(page: Page, paneId: string) {
@@ -41,6 +40,15 @@ async function expectRouteShellFillsBody(page: Page, paneId: string): Promise<vo
       }),
     )
     .toBe(true);
+}
+
+async function resizeHandlePrimaryMinimum(page: Page, paneId: string): Promise<number> {
+  const value = await paneWrap(page, paneId)
+    .getByRole("separator", { name: /^Resize pane / })
+    .getAttribute("aria-valuemin");
+  const widthPx = Number(value);
+  expect(Number.isFinite(widthPx)).toBe(true);
+  return widthPx;
 }
 
 test.describe("workspace pane history", () => {
@@ -116,13 +124,17 @@ test.describe("workspace pane history", () => {
     await expect(
       paneWrap(page, "pane-wide-media").getByTestId("pane-shell-body"),
     ).toHaveAttribute("data-body-mode", "standard");
+    const workspacePrimaryWidthPx = await resizeHandlePrimaryMinimum(
+      page,
+      "pane-wide-media",
+    );
     await expect
       .poll(async () => {
         const state = await workspaceStateFromUrl(page);
         const pane = state.panes[0];
         return [pane?.href, pane?.widthPx, pane?.history.forward[0]];
       })
-      .toEqual(["/libraries", DEFAULT_DENSE_LIST_PANE_WIDTH_PX, mediaHref]);
+      .toEqual(["/libraries", workspacePrimaryWidthPx, mediaHref]);
     await expectRouteShellFillsBody(page, "pane-wide-media");
   });
 });

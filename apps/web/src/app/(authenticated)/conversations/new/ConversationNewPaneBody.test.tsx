@@ -218,7 +218,7 @@ describe("ConversationNewPaneBody", () => {
         paneId: "pane-1",
         resourceKey,
         sizing: {
-          minWidthPx: null,
+          primaryWidth: { kind: "workspace" },
           extraWidthPx: CONVERSATION_REFERENCES_RAIL_WIDTH_PX,
         },
       });
@@ -230,7 +230,7 @@ describe("ConversationNewPaneBody", () => {
         paneId: "pane-1",
         resourceKey,
         sizing: {
-          minWidthPx: null,
+          primaryWidth: { kind: "workspace" },
           extraWidthPx: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
         },
       });
@@ -240,7 +240,7 @@ describe("ConversationNewPaneBody", () => {
     expect(onSetPaneSizing).toHaveBeenLastCalledWith({
       paneId: "pane-1",
       resourceKey,
-      sizing: { minWidthPx: null, extraWidthPx: 0 },
+      sizing: { primaryWidth: { kind: "workspace" }, extraWidthPx: 0 },
     });
   });
 });

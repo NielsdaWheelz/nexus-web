@@ -8,8 +8,9 @@ import {
   normalizeWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
 import { clampPaneWidth, getDefaultPaneWidthPx } from "@/lib/workspace/paneWidth";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
-export const WORKSPACE_SCHEMA_VERSION = 6;
+export const WORKSPACE_SCHEMA_VERSION = 7;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
 
@@ -100,6 +101,7 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
 
 export function createDefaultWorkspaceState(
   primaryHref: string,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
   widthPx?: number
 ): WorkspaceState {
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
@@ -112,7 +114,9 @@ export function createDefaultWorkspaceState(
         id,
         href,
         widthPx:
-          widthPx != null ? clampPaneWidth(widthPx, href) : getDefaultPaneWidthPx(href),
+          widthPx != null
+            ? clampPaneWidth(widthPx, workspacePrimaryMetrics)
+            : getDefaultPaneWidthPx(workspacePrimaryMetrics),
         visibility: "visible",
         history: createEmptyPaneHistory(),
       },
@@ -155,6 +159,7 @@ function sanitizePane(
   value: unknown,
   fallbackHref: string,
   seenIds: Set<string>,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
   options?: { baseOrigin?: string }
 ): WorkspacePaneState | null {
   if (!isRecord(value)) {
@@ -179,22 +184,26 @@ function sanitizePane(
 
   const widthPx =
     typeof value.widthPx === "number"
-      ? clampPaneWidth(value.widthPx, href)
-      : getDefaultPaneWidthPx(href);
+      ? clampPaneWidth(value.widthPx, workspacePrimaryMetrics)
+      : getDefaultPaneWidthPx(workspacePrimaryMetrics);
 
   return { id, href, widthPx, visibility, history };
 }
 
 export function sanitizeWorkspaceState(
   value: unknown,
-  options: { fallbackHref: string; baseOrigin?: string }
+  options: {
+    fallbackHref: string;
+    baseOrigin?: string;
+    workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+  }
 ): WorkspaceState {
   const fallbackHref =
     normalizeWorkspaceHref(options.fallbackHref, options) ??
     WORKSPACE_DEFAULT_FALLBACK_HREF;
 
   if (!isRecord(value) || value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
-    return createDefaultWorkspaceState(fallbackHref);
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
   const rawPanes = Array.isArray(value.panes) ? value.panes : [];
@@ -205,18 +214,24 @@ export function sanitizeWorkspaceState(
     if (panes.length >= MAX_PANES) {
       break;
     }
-    const pane = sanitizePane(rawPane, fallbackHref, seenIds, options);
+    const pane = sanitizePane(
+      rawPane,
+      fallbackHref,
+      seenIds,
+      options.workspacePrimaryMetrics,
+      options,
+    );
     if (!pane) {
-      return createDefaultWorkspaceState(fallbackHref);
+      return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
     }
     panes.push(pane);
   }
 
   if (panes.length === 0) {
-    return createDefaultWorkspaceState(fallbackHref);
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
   if (!panes.some((p) => p.visibility === "visible")) {
-    return createDefaultWorkspaceState(fallbackHref);
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
   const requestedActiveId =
@@ -226,7 +241,7 @@ export function sanitizeWorkspaceState(
   )?.id;
 
   if (!activePaneId) {
-    return createDefaultWorkspaceState(fallbackHref);
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
   return trimWorkspacePaneHistory({

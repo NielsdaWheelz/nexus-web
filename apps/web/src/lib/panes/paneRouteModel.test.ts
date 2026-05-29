@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-  DEFAULT_DOCUMENT_PANE_WIDTH_PX,
-  DEFAULT_MEDIA_PANE_WIDTH_PX,
-  DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
-  DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
-  MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+  MAX_STANDARD_PANE_WIDTH_PX,
   PANE_ROUTE_MODELS,
   resolvePaneRouteModel,
   resolvePaneRouteWidthContract,
@@ -20,15 +15,15 @@ describe("pane route model", () => {
       resourceRef: null,
       definition: {
         bodyMode: "standard",
-        defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-        layoutKind: "dense-list",
+        maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+        allowsIntrinsicPrimaryWidth: false,
       },
     });
     expect(resolvePaneRouteModel("/libraries/lib-1")).toMatchObject({
       id: "library",
       params: { id: "lib-1" },
       resourceRef: "library:lib-1",
-      definition: { layoutKind: "dense-list" },
+      definition: { allowsIntrinsicPrimaryWidth: false },
     });
     expect(resolvePaneRouteModel("/media/media-1")).toMatchObject({
       id: "media",
@@ -36,9 +31,8 @@ describe("pane route model", () => {
       resourceRef: "media:media-1",
       definition: {
         bodyMode: "document",
-        defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
         maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
-        layoutKind: "media-reader",
+        allowsIntrinsicPrimaryWidth: true,
       },
     });
     expect(resolvePaneRouteModel("/podcasts/podcast-1")).toMatchObject({
@@ -46,17 +40,17 @@ describe("pane route model", () => {
       params: { podcastId: "podcast-1" },
       resourceRef: "podcast:podcast-1",
       definition: {
-        defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
-        minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
-        layoutKind: "podcast-detail",
+        bodyMode: "document",
+        maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+        allowsIntrinsicPrimaryWidth: false,
       },
     });
     expect(resolvePaneRouteModel("/pages/page-1")).toMatchObject({
       id: "page",
       resourceRef: "page:page-1",
       definition: {
-        defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
-        layoutKind: "document",
+        bodyMode: "document",
+        maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
       },
     });
   });
@@ -72,15 +66,15 @@ describe("pane route model", () => {
     });
   });
 
-  it("returns unsupported routes with the standard width contract", () => {
+  it("returns unsupported routes with standard max policy only", () => {
     for (const href of ["/oracle", "/media", "/pages/a/b"]) {
       expect(resolvePaneRouteModel(href)).toMatchObject({
         id: "unsupported",
         definition: null,
       });
-      expect(resolvePaneRouteWidthContract(href)).toMatchObject({
-        defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-        layoutKind: "standard",
+      expect(resolvePaneRouteWidthContract(href)).toEqual({
+        maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+        allowsIntrinsicPrimaryWidth: false,
       });
     }
   });

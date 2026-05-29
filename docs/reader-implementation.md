@@ -50,20 +50,20 @@ the reader has two right-side highlight surfaces with distinct scopes.
 
 ### workspace pane sizing
 
-Desktop web article and EPUB panes publish a protected primary width based on
-the configured reader measure, not live content intrinsic width. The protected
-floor is measured with an offscreen probe using the active reader font family,
-font size, line height, and `column_width_ch`, then the overview ruler width is
-added to that primary floor.
+The authenticated workspace owns one reader text floor for every non-PDF
+desktop pane. It measures the active reader font family, font size, line
+height, `column_width_ch`, and reader inline padding with one hidden browser
+probe before mounting workspace state. New non-PDF panes default to that floor,
+and no non-PDF pane can shrink below it.
 
-The reader secondary rail is outward extra width. Opening it increases the
-rendered pane width without changing the stored primary pane width; closing it
-removes only that extra width.
+PDF panes are the only primary-width exception. `PdfReader` measures rendered
+PDF page geometry and publishes the widest rendered page as intrinsic primary
+width; the workspace raises the PDF pane floor to that width.
 
-PDF and transcript panes do not publish the reflowable text floor. They keep
-the media route width contract and may publish only legitimate rail extra
-width. Mobile panes ignore desktop runtime pane sizing and render at viewport
-width.
+The overview ruler and reader secondary rail are outward extra width. Opening
+or closing them changes rendered pane width without changing stored primary
+pane width. Mobile panes ignore desktop runtime pane sizing and render at
+viewport width.
 
 ### overview ruler positioning
 

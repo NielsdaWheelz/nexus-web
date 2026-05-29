@@ -13,6 +13,7 @@ import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 
@@ -105,7 +106,11 @@ export function encodeWorkspaceStateParam(state: WorkspaceState): WorkspaceEncod
 
 export function decodeWorkspaceStateParam(
   payload: string,
-  options: { fallbackHref: string; baseOrigin?: string }
+  options: {
+    fallbackHref: string;
+    baseOrigin?: string;
+    workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+  }
 ): WorkspaceDecodeResult {
   if (!payload || payload.length === 0) {
     return {
@@ -150,7 +155,11 @@ export function decodeWorkspaceStateParam(
 export function decodeWorkspaceStateFromUrl(
   pathname: string,
   searchParams: URLSearchParams,
-  options?: { hash?: string; baseOrigin?: string }
+  options: {
+    hash?: string;
+    baseOrigin?: string;
+    workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+  }
 ): WorkspaceDecodeResult {
   const fallbackHref = buildWorkspaceFallbackHref(pathname, searchParams, options?.hash ?? "");
   const version = searchParams.get(WORKSPACE_VERSION_PARAM);
@@ -160,7 +169,8 @@ export function decodeWorkspaceStateFromUrl(
     return {
       state: sanitizeWorkspaceState(null, {
         fallbackHref,
-        baseOrigin: options?.baseOrigin,
+        baseOrigin: options.baseOrigin,
+        workspacePrimaryMetrics: options.workspacePrimaryMetrics,
       }),
       source: "inferred",
       errorCode: null,
@@ -170,7 +180,8 @@ export function decodeWorkspaceStateFromUrl(
     return {
       state: sanitizeWorkspaceState(null, {
         fallbackHref,
-        baseOrigin: options?.baseOrigin,
+        baseOrigin: options.baseOrigin,
+        workspacePrimaryMetrics: options.workspacePrimaryMetrics,
       }),
       source: "fallback",
       errorCode: "unsupported_version",
@@ -179,7 +190,8 @@ export function decodeWorkspaceStateFromUrl(
 
   return decodeWorkspaceStateParam(encodedState, {
     fallbackHref,
-    baseOrigin: options?.baseOrigin,
+    baseOrigin: options.baseOrigin,
+    workspacePrimaryMetrics: options.workspacePrimaryMetrics,
   });
 }
 

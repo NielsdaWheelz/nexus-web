@@ -9,13 +9,19 @@ import {
   type WorkspacePaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 
 const emptyHistory = () => ({ back: [], forward: [] });
 
 const librariesPane: WorkspacePaneState = {
   id: "pane-1",
   href: "/libraries",
-  widthPx: 480,
+  widthPx: 684,
   visibility: "visible" as const,
   history: emptyHistory(),
 };
@@ -201,17 +207,17 @@ describe("prepareRestoredState", () => {
       activePaneId: "pane-2",
       panes: [{ ...librariesPane }, { ...mediaPane }],
     };
-    expect(prepareRestoredState(raw)).toEqual(raw);
+    expect(prepareRestoredState(raw, workspacePrimaryMetrics)).toEqual(raw);
   });
 
   it("returns a default workspace for null", () => {
-    const result = prepareRestoredState(null);
+    const result = prepareRestoredState(null, workspacePrimaryMetrics);
     expect(result.panes).toHaveLength(1);
     expect(result.panes[0].href).toBe("/libraries");
   });
 
   it("returns a default workspace for a garbage value", () => {
-    const result = prepareRestoredState({ nonsense: true });
+    const result = prepareRestoredState({ nonsense: true }, workspacePrimaryMetrics);
     expect(result.panes).toHaveLength(1);
     expect(result.panes[0].href).toBe("/libraries");
   });

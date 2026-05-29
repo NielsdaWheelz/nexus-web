@@ -3,15 +3,16 @@ import { useEffect, useRef } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import type { PaneRuntimeSizing } from "@/lib/workspace/paneSizing";
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
-  runtimeSizing: null as { minWidthPx: number | null; extraWidthPx: number } | null,
+  runtimeSizing: null as PaneRuntimeSizing | null,
   store: {
     state: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       panes: [
         {
           id: "pane-1",
@@ -22,6 +23,10 @@ const hostMocks = vi.hoisted(() => ({
         },
       ],
       activePaneId: "pane-1",
+    },
+    workspacePrimaryMetrics: {
+      primaryMinWidthPx: 684,
+      primaryDefaultWidthPx: 684,
     },
     runtimeTitleByPaneId: new Map(),
     activatePane: vi.fn(),
@@ -50,10 +55,8 @@ function mediaRoute(href: string) {
     render: () => <TestPaneBody />,
     definition: {
       bodyMode: "document",
-      defaultWidthPx: 1280,
-      minWidthPx: 320,
       maxWidthPx: 2400,
-      layoutKind: "media-reader",
+      allowsIntrinsicPrimaryWidth: true,
     },
   };
 }
@@ -182,7 +185,7 @@ function setPaneHref(
   history: { back: string[]; forward: string[] } = { back: [], forward: [] }
 ) {
   hostMocks.store.state = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     panes: [
       {
         id: "pane-1",
@@ -242,7 +245,10 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 
   it("auto-resizes a visible pane when runtime content raises the minimum width", async () => {
-    hostMocks.runtimeSizing = { minWidthPx: 900, extraWidthPx: 0 };
+    hostMocks.runtimeSizing = {
+      primaryWidth: { kind: "intrinsic", widthPx: 900 },
+      extraWidthPx: 0,
+    };
 
     render(<WorkspaceHost />);
 
@@ -252,7 +258,10 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 
   it("ignores stale runtime sizing records after the pane resource changes", async () => {
-    hostMocks.runtimeSizing = { minWidthPx: 900, extraWidthPx: 360 };
+    hostMocks.runtimeSizing = {
+      primaryWidth: { kind: "intrinsic", widthPx: 900 },
+      extraWidthPx: 360,
+    };
     const { rerender } = render(<WorkspaceHost />);
 
     await waitFor(() => {
@@ -272,13 +281,13 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-min-width-px",
-      "320",
+      "684",
     );
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-extra-width-px",
       "0",
     );
-    expect(hostMocks.store.resizePane).not.toHaveBeenCalled();
+    expect(hostMocks.store.resizePane).toHaveBeenCalledWith("pane-1", 684);
   });
 
   it("routes pane chrome internal links through the current pane", () => {

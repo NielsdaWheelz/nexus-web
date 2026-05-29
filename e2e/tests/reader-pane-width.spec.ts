@@ -36,9 +36,6 @@ async function waitForReflowableReader(activePane: Locator): Promise<void> {
   await expect(activePane.getByTestId("reader-overview-ruler")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(
-    activePane.locator('[style*="--reader-protected-width-px"]').first(),
-  ).toBeVisible({ timeout: 20_000 });
 }
 
 async function expectReflowableFloor(page: Page, mediaId: string): Promise<void> {
@@ -94,7 +91,7 @@ test.describe("reader pane width floor", () => {
     await expectReflowableFloor(page, readSeed("epub-media.json").media_id);
   });
 
-  test("PDF and transcript panes keep the media route minimum without a text floor", async ({
+  test("PDF panes use intrinsic page width and transcripts use the workspace floor", async ({
     page,
   }) => {
     const pdf = readSeed("pdf-media.json");
@@ -103,8 +100,13 @@ test.describe("reader pane width floor", () => {
     await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible({
       timeout: 20_000,
     });
-    await expect.poll(() => numericAttribute(resizeHandle(activePane), "aria-valuemin")).toBe(320);
-    await expect.poll(() => numericAttribute(resizeHandle(activePane), "aria-valuenow")).toBe(320);
+    await expect
+      .poll(() => numericAttribute(resizeHandle(activePane), "aria-valuemin"))
+      .toBeGreaterThan(320);
+    const pdfFloor = await numericAttribute(resizeHandle(activePane), "aria-valuemin");
+    await expect
+      .poll(() => numericAttribute(resizeHandle(activePane), "aria-valuenow"))
+      .toBe(pdfFloor);
 
     const youtube = readSeed("youtube-media.json");
     await gotoSinglePaneWorkspace(page, `/media/${youtube.media_id}`, { widthPx: 320 });
@@ -112,8 +114,16 @@ test.describe("reader pane width floor", () => {
     await expect(activePane.getByTestId("document-viewport")).toBeVisible({
       timeout: 20_000,
     });
-    await expect.poll(() => numericAttribute(resizeHandle(activePane), "aria-valuemin")).toBe(320);
-    await expect.poll(() => numericAttribute(resizeHandle(activePane), "aria-valuenow")).toBe(320);
+    await expect
+      .poll(() => numericAttribute(resizeHandle(activePane), "aria-valuemin"))
+      .toBeGreaterThan(320);
+    const transcriptFloor = await numericAttribute(
+      resizeHandle(activePane),
+      "aria-valuemin",
+    );
+    await expect
+      .poll(() => numericAttribute(resizeHandle(activePane), "aria-valuenow"))
+      .toBe(transcriptFloor);
   });
 
   test("mobile reflowable readers use viewport width instead of desktop floors", async ({
@@ -129,9 +139,6 @@ test.describe("reader pane width floor", () => {
       timeout: 20_000,
     });
     await expect(paneShell(activePane)).toHaveAttribute("data-mobile", "true");
-    await expect(
-      activePane.locator('[style*="--reader-protected-width-px"]').first(),
-    ).toHaveCount(0);
     await expect
       .poll(() =>
         paneShell(activePane).evaluate((element) =>

@@ -10,6 +10,8 @@ const pdfRuntimeState = vi.hoisted(() => ({
   },
   viewerHost: null as HTMLDivElement | null,
   textNode: null as Text | null,
+  numPages: 1,
+  pageWidths: [600] as number[],
   pageHighlights: [] as unknown[],
   createdHighlightId: "created-highlight-1",
 }));
@@ -139,34 +141,39 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       }
 
       this.pagesCount = doc.numPages;
-      const pageRect = new DOMRect(40, 80, 600, 800);
-      const page = document.createElement("div");
-      page.className = "page";
-      page.setAttribute("data-page-number", "1");
-      setElementRect(page, pageRect);
-      Object.defineProperty(page, "offsetTop", {
-        configurable: true,
-        value: 0,
-      });
+      for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+        const width = pdfRuntimeState.pageWidths[pageNumber - 1] ?? 600;
+        const pageRect = new DOMRect(40, 80 * pageNumber, width, 800);
+        const page = document.createElement("div");
+        page.className = "page";
+        page.setAttribute("data-page-number", String(pageNumber));
+        setElementRect(page, pageRect);
+        Object.defineProperty(page, "offsetTop", {
+          configurable: true,
+          value: (pageNumber - 1) * 820,
+        });
 
-      const canvasWrapper = document.createElement("div");
-      canvasWrapper.className = "canvasWrapper";
-      setElementRect(canvasWrapper, pageRect);
-      const canvas = document.createElement("canvas");
-      setElementRect(canvas, pageRect);
-      canvasWrapper.append(canvas);
+        const canvasWrapper = document.createElement("div");
+        canvasWrapper.className = "canvasWrapper";
+        setElementRect(canvasWrapper, pageRect);
+        const canvas = document.createElement("canvas");
+        setElementRect(canvas, pageRect);
+        canvasWrapper.append(canvas);
 
-      const textLayer = document.createElement("div");
-      textLayer.className = "textLayer";
-      setElementRect(textLayer, pageRect);
-      const span = document.createElement("span");
-      const textNode = document.createTextNode("Alpha selected quote Omega");
-      span.append(textNode);
-      textLayer.append(span);
+        const textLayer = document.createElement("div");
+        textLayer.className = "textLayer";
+        setElementRect(textLayer, pageRect);
+        const span = document.createElement("span");
+        const textNode = document.createTextNode("Alpha selected quote Omega");
+        span.append(textNode);
+        textLayer.append(span);
 
-      page.append(canvasWrapper, textLayer);
-      viewer.append(page);
-      pdfRuntimeState.textNode = textNode;
+        page.append(canvasWrapper, textLayer);
+        viewer.append(page);
+        if (pageNumber === 1) {
+          pdfRuntimeState.textNode = textNode;
+        }
+      }
 
       window.requestAnimationFrame(() => {
         pdfRuntimeState.eventBus?.dispatch("pagesloaded", {
@@ -180,17 +187,18 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       });
     }
 
-    getPageView(_index?: number) {
+    getPageView(index = 0) {
+      const width = pdfRuntimeState.pageWidths[index] ?? 600;
       return {
         viewport: {
-          width: 600,
+          width,
           height: 800,
           scale: 1,
           rotation: 0,
         },
         pdfPage: {
           getViewport: () => ({
-            width: 600,
+            width,
             height: 800,
             scale: 1,
             rotation: 0,
@@ -208,7 +216,10 @@ vi.mock("@/components/pdfReaderRuntime", () => {
     loadPdfJs: async () => ({
       GlobalWorkerOptions: { workerSrc: "" },
       getDocument: () => ({
-        promise: Promise.resolve({ numPages: 1, destroy: vi.fn() }),
+        promise: Promise.resolve({
+          numPages: pdfRuntimeState.numPages,
+          destroy: vi.fn(),
+        }),
         destroy: vi.fn(),
       }),
     }),
@@ -229,6 +240,8 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.eventBus = null;
     pdfRuntimeState.viewerHost = null;
     pdfRuntimeState.textNode = null;
+    pdfRuntimeState.numPages = 1;
+    pdfRuntimeState.pageWidths = [600];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
     vi.mocked(apiFetch).mockClear();
@@ -300,6 +313,25 @@ describe("PdfReader selection chat destinations", () => {
       page_number: 1,
       color: "yellow",
       exact: "selected quote",
+    });
+  });
+
+  it("publishes the widest rendered page width", async () => {
+    pdfRuntimeState.numPages = 2;
+    pdfRuntimeState.pageWidths = [600, 735.4];
+    const onIntrinsicWidthChange = vi.fn();
+
+    render(
+      <PdfReader
+        mediaId="media-1"
+        onIntrinsicWidthChange={onIntrinsicWidthChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onIntrinsicWidthChange).toHaveBeenCalledWith({
+        maxRenderedPageWidthPx: 736,
+      });
     });
   });
 

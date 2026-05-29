@@ -30,6 +30,7 @@ import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   normalizeWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import {
   buildWorkspaceUrl,
   decodeWorkspaceStateFromUrl,
@@ -82,9 +83,15 @@ type WorkspaceAction =
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
 
-function ensureActivePaneId(state: WorkspaceState): WorkspaceState {
+function ensureActivePaneId(
+  state: WorkspaceState,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceState {
   if (!state.panes.length) {
-    return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+    return createDefaultWorkspaceState(
+      WORKSPACE_DEFAULT_FALLBACK_HREF,
+      workspacePrimaryMetrics,
+    );
   }
   if (
     state.panes.some((p) => p.id === state.activePaneId && p.visibility === "visible")
@@ -95,17 +102,27 @@ function ensureActivePaneId(state: WorkspaceState): WorkspaceState {
   if (firstVisiblePane) {
     return { ...state, activePaneId: firstVisiblePane.id };
   }
-  return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+  return createDefaultWorkspaceState(
+    WORKSPACE_DEFAULT_FALLBACK_HREF,
+    workspacePrimaryMetrics,
+  );
 }
 
-function trimAndEnsureActivePaneId(state: WorkspaceState): WorkspaceState {
-  return ensureActivePaneId(trimWorkspacePaneHistory(state));
+function trimAndEnsureActivePaneId(
+  state: WorkspaceState,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceState {
+  return ensureActivePaneId(
+    trimWorkspacePaneHistory(state),
+    workspacePrimaryMetrics,
+  );
 }
 
 function applyPaneHrefTransition(
   pane: WorkspacePaneState,
   href: string,
-  mode: PaneNavigationMode
+  mode: PaneNavigationMode,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspacePaneState {
   if (pane.href === href) {
     return pane;
@@ -114,10 +131,9 @@ function applyPaneHrefTransition(
     ...pane,
     href,
     widthPx: resolvePaneTransitionWidth(
-      pane.href,
-      href,
       pane.widthPx,
-      hasSamePaneResource(pane.href, href)
+      hasSamePaneResource(pane.href, href),
+      workspacePrimaryMetrics,
     ),
     history:
       mode === "push"
@@ -140,7 +156,8 @@ function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
 
 export function mergeRestoredWorkspaceWithUrlIntent(
   restored: WorkspaceState,
-  urlIntent: WorkspaceState
+  urlIntent: WorkspaceState,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspaceState {
   if (isNeutralWorkspaceRestoreIntent(urlIntent)) {
     return restored;
@@ -163,12 +180,17 @@ export function mergeRestoredWorkspaceWithUrlIntent(
       panes: restored.panes.map((pane) =>
         pane.id === existingPane.id
           ? {
-              ...applyPaneHrefTransition(pane, requestedPane.href, "replace"),
+              ...applyPaneHrefTransition(
+                pane,
+                requestedPane.href,
+                "replace",
+                workspacePrimaryMetrics,
+              ),
               visibility: "visible" as const,
             }
           : pane
       ),
-    });
+    }, workspacePrimaryMetrics);
   }
 
   const requestedPaneId = restored.panes.some((pane) => pane.id === requestedPane.id)
@@ -189,13 +211,17 @@ export function mergeRestoredWorkspaceWithUrlIntent(
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: requestedPaneId,
     panes: [...panes, paneToAppend],
-  });
+  }, workspacePrimaryMetrics);
 }
 
-function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+function workspaceReducer(
+  state: WorkspaceState,
+  action: WorkspaceAction,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceState {
   switch (action.type) {
     case "hydrate":
-      return trimAndEnsureActivePaneId(action.state);
+      return trimAndEnsureActivePaneId(action.state, workspacePrimaryMetrics);
 
     case "activate_pane": {
       if (
@@ -213,7 +239,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       for (const pane of action.panes) {
         const paneToOpen = {
           ...pane,
-          widthPx: clampPaneWidth(pane.widthPx, pane.href),
+          widthPx: clampPaneWidth(pane.widthPx, workspacePrimaryMetrics),
           visibility: "visible" as const,
         };
         const existingPane = panes.find((item) =>
@@ -224,7 +250,12 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
           panes = panes.map((item) =>
             item.id === existingPane.id
               ? {
-                  ...applyPaneHrefTransition(item, paneToOpen.href, action.mode),
+                  ...applyPaneHrefTransition(
+                    item,
+                    paneToOpen.href,
+                    action.mode,
+                    workspacePrimaryMetrics,
+                  ),
                   visibility: "visible" as const,
                 }
               : item
@@ -250,7 +281,10 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         }
       }
 
-      return trimAndEnsureActivePaneId({ ...state, panes, activePaneId });
+      return trimAndEnsureActivePaneId(
+        { ...state, panes, activePaneId },
+        workspacePrimaryMetrics,
+      );
     }
 
     case "navigate_pane": {
@@ -261,7 +295,12 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       const panes = state.panes.map((p) =>
         p.id === action.paneId
           ? {
-              ...applyPaneHrefTransition(p, action.href, action.mode),
+              ...applyPaneHrefTransition(
+                p,
+                action.href,
+                action.mode,
+                workspacePrimaryMetrics,
+              ),
               visibility: action.activate ? "visible" : p.visibility,
             }
           : p
@@ -270,7 +309,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         ...state,
         panes,
         activePaneId: action.activate ? action.paneId : state.activePaneId,
-      });
+      }, workspacePrimaryMetrics);
     }
 
     case "go_back_pane": {
@@ -285,10 +324,9 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
               ...p,
               href,
               widthPx: resolvePaneTransitionWidth(
-                p.href,
-                href,
                 p.widthPx,
-                hasSamePaneResource(p.href, href)
+                hasSamePaneResource(p.href, href),
+                workspacePrimaryMetrics,
               ),
               visibility: "visible" as const,
               history: {
@@ -302,7 +340,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         ...state,
         activePaneId: action.paneId,
         panes,
-      });
+      }, workspacePrimaryMetrics);
     }
 
     case "go_forward_pane": {
@@ -317,10 +355,9 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
               ...p,
               href,
               widthPx: resolvePaneTransitionWidth(
-                p.href,
-                href,
                 p.widthPx,
-                hasSamePaneResource(p.href, href)
+                hasSamePaneResource(p.href, href),
+                workspacePrimaryMetrics,
               ),
               visibility: "visible" as const,
               history: {
@@ -334,7 +371,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         ...state,
         activePaneId: action.paneId,
         panes,
-      });
+      }, workspacePrimaryMetrics);
     }
 
     case "close_pane": {
@@ -344,7 +381,10 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       }
       let panes = state.panes.filter((p) => p.id !== action.paneId);
       if (!panes.length) {
-        return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+        return createDefaultWorkspaceState(
+          WORKSPACE_DEFAULT_FALLBACK_HREF,
+          workspacePrimaryMetrics,
+        );
       }
       let { activePaneId } = state;
       if (
@@ -371,13 +411,16 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
           );
         }
       }
-      return ensureActivePaneId({ ...state, panes, activePaneId });
+      return ensureActivePaneId(
+        { ...state, panes, activePaneId },
+        workspacePrimaryMetrics,
+      );
     }
 
     case "resize_pane": {
       const panes = state.panes.map((p) =>
         p.id === action.paneId
-          ? { ...p, widthPx: clampPaneWidth(action.widthPx, p.href) }
+          ? { ...p, widthPx: clampPaneWidth(action.widthPx, workspacePrimaryMetrics) }
           : p
       );
       return { ...state, panes };
@@ -438,13 +481,16 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
 // Build pane for an open action
 // ---------------------------------------------------------------------------
 
-function buildPanesForOpen(href: string): WorkspacePaneState[] {
+function buildPanesForOpen(
+  href: string,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspacePaneState[] {
   const mainId = createPaneId();
   return [
     {
       id: mainId,
       href,
-      widthPx: getDefaultPaneWidthPx(href),
+      widthPx: getDefaultPaneWidthPx(workspacePrimaryMetrics),
       visibility: "visible",
       history: createEmptyPaneHistory(),
     },
@@ -541,6 +587,7 @@ export function resolveWorkspacePaneTitle(
 
 interface WorkspaceStoreValue {
   state: WorkspaceState;
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>;
   activatePane: (paneId: string) => void;
   openPane: (input: {
@@ -569,10 +616,15 @@ interface WorkspaceStoreValue {
 }
 
 const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
-function getWindowLocationState(): WorkspaceDecodeResult {
+function getWindowLocationState(
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceDecodeResult {
   if (typeof window === "undefined") {
     return {
-      state: createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF),
+      state: createDefaultWorkspaceState(
+        WORKSPACE_DEFAULT_FALLBACK_HREF,
+        workspacePrimaryMetrics,
+      ),
       source: "inferred",
       errorCode: null,
     };
@@ -586,16 +638,28 @@ function getWindowLocationState(): WorkspaceDecodeResult {
         window.location.origin && window.location.origin !== "null"
           ? window.location.origin
           : undefined,
+      workspacePrimaryMetrics,
     }
   );
 }
 
-export function WorkspaceStoreProvider({ children }: { children: React.ReactNode }) {
+export function WorkspaceStoreProvider({
+  children,
+  workspacePrimaryMetrics,
+}: {
+  children: React.ReactNode;
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+}) {
   const [mounted, setMounted] = useState(false);
   const [state, dispatch] = useReducer(
-    workspaceReducer,
+    (current: WorkspaceState, action: WorkspaceAction) =>
+      workspaceReducer(current, action, workspacePrimaryMetrics),
     null,
-    () => createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF)
+    () =>
+      createDefaultWorkspaceState(
+        WORKSPACE_DEFAULT_FALLBACK_HREF,
+        workspacePrimaryMetrics,
+      )
   );
   const [, setMeta] = useState<{
     lastDecodeError: WorkspaceDecodeResult["errorCode"];
@@ -617,11 +681,20 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     (restored: WorkspaceState, urlIntent: WorkspaceState) =>
       dispatch({
         type: "hydrate",
-        state: mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent),
+        state: mergeRestoredWorkspaceWithUrlIntent(
+          restored,
+          urlIntent,
+          workspacePrimaryMetrics,
+        ),
       }),
-    []
+    [workspacePrimaryMetrics]
   );
-  useWorkspaceSession(state, mounted, applyRestoredState);
+  useWorkspaceSession(
+    state,
+    mounted,
+    applyRestoredState,
+    workspacePrimaryMetrics,
+  );
 
   const dispatchAndSync = useCallback(
     (action: WorkspaceAction, historyMode: HistoryMode = "replace") => {
@@ -674,12 +747,12 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
 
   // --- Hydrate from URL on mount ---
   useEffect(() => {
-    const decoded = getWindowLocationState();
+    const decoded = getWindowLocationState(workspacePrimaryMetrics);
     dispatch({ type: "hydrate", state: decoded.state });
     setMeta((prev) => ({ ...prev, lastDecodeError: decoded.errorCode }));
     publishDecodeTelemetry(decoded);
     setMounted(true);
-  }, [publishDecodeTelemetry]);
+  }, [publishDecodeTelemetry, workspacePrimaryMetrics]);
 
   // --- Event listeners: popstate, open-pane events ---
   useEffect(() => {
@@ -688,7 +761,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     readyRef.current = true;
 
     const handlePopState = () => {
-      const decoded = getWindowLocationState();
+      const decoded = getWindowLocationState(workspacePrimaryMetrics);
       skipSyncRef.current = true;
       dispatch({ type: "hydrate", state: decoded.state });
       setMeta((prev) => ({ ...prev, lastDecodeError: decoded.errorCode }));
@@ -698,7 +771,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     const handleOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
       const href = normalizeWorkspaceHref(detail.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href);
+      const panes = buildPanesForOpen(href, workspacePrimaryMetrics);
       const targetPaneId = findPaneIdForOpen(stateRef.current.panes, panes[0]!);
       publishPaneTitleHint(targetPaneId, href, detail.titleHint);
       dispatchAndSync(
@@ -742,7 +815,12 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [dispatchAndSync, publishDecodeTelemetry, publishPaneTitleHint]);
+  }, [
+    dispatchAndSync,
+    publishDecodeTelemetry,
+    publishPaneTitleHint,
+    workspacePrimaryMetrics,
+  ]);
 
   // --- Prune stale title caches when panes change ---
   useEffect(() => {
@@ -856,7 +934,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href);
+      const panes = buildPanesForOpen(href, workspacePrimaryMetrics);
       const targetPaneId = findPaneIdForOpen(stateRef.current.panes, panes[0]!);
       publishPaneTitleHint(targetPaneId, href, input.titleHint);
       const mode = input.replace ? "replace" : "push";
@@ -871,7 +949,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
         mode
       );
     },
-    [dispatchAndSync, publishPaneTitleHint]
+    [dispatchAndSync, publishPaneTitleHint, workspacePrimaryMetrics]
   );
 
   const navigatePane = useCallback(
@@ -960,6 +1038,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const value = useMemo<WorkspaceStoreValue>(
     () => ({
       state,
+      workspacePrimaryMetrics,
       runtimeTitleByPaneId,
       activatePane,
       openPane,
@@ -974,6 +1053,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     }),
     [
       state,
+      workspacePrimaryMetrics,
       runtimeTitleByPaneId,
       activatePane,
       openPane,

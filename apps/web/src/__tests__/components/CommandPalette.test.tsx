@@ -5,6 +5,12 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { NEXUS_OPEN_PANE_EVENT } from "@/lib/panes/openInAppPane";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -15,7 +21,7 @@ function jsonResponse(body: unknown): Response {
 function renderCommandPalette() {
   render(
     <FeedbackProvider>
-      <WorkspaceStoreProvider>
+      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
         <div data-testid="workspace-ready" />
         <CommandPalette />
       </WorkspaceStoreProvider>

@@ -1,38 +1,33 @@
 "use client";
 
-import {
-  WORKSPACE_DEFAULT_FALLBACK_HREF,
-} from "@/lib/workspace/workspaceHref";
-import { resolvePaneRouteWidthContract } from "@/lib/panes/paneRouteModel";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
-export function getDefaultPaneWidthPx(href: string): number {
-  const width = resolvePaneRouteWidthContract(href).defaultWidthPx;
-  return clampPaneWidth(width, href);
+export function getDefaultPaneWidthPx(
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): number {
+  return Math.ceil(workspacePrimaryMetrics.primaryDefaultWidthPx);
 }
 
-export function clampPaneWidth(value: number, href?: string): number {
-  const contract = resolvePaneRouteWidthContract(
-    href ?? WORKSPACE_DEFAULT_FALLBACK_HREF
-  );
+export function clampPaneWidth(
+  value: number,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): number {
   if (!Number.isFinite(value)) {
-    return contract.defaultWidthPx;
+    return getDefaultPaneWidthPx(workspacePrimaryMetrics);
   }
-  return Math.min(
-    contract.maxWidthPx,
-    Math.max(contract.minWidthPx, Math.round(value))
+  return Math.max(
+    Math.ceil(workspacePrimaryMetrics.primaryMinWidthPx),
+    Math.round(value),
   );
 }
 
 export function resolvePaneTransitionWidth(
-  previousHref: string,
-  nextHref: string,
   previousWidthPx: number,
-  preserveWidth: boolean
+  preserveWidth: boolean,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): number {
-  const previousContract = resolvePaneRouteWidthContract(previousHref);
-  const nextContract = resolvePaneRouteWidthContract(nextHref);
-  if (preserveWidth || previousContract.layoutKind === nextContract.layoutKind) {
-    return clampPaneWidth(previousWidthPx, nextHref);
+  if (preserveWidth) {
+    return clampPaneWidth(previousWidthPx, workspacePrimaryMetrics);
   }
-  return getDefaultPaneWidthPx(nextHref);
+  return getDefaultPaneWidthPx(workspacePrimaryMetrics);
 }

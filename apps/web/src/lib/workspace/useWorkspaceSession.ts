@@ -11,13 +11,15 @@ import {
   workspaceStatesEqual,
 } from "@/lib/workspace/sessionSync";
 import type { WorkspaceState } from "@/lib/workspace/schema";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 
 export function useWorkspaceSession(
   state: WorkspaceState,
   mounted: boolean,
-  applyRestoredState: (restored: WorkspaceState, urlIntent: WorkspaceState) => void
+  applyRestoredState: (restored: WorkspaceState, urlIntent: WorkspaceState) => void,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): void {
   const captureArmedRef = useRef(false);
   const stateRef = useRef(state);
@@ -48,10 +50,11 @@ export function useWorkspaceSession(
         if (cancelled) {
           return;
         }
-        const ownState = own != null ? prepareRestoredState(own) : null;
+        const ownState =
+          own != null ? prepareRestoredState(own, workspacePrimaryMetrics) : null;
         const elsewhereState =
           mostRecentElsewhere != null
-            ? prepareRestoredState(mostRecentElsewhere)
+            ? prepareRestoredState(mostRecentElsewhere, workspacePrimaryMetrics)
             : null;
         const restored =
           ownState && isNonTrivialSession(ownState)
@@ -75,7 +78,7 @@ export function useWorkspaceSession(
     return () => {
       cancelled = true;
     };
-  }, [mounted, applyRestoredState]);
+  }, [mounted, applyRestoredState, workspacePrimaryMetrics]);
 
   // (2) CAPTURE — debounced PUT of the current state once capture is armed.
   useEffect(() => {

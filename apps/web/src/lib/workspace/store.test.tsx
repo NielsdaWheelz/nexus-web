@@ -6,12 +6,6 @@ import {
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
-  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-  DEFAULT_MEDIA_PANE_WIDTH_PX,
-  MAX_MEDIA_PANE_WIDTH_PX,
-  MAX_STANDARD_PANE_WIDTH_PX,
-} from "@/lib/panes/paneRouteModel";
-import {
   mergeRestoredWorkspaceWithUrlIntent,
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
@@ -20,6 +14,12 @@ import {
   type WorkspacePaneTitleSource,
 } from "@/lib/workspace/store";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 
 type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
 
@@ -72,7 +72,7 @@ async function mountWorkspaceStore(path = "/libraries") {
   let store: WorkspaceStore | null = null;
 
   render(
-    <WorkspaceStoreProvider>
+    <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
       <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
     </WorkspaceStoreProvider>,
   );
@@ -130,7 +130,13 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       panes: [pane("pane-url-libraries", "/libraries")],
     };
 
-    expect(mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent)).toBe(restored);
+    expect(
+      mergeRestoredWorkspaceWithUrlIntent(
+        restored,
+        urlIntent,
+        workspacePrimaryMetrics,
+      ),
+    ).toBe(restored);
   });
 
   it("adds an explicit direct URL as the active pane instead of letting restore override it", () => {
@@ -140,7 +146,11 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       panes: [pane("pane-url-media", "/media/media-123", { widthPx: 1280 })],
     };
 
-    const merged = mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent);
+    const merged = mergeRestoredWorkspaceWithUrlIntent(
+      restored,
+      urlIntent,
+      workspacePrimaryMetrics,
+    );
 
     expect(merged.panes.map((pane) => pane.href)).toEqual([
       "/libraries",
@@ -173,7 +183,11 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       ],
     };
 
-    const merged = mergeRestoredWorkspaceWithUrlIntent(savedWithMedia, urlIntent);
+    const merged = mergeRestoredWorkspaceWithUrlIntent(
+      savedWithMedia,
+      urlIntent,
+      workspacePrimaryMetrics,
+    );
 
     expect(merged.panes).toHaveLength(3);
     expect(merged.activePaneId).toBe("pane-saved-media");
@@ -211,7 +225,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("opens new panes at the route default width", async () => {
+  it("opens new panes at the workspace default width", async () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
@@ -220,7 +234,9 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/media/media-1");
-      expect(workspace().state.panes[1]?.widthPx).toBe(DEFAULT_MEDIA_PANE_WIDTH_PX);
+      expect(workspace().state.panes[1]?.widthPx).toBe(
+        workspacePrimaryMetrics.primaryDefaultWidthPx,
+      );
     });
     flushWorkspaceSession();
   });
@@ -371,7 +387,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("preserves resized width across same-layout navigation", async () => {
+  it("resets resized width across different resources", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
     const paneId = workspace().state.activePaneId;
 
@@ -383,13 +399,13 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(workspace().state.panes[0]).toMatchObject({
         href: "/conversations",
-        widthPx: 900,
+        widthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       });
     });
     flushWorkspaceSession();
   });
 
-  it("resets pane width across route layout changes", async () => {
+  it("resets pane width when navigating to a different resource", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
     const paneId = workspace().state.activePaneId;
 
@@ -397,7 +413,7 @@ describe("WorkspaceStoreProvider", () => {
       workspace().resizePane(paneId, 99999);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.widthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
+      expect(workspace().state.panes[0]?.widthPx).toBe(99999);
     });
 
     act(() => {
@@ -406,14 +422,14 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(workspace().state.panes[0]?.href).toBe("/libraries");
       expect(workspace().state.panes[0]?.widthPx).toBe(
-        DEFAULT_DENSE_LIST_PANE_WIDTH_PX
+        workspacePrimaryMetrics.primaryDefaultWidthPx,
       );
       expect(workspace().state.activePaneId).toBe(paneId);
     });
     flushWorkspaceSession();
   });
 
-  it("uses target route defaults while traversing history across layout kinds", async () => {
+  it("uses workspace defaults while traversing history across resources", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
     const paneId = workspace().state.activePaneId;
 
@@ -424,7 +440,7 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(workspace().state.panes[0]).toMatchObject({
         href: "/libraries",
-        widthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+        widthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: ["/media/media-1"], forward: [] },
       });
     });
@@ -435,7 +451,7 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(workspace().state.panes[0]).toMatchObject({
         href: "/media/media-1",
-        widthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
+        widthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: [], forward: ["/libraries"] },
       });
     });
@@ -446,7 +462,7 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(workspace().state.panes[0]).toMatchObject({
         href: "/libraries",
-        widthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+        widthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: ["/media/media-1"], forward: [] },
       });
     });
@@ -586,7 +602,7 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       const secondPane = workspace().state.panes.find((pane) => pane.id === secondPaneId);
       expect(secondPane?.visibility).toBe("minimized");
-      expect(secondPane?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
+      expect(secondPane?.widthPx).toBe(99999);
     });
 
     act(() => {

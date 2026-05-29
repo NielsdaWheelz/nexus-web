@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-export const WORKSPACE_E2E_SCHEMA_VERSION = 6;
+export const WORKSPACE_E2E_SCHEMA_VERSION = 7;
 
 export interface WorkspacePaneHistory {
   back: string[];
@@ -60,10 +60,7 @@ export function singlePaneWorkspaceState(
   options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
   const paneId = options?.paneId ?? "pane-e2e-primary";
-  const widthPx =
-    options?.widthPx ?? (new URL(href, "http://nexus-e2e.local").pathname.startsWith("/media/")
-      ? 1280
-      : 560);
+  const widthPx = options?.widthPx ?? 684;
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: paneId,

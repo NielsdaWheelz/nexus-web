@@ -1,126 +1,429 @@
-# Workspace Pane Layout Cutover
+# Workspace Pane Width Cutover
 
 ## Status
 
-This is the implementation plan and target contract for simplifying workspace
-panes, centralizing pane sizing, and making web article and EPUB reader panes
-impossible to narrow below their protected text measure.
+This is the target contract and implementation plan for simplifying workspace
+pane widths.
 
 The cutover is strict:
 
-- No nested split-pane tree.
-- No duplicate width contract resolver.
-- No separate runtime min-width and extra-width APIs.
-- No live-content or CSS `min-content` pane sizing for readers.
-- No protected text-width floor for PDF or transcript panes.
-- No duplicated rail width constants.
-- No compatibility shim for the previous pane sizing API.
-- No fallback path that keeps old sizing behavior alive.
+- One primary pane width rule for every non-PDF pane.
+- Default primary width equals minimum primary width.
+- The non-PDF primary width is the measured reader text content floor.
+- PDF panes are the only primary-width exception.
+- Overview rulers and secondary rails are runtime extra width.
+- Pane width policy has one owner.
+- Effective pane sizing has one calculation.
+- Runtime pane sizing has one API.
+- No stale route-specific width defaults.
+- No compatibility path for old pane width behavior.
 
-Any code path that still depends on those concepts is wrong and should be
-deleted, not adapted.
+Any code path that keeps the old per-layout defaults, adds overview ruler width
+to primary width, or gives PDF the universal text floor is wrong and should be
+deleted.
 
 ## Problem Statement
 
-The current workspace has the right product shape: a flat ordered list of panes
-rendered in a horizontal desktop canvas, with a single active pane on mobile.
-The problem is that pane sizing is spread across too many owners:
+The workspace pane implementation already has the right product shape: a flat
+ordered list of panes rendered in one horizontal desktop canvas, with one active
+pane on mobile. The remaining problem is width policy.
 
-- `schema.ts` derives width contracts from URL shape.
-- `paneRouteRegistry.tsx` owns route matching, body mode, render binding, and
-  then imports the schema width contract.
-- `WorkspaceHost.tsx` keeps two runtime maps, one for min width and one for
-  extra width.
-- `PaneShell.tsx` recomputes effective rendered dimensions.
-- `useResizeHandle.ts` performs another local clamp.
-- `MediaPaneBody.tsx` owns the reader text-width probe, reader column CSS var,
-  overview ruler width, secondary rail width, and runtime width publication.
-- Conversation panes publish extra rail width through similar ad hoc effects.
+Today pane width policy is still shaped by old route categories:
 
-That split makes the pane system hard to reason about. It also makes reader
-width behavior easy to regress: the code already has a protected reader width
-probe, but the behavior is hidden inside a large media component, applies too
-broadly, and lacks an E2E contract proving that live web article and EPUB panes
-cannot stay narrower than the reader text measure.
+- standard panes default wider than their minimum
+- dense-list panes have a different default
+- document panes have another default
+- podcast detail panes have their own minimum and default
+- media panes have a large static default
+- web article and EPUB readers publish a special measured floor
+- PDF panes bypass the reader text floor
+- the reader overview ruler is folded into the reflowable reader primary floor
 
-The correct fix is one hard cutover to the pane sizing contract below.
+That creates a pane system that is technically centralized but product-wise hard
+to predict. New panes open at arbitrary widths. Some panes can shrink to narrow
+layouts while reader panes cannot. The overview ruler is treated like primary
+content in one path but behaves like outward chrome in the UI. PDFs, which are
+the only truly intrinsic-width reader, do not own their own pane floor.
+
+The correct target is a hard cutover to one simple rule:
+
+```text
+non-PDF primary pane min/default = reader text content floor
+PDF primary pane min/default = measured PDF page width
+rendered pane width = primary pane width + runtime extra width
+```
 
 ## Goals
 
-- Keep the flat workspace pane model.
-- Keep desktop panes as independent shells in one horizontal canvas.
-- Keep mobile as one active visible pane with no desktop rail width behavior.
-- Make pane width contracts resolve from one source of truth.
-- Make runtime pane sizing one atomic capability.
-- Keep persisted pane width as the resizable primary pane width.
-- Keep outward rails outside the persisted primary pane width.
-- Protect web article and EPUB reader text from compression below the configured
-  reader measure.
-- Measure reader text floors from reader profile typography, not from live
-  article/EPUB content.
-- Scope protected reader text floors to reflowable text readers only.
-- Shrink `MediaPaneBody` by moving pane layout and sizing behavior to owned
-  modules.
-- Preserve reader pane-local history, reader resume, highlights, and focus-mode
-  contracts.
-- Add behavior-level tests for reader pane width floors.
-- Delete old duplicate APIs, stale constants, and doc drift as part of the
-  cutover.
+- Make pane widths predictable.
+- Make every non-PDF pane open at its minimum width.
+- Make every non-PDF pane share the same minimum width.
+- Base the shared width on the configured reader text content measure.
+- Keep web article and EPUB protected reader text behavior.
+- Apply that protected reader floor universally to non-PDF panes.
+- Remove the overview ruler from the protected reader floor.
+- Treat overview ruler width like secondary rail width: runtime extra width.
+- Make PDF panes show the whole rendered PDF page by default.
+- Make PDF panes impossible to shrink below their measured rendered page width.
+- Keep desktop workspace panes as independent shells in one horizontal canvas.
+- Keep mobile panes at viewport width with no desktop width publication.
+- Keep persisted pane width as primary content width only.
+- Keep outward UI chrome out of persisted primary width.
+- Delete stale width constants, layout-kind width distinctions, and tests that
+  preserve old behavior.
+- Update docs and tests in the same cutover so the product contract is stated
+  once and verified at the right surfaces.
 
 ## Non-Goals
 
-- Replacing the workspace with a nested split tree.
-- Making child rails or panels independently resizable.
-- Persisting secondary rail width in workspace state.
-- Changing `WorkspaceState` shape unless a hard defect requires it.
-- Changing reader profile schema.
-- Changing the web article, EPUB, transcript, or PDF resume contracts.
-- Changing highlight data APIs.
-- Merging the overview ruler and visible highlights rail.
-- Making PDF pages obey text-reader column width.
-- Making transcript playback/segments obey text-reader column width.
-- Supporting both old and new pane runtime sizing APIs.
-- Adding CSS intrinsic pane sizing as a second layout authority.
+- Replacing the flat workspace with nested split panes.
+- Making arbitrary child panels independently resizable.
+- Persisting overview ruler width.
+- Persisting secondary rail width.
+- Preserving old route-specific default widths.
+- Preserving the old runtime `{ minWidthPx: null }` API shape.
+- Supporting both old and new pane width schemas.
+- Letting live article, EPUB, transcript, or arbitrary pane content determine
+  non-PDF pane width.
+- Using CSS `min-content` as a pane shell sizing authority.
+- Making PDF pages obey the reflowable text column.
+- Making PDF width depend on reader text typography.
+- Adding per-document reader width overrides.
+- Adding a generalized layout manager.
 
-## Design Rules
+## Repository Rules
 
-The repository rules in `docs/rules/cleanliness.md`,
-`docs/rules/module-apis.md`, and `docs/rules/simplicity.md` govern this
-cutover:
+This cutover follows the repository rules in:
+
+- `docs/rules/cleanliness.md`
+- `docs/rules/module-apis.md`
+- `docs/rules/simplicity.md`
+- `docs/rules/testing_standards.md`
+
+Applied here:
 
 - One concern has one owner.
 - A capability has one primary API.
 - Duplicate derivations are deleted.
 - Dead compatibility branches are deleted.
-- Values are parsed or normalized at the boundary and trusted afterward.
+- Values are measured or normalized at the boundary and trusted afterward.
 - Tests assert observable behavior at the owning surface.
+- Browser-dependent width measurement is tested in browser or E2E contexts.
 
-Consequences for this feature:
+## Current Owners To Reuse
 
-- Pane width contracts are owned by one pure route model.
-- Effective pane sizing is a pure calculation with a single implementation.
-- Pane runtime publishes one sizing object, not two independent numbers.
-- Pane shell rendering consumes an already resolved sizing result.
-- Resize handles clamp through the same sizing function as render.
-- Reader text floors come from configured reader measure, never from live
-  content intrinsic width.
-- Reflowable text reader sizing is a media-reader concern, not a workspace
-  schema concern.
-- Secondary rail width is a shared rail concern, not a per-pane magic number.
+The existing architecture should be reused, not replaced:
+
+- `apps/web/src/lib/panes/paneRouteModel.ts`
+  owns route identity, body mode, resource refs, and route-level width policy.
+- `apps/web/src/lib/workspace/paneWidth.ts`
+  owns default-width and clamp helpers for persisted workspace widths.
+- `apps/web/src/lib/workspace/paneSizing.ts`
+  owns effective pane sizing math.
+- `apps/web/src/lib/panes/paneRuntime.tsx`
+  owns the pane body to workspace runtime sizing API.
+- `apps/web/src/components/workspace/WorkspaceHost.tsx`
+  owns runtime sizing records and rendered pane descriptors.
+- `apps/web/src/components/workspace/PaneShell.tsx`
+  owns shell inline dimensions and resize ARIA.
+- `apps/web/src/components/workspace/useResizeHandle.ts`
+  owns pointer and keyboard resize interaction.
+- `apps/web/src/lib/reader/ReaderContext.tsx`
+  already wraps the authenticated workspace and owns reader profile access.
+- `apps/web/src/components/secondaryRail/railSizing.ts`
+  already centralizes secondary rail widths.
+- `apps/web/src/components/PdfReader.tsx`
+  owns PDF.js page rendering and knows rendered page geometry.
+
+The cutover should consolidate into these owners. It should not introduce a
+second width resolver, a second runtime width API, or per-pane local width
+helpers.
 
 ## Target Behavior
 
-### Workspace Panes
+### Primary Width
 
-The workspace remains a flat ordered list:
+Every desktop pane has a primary width.
+
+Primary width is the width the user resizes. It is stored in workspace state as
+`WorkspacePaneState.widthPx`.
+
+Primary width excludes:
+
+- overview ruler width
+- secondary rail width
+- collapsed rail width
+- mobile drawer width
+- transient overlays
+
+### Universal Non-PDF Width
+
+Every non-PDF desktop pane uses the same primary width floor:
+
+```text
+reader text content floor =
+  measured reader column width
+  + reader inline padding
+```
+
+The floor uses the active reader profile:
+
+- `reader_profile.font_family`
+- `reader_profile.font_size_px`
+- `reader_profile.line_height`
+- `reader_profile.column_width_ch`
+
+The value is measured in the browser with an offscreen probe. It is not derived
+with a hard-coded `ch` multiplier.
+
+The floor is not:
+
+- live article width
+- EPUB publisher markup width
+- transcript content width
+- table width
+- code block width
+- long URL width
+- CSS `min-content`
+- overview ruler width
+- secondary rail width
+
+### Default Equals Minimum
+
+For every non-PDF pane:
+
+```text
+default primary width = minimum primary width = reader text content floor
+```
+
+Opening a new non-PDF pane stores the current measured reader text content floor
+as `widthPx`.
+
+If reader profile changes increase the floor, visible non-PDF panes whose stored
+width is below the new floor are resized to the new floor.
+
+If reader profile changes decrease the floor, user-expanded panes keep their
+stored width. The new lower floor only affects future shrink clamping and future
+default widths.
+
+### PDF Width
+
+PDF panes are the only exception to the universal primary floor.
+
+For PDF panes:
+
+```text
+default primary width = minimum primary width = measured rendered PDF page width
+```
+
+The measured rendered PDF page width is the maximum rendered page width for the
+loaded PDF at the active PDF viewer scale, including PDF.js page surface chrome
+that is required to avoid horizontal clipping.
+
+If pages have mixed sizes, use the maximum rendered page width. This guarantees
+that a pane wide enough for one page is wide enough for every page at the same
+scale.
+
+If the active PDF zoom changes and the rendered page width changes, the PDF pane
+publishes the new intrinsic primary width. The workspace resizes the stored
+primary width upward only when it is below the new PDF floor. User-expanded
+widths above the floor remain user-owned.
+
+PDF width is measured from rendered PDF geometry, not reader text settings.
+
+### Runtime Extra Width
+
+Rendered pane width is:
+
+```text
+primary width + runtime extra width
+```
+
+Runtime extra width includes outward chrome:
+
+- reader overview ruler
+- reader secondary rail
+- conversation references rail
+- collapsed rail affordances, when they occupy horizontal space
+
+Runtime extra width does not mutate stored `widthPx`.
+
+Opening outward chrome increases rendered pane width. Closing it removes only
+the outward extra width.
+
+### Overview Ruler
+
+The reader overview ruler is runtime extra width.
+
+It must not be added to the primary pane floor.
+
+It composes exactly like a rail:
+
+```text
+extraWidthPx += READER_OVERVIEW_RULER_WIDTH_PX
+```
+
+When the overview ruler is hidden, its contribution is `0`.
+
+### Secondary Rails
+
+Secondary rails remain runtime extra width.
+
+Conversation panes, reader highlight rails, and document chat rails publish only
+their outward rail width. They do not publish a primary min width unless they
+are the PDF reader publishing measured PDF width.
+
+### Mobile
+
+Mobile panes render at viewport width.
+
+Mobile ignores:
+
+- universal reader text floor
+- PDF intrinsic width
+- runtime extra width
+- overview ruler width
+- secondary rail width
+
+Mobile keeps the existing reader behavior:
+
+- one active visible pane
+- no desktop horizontal pane canvas
+- no persistent desktop overview ruler
+- no persistent desktop secondary rail
+- highlights through drawer or direct interaction
+- pane chrome local to the active pane
+
+## Capability Contract
+
+### Workspace Primary Metrics
+
+The workspace needs one measured text-floor capability:
 
 ```ts
-interface WorkspaceState {
-  schemaVersion: number;
-  activePaneId: string;
-  panes: WorkspacePaneState[];
+interface WorkspacePrimaryMetrics {
+  primaryMinWidthPx: number;
+  primaryDefaultWidthPx: number;
 }
+```
 
+Rules:
+
+- `primaryDefaultWidthPx === primaryMinWidthPx`.
+- The value is measured from reader profile typography and padding.
+- The value exists before the workspace store creates or sanitizes panes.
+- The value is workspace-wide, not pane-local.
+- It is not a CSS token source of truth.
+
+### Pane Runtime Sizing
+
+Replace the old nullable runtime min-width API with an explicit primary-width
+source:
+
+```ts
+type PaneRuntimePrimaryWidth =
+  | { kind: "workspace" }
+  | { kind: "intrinsic"; widthPx: number };
+
+interface PaneRuntimeSizing {
+  primaryWidth: PaneRuntimePrimaryWidth;
+  extraWidthPx: number;
+}
+```
+
+Rules:
+
+- `kind: "workspace"` means the pane uses the universal non-PDF floor.
+- `kind: "intrinsic"` means the pane owns a measured primary width.
+- PDF is the only shipped `intrinsic` publisher.
+- `extraWidthPx` is always outward rendered width.
+- `extraWidthPx` is finite and non-negative.
+- `intrinsic.widthPx` is finite and positive.
+- The runtime API is atomic: primary source and extra width publish together.
+- There is no separate min-width setter.
+- There is no separate extra-width setter.
+- There is no nullable min-width sentinel.
+
+Default runtime sizing is:
+
+```ts
+const DEFAULT_PANE_RUNTIME_SIZING = {
+  primaryWidth: { kind: "workspace" },
+  extraWidthPx: 0,
+} satisfies PaneRuntimeSizing;
+```
+
+### Effective Sizing
+
+`resolveEffectivePaneSizing` becomes the only sizing calculation:
+
+```ts
+effectivePrimaryFloorPx =
+  runtime.primaryWidth.kind === "intrinsic"
+    ? runtime.primaryWidth.widthPx
+    : workspacePrimaryMetrics.primaryMinWidthPx;
+
+primaryMinWidthPx = ceil(effectivePrimaryFloorPx);
+primaryDefaultWidthPx = primaryMinWidthPx;
+primaryMaxWidthPx = max(routeMaxWidthPx, primaryMinWidthPx);
+
+primaryWidthPx = clamp(
+  storedWidthPx,
+  primaryMinWidthPx,
+  primaryMaxWidthPx,
+);
+
+renderedWidthPx = primaryWidthPx + extraWidthPx;
+renderedMinWidthPx = primaryMinWidthPx + extraWidthPx;
+renderedMaxWidthPx = primaryMaxWidthPx + extraWidthPx;
+```
+
+Mobile short-circuits to viewport width and does not use runtime sizing.
+
+### Route Width Policy
+
+Route width policy no longer owns per-layout min/default values.
+
+Route policy owns only:
+
+- route identity
+- body mode
+- resource ref
+- max width policy
+- whether a route may publish intrinsic primary width
+
+There is one non-PDF default/min width: the workspace measured text floor.
+
+## API Design
+
+### Route Model
+
+`PaneWidthContract` should be reduced to the data routes still own:
+
+```ts
+interface PaneWidthContract {
+  maxWidthPx: number;
+  intrinsicPrimaryWidth: "none" | "allowed";
+}
+```
+
+Expected route rules:
+
+- Most routes: `intrinsicPrimaryWidth: "none"`.
+- `/media/:id`: `intrinsicPrimaryWidth: "allowed"` because PDF media can
+  publish intrinsic width.
+- Route model does not decide media kind.
+- Route model does not import media data.
+- Route model does not import React.
+
+Delete route width layout kinds if their only remaining purpose is selecting
+old min/default values.
+
+### Workspace Store
+
+Workspace state shape remains:
+
+```ts
 interface WorkspacePaneState {
   id: string;
   href: string;
@@ -130,838 +433,503 @@ interface WorkspacePaneState {
 }
 ```
 
-`widthPx` is the primary resizable pane width. It excludes outward rails.
+Rules:
 
-Desktop renders visible panes in the horizontal pane canvas. Mobile renders only
-the active visible pane and ignores runtime width and extra width publications.
+- `widthPx` is always primary width.
+- New panes use `workspacePrimaryMetrics.primaryDefaultWidthPx`.
+- State sanitization clamps using current width policy.
+- Pane navigation preserves width only when it is still valid for the next pane.
+- If a transition cannot preserve width under the new contract, it resets to the
+  current default primary width.
+- Schema version increments.
+- Old encoded/session workspace states are not migrated.
+- Tests that preserve old route defaults are deleted or rewritten.
 
-### Effective Sizing
+### Workspace Host
 
-Every pane has three sizing inputs:
+`WorkspaceHost` receives or reads:
 
-- Route width contract.
-- Stored primary width from workspace state.
-- Runtime sizing publication from the mounted pane body.
+- workspace state
+- route width policy
+- workspace primary metrics
+- runtime sizing records
+- mobile viewport status
 
-The effective desktop sizing calculation is:
+It builds host pane descriptors with `resolveEffectivePaneSizing`.
 
-```ts
-routeMinWidthPx = route.width.minWidthPx;
-routeMaxWidthPx = route.width.maxWidthPx;
-publishedMinWidthPx = runtime.minWidthPx;
-extraWidthPx = runtime.extraWidthPx;
+It owns the existing correction behavior:
 
-primaryMinWidthPx = min(
-  routeMaxWidthPx,
-  max(routeMinWidthPx, publishedMinWidthPx ?? routeMinWidthPx),
-);
+- visible desktop pane below effective primary floor is resized upward
+- invisible/minimized pane is not force-resized until visible
+- correction writes primary width only
+- extra width never writes to workspace state
+- stale runtime records are ignored by `paneId + resourceKey`
 
-primaryWidthPx = clamp(
-  storedWidthPx,
-  primaryMinWidthPx,
-  routeMaxWidthPx,
-);
+### Pane Runtime
 
-renderedWidthPx = primaryWidthPx + extraWidthPx;
-renderedMinWidthPx = primaryMinWidthPx + extraWidthPx;
-renderedMaxWidthPx = routeMaxWidthPx + extraWidthPx;
-```
-
-If a visible desktop pane's stored `widthPx` is below `primaryMinWidthPx`, the
-workspace store resizes that pane to `primaryMinWidthPx`. This is the only
-automatic stored-width mutation caused by runtime sizing.
-
-Opening or closing an outward rail changes `extraWidthPx` and the rendered pane
-width. It does not mutate the persisted primary `widthPx`.
-
-### Resize Interaction
-
-The mouse resize handle, keyboard resize handle, shell inline styles, and host
-auto-resize use the same effective sizing result.
-
-Required keyboard behavior:
-
-- `ArrowLeft`: decrease primary width by the existing step, clamped to
-  `primaryMinWidthPx`.
-- `ArrowRight`: increase primary width by the existing step, clamped to
-  `routeMaxWidthPx`.
-- `Home`: set primary width to `primaryMinWidthPx`.
-- `End`: set primary width to `routeMaxWidthPx`.
-
-The ARIA separator reports rendered dimensions, because that is what the user
-sees. The store receives primary dimensions, because that is what the user can
-resize.
-
-### Web Article And EPUB Reader Floor
-
-Desktop readable web article and EPUB panes must not be narrower than:
-
-```text
-measured reader column width
-+ reader inline padding
-+ desktop overview ruler width when shown
-```
-
-The measured reader column width is the configured `reader_profile.column_width_ch`
-in the configured reader font family and font size. It is measured by an
-offscreen fixed-width probe that uses the same reader typography custom
-properties as the visible text reader.
-
-The floor is not:
-
-- The live rendered article width.
-- CSS `min-content`.
-- The width of a long URL, table, image, or code block.
-- The open secondary rail width.
-- A hard-coded pixel conversion for `ch`.
-
-With the default reader profile, the effective text floor is approximately:
-
-```text
-65ch + 2 * var(--space-4) + OVERVIEW_RULER_WIDTH_PX
-```
-
-The value must still be measured, because `ch` depends on the active reader
-font and font size.
-
-### Secondary Rail Width
-
-The reader secondary rail remains outward extra width:
-
-```text
-renderedWidthPx = primaryWidthPx + SECONDARY_RAIL_EXPANDED_WIDTH_PX
-```
-
-The rail is not part of the text floor. Closing the rail returns the rendered
-pane to the protected primary width without changing stored primary width.
-
-### PDF And Transcript Panes
-
-PDF and transcript panes use the media route width contract and any rail extra
-width they legitimately publish. They do not publish the reflowable reader text
-floor.
-
-PDF canvas zoom and page geometry remain PDF reader state. Transcript playback,
-chapter panels, and transcript segments remain transcript layout state.
-
-### Mobile
-
-Mobile panes render at `100%` width.
-
-Mobile ignores:
-
-- Runtime min width.
-- Runtime extra width.
-- Desktop overview ruler width.
-- Desktop secondary rail width.
-
-Mobile keeps the existing reader contract:
-
-- No desktop overview ruler.
-- No persistent highlights rail.
-- Highlights open in a drawer.
-- Document pane chrome remains local to the active pane.
-
-## Final Architecture
-
-### Pure Route Model
-
-Add one pure route model module:
-
-```text
-apps/web/src/lib/panes/paneRouteModel.ts
-```
-
-It owns:
-
-- `PaneRouteId`
-- `PaneBodyMode`
-- `PaneLayoutKind`
-- `PaneWidthContract`
-- route patterns
-- static titles
-- title mode
-- resource refs
-- body mode
-- width contract
-- `resolvePaneRouteModel(href)`
-
-It does not import React components or icons.
-
-`paneRouteRegistry.tsx` becomes the render/chrome binding layer. It imports the
-pure route model by route id and attaches:
-
-- component render functions
-- icons
-- chrome descriptors
-
-`schema.ts` stops deriving route width contracts from URL shape. Workspace
-state parsing, URL encoding, pane history, and persisted width clamping call the
-pure route model resolver instead.
-
-There is no second width-contract resolver.
-
-### Effective Sizing Module
-
-Add one pure sizing module:
-
-```text
-apps/web/src/lib/workspace/paneSizing.ts
-```
-
-It owns:
+`PaneRuntimeProvider` exposes one runtime sizing command:
 
 ```ts
-interface PaneRuntimeSizing {
-  minWidthPx: number | null;
-  extraWidthPx: number;
-}
-
-interface PaneSizingInput {
-  storedWidthPx: number;
-  routeWidth: PaneWidthContract;
-  runtimeSizing: PaneRuntimeSizing;
-  isMobile: boolean;
-}
-
-interface EffectivePaneSizing {
-  primaryWidthPx: number;
-  primaryMinWidthPx: number;
-  primaryMaxWidthPx: number;
-  extraWidthPx: number;
-  renderedWidthPx: number;
-  renderedMinWidthPx: number;
-  renderedMaxWidthPx: number;
-  storedWidthCorrectionPx: number | null;
-}
+setPaneSizing(sizing: PaneRuntimeSizing): void;
 ```
 
-Public functions:
+Publishers:
 
-```ts
-resolveEffectivePaneSizing(input: PaneSizingInput): EffectivePaneSizing
-normalizePaneRuntimeSizing(input: PaneRuntimeSizing): PaneRuntimeSizing
+- PDF media pane publishes intrinsic PDF width plus reader extras.
+- Reflowable media pane publishes workspace primary width plus reader extras.
+- Transcript media pane publishes workspace primary width plus reader extras.
+- Conversation panes publish workspace primary width plus references rail extra.
+- Panes with no outward chrome do not publish sizing.
+
+### Reader Text Floor Measurement
+
+Add one workspace-owned measurement capability. The exact file can be chosen
+during implementation, but the owner should be under reader or workspace, not
+inside a media pane:
+
+```text
+apps/web/src/lib/reader/useReaderTextContentFloor.tsx
+```
+
+or
+
+```text
+apps/web/src/lib/workspace/useWorkspacePrimaryMetrics.tsx
 ```
 
 Rules:
 
-- `minWidthPx` is `null` or a finite positive integer.
-- `extraWidthPx` is a finite non-negative integer.
-- Invalid runtime sizing is a defect.
-- Mobile returns `100%` render behavior at the shell layer and no stored-width
-  correction.
-- Desktop returns numeric pixel dimensions.
+- It uses `useReaderContext`.
+- It renders one offscreen probe.
+- It uses the same reader font family mapping as the media reader.
+- It uses the same reader font size, line height, and column width.
+- It includes reader inline padding.
+- It returns no workspace metrics until a real measurement exists.
+- `AuthenticatedShell` mounts the workspace only after metrics are available.
+- No route or store function invents a pixel fallback for reader measure.
 
-### Pane Runtime API
+### PDF Width Measurement
 
-Replace the existing two-method runtime API:
+`PdfReader` owns rendered page geometry.
 
-```ts
-setPaneMinWidth(widthPx)
-setPaneExtraWidth(widthPx)
-```
-
-with one method:
+Expose a narrow callback to the media pane:
 
 ```ts
-setPaneSizing(input: {
-  minWidthPx: number | null;
-  extraWidthPx: number;
-}): void
-```
-
-`PaneRuntimeProvider` publishes sizing with the active `paneId` and
-`resourceKey`.
-
-`WorkspaceHost` keeps one runtime sizing map:
-
-```ts
-Map<paneId, { resourceKey: string; sizing: PaneRuntimeSizing }>
-```
-
-Records are pruned when the pane resource key changes. Stale records are not
-used.
-
-Cleanup publishes:
-
-```ts
-{ minWidthPx: null, extraWidthPx: 0 }
-```
-
-There is no adapter that keeps the old `setPaneMinWidth` or `setPaneExtraWidth`
-names alive.
-
-### Pane Shell
-
-`PaneShell` receives an `EffectivePaneSizing`, not raw `widthPx`,
-`minWidthPx`, `maxWidthPx`, and `extraWidthPx`.
-
-It is responsible for:
-
-- Applying shell inline width styles.
-- Rendering pane chrome.
-- Rendering body mode.
-- Rendering resize separator ARIA values.
-
-It is not responsible for recomputing effective sizing.
-
-### Resize Handle
-
-`useResizeHandle` receives:
-
-```ts
-{
-  paneId: string;
-  primaryWidthPx: number;
-  primaryMinWidthPx: number;
-  primaryMaxWidthPx: number;
-  onResizePane: (paneId: string, primaryWidthPx: number) => void;
-}
-```
-
-It clamps to those resolved primary bounds. It does not know about route
-contracts or runtime sizing publications.
-
-### Reflowable Reader Pane Sizing
-
-Add one media-reader sizing owner:
-
-```text
-apps/web/src/app/(authenticated)/media/[id]/useReflowableReaderPaneSizing.tsx
-```
-
-It owns:
-
-- hidden protected-width probe ref
-- `ResizeObserver` for the probe
-- measured protected text width
-- reader column `--reader-protected-width-px`
-- pane runtime sizing publication for web article and EPUB
-
-Public hook:
-
-```ts
-function useReflowableReaderPaneSizing(input: {
-  enabled: boolean;
-  readerSurfaceStyle: CSSProperties;
-  overviewRulerWidthPx: number;
-  secondaryRailWidthPx: number;
-}): {
-  protectedWidthProbe: ReactNode;
-  readerColumnStyle: CSSProperties;
+interface PdfReaderProps {
+  onIntrinsicPageWidthChange?: (widthPx: number | null) => void;
 }
 ```
 
 Rules:
 
-- `enabled` is true only for readable `web_article` and `epub` media on desktop.
-- The probe uses the same reader typography variables as the visible reader.
-- The hook publishes `{ minWidthPx, extraWidthPx }` atomically.
-- The hook clears sizing on disable or unmount.
-- `ResizeObserver` is required for ongoing typography measurement.
-- Initial layout measurement happens before first paint where React permits it.
-- The hook does not inspect rendered article or EPUB HTML.
-- The hook does not run for PDF or transcript media.
+- The callback reports maximum rendered page width.
+- It reports `null` before a PDF page width can be measured.
+- It re-reports after pages render, page sizes become known, rotation changes,
+  or zoom changes.
+- It reads actual `.page.getBoundingClientRect().width` where possible.
+- It may fall back to pdf.js viewport width only inside PDF measurement code.
+- It does not call pane runtime directly.
+- `MediaPaneBody` composes PDF width with overview and rail extra width and
+  publishes one atomic runtime sizing object.
 
-The visible reader column keeps a CSS min width:
+### Outward Width Constants
 
-```css
-.readerColumn {
-  min-width: var(--reader-protected-width-px, 0);
-}
-```
+All outward fixed widths should live in one module.
 
-The CSS var is set only when the hook has a measured positive protected width.
-
-### Rail Sizing
-
-Add one shared rail sizing module:
+Current secondary rail constants live in:
 
 ```text
 apps/web/src/components/secondaryRail/railSizing.ts
 ```
 
-It owns:
+Cutover options:
 
-```ts
-export const SECONDARY_RAIL_COLLAPSED_WIDTH_PX = 36;
-export const SECONDARY_RAIL_EXPANDED_WIDTH_PX = 360;
-export const CONVERSATION_REFERENCES_RAIL_WIDTH_PX = 320;
-```
+- move `OVERVIEW_RULER_WIDTH_PX` into `railSizing.ts`, or
+- rename the module to a broader outward-chrome sizing owner.
 
-If the product decides all secondary rails should use one width, delete the
-conversation-specific width and use `SECONDARY_RAIL_EXPANDED_WIDTH_PX`
-everywhere. Do not keep duplicate constants with the same value in pane bodies.
+The final state must have one import source for:
 
-`SecondaryRail.tsx`, reader panes, conversation panes, and new-chat panes import
-from this module.
-
-### MediaPaneBody Final Shape
-
-`MediaPaneBody` keeps media-reader orchestration:
-
-- media loading
-- navigation loading
-- active content selection
-- reader resume
-- highlight mutation
-- reader chrome actions
-- PDF/transcript/web/EPUB reader selection
-
-It no longer owns:
-
-- hidden protected-width probe implementation
-- pane runtime sizing publication details
-- reader column protected-width state
-- duplicated secondary rail width constants
-
-The reflowable text reader remains shared:
-
-```text
-apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.tsx
-```
-
-Web article and EPUB continue to render through that component.
-
-## Capability Contract
-
-### Workspace Sizing
-
-Workspace sizing is:
-
-- Pane-scoped.
-- Resource-key-scoped for runtime publications.
-- Numeric at the shell boundary.
-- Persisted only as primary pane width.
-- Derived from one pure sizing function.
-
-Workspace sizing is not:
-
-- CSS intrinsic layout.
-- Live content measurement.
-- A split-tree data model.
-- A rail persistence system.
-- A component-local approximation of route contracts.
-
-### Runtime Pane Sizing
-
-Runtime pane sizing lets pane content publish layout requirements that the
-workspace cannot know statically.
-
-Allowed publications:
-
-- `minWidthPx`: the minimum primary pane width needed by mounted content.
-- `extraWidthPx`: outward width added by mounted, non-resizable side surfaces.
-
-Required behavior:
-
-- Publications are keyed by `paneId` and `resourceKey`.
-- Stale resource publications are ignored and pruned.
-- Every publication replaces the previous publication for that pane/resource.
-- Cleanup clears both min and extra width.
-- Invalid values are defects.
-
-Runtime pane sizing must not:
-
-- Write directly to workspace state.
-- Persist outward rails.
-- Publish separate independent records for min and extra width.
-- Publish mobile desktop rail sizing.
-
-### Reflowable Reader Width
-
-Reflowable reader width is:
-
-- Derived from `reader_profile`.
-- Measured through a fixed offscreen typography probe.
-- Published as runtime pane sizing.
-- Applied as a CSS floor to the reader column.
-
-Reflowable reader width is not:
-
-- A measurement of the current DOM content.
-- A PDF canvas rule.
-- A transcript layout rule.
-- A mobile width rule.
+- overview ruler width
+- reader expanded rail width
+- reader collapsed rail width
+- conversation references rail width
 
 ## Composition With Other Systems
 
-### Workspace Session And URL State
-
-The persisted workspace state continues to store `widthPx` as primary pane
-width. Runtime sizing is never serialized into `ws=` URLs or workspace session
-JSON.
-
-When a persisted pane width is too narrow for the current runtime content, the
-host corrects it to the effective primary minimum. That corrected primary width
-can later be captured by the existing workspace session system.
-
-### Pane Route Registry
-
-Route resolution composes in two layers:
-
-1. Pure route model resolves route identity, resource identity, body mode, and
-   width contract.
-2. React registry attaches component renderers, icons, and chrome.
-
-Tests must fail if a renderable route does not have exactly one route model and
-one width contract.
-
 ### Reader Profile
 
-Reader pane width composes with reader profile by measuring the configured
-profile. A change to font family, font size, line height, or column width causes
-the protected width probe to remeasure and republish sizing.
+Reader profile drives the universal non-PDF floor.
 
-The reader profile remains global. No per-media width override is introduced.
+When the profile changes:
 
-### Reader Resume And Highlight Projection
+- the workspace text floor is remeasured
+- pane defaults for future opens change
+- visible panes below the new floor resize upward
+- user-expanded panes above the new floor remain unchanged
+- web/EPUB reader columns remain protected because primary pane width is already
+  at least the measured text floor
 
-Text width changes already participate in reflow-safe resume and highlight
-projection. This cutover keeps that model:
+### Web Article And EPUB Readers
 
-- Web article resume uses canonical text offsets.
-- EPUB resume uses section and text-offset restore.
-- Anchored highlight projection remeasures after typography and rail width
-  changes.
+Web article and EPUB readers keep their protected text behavior.
 
-The pane sizing hook must not persist reader geometry. Geometry remains derived
-from the current DOM.
+The protection moves from media-pane-specific runtime min-width publication to
+the workspace-wide primary floor.
 
-### Focus Mode
+The visible reader column may keep a CSS min width set to the same measured
+floor for internal layout integrity, but that CSS is not the pane shell sizing
+authority.
 
-Focus mode keeps its current product contract:
+### Transcripts
 
-- `distraction_free` reduces chrome and hides sibling panes from view.
-- Paragraph and sentence focus add dimming.
-- Active selection suspends dimming.
+Transcript panes use the universal non-PDF floor.
 
-Runtime pane sizing still protects the configured reader measure for the active
-reader pane. Focus mode must not introduce a second width path.
+Transcript playback panels and segments do not derive pane width from their own
+intrinsic content. Overflow, wrapping, or internal layout is transcript-owned.
 
-### Secondary Rail
+### Conversations
 
-The secondary rail composes through runtime `extraWidthPx`.
+Conversation panes use the universal non-PDF floor.
 
-Reader overview ruler width contributes to reader minimum width because it is
-always present for desktop readable media. The expanded secondary rail
-contributes to extra width because it opens and closes outward.
+Conversation reference rails publish only extra width.
 
-### Pane Canvas
+Existing and new conversation panes should share one small rail sizing hook or
+component if that removes duplication without introducing a hollow abstraction.
 
-The pane canvas remains the horizontal scroll container. It must not expand its
-grid row to fit all panes. `min-width: 0` and horizontal overflow stay at the
-canvas boundary.
+### Libraries, Browse, Search, Notes, Settings, Pages, Authors, Podcasts
 
-## API Design
+These panes use the universal non-PDF floor.
 
-### `paneRouteModel.ts`
+They no longer have route-specific default widths. Dense-list and document
+distinctions can remain only if they still affect rendering or body mode; they
+must not exist solely to select width values.
 
-```ts
-export type PaneBodyMode = "standard" | "document" | "contained";
-export type PaneLayoutKind =
-  | "standard"
-  | "dense-list"
-  | "document"
-  | "podcast-detail"
-  | "media-reader";
+### PDF Reader
 
-export interface PaneWidthContract {
-  defaultWidthPx: number;
-  minWidthPx: number;
-  maxWidthPx: number;
-  layoutKind: PaneLayoutKind;
-}
+PDF panes publish intrinsic primary width.
 
-export interface PaneRouteModel {
-  id: PaneRouteId;
-  pattern: readonly string[];
-  staticTitle: string;
-  titleMode: "static" | "dynamic";
-  bodyMode: PaneBodyMode;
-  width: PaneWidthContract;
-  resourceRef?: (params: Record<string, string>) => string | null;
-}
+PDF zoom, page, and resume state remain PDF reader state. Pane width composes
+with PDF state by reflecting the currently rendered page width.
 
-export interface ResolvedPaneRouteModel {
-  id: PaneRouteId | "unsupported";
-  pathname: string;
-  params: Record<string, string>;
-  staticTitle: string;
-  titleMode: "static" | "dynamic";
-  bodyMode: PaneBodyMode;
-  resourceRef: string | null;
-  width: PaneWidthContract;
-}
+If the PDF page width is larger than the current stored primary width, the
+workspace grows the primary width to show the page. If the user has already
+resized wider, the workspace does not shrink them.
 
-export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel;
-```
+### Workspace URL And Session State
 
-### `paneSizing.ts`
+Workspace URL/session state continues to store `widthPx` as primary width.
 
-```ts
-export interface PaneRuntimeSizing {
-  minWidthPx: number | null;
-  extraWidthPx: number;
-}
+Schema version increments because old width semantics are removed.
 
-export const EMPTY_PANE_RUNTIME_SIZING: PaneRuntimeSizing = {
-  minWidthPx: null,
-  extraWidthPx: 0,
-};
+Old encoded pane widths are not interpreted as route-specific defaults. Invalid
+or old workspace payloads are rejected at the boundary and replaced with a new
+workspace state created under the new width contract.
 
-export function normalizePaneRuntimeSizing(
-  input: PaneRuntimeSizing,
-): PaneRuntimeSizing;
+### Mobile
 
-export function resolveEffectivePaneSizing(input: {
-  storedWidthPx: number;
-  routeWidth: PaneWidthContract;
-  runtimeSizing: PaneRuntimeSizing;
-  isMobile: boolean;
-}): EffectivePaneSizing;
-```
+Mobile ignores this desktop width system.
 
-### `paneRuntime.tsx`
+Reader profile can still be measured, but mobile rendering does not apply
+desktop primary or extra widths.
 
-```ts
-interface PaneRuntimeContextValue {
-  ...
-  setPaneSizing: (sizing: PaneRuntimeSizing) => void;
-}
-```
+## Final Architecture
 
-No `setPaneMinWidth`. No `setPaneExtraWidth`.
+### One Width Policy Source
 
-### `useReflowableReaderPaneSizing.tsx`
+`paneRouteModel.ts` remains the route model, but it stops owning min/default
+pixel values.
 
-```ts
-export function useReflowableReaderPaneSizing(input: {
-  enabled: boolean;
-  readerSurfaceStyle: CSSProperties;
-  overviewRulerWidthPx: number;
-  secondaryRailWidthPx: number;
-}): {
-  protectedWidthProbe: ReactNode;
-  readerColumnStyle: CSSProperties;
-};
-```
+`WorkspacePrimaryMetrics` owns the current measured default/min pixel value.
 
-The hook returns renderable probe content so the owning reader layout decides
-where hidden measurement DOM lives.
+`paneSizing.ts` combines:
+
+- route max policy
+- current workspace primary metrics
+- stored primary width
+- runtime intrinsic primary width
+- runtime extra width
+- mobile status
+
+No other module computes effective pane width.
+
+### One Runtime Sizing API
+
+`PaneRuntimeSizing` is the only body-to-shell sizing capability.
+
+It publishes:
+
+- primary source: workspace or intrinsic
+- extra width
+
+It does not publish separate min and extra values through independent paths.
+
+### One Outward Width Model
+
+Overview ruler and secondary rails are fixed outward chrome.
+
+They are accumulated into `extraWidthPx`.
+
+They are never persisted as primary width.
+
+### One PDF Intrinsic Path
+
+PDF measurement lives in the PDF reader.
+
+PDF pane sizing publication lives in the media pane, where PDF measurement and
+reader outward chrome are composed into one runtime sizing publication.
+
+No route-level PDF special case is added.
 
 ## Implementation Scope
 
-### Files To Add
-
-- `apps/web/src/lib/panes/paneRouteModel.ts`
-- `apps/web/src/lib/workspace/paneSizing.ts`
-- `apps/web/src/components/secondaryRail/railSizing.ts`
-- `apps/web/src/app/(authenticated)/media/[id]/useReflowableReaderPaneSizing.tsx`
-- E2E coverage for reader pane minimum width, likely
-  `e2e/tests/reader-pane-width.spec.ts`
-
 ### Files To Change
 
-- `apps/web/src/lib/workspace/schema.ts`
-- `apps/web/src/lib/workspace/schema.test.ts`
-- `apps/web/src/lib/workspace/store.tsx`
+- `docs/workspace-pane-layout-cutover.md`
+- `docs/reader-implementation.md`
+- `docs/reader-research.md`
+- `apps/web/src/app/(authenticated)/AuthenticatedShell.tsx`
+- `apps/web/src/lib/reader/ReaderContext.tsx`
+- `apps/web/src/lib/reader/types.ts`
+- `apps/web/src/lib/panes/paneRouteModel.ts`
+- `apps/web/src/lib/panes/paneRouteModel.test.ts`
 - `apps/web/src/lib/panes/paneRuntime.tsx`
 - `apps/web/src/lib/panes/paneRuntime.test.tsx`
 - `apps/web/src/lib/panes/paneRouteRegistry.tsx`
 - `apps/web/src/lib/panes/paneRouteRegistry.test.tsx`
+- `apps/web/src/lib/workspace/paneWidth.ts`
+- `apps/web/src/lib/workspace/paneSizing.ts`
+- `apps/web/src/lib/workspace/paneSizing.test.ts`
+- `apps/web/src/lib/workspace/schema.ts`
+- `apps/web/src/lib/workspace/schema.test.ts`
+- `apps/web/src/lib/workspace/store.tsx`
+- `apps/web/src/lib/workspace/store.test.tsx`
+- `apps/web/src/lib/workspace/urlCodec.ts`
+- `apps/web/src/lib/workspace/urlCodec.test.ts`
 - `apps/web/src/components/workspace/WorkspaceHost.tsx`
 - `apps/web/src/components/workspace/WorkspaceHost.test.tsx`
 - `apps/web/src/components/workspace/PaneShell.tsx`
 - `apps/web/src/components/workspace/useResizeHandle.ts`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
+- `apps/web/src/components/reader/ReaderOverviewRuler.tsx`
+- `apps/web/src/components/secondaryRail/railSizing.ts`
 - `apps/web/src/components/secondaryRail/SecondaryRail.tsx`
+- `apps/web/src/components/PdfReader.tsx`
+- `apps/web/src/components/PdfReader.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/page.module.css`
+- `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.tsx`
 - `apps/web/src/app/(authenticated)/conversations/[id]/ConversationPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.tsx`
-- `docs/reader-implementation.md`
-- `docs/reader-research.md`
-- `README.md`
+- `e2e/tests/reader-pane-width.spec.ts`
+- `e2e/tests/pdf-reader.spec.ts`
 
-### Files To Delete Or Inline If Left Empty
+### Files To Add
 
-- Any local helper that only wraps old `setPaneMinWidth`.
-- Any local helper that only wraps old `setPaneExtraWidth`.
-- Any duplicate chat rail width constant.
-- Any duplicate media rail width constant.
-- Any test whose only purpose is preserving the old two-map runtime width API.
+Add only if the code reads better with owned modules:
+
+- `apps/web/src/lib/workspace/useWorkspacePrimaryMetrics.tsx`
+- `apps/web/src/lib/workspace/workspacePrimaryMetrics.ts`
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaPaneSizing.ts`
+- `apps/web/src/components/PdfReader.test.tsx` or browser component coverage if
+  PDF measurement can be isolated without mocking internals
+
+### Files Or Symbols To Delete
+
+Delete if left with no remaining purpose:
+
+- `DEFAULT_STANDARD_PANE_WIDTH_PX`
+- `DEFAULT_DENSE_LIST_PANE_WIDTH_PX`
+- `DEFAULT_DOCUMENT_PANE_WIDTH_PX`
+- `DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX`
+- `DEFAULT_MEDIA_PANE_WIDTH_PX`
+- `MIN_PODCAST_DETAIL_PANE_WIDTH_PX`
+- route layout kinds used only for width selection
+- `useReflowableReaderPaneSizing` if it only publishes the old reflowable min
+- CSS custom properties `--pane-min-width`, `--pane-default-width`,
+  `--pane-max-width` if no active code uses them
+- tests whose only purpose is preserving old route defaults
+- tests asserting PDF panes stay at the old generic media width
+- tests asserting transcript panes bypass the universal non-PDF floor
+- stale doc text preserving the old PDF generic-width target or transcript
+  floor exception
 
 ## Implementation Plan
 
-### 1. Establish Pure Route And Width Ownership
+### 1. Establish Workspace Primary Metrics
 
-Move route identity and width contract data into `paneRouteModel.ts`.
+Add a workspace-level measured reader text floor.
 
-Cut over:
+Use the current reader typography mapping and reader profile.
 
-- `resolvePaneWidthContract(href)` callers to `resolvePaneRouteModel(href).width`.
-- `paneRouteRegistry.tsx` to use pure route models.
-- Tests to assert every route model has one render binding when supported.
+Mount the workspace only after the metric has been measured. This avoids
+inventing a second pixel fallback for the primary default.
 
-Delete URL-shape width derivation from `schema.ts`.
+### 2. Cut Route Width Contracts To Max Policy
 
-### 2. Establish One Effective Sizing Function
+Remove per-layout default/min widths from `paneRouteModel.ts`.
 
-Add `paneSizing.ts` and move all effective sizing math into it.
+Keep route identity, body mode, resource ref, static title, and max width.
 
-Cut over:
+Mark `/media/:id` as allowing intrinsic primary width because PDF can publish
+one after media load.
 
-- `WorkspaceHost.buildHostPane`.
-- `PaneShell`.
-- `useResizeHandle`.
-- Workspace and shell tests.
+### 3. Cut Workspace Creation To Current Default
 
-Delete local clamp recomputation where it duplicates the pure sizing result.
+Change default pane creation, open-pane creation, sanitize, and width transition
+logic to use current `WorkspacePrimaryMetrics.primaryDefaultWidthPx`.
 
-### 3. Replace Runtime Width API Atomically
+Increment workspace schema version.
 
-Replace runtime width publication with `setPaneSizing`.
+Delete old width default expectations.
 
-Cut over all publishers:
+### 4. Replace Runtime Sizing API
 
-- Media reader pane.
-- Conversation pane.
-- New conversation pane.
+Replace `PaneRuntimeSizing` with explicit primary source plus extra width.
 
-Delete:
+Update all publishers in one change:
 
-- `setPaneMinWidth`
-- `setPaneExtraWidth`
-- separate runtime min width map
-- separate runtime extra width map
-- tests for stale split records
+- media panes
+- conversation panes
+- new conversation pane
 
-Replace stale-record tests with tests for stale atomic runtime sizing records.
+Delete nullable min-width semantics in tests and implementation.
 
-### 4. Extract Reflowable Reader Pane Sizing
+### 5. Move Overview Ruler To Extra Width
 
-Move reader protected-width measurement and publication into
-`useReflowableReaderPaneSizing`.
+Centralize overview ruler width with other outward width constants.
 
-Scope `enabled` to:
+Make media panes add overview ruler width to `extraWidthPx` whenever the ruler
+is rendered on desktop.
+
+Remove overview ruler width from reader primary floors and related assertions.
+
+### 6. Move Web/EPUB Protection To Workspace Floor
+
+Stop reflowable readers from publishing a pane-specific primary min.
+
+Keep internal reader column protection only as layout integrity, not pane shell
+sizing authority.
+
+Ensure web/EPUB panes remain impossible to shrink below the reader text floor
+because every non-PDF pane has that floor.
+
+### 7. Add PDF Intrinsic Width Publication
+
+Make `PdfReader` report maximum rendered page width.
+
+Make `MediaPaneBody` publish:
 
 ```ts
-!isMobileViewport &&
-canRead &&
-(media.kind === "web_article" || media.kind === "epub")
+{
+  primaryWidth: { kind: "intrinsic", widthPx: measuredPdfPageWidthPx },
+  extraWidthPx: overviewRulerWidthPx + secondaryRailWidthPx,
+}
 ```
 
-Delete `hasProtectedReaderTextWidth = canRead`.
+When PDF measurement is unavailable, the media pane must not pretend a PDF floor
+exists. It can publish workspace primary width until the PDF reports geometry;
+once geometry is known, it publishes intrinsic width and the host corrects.
 
-Keep the protected CSS var on `.readerColumn`, but set it only from the new
-hook result.
+### 8. Simplify Open-Pane Plumbing
 
-### 5. Centralize Rail Width Constants
+Consolidate duplicated open-pane logic in `store.tsx` if still present after
+width policy changes.
 
-Move rail width constants into `railSizing.ts`.
+`buildPanesForOpen` should return one pane unless a real multi-pane open call
+site exists. If no call site exists, replace array-shaped action plumbing with a
+single-pane action.
 
-Cut over imports in:
+### 9. Update Tests
 
-- `SecondaryRail.tsx`
-- `MediaPaneBody.tsx`
-- conversation panes
-- tests
+Rewrite tests around the new observable contract:
 
-Delete duplicate constants.
-
-### 6. Add Reader Pane Width E2E
-
-Add a Playwright spec that:
-
-- Uses encoded workspace state with a `/media/{id}` pane width below the
-  protected reader floor.
-- Opens a seeded web article.
-- Asserts the pane auto-expands to at least protected text width plus overview
-  ruler width.
-- Attempts keyboard shrink with `Home` or repeated `ArrowLeft`.
-- Asserts the pane remains at the protected floor.
-- Repeats for seeded EPUB.
-- Verifies mobile ignores desktop width publication and remains viewport width.
-
-The test must use the existing workspace helper pattern for pane-sensitive
-state. It must not assume restored workspace state is empty.
-
-### 7. Clean Documentation Drift
-
-Update reader docs to state:
-
-- One-shot EPUB reader targets use `#loc-<section_id>`; pane-local EPUB
-  active-section history uses `?loc=<section_id>`.
-- Web article/EPUB desktop pane floors are protected by configured reader
-  measure.
-- PDF/transcript panes do not inherit the reflowable text floor.
-
-Remove or replace stale README links to missing docs.
+- every non-PDF pane opens at the shared primary floor
+- default equals minimum
+- route categories no longer change default width
+- web/EPUB still cannot shrink below text floor
+- overview ruler adds rendered extra width
+- secondary rails add rendered extra width
+- extra width does not mutate stored primary width
+- PDF pane auto-corrects to measured page width
+- PDF cannot shrink below measured page width
+- PDF width updates when rendered page width changes
+- mobile ignores desktop primary and extra widths
 
 ## Acceptance Criteria
 
 ### Product Behavior
 
-- A desktop web article pane cannot remain narrower than the configured reader
-  text measure plus reader padding plus desktop overview ruler.
-- A desktop EPUB pane cannot remain narrower than the configured reader text
-  measure plus reader padding plus desktop overview ruler.
-- A desktop web article or EPUB pane opened from persisted workspace state below
-  the floor auto-corrects upward.
-- Drag resize cannot reduce those panes below the floor.
-- Keyboard resize cannot reduce those panes below the floor.
-- Opening the reader secondary rail increases rendered width by the rail width
-  without reducing text measure.
-- Closing the reader secondary rail removes only the outward extra width.
-- PDF panes do not receive the reflowable text floor.
-- Transcript panes do not receive the reflowable text floor.
-- Mobile media panes remain viewport width and do not publish desktop rail
+- Opening a standard pane uses the measured reader text floor as its primary
   width.
+- Opening a dense list pane uses the same primary width as a standard pane.
+- Opening a document pane uses the same primary width as a standard pane.
+- Opening a conversation pane uses the same primary width as a standard pane.
+- Opening a transcript pane uses the same primary width as a standard pane.
+- Opening a web article pane uses the same primary width as a standard pane.
+- Opening an EPUB pane uses the same primary width as a standard pane.
+- All non-PDF panes report the same resize handle minimum on desktop.
+- All non-PDF panes report resize handle current width equal to minimum when
+  newly opened.
+- Drag resize cannot reduce any non-PDF pane below the shared floor.
+- Keyboard resize cannot reduce any non-PDF pane below the shared floor.
+- Web article and EPUB text columns are not compressed below configured reader
+  measure.
+- Reader overview ruler increases rendered width but does not increase primary
+  width.
+- Reader secondary rail increases rendered width but does not increase primary
+  width.
+- Conversation reference rail increases rendered width but does not increase
+  primary width.
+- Closing outward chrome removes only its extra rendered width.
+- Opening/closing outward chrome does not mutate stored primary `widthPx`.
+- PDF panes auto-correct to measured rendered PDF page width once PDF geometry is
+  known.
+- PDF panes cannot be shrunk below measured rendered PDF page width.
+- Mixed-size PDFs use the maximum rendered page width.
+- Mobile panes render at viewport width and ignore desktop width publication.
 
 ### Architecture
 
-- There is one pure route width contract source.
-- There is one effective pane sizing function.
-- There is one runtime pane sizing API.
-- There is one runtime sizing map in `WorkspaceHost`.
-- `PaneShell` does not recompute route/runtime sizing.
-- `useResizeHandle` clamps with resolved primary bounds only.
-- Reader protected-width measurement is not implemented inside
-  `MediaPaneBody`.
-- Rail width constants are imported from one module.
-- No old runtime width setters remain.
-- No duplicate chat rail width constants remain.
-
-### Tests
-
-- Unit tests cover route model width contracts.
-- Unit tests cover `resolveEffectivePaneSizing`.
-- Browser/component tests cover `PaneShell` rendered dimensions and resize
-  behavior through effective sizing.
-- Browser/component tests cover stale runtime sizing records after resource
-  changes.
-- Media reader browser tests cover web article and EPUB sizing publication.
-- Media reader browser tests prove PDF/transcript do not publish the
-  reflowable text floor.
-- E2E covers article and EPUB panes opened below the protected floor.
-- E2E covers attempted shrink below the protected floor.
-- E2E covers mobile ignoring desktop sizing publication.
+- One workspace-wide reader text floor measurement exists.
+- `paneRouteModel.ts` does not define route-specific default/min widths.
+- `paneSizing.ts` is the only effective sizing calculation.
+- `PaneRuntimeSizing` has one atomic API.
+- Runtime sizing uses explicit `workspace` vs `intrinsic` primary source.
+- Overview ruler width is imported from the same outward-width owner as rail
+  widths.
+- `MediaPaneBody` does not measure reader text floor.
+- `PdfReader` does not import pane runtime.
+- PDF intrinsic measurement flows through a narrow callback to `MediaPaneBody`.
+- `WorkspaceHost` remains the only runtime sizing record owner.
+- `PaneShell` consumes resolved sizing and does not recompute width policy.
+- `useResizeHandle` clamps against resolved primary bounds only.
 
 ### Deletion Checks
 
-These searches return no matches after cutover:
+These searches must return no production matches:
 
 ```bash
+rg "DEFAULT_STANDARD_PANE_WIDTH_PX|DEFAULT_DENSE_LIST_PANE_WIDTH_PX|DEFAULT_DOCUMENT_PANE_WIDTH_PX|DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX|DEFAULT_MEDIA_PANE_WIDTH_PX" apps/web/src
+rg "MIN_PODCAST_DETAIL_PANE_WIDTH_PX" apps/web/src
+rg "minWidthPx: null" apps/web/src
 rg "setPaneMinWidth|setPaneExtraWidth" apps/web/src
-rg "hasProtectedReaderTextWidth" apps/web/src
-rg "CHAT_REFERENCES_RAIL_WIDTH_PX" apps/web/src
-rg "resolvePaneWidthContract" apps/web/src/lib/workspace/schema.ts
+rg "useReflowableReaderPaneSizing" apps/web/src
+rg -- "--pane-min-width|--pane-default-width|--pane-max-width" apps/web/src
 ```
 
-`rg "min-content" apps/web/src` may remain empty. If future code introduces it,
-it must not participate in pane shell width.
+`rg "min-content" apps/web/src` may only match code that is unrelated to pane
+shell sizing.
+
+### Docs
+
+- Reader docs state that the reader text floor is workspace-wide for non-PDF
+  panes.
+- Reader docs state that overview ruler width is runtime extra width.
+- Reader docs state that PDF panes publish intrinsic page width.
+- No doc states as target behavior that PDF panes keep generic media width or
+  transcript panes bypass the universal non-PDF floor.
+- No doc states as target behavior that route categories own default pane width.
 
 ## Verification Commands
 
@@ -970,7 +938,8 @@ Focused frontend browser coverage:
 ```bash
 cd apps/web && bun run test:browser -- \
   'src/lib/workspace/paneSizing.test.ts' \
-  'src/lib/panes/paneRouteRegistry.test.tsx' \
+  'src/lib/panes/paneRouteModel.test.ts' \
+  'src/lib/panes/paneRuntime.test.tsx' \
   'src/components/workspace/WorkspaceHost.test.tsx' \
   'src/__tests__/components/PaneShell.test.tsx' \
   'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx'
@@ -979,89 +948,89 @@ cd apps/web && bun run test:browser -- \
 Focused E2E:
 
 ```bash
-make test-e2e PLAYWRIGHT_ARGS="tests/reader-pane-width.spec.ts tests/web-articles.spec.ts tests/epub.spec.ts tests/pane-chrome.spec.ts"
+make test-e2e PLAYWRIGHT_ARGS="tests/reader-pane-width.spec.ts tests/pdf-reader.spec.ts tests/pane-chrome.spec.ts"
 ```
 
-Routine full verification:
+Routine verification:
 
 ```bash
 make verify
 make test-e2e
 ```
 
-Pre-merge broad verification:
+Pre-merge verification:
 
 ```bash
 make verify-full
 ```
 
-## Cutover Completion Checklist
-
-- [x] Route model owns width contracts.
-- [x] Schema no longer derives width contracts by URL shape.
-- [x] Effective pane sizing is centralized.
-- [x] Runtime pane sizing is atomic.
-- [x] Old runtime width setters are deleted.
-- [x] Runtime sizing records are resource-key scoped and pruned.
-- [x] Reader protected-width measurement is extracted from `MediaPaneBody`.
-- [x] Reflowable text floor is scoped to web article and EPUB only.
-- [x] Secondary rail widths are centralized.
-- [x] E2E proves article and EPUB panes cannot stay below the protected floor.
-- [x] Docs distinguish EPUB `?loc` pane state from hash target behavior.
-- [x] README no longer links to missing reader docs.
-
 ## Key Decisions
 
 ### Keep Flat Panes
 
-The existing flat pane canvas is the correct product model. It supports
-side-by-side work, pane-local history, minimization, and mobile active-pane
-rendering without introducing split-tree state. The cutover simplifies this
-model; it does not replace it.
+The flat horizontal pane canvas is still the right product model. Width
+simplification does not require a new layout manager.
 
-### Protect Configured Measure, Not Live Content
+### One Non-PDF Floor
 
-Reader comfort depends on configured measure. Live content intrinsic width is
-unbounded and hostile to pane layout: long URLs, tables, code blocks, images,
-and publisher EPUB markup can all create oversized intrinsic widths. Those
-elements should scroll or wrap inside the reader content, not enlarge the pane
+The reader text content floor is the best shared minimum because it is already
+the application's strictest comfortable reading measure. Applying it universally
+makes all non-PDF panes predictable and removes route-specific defaults.
+
+### Default Equals Minimum
+
+New panes should not consume more horizontal space than their minimum. If the
+user wants a wider pane, resizing remains explicit and persisted.
+
+### Overview Ruler Is Outward Chrome
+
+The overview ruler is not primary content width. It behaves like a rail: it is
+visible desktop chrome appended beside content. It belongs in runtime extra
+width.
+
+### PDFs Are Intrinsic
+
+PDF pages have fixed rendered geometry. They are the only pane type whose
+primary minimum should come from document geometry rather than the reader text
 floor.
+
+### Runtime Intrinsic Width Is Explicit
+
+Allowing runtime width to silently raise or lower a generic min width makes
+exceptions hard to audit. The runtime API states whether primary width comes
+from the workspace floor or intrinsic content.
 
 ### Store Primary Width Only
 
-Persisting outward rails would make a temporary reader tool change the user's
-main pane preference. The store persists what the user resizes. Rails are
-runtime additions.
+Persisting outward chrome width would make transient tools change the user's
+content width preference. The store persists primary width only.
 
-### Make Runtime Sizing Atomic
+### No Compatibility Width Layer
 
-A single publication prevents stale combinations such as new min width with old
-extra width. The pane body owns its current runtime requirement and publishes it
-as one fact.
-
-### Scope Reader Floor To Reflowable Readers
-
-PDF and transcript panes have different layout primitives. Giving them the
-reader text floor couples unrelated readers and makes media panes wider for no
-reading benefit.
+Old route defaults and old runtime min semantics are removed. Tests and docs
+must move to the new contract in the same cutover.
 
 ## Risks
 
-- Refactoring route width ownership can create import cycles if the pure route
-  model imports React code. Keep it pure.
-- Changing runtime sizing API touches multiple pane bodies. Delete old setters
-  in the same change so no half-cutover survives.
-- E2E width assertions can be flaky if they compare exact pixels. Assert lower
-  bounds and visible text measure, not exact browser font metrics.
-- Browser font metrics can differ by platform. Tests must derive expected floor
-  from measured DOM where possible.
-- `ResizeObserver` tests must run in browser/component or Playwright contexts,
-  not pure node tests.
+- Measuring reader text floor before workspace mount can affect initial shell
+  timing. Keep the probe small and deterministic.
+- Changing workspace state sanitization touches URL/session restore. Increment
+  schema and test old payload rejection.
+- PDF measurements can arrive after initial pane render. Use the existing host
+  correction path and assert behavior after geometry is known.
+- PDF zoom-driven width changes can grow panes. This is the direct consequence
+  of making PDF width intrinsic to rendered page geometry.
+- Mixed-size PDFs can create wide panes. Use maximum page width because the
+  product rule is "show the whole thing."
+- Exact pixel assertions can be flaky across fonts and platforms. Tests should
+  derive expected floor from measured DOM whenever possible.
 
 ## Out Of Scope Until After Cutover
 
-- User-resizable secondary rails.
-- Persisted per-pane rail open state.
-- Visual regression screenshot baseline system.
-- Generalized layout manager for arbitrary nested panes.
+- User-resizable rails.
 - Per-document reader width overrides.
+- Visual regression screenshot baseline system.
+- Nested panes.
+- Arbitrary split panes.
+- Persisted secondary rail state.
+- Persisted overview ruler width.

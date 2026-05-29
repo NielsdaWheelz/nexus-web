@@ -714,13 +714,16 @@ function ChatView({
   useEffect(() => {
     if (!paneRuntime) return;
     paneRuntime.setPaneSizing({
-      minWidthPx: null,
+      primaryWidth: { kind: "workspace" },
       extraWidthPx: referencesRailExpanded
         ? CONVERSATION_REFERENCES_RAIL_WIDTH_PX
         : SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
     });
     return () => {
-      paneRuntime.setPaneSizing({ minWidthPx: null, extraWidthPx: 0 });
+      paneRuntime.setPaneSizing({
+        primaryWidth: { kind: "workspace" },
+        extraWidthPx: 0,
+      });
     };
   }, [paneRuntime, referencesRailExpanded]);
 

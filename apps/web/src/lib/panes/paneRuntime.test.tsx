@@ -39,7 +39,10 @@ function PublishSizingOnMount() {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.setPaneSizing({ minWidthPx: 640, extraWidthPx: 36 });
+    runtime.setPaneSizing({
+      primaryWidth: { kind: "intrinsic", widthPx: 640 },
+      extraWidthPx: 36,
+    });
   }, [runtime]);
   return null;
 }
@@ -251,7 +254,10 @@ describe("PaneRuntimeProvider", () => {
       expect(onSetPaneSizing).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey: identity.resourceKey,
-        sizing: { minWidthPx: 640, extraWidthPx: 36 },
+        sizing: {
+          primaryWidth: { kind: "intrinsic", widthPx: 640 },
+          extraWidthPx: 36,
+        },
       });
     });
   });

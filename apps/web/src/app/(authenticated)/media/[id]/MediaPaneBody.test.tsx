@@ -73,8 +73,23 @@ vi.mock("@/lib/media/useDocumentActions", () => ({
   }),
 }));
 
+const PDF_INTRINSIC_WIDTH_PX = 812;
+
 vi.mock("@/components/PdfReader", () => ({
-  default: () => <div data-testid="pdf-reader" />,
+  default: ({
+    onIntrinsicWidthChange,
+  }: {
+    onIntrinsicWidthChange?: (state: {
+      maxRenderedPageWidthPx: number | null;
+    }) => void;
+  }) => {
+    window.setTimeout(() => {
+      onIntrinsicWidthChange?.({
+        maxRenderedPageWidthPx: 812,
+      });
+    }, 0);
+    return <div data-testid="pdf-reader" />;
+  },
 }));
 
 vi.mock("@/components/HtmlRenderer", () => ({
@@ -94,7 +109,6 @@ vi.mock("@/components/reader/ReaderOverviewRuler", () => ({
   ),
 }));
 
-const PROTECTED_READER_WIDTH_PX = 700;
 const OVERVIEW_RULER_WIDTH_PX = 28;
 
 function jsonResponse(data: unknown) {
@@ -248,36 +262,21 @@ describe("MediaPaneBody pane sizing", () => {
         disconnect = vi.fn();
       },
     );
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      () =>
-        ({
-          x: 0,
-          y: 0,
-          width: PROTECTED_READER_WIDTH_PX,
-          height: 20,
-          top: 0,
-          right: PROTECTED_READER_WIDTH_PX,
-          bottom: 20,
-          left: 0,
-          toJSON: () => ({}),
-        }) as DOMRect,
-    );
   });
 
   it.each(["web_article", "epub"] as const)(
-    "publishes protected primary width and appended rail width for %s",
+    "publishes workspace primary width and appended rail width for %s",
     async (kind) => {
       testState.mediaKind = kind;
       const { onSetPaneSizing, resourceKey } = renderMediaPane();
-      const expectedMinWidthPx = PROTECTED_READER_WIDTH_PX + OVERVIEW_RULER_WIDTH_PX;
 
       await waitFor(() => {
         expect(onSetPaneSizing).toHaveBeenCalledWith({
           paneId: "pane-1",
           resourceKey,
           sizing: {
-            minWidthPx: expectedMinWidthPx,
-            extraWidthPx: 0,
+            primaryWidth: { kind: "workspace" },
+            extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
           },
         });
       });
@@ -289,8 +288,9 @@ describe("MediaPaneBody pane sizing", () => {
           paneId: "pane-1",
           resourceKey,
           sizing: {
-            minWidthPx: expectedMinWidthPx,
-            extraWidthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+            primaryWidth: { kind: "workspace" },
+            extraWidthPx:
+              OVERVIEW_RULER_WIDTH_PX + SECONDARY_RAIL_EXPANDED_WIDTH_PX,
           },
         });
       });
@@ -304,15 +304,15 @@ describe("MediaPaneBody pane sizing", () => {
           paneId: "pane-1",
           resourceKey,
           sizing: {
-            minWidthPx: expectedMinWidthPx,
-            extraWidthPx: 0,
+            primaryWidth: { kind: "workspace" },
+            extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
           },
         });
       });
     },
   );
 
-  it("publishes rail extra width without a reflowable floor for PDF", async () => {
+  it("publishes intrinsic PDF width with rail extra width", async () => {
     testState.mediaKind = "pdf";
     const { onSetPaneSizing, resourceKey } = renderMediaPane();
 
@@ -320,7 +320,10 @@ describe("MediaPaneBody pane sizing", () => {
       expect(onSetPaneSizing).toHaveBeenCalledWith({
         paneId: "pane-1",
         resourceKey,
-        sizing: { minWidthPx: null, extraWidthPx: 0 },
+        sizing: {
+          primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
+          extraWidthPx: OVERVIEW_RULER_WIDTH_PX,
+        },
       });
     });
 
@@ -331,8 +334,9 @@ describe("MediaPaneBody pane sizing", () => {
         paneId: "pane-1",
         resourceKey,
         sizing: {
-          minWidthPx: null,
-          extraWidthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+          primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
+          extraWidthPx:
+            OVERVIEW_RULER_WIDTH_PX + SECONDARY_RAIL_EXPANDED_WIDTH_PX,
         },
       });
     });

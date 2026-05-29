@@ -13,15 +13,12 @@ import {
   useCallback,
   useRef,
   useMemo,
-  type CSSProperties,
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
-import ReaderOverviewRuler, {
-  OVERVIEW_RULER_WIDTH_PX,
-} from "@/components/reader/ReaderOverviewRuler";
+import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
 import {
   toPdfAnchoredHighlightRow,
@@ -30,10 +27,12 @@ import {
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import {
+  OVERVIEW_RULER_WIDTH_PX,
   SECONDARY_RAIL_EXPANDED_WIDTH_PX,
 } from "@/components/secondaryRail/railSizing";
 import PdfReader, {
   type PdfHighlightOut,
+  type PdfReaderIntrinsicWidthState,
   type PdfReaderControlActions,
   type PdfReaderControlsState,
   type PdfTemporaryHighlight,
@@ -178,7 +177,7 @@ import {
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
-import { useReflowableReaderPaneSizing } from "./useReflowableReaderPaneSizing";
+import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
 import styles from "./page.module.css";
 
 // =============================================================================
@@ -538,6 +537,7 @@ export default function MediaPaneBody({
   const [webTocExpanded, setWebTocExpanded] = useState(false);
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
+  const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(null);
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
@@ -782,8 +782,6 @@ export default function MediaPaneBody({
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
-  const isReflowableReaderPaneSizingEnabled =
-    !isMobileViewport && canRead && (media?.kind === "web_article" || isEpub);
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia) {
@@ -1076,9 +1074,17 @@ export default function MediaPaneBody({
     // This prevents stale cross-document rows from flashing during navigation.
     setPdfHighlightsPaneState(EMPTY_PDF_HIGHLIGHTS_PANE_STATE);
     setPdfDocumentHighlights([]);
+    setPdfIntrinsicWidthPx(null);
     setPdfRefreshToken(0);
     setReaderSourceTarget(null);
   }, [isPdf, id]);
+
+  const handlePdfIntrinsicWidthChange = useCallback(
+    (state: PdfReaderIntrinsicWidthState) => {
+      setPdfIntrinsicWidthPx(state.maxRenderedPageWidthPx);
+    },
+    [],
+  );
 
   // ==========================================================================
   // Data Fetching — initial load
@@ -3229,16 +3235,7 @@ export default function MediaPaneBody({
   );
 
   const { seekToMs, play } = useGlobalPlayer();
-  const readerFontFamily =
-    readerProfile.font_family === "sans"
-      ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-      : "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif";
-  const readerSurfaceStyle = {
-    "--reader-font-family": readerFontFamily,
-    "--reader-font-size-px": `${readerProfile.font_size_px}px`,
-    "--reader-line-height": String(readerProfile.line_height),
-    "--reader-column-width-ch": `${readerProfile.column_width_ch}ch`,
-  } as CSSProperties;
+  const readerSurfaceStyle = buildReaderSurfaceStyle(readerProfile);
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     readerProfile.theme === "dark"
       ? styles.readerThemeDark
@@ -3320,31 +3317,34 @@ export default function MediaPaneBody({
     readerRootRef,
     renderedHtml,
   );
-  const { protectedWidthProbe, readerColumnStyle } =
-    useReflowableReaderPaneSizing({
-      enabled: isReflowableReaderPaneSizingEnabled,
-      readerSurfaceStyle,
-      overviewRulerWidthPx: desktopOverviewRulerWidthPx,
-      secondaryRailWidthPx: desktopSecondaryRailWidthPx,
-    });
-
   useEffect(() => {
-    if (!paneRuntime || isReflowableReaderPaneSizingEnabled) {
+    if (!paneRuntime) {
       return;
     }
     paneRuntime.setPaneSizing({
-      minWidthPx: null,
-      extraWidthPx: !isMobileViewport && canRead ? desktopSecondaryRailWidthPx : 0,
+      primaryWidth:
+        isPdf && pdfIntrinsicWidthPx !== null
+          ? { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx }
+          : { kind: "workspace" },
+      extraWidthPx:
+        !isMobileViewport && canRead
+          ? desktopOverviewRulerWidthPx + desktopSecondaryRailWidthPx
+          : 0,
     });
     return () => {
-      paneRuntime.setPaneSizing({ minWidthPx: null, extraWidthPx: 0 });
+      paneRuntime.setPaneSizing({
+        primaryWidth: { kind: "workspace" },
+        extraWidthPx: 0,
+      });
     };
   }, [
     canRead,
+    desktopOverviewRulerWidthPx,
     desktopSecondaryRailWidthPx,
-    isReflowableReaderPaneSizingEnabled,
     isMobileViewport,
+    isPdf,
     paneRuntime,
+    pdfIntrinsicWidthPx,
   ]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
@@ -4427,8 +4427,7 @@ export default function MediaPaneBody({
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
       >
-        {protectedWidthProbe}
-        <div className={styles.readerColumn} style={readerColumnStyle}>
+        <div className={styles.readerColumn}>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
@@ -4559,6 +4558,7 @@ export default function MediaPaneBody({
                   onControlsReady={(controls) => {
                     pdfControlsRef.current = controls;
                   }}
+                  onIntrinsicWidthChange={handlePdfIntrinsicWidthChange}
                   startPageNumber={
                     activeRequestedPdfPageNumber ??
                     resolvedPdfPageNumber ??

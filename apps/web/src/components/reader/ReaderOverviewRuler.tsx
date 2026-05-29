@@ -21,7 +21,6 @@ import { type PositionedHighlight } from "./overviewPositions";
 import { findScrollParent } from "./useAnchoredHighlightProjection";
 import styles from "./ReaderOverviewRuler.module.css";
 
-export const OVERVIEW_RULER_WIDTH_PX = 28;
 export const OVERVIEW_TICK_MIN_GAP_PX = 14;
 
 interface ReaderOverviewRulerProps {
