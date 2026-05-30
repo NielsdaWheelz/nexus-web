@@ -923,8 +923,8 @@ export async function createFragmentHighlightThroughVisibleSelection(
           const viewport = document.querySelector<HTMLElement>(
             '[data-testid="document-viewport"]',
           );
-          const sidecar = document.querySelector<HTMLElement>(
-            '[data-testid="workspace-sidecar-pane"]',
+          const secondary = document.querySelector<HTMLElement>(
+            '[data-testid="workspace-secondary-pane"]',
           );
           return {
             targetCount: targets.length,
@@ -947,7 +947,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
                   clientHeight: viewport.clientHeight,
                 }
               : null,
-            sidecarText: sidecar?.textContent?.slice(0, 500) ?? null,
+            secondaryText: secondary?.textContent?.slice(0, 500) ?? null,
             selectedText,
           };
         },
@@ -958,7 +958,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
         },
       );
       throw new Error(
-        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights sidecar. Projection debug: ${JSON.stringify(debug)}`,
+        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights secondary. Projection debug: ${JSON.stringify(debug)}`,
         { cause: error },
       );
     }
@@ -980,14 +980,14 @@ export async function createFragmentHighlightThroughVisibleSelection(
 }
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
-    await sidecar.getByRole("tab", { name: "Highlights" }).click();
+  const secondary = page.getByTestId("workspace-secondary-pane");
+  if ((await secondary.count()) > 0 && (await secondary.isVisible().catch(() => false))) {
+    await secondary.getByRole("tab", { name: "Highlights" }).click();
   } else {
     await page.getByRole("button", { name: "Open highlights pane" }).click();
   }
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
+  await expect(secondary.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

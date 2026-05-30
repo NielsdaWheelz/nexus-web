@@ -21,9 +21,9 @@ URL deep-link targets are one-shot reader focus state consumed by
   `sentence`) driven by `reader_profile.focus_mode`; toggle at
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
 - mobile-safe reader layout and controls; mobile document panes keep reader
-  controls local to the active pane and do not mount the desktop sidecar
+  controls local to the active pane and do not mount the desktop secondary
 - on mobile, highlights are reached through a drawer opened from the reader
-  menu or by tapping an existing highlight; the highlights sidecar is
+  menu or by tapping an existing highlight; the highlights secondary is
   desktop-only
 - resume that survives reflow where possible
 
@@ -38,15 +38,15 @@ the reader has two right-side highlight surfaces with distinct scopes.
   with a viewport-position band, a read-only hover preview, and click-to-jump
   that navigates cross-fragment. it is `~28px` wide and present for every
   desktop readable media whether or not highlights exist.
-- the **highlights sidecar** (`AnchoredHighlightsSidecar`) is visible-only: it
+- the **highlights secondary** (`ReaderHighlightsSurface`) is visible-only: it
   shows only highlights in the current viewport, with their notes and actions.
-  it is the reader `SidecarPaneShell` "Highlights" surface, opened on demand
+  it is the reader `SecondaryPaneShell` "Highlights" surface, opened on demand
   from the ruler's open-highlights button.
-- the ruler and the sidecar are decoupled instruments, not two states of one
-  widget: *map* (ruler, always on) vs *here, with notes* (sidecar, on demand).
+- the ruler and the secondary are decoupled instruments, not two states of one
+  widget: *map* (ruler, always on) vs *here, with notes* (secondary, on demand).
 - mobile has no ruler. highlights are reached through a drawer opened from the
   reader menu or by tapping an existing highlight; the drawer is the same
-  `AnchoredHighlightsSidecar` component on the same visible-only model.
+  `ReaderHighlightsSurface` component on the same visible-only model.
 
 ### workspace pane sizing
 
@@ -62,8 +62,8 @@ width; the workspace raises the PDF pane floor to that width.
 
 The overview ruler is fixed primary-adjacent chrome: it changes rendered pane
 width without changing stored primary pane width. Reader highlights and
-document chat are target sidecar surfaces under
-`docs/workspace-sidecar-pane-cutover.md`; their width is independent from the
+document chat are target secondary surfaces under
+`docs/workspace-pane-system-consolidation-cutover.md`; their width is independent from the
 primary reader width. Mobile panes ignore desktop runtime pane sizing and render
 at viewport width.
 
@@ -97,7 +97,7 @@ cadences.
 
 - per-fragment: `GET /api/fragments/{id}/highlights` (per-page for pdf), fed
   to inline highlight rendering of the active fragment and the visible-only
-  sidecar; re-fetched on every fragment switch
+  secondary; re-fetched on every fragment switch
 - media-wide: `GET /api/media/{id}/highlights` returns every highlight of the
   media across all fragments and pages; fed to the overview ruler only,
   fetched once per media open and after mutations
@@ -105,7 +105,7 @@ cadences.
 ### anchored highlight projection
 
 Anchored projection is the reader-owned bridge from stored highlight anchors to
-visible sidecar rows. It is the highlights sidecar's mechanism only; the overview
+visible secondary rows. It is the highlights secondary's mechanism only; the overview
 ruler never uses it.
 
 - Reflowable readers project highlights from rendered DOM segments tagged with
@@ -113,7 +113,7 @@ ruler never uses it.
 - PDF readers project highlights from visible page geometry and the current PDF
   viewport transform.
 - Projection remeasures after reader typography, active fragment/section,
-  rendered HTML, PDF zoom/page render epoch, active sidecar surface, sidecar
+  rendered HTML, PDF zoom/page render epoch, active secondary surface, secondary
   width, or highlight data changes.
 - Missing targets are explicit projection state; they are not silently treated
   as visible rows.

@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireRunnableChatComposer } from "./chatReadiness";
-import { openMediaInSinglePaneWorkspace, openReaderSidecar } from "./reader";
+import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 
 interface NonPdfSeed {
@@ -76,23 +76,23 @@ test.describe("quote-attach references (post-cutover)", () => {
     await expect(popover).toBeVisible({ timeout: 5_000 });
     await popover.getByRole("button", { name: "Add to document chat" }).click();
 
-    // The reader sidecar switches to Doc chat with the quote pending
+    // The reader secondary switches to Doc chat with the quote pending
     // until the user selects the chat that should receive it.
-    const sidecar = await openReaderSidecar(page);
-    const docChatTab = sidecar.getByRole("tab", {
+    const secondary = await openReaderSecondary(page);
+    const docChatTab = secondary.getByRole("tab", {
       name: "Document chat",
     });
     await expect(docChatTab).toHaveAttribute("aria-selected", "true", {
       timeout: 10_000,
     });
-    const contextSidecar = sidecar.getByLabel("Conversation context");
-    await expect(contextSidecar).toBeVisible({ timeout: 10_000 });
-    await expect(contextSidecar).toContainText(selectedText);
-    await sidecar.getByRole("button", { name: "Start new chat" }).click();
+    const contextSecondary = secondary.getByLabel("Conversation context");
+    await expect(contextSecondary).toBeVisible({ timeout: 10_000 });
+    await expect(contextSecondary).toContainText(selectedText);
+    await secondary.getByRole("button", { name: "Start new chat" }).click();
 
-    const composerInput = sidecar.getByRole("textbox", { name: /ask anything/i });
-    const sendButton = sidecar.getByRole("button", { name: /send message/i });
-    const modelSettings = sidecar.getByRole("button", {
+    const composerInput = secondary.getByRole("textbox", { name: /ask anything/i });
+    const sendButton = secondary.getByRole("button", { name: /send message/i });
+    const modelSettings = secondary.getByRole("button", {
       name: /model settings/i,
     });
 
@@ -107,7 +107,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     const messageText = `quote-attach-${Date.now() % 1_000_000}`;
     await composerInput.fill(messageText);
     await sendButton.click();
-    const chatLog = sidecar.getByRole("log", { name: "Chat messages" });
+    const chatLog = secondary.getByRole("log", { name: "Chat messages" });
     await expect(chatLog.getByText(messageText).first()).toBeVisible({
       timeout: 15_000,
     });
@@ -136,12 +136,12 @@ test.describe("quote-attach references (post-cutover)", () => {
     // Revisit the doc's reader pane and confirm the new chat appears in the
     // reference-backed Doc chat list.
     await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
-    const reloadedSidecar = await openReaderSidecar(page);
-    await reloadedSidecar
+    const reloadedSecondary = await openReaderSecondary(page);
+    await reloadedSecondary
       .getByRole("tab", { name: "Document chat" })
       .click();
     await expect(
-      reloadedSidecar.getByRole("button", {
+      reloadedSecondary.getByRole("button", {
         name: new RegExp(newChat?.title ?? "Chat", "i"),
       }),
     ).toBeVisible({ timeout: 10_000 });

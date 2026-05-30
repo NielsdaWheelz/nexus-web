@@ -2,10 +2,10 @@
 
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import {
-  getSidecarGroupForSurface,
-  type WorkspaceSidecarGroupId,
-  type WorkspaceSidecarSurfaceId,
-} from "@/lib/panes/paneSidecarModel";
+  getSecondaryGroupForSurface,
+  type WorkspaceSecondaryGroupId,
+  type WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -58,7 +58,7 @@ export interface PaneRouteModelDefinition extends PaneWidthContract {
   titleMode: "static" | "dynamic";
   resourceRef?: (params: RouteParams) => string | null;
   bodyMode: PaneBodyMode;
-  sidecarGroups?: readonly WorkspaceSidecarGroupId[];
+  secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
 }
 
 export interface ResolvedPaneRouteModel {
@@ -104,7 +104,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `library:${params.id}` : null),
     bodyMode: "standard",
-    sidecarGroups: ["library-tools"],
+    secondaryGroups: ["library-tools"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -114,7 +114,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `media:${params.id}` : null),
     bodyMode: "document",
-    sidecarGroups: ["reader-tools"],
+    secondaryGroups: ["reader-tools"],
     ...MEDIA_READER_WIDTH_CONTRACT,
   }),
   route({
@@ -131,7 +131,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     staticTitle: "New chat",
     titleMode: "static",
     bodyMode: "contained",
-    sidecarGroups: ["conversation-context"],
+    secondaryGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -141,7 +141,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     titleMode: "dynamic",
     resourceRef: (params) => (params.id ? `conversation:${params.id}` : null),
     bodyMode: "contained",
-    sidecarGroups: ["conversation-context"],
+    secondaryGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -375,16 +375,16 @@ export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {
   };
 }
 
-export function paneRouteAllowsSidecarGroup(
+export function paneRouteAllowsSecondaryGroup(
   href: string,
-  groupId: WorkspaceSidecarGroupId,
+  groupId: WorkspaceSecondaryGroupId,
 ): boolean {
-  return resolvePaneRouteModel(href).definition?.sidecarGroups?.includes(groupId) ?? false;
+  return resolvePaneRouteModel(href).definition?.secondaryGroups?.includes(groupId) ?? false;
 }
 
-export function paneRouteAllowsSidecarSurface(
+export function paneRouteAllowsSecondarySurface(
   href: string,
-  surfaceId: WorkspaceSidecarSurfaceId,
+  surfaceId: WorkspaceSecondarySurfaceId,
 ): boolean {
-  return paneRouteAllowsSidecarGroup(href, getSidecarGroupForSurface(surfaceId));
+  return paneRouteAllowsSecondaryGroup(href, getSecondaryGroupForSurface(surfaceId));
 }

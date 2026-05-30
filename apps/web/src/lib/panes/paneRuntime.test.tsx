@@ -50,15 +50,15 @@ function PublishLayoutOnMount() {
   return null;
 }
 
-function SidecarCommandsOnMount() {
+function SecondaryCommandsOnMount() {
   const runtime = usePaneRuntime();
   useEffect(() => {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.openSidecar("reader-highlights");
-    runtime.setActiveSidecarSurface("reader-doc-chat");
-    runtime.closeSidecar();
+    runtime.requestSecondarySurface("reader-highlights");
+    runtime.setSecondarySurface("reader-doc-chat");
+    runtime.closeSecondaryPane();
   }, [runtime]);
   return null;
 }
@@ -278,10 +278,10 @@ describe("PaneRuntimeProvider", () => {
     });
   });
 
-  it("passes sidecar commands with pane identity", async () => {
-    const onOpenSidecar = vi.fn();
-    const onCloseSidecar = vi.fn();
-    const onSetActiveSidecarSurface = vi.fn();
+  it("passes secondary commands with pane identity", async () => {
+    const onRequestSecondarySurface = vi.fn();
+    const onCloseSecondaryPane = vi.fn();
+    const onSetSecondarySurface = vi.fn();
     const identity = resolvePaneRouteIdentity("/media/media-1");
 
     render(
@@ -295,21 +295,32 @@ describe("PaneRuntimeProvider", () => {
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onOpenSidecar={onOpenSidecar}
-        onCloseSidecar={onCloseSidecar}
-        onSetActiveSidecarSurface={onSetActiveSidecarSurface}
+        secondaryPane={{
+          id: "secondary-1",
+          parentPrimaryPaneId: "pane-1",
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-highlights",
+          widthPx: 360,
+          visibility: "visible",
+        }}
+        onRequestSecondarySurface={onRequestSecondarySurface}
+        onCloseSecondaryPane={onCloseSecondaryPane}
+        onSetSecondarySurface={onSetSecondarySurface}
       >
-        <SidecarCommandsOnMount />
+        <SecondaryCommandsOnMount />
       </PaneRuntimeProvider>,
     );
 
     await waitFor(() => {
-      expect(onOpenSidecar).toHaveBeenCalledWith("pane-1", "reader-highlights");
-      expect(onSetActiveSidecarSurface).toHaveBeenCalledWith(
+      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
+        "reader-highlights",
+      );
+      expect(onSetSecondarySurface).toHaveBeenCalledWith(
+        "secondary-1",
         "reader-doc-chat",
       );
-      expect(onCloseSidecar).toHaveBeenCalledWith("pane-1");
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
     });
   });
 
@@ -337,9 +348,9 @@ describe("PaneRuntimeProvider", () => {
     const runtimeValue = onValue.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(runtimeValue[`setPane${"Sizing"}`]).toBeUndefined();
     expect(runtimeValue.setPaneLayout).toEqual(expect.any(Function));
-    expect(runtimeValue.openSidecar).toEqual(expect.any(Function));
-    expect(runtimeValue.closeSidecar).toEqual(expect.any(Function));
-    expect(runtimeValue.setActiveSidecarSurface).toEqual(expect.any(Function));
+    expect(runtimeValue.requestSecondarySurface).toEqual(expect.any(Function));
+    expect(runtimeValue.closeSecondaryPane).toEqual(expect.any(Function));
+    expect(runtimeValue.setSecondarySurface).toEqual(expect.any(Function));
     expect(runtimeValue[`setPane${"Min"}Width`]).toBeUndefined();
     expect(runtimeValue[`setPane${"Extra"}Width`]).toBeUndefined();
   });

@@ -96,8 +96,8 @@ vi.mock("@/components/HtmlRenderer", () => ({
   default: () => <div data-testid="html-renderer" />,
 }));
 
-vi.mock("@/components/reader/AnchoredHighlightsSidecar", () => ({
-  default: () => <div>Highlights sidecar</div>,
+vi.mock("@/components/reader/ReaderHighlightsSurface", () => ({
+  default: () => <div>Highlights secondary</div>,
 }));
 
 vi.mock("@/components/reader/ReaderOverviewRuler", () => ({
@@ -157,7 +157,7 @@ function renderMediaPane() {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
-  const onOpenSidecar = vi.fn();
+  const onRequestSecondarySurface = vi.fn();
   const onSetFixedChrome = vi.fn();
 
   render(
@@ -178,7 +178,7 @@ function renderMediaPane() {
           onReplacePane={vi.fn()}
           onOpenInNewPane={vi.fn()}
           onSetPaneLayout={onSetPaneLayout}
-          onOpenSidecar={onOpenSidecar}
+          onRequestSecondarySurface={onRequestSecondarySurface}
         >
           <MediaPaneBody />
         </PaneRuntimeProvider>
@@ -188,7 +188,7 @@ function renderMediaPane() {
 
   return {
     onSetPaneLayout,
-    onOpenSidecar,
+    onRequestSecondarySurface,
     onSetFixedChrome,
     resourceKey: identity.resourceKey,
   };

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   openHighlightsPane,
-  readerSidecarForActivePane,
+  readerSecondaryForActivePane,
 } from "./reader";
 import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
 
@@ -108,12 +108,12 @@ async function expectHighlightRowVisible(
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const sidecar = readerSidecarForActivePane(page);
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  const secondary = readerSecondaryForActivePane(page);
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    sidecar.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(sidecar.getByLabel("Conversation context")).toContainText(exact);
+  await expect(secondary.getByLabel("Conversation context")).toContainText(exact);
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<Locator> {

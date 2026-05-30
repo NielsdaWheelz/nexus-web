@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   makeWorkspacePane,
+  makeWorkspaceState,
   pinDeviceId,
   seedWorkspaceSession,
   type WorkspaceState,
@@ -45,10 +46,14 @@ function paneChromeDeviceId(testInfo: TestInfo): string {
 }
 
 function trivialWorkspaceSession(): WorkspaceState {
-  return {
-    activePaneId: "pane-chrome-default",
-    panes: [makeWorkspacePane("pane-chrome-default", "/libraries", { primaryWidthPx: 480 })],
-  };
+  return makeWorkspaceState(
+    [
+      makeWorkspacePane("pane-chrome-default", "/libraries", {
+        primaryWidthPx: 480,
+      }),
+    ],
+    { activePrimaryPaneId: "pane-chrome-default" },
+  );
 }
 
 async function useMobileViewport(page: Page): Promise<void> {

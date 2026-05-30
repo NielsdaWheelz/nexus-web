@@ -18,14 +18,31 @@ export interface WorkspacePaneState {
   id: string;
   href: string;
   primaryWidthPx: number;
-  sidecar: null;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
+  attachedSecondaryPaneId: string | null;
+}
+
+export interface WorkspaceAttachedSecondaryPaneState {
+  id: string;
+  parentPrimaryPaneId: string;
+  groupId: "reader-tools" | "conversation-context" | "library-tools";
+  activeSurfaceId:
+    | "reader-highlights"
+    | "reader-doc-chat"
+    | "conversation-references"
+    | "conversation-forks"
+    | "library-chat"
+    | "library-intelligence";
+  widthPx: number;
+  visibility: "visible" | "collapsed";
 }
 
 export interface WorkspaceState {
-  activePaneId: string;
-  panes: WorkspacePaneState[];
+  activePrimaryPaneId: string;
+  primaryPaneOrder: string[];
+  primaryPanesById: Record<string, WorkspacePaneState>;
+  secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState>;
 }
 
 export function makeWorkspacePane(
@@ -41,9 +58,26 @@ export function makeWorkspacePane(
     id,
     href,
     primaryWidthPx: options?.primaryWidthPx ?? 560,
-    sidecar: null,
     visibility: options?.visibility ?? "visible",
     history: options?.history ?? { back: [], forward: [] },
+    attachedSecondaryPaneId: null,
+  };
+}
+
+export function makeWorkspaceState(
+  primaryPanes: WorkspacePaneState[],
+  options?: {
+    activePrimaryPaneId?: string;
+    secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
+  },
+): WorkspaceState {
+  return {
+    activePrimaryPaneId: options?.activePrimaryPaneId ?? primaryPanes[0]!.id,
+    primaryPaneOrder: primaryPanes.map((pane) => pane.id),
+    primaryPanesById: Object.fromEntries(
+      primaryPanes.map((pane) => [pane.id, pane]),
+    ),
+    secondaryPanesById: options?.secondaryPanesById ?? {},
   };
 }
 
@@ -52,15 +86,15 @@ export function singlePaneWorkspaceState(
   options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
   const paneId = options?.paneId ?? "pane-e2e-primary";
-  return {
-    activePaneId: paneId,
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane(paneId, href, {
         primaryWidthPx: options?.primaryWidthPx ?? 684,
         history: options?.history,
       }),
     ],
-  };
+    { activePrimaryPaneId: paneId },
+  );
 }
 
 // Pin the device id before any navigation so capture + restore key off the id

@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
+  makeWorkspaceState,
   type WorkspaceState,
 } from "./workspace";
 
@@ -83,13 +84,13 @@ function workspaceTabsDeviceId(testInfo: TestInfo): string {
 // A two-pane session (Libraries active, Search alongside) shared by the tests
 // that exercise the strip's multi-tab behavior.
 function librariesAndSearchSession(): WorkspaceState {
-  return {
-    activePaneId: "pane-libraries",
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane("pane-libraries", "/libraries"),
       makeWorkspacePane("pane-search", "/search"),
     ],
-  };
+    { activePrimaryPaneId: "pane-libraries" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -263,14 +264,14 @@ test.describe("workspace tabs", () => {
     await gotoWithWorkspaceSession(
       page,
       workspaceTabsDeviceId(testInfo),
-      {
-        activePaneId: "pane-media",
-        panes: [
+      makeWorkspaceState(
+        [
           makeWorkspacePane("pane-media", `/media/${epub.media_id}`, {
             primaryWidthPx: 720,
           }),
         ],
-      },
+        { activePrimaryPaneId: "pane-media" },
+      ),
       "/libraries",
     );
 
@@ -484,14 +485,14 @@ test.describe("workspace tabs", () => {
     await gotoWithWorkspaceSession(
       page,
       workspaceTabsDeviceId(testInfo),
-      {
-        activePaneId: "pane-media",
-        panes: [
+      makeWorkspaceState(
+        [
           makeWorkspacePane("pane-media", `/media/${nonPdf.media_id}`, {
             primaryWidthPx: 720,
           }),
         ],
-      },
+        { activePrimaryPaneId: "pane-media" },
+      ),
       "/libraries",
     );
 

@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openMediaInSinglePaneWorkspace, openReaderSidecar } from "./reader";
+import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
 
 interface NonPdfSeed {
   media_id: string;
@@ -19,8 +19,8 @@ test.describe("reader pane tabs (references cutover)", () => {
     const seed = readNonPdfSeed();
     await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
 
-    const sidecar = await openReaderSidecar(page);
-    const tablist = sidecar.getByRole("tablist", { name: "Sidecar surfaces" });
+    const secondary = await openReaderSecondary(page);
+    const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });
     const tabs = tablist.getByRole("tab");
 
     await expect(tabs).toHaveCount(2);
@@ -36,7 +36,7 @@ test.describe("reader pane tabs (references cutover)", () => {
     await tabs.nth(1).click();
     await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
     await expect(
-      sidecar.getByRole("button", {
+      secondary.getByRole("button", {
         name: /Start new chat about this document|\+ New chat/i,
       }),
     ).toBeVisible({ timeout: 10_000 });

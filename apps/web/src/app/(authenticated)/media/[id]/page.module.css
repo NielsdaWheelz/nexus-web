@@ -717,7 +717,7 @@
   }
 }
 
-/* --- Split layout: reader column plus stable sidecar --- */
+/* --- Split layout: reader column plus stable secondary --- */
 
 .readerLayout {
   position: relative;
@@ -750,11 +750,11 @@
   position: relative;
 }
 
-.readerSidecarBody {
+.readerSecondaryBody {
   overflow: hidden;
 }
 
-.readerSidecarEmpty {
+.readerSecondaryEmpty {
   display: flex;
   align-items: center;
   justify-content: center;

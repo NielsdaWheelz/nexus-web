@@ -57,7 +57,7 @@ import type {
   UserSearchResult,
 } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
   usePaneParam,
   usePaneRouter,
@@ -705,11 +705,11 @@ export default function LibraryPaneBody() {
   }, [library, closeEditDialog, router]);
 
   const handleOpenLibraryChat = useCallback(() => {
-    paneRuntime?.openSidecar("library-chat");
+    paneRuntime?.requestSecondarySurface("library-chat");
   }, [paneRuntime]);
 
   const handleOpenLibraryIntelligence = useCallback(() => {
-    paneRuntime?.openSidecar("library-intelligence");
+    paneRuntime?.requestSecondarySurface("library-intelligence");
   }, [paneRuntime]);
 
   const handleOpenFullLibraryChat = useCallback(
@@ -794,7 +794,7 @@ export default function LibraryPaneBody() {
     : [];
 
   usePaneChromeOverride({ options: paneOptions });
-  const sidecarDescriptor = useMemo(
+  const secondaryDescriptor = useMemo(
     () =>
       library
         ? {
@@ -819,7 +819,7 @@ export default function LibraryPaneBody() {
         : null,
     [handleOpenFullLibraryChat, id, library],
   );
-  usePaneSidecar(sidecarDescriptor);
+  usePaneSecondary(secondaryDescriptor);
 
   if (loading) {
     return <FeedbackNotice severity="info" title="Loading library..." />;

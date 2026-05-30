@@ -4,6 +4,8 @@ import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import {
   createDefaultWorkspaceState,
+  createWorkspaceStateFromPrimaryPanes,
+  getWorkspacePrimaryPanes,
   hasPaneHistory,
   sanitizeWorkspaceState,
   type WorkspaceState,
@@ -56,11 +58,11 @@ export function prepareRestoredState(
   });
 
   const androidShell = isAndroidShell();
-  const panes = sanitized.panes.filter(
+  const primaryPanes = getWorkspacePrimaryPanes(sanitized).filter(
     (pane) => !(androidShell && isAndroidShellRestrictedHref(pane.href))
   );
 
-  const visiblePanes = panes.filter((pane) => pane.visibility === "visible");
+  const visiblePanes = primaryPanes.filter((pane) => pane.visibility === "visible");
   if (visiblePanes.length === 0) {
     return createDefaultWorkspaceState(
       WORKSPACE_DEFAULT_FALLBACK_HREF,
@@ -68,23 +70,28 @@ export function prepareRestoredState(
     );
   }
 
-  const activePaneId = visiblePanes.some(
-    (pane) => pane.id === sanitized.activePaneId
+  const activePrimaryPaneId = visiblePanes.some(
+    (pane) => pane.id === sanitized.activePrimaryPaneId
   )
-    ? sanitized.activePaneId
+    ? sanitized.activePrimaryPaneId
     : visiblePanes[0].id;
 
-  return { activePaneId, panes };
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId,
+    primaryPanes,
+    secondaryPanesById: sanitized.secondaryPanesById,
+  });
 }
 
 export function isNonTrivialSession(state: WorkspaceState): boolean {
-  if (state.panes.length > 1) {
+  const primaryPanes = getWorkspacePrimaryPanes(state);
+  if (primaryPanes.length > 1) {
     return true;
   }
-  const pane = state.panes[0];
+  const pane = primaryPanes[0];
   return (
     pane.href !== WORKSPACE_DEFAULT_FALLBACK_HREF ||
-    pane.sidecar !== null ||
+    pane.attachedSecondaryPaneId !== null ||
     hasPaneHistory(pane.history)
   );
 }
@@ -93,34 +100,54 @@ export function workspaceStatesEqual(
   a: WorkspaceState,
   b: WorkspaceState
 ): boolean {
-  if (a.activePaneId !== b.activePaneId) {
+  if (a.activePrimaryPaneId !== b.activePrimaryPaneId) {
     return false;
   }
-  if (a.panes.length !== b.panes.length) {
+  if (a.primaryPaneOrder.length !== b.primaryPaneOrder.length) {
     return false;
   }
-  return a.panes.every((pane, index) => {
-    const other = b.panes[index];
-    const sameSidecar =
-      pane.sidecar === null
-        ? other.sidecar === null
-        : other.sidecar !== null &&
-          pane.sidecar.groupId === other.sidecar.groupId &&
-          pane.sidecar.activeSurfaceId === other.sidecar.activeSurfaceId &&
-          pane.sidecar.widthPx === other.sidecar.widthPx &&
-          pane.sidecar.visibility === other.sidecar.visibility;
-    return (
-      pane.id === other.id &&
-      pane.href === other.href &&
-      pane.primaryWidthPx === other.primaryWidthPx &&
-      sameSidecar &&
-      pane.visibility === other.visibility &&
-      pane.history.back.length === other.history.back.length &&
-      pane.history.forward.length === other.history.forward.length &&
-      pane.history.back.every((href, hrefIndex) => href === other.history.back[hrefIndex]) &&
-      pane.history.forward.every(
+  for (let index = 0; index < a.primaryPaneOrder.length; index += 1) {
+    if (a.primaryPaneOrder[index] !== b.primaryPaneOrder[index]) {
+      return false;
+    }
+    const pane = a.primaryPanesById[a.primaryPaneOrder[index]!];
+    const other = b.primaryPanesById[b.primaryPaneOrder[index]!];
+    if (!pane || !other) {
+      return false;
+    }
+    if (
+      pane.id !== other.id ||
+      pane.href !== other.href ||
+      pane.primaryWidthPx !== other.primaryWidthPx ||
+      pane.visibility !== other.visibility ||
+      pane.attachedSecondaryPaneId !== other.attachedSecondaryPaneId ||
+      pane.history.back.length !== other.history.back.length ||
+      pane.history.forward.length !== other.history.forward.length ||
+      !pane.history.back.every((href, hrefIndex) => href === other.history.back[hrefIndex]) ||
+      !pane.history.forward.every(
         (href, hrefIndex) => href === other.history.forward[hrefIndex]
       )
+    ) {
+      return false;
+    }
+  }
+
+  const secondaryPaneIds = Object.keys(a.secondaryPanesById);
+  if (secondaryPaneIds.length !== Object.keys(b.secondaryPanesById).length) {
+    return false;
+  }
+  return secondaryPaneIds.every((secondaryPaneId) => {
+    const pane = a.secondaryPanesById[secondaryPaneId];
+    const other = b.secondaryPanesById[secondaryPaneId];
+    return (
+      pane &&
+      other &&
+      pane.id === other.id &&
+      pane.parentPrimaryPaneId === other.parentPrimaryPaneId &&
+      pane.groupId === other.groupId &&
+      pane.activeSurfaceId === other.activeSurfaceId &&
+      pane.widthPx === other.widthPx &&
+      pane.visibility === other.visibility
     );
   });
 }

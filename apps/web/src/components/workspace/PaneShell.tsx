@@ -3,6 +3,7 @@
 import { Command } from "lucide-react";
 import {
   createContext,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -18,17 +19,17 @@ import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
-import type { PaneSidecarPublication } from "@/components/workspace/PaneSidecar";
+import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
 import type { PaneFixedChromePublication } from "@/components/workspace/PaneFixedChrome";
-import SidecarPaneShell from "@/components/workspace/SidecarPaneShell";
+import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import type {
-  WorkspaceSidecarSizing,
-  WorkspaceSidecarState,
-  WorkspaceSidecarSurfaceId,
-} from "@/lib/panes/paneSidecarModel";
+  WorkspaceSecondarySizing,
+  WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
+import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -70,12 +71,24 @@ const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null
 >(null);
 
+function arePaneChromeOverridesEqual(
+  left: PaneChromeOverrides,
+  right: PaneChromeOverrides,
+): boolean {
+  return (
+    left.toolbar === right.toolbar &&
+    left.actions === right.actions &&
+    left.options === right.options &&
+    left.meta === right.meta
+  );
+}
+
 export type PaneMobileChromeLockReason =
   | "reader-restore"
   | "pdf-selection"
   | "text-selection"
   | "highlight-navigation"
-  | "mobile-sidecar"
+  | "mobile-secondary"
   | "library-picker"
   | "action-menu";
 
@@ -95,31 +108,65 @@ const MOBILE_CHROME_SCROLL_DELTA_EPSILON_PX = 1;
 const MOBILE_CHROME_HIDE_TOLERANCE_PX = 24;
 const MOBILE_CHROME_REVEAL_TOLERANCE_PX = 16;
 
-const noopResizeSidecarPane = () => {};
-const noopCloseSidecar = () => {};
-const noopSetActiveSidecarSurface = () => {};
+const noopResizeSecondaryPane = () => {};
+const noopCloseSecondary = () => {};
+const noopSetActiveSecondarySurface = () => {};
 
 /**
  * Call from a body component rendered inside PaneShell to push toolbar,
- * options, meta, or actions into the pane chrome. Uses useLayoutEffect so the
- * chrome is ready before the browser paints.
+ * options, meta, or actions into the pane chrome.
  */
 export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
   const setOverrides = useContext(PaneChromeOverrideContext);
-  useLayoutEffect(() => {
+  const { actions, meta, options, toolbar } = overrides;
+  const lastPublishedRef = useRef<PaneChromeOverrides | null>(null);
+  useEffect(() => {
     if (!setOverrides) {
       return;
     }
-    setOverrides(overrides);
+    const next = { actions, meta, options, toolbar };
+    if (
+      lastPublishedRef.current &&
+      arePaneChromeOverridesEqual(lastPublishedRef.current, next)
+    ) {
+      return;
+    }
+    lastPublishedRef.current = next;
+    setOverrides(next);
+  }, [actions, meta, options, setOverrides, toolbar]);
+
+  useEffect(() => {
+    if (!setOverrides) {
+      return;
+    }
     return () => {
+      lastPublishedRef.current = null;
       setOverrides(EMPTY_PANE_CHROME_OVERRIDES);
     };
-  }, [overrides, setOverrides]);
+  }, [setOverrides]);
 }
 
 export function usePaneMobileChromeController(): PaneMobileChromeController | null {
   return useContext(PaneMobileChromeControllerContext);
 }
+
+const PaneShellBodyProviders = memo(function PaneShellBodyProviders({
+  children,
+  mobileChromeController,
+  setChromeOverrides,
+}: {
+  children: React.ReactNode;
+  mobileChromeController: PaneMobileChromeController | null;
+  setChromeOverrides: (overrides: PaneChromeOverrides) => void;
+}) {
+  return (
+    <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
+      <PaneMobileChromeControllerContext.Provider value={mobileChromeController}>
+        {children}
+      </PaneMobileChromeControllerContext.Provider>
+    </PaneChromeOverrideContext.Provider>
+  );
+});
 
 type PaneShellStyle = CSSProperties & {
   "--mobile-pane-chrome-height"?: string;
@@ -137,16 +184,16 @@ interface PaneShellProps {
   navigation: SurfaceHeaderNavigation;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
-  sidecar?: WorkspaceSidecarState | null;
-  sidecarSizing?: WorkspaceSidecarSizing | null;
-  sidecarPublication?: PaneSidecarPublication | null;
+  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+  secondarySizing?: WorkspaceSecondarySizing | null;
+  secondaryPublication?: PaneSecondaryPublication | null;
   fixedChromePublication?: PaneFixedChromePublication | null;
   onResizePrimaryPane: (paneId: string, widthPx: number) => void;
-  onResizeSidecarPane?: (paneId: string, widthPx: number) => void;
-  onCloseSidecar?: (paneId: string) => void;
-  onSetActiveSidecarSurface?: (
-    paneId: string,
-    surfaceId: WorkspaceSidecarSurfaceId,
+  onResizeSecondaryPane?: (secondaryPaneId: string, widthPx: number) => void;
+  onCloseSecondaryPane?: (secondaryPaneId: string) => void;
+  onSetSecondarySurface?: (
+    secondaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
@@ -167,14 +214,14 @@ export default function PaneShell({
   navigation,
   sizing,
   bodyMode,
-  sidecar = null,
-  sidecarSizing = null,
-  sidecarPublication = null,
+  secondaryPane = null,
+  secondarySizing = null,
+  secondaryPublication = null,
   fixedChromePublication = null,
   onResizePrimaryPane,
-  onResizeSidecarPane = noopResizeSidecarPane,
-  onCloseSidecar = noopCloseSidecar,
-  onSetActiveSidecarSurface = noopSetActiveSidecarSurface,
+  onResizeSecondaryPane = noopResizeSecondaryPane,
+  onCloseSecondaryPane = noopCloseSecondary,
+  onSetSecondarySurface = noopSetActiveSecondarySurface,
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
@@ -204,6 +251,11 @@ export default function PaneShell({
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
   );
+  const publishChromeOverrides = useCallback((overrides: PaneChromeOverrides) => {
+    setChromeOverrides((current) =>
+      arePaneChromeOverridesEqual(current, overrides) ? current : overrides
+    );
+  }, []);
 
   const isMobileDocumentPane = isMobile && bodyMode === "document";
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
@@ -414,22 +466,24 @@ export default function PaneShell({
     : styles.paneShell;
 
   const bodyId = `${paneId}-body`;
-  const visibleSidecar =
+  const visibleSecondary =
     !isMobile &&
-    sidecar?.visibility === "visible" &&
-    sidecarSizing &&
-    sidecarPublication?.groupId === sidecar.groupId &&
-    sidecarPublication.surfaces.some((surface) => surface.id === sidecar.activeSurfaceId)
-      ? { state: sidecar, sizing: sidecarSizing, publication: sidecarPublication }
+    secondaryPane?.visibility === "visible" &&
+    secondarySizing &&
+    secondaryPublication?.groupId === secondaryPane.groupId &&
+    secondaryPublication.surfaces.some(
+      (surface) => surface.id === secondaryPane.activeSurfaceId
+    )
+      ? { state: secondaryPane, sizing: secondarySizing, publication: secondaryPublication }
       : null;
-  const visibleSidecarWidthPx = visibleSidecar?.sizing.widthPx ?? 0;
+  const visibleSecondaryWidthPx = visibleSecondary?.sizing.widthPx ?? 0;
   const visibleFixedChrome = !isMobile ? fixedChromePublication : null;
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
     : {
-        width: `${sizing.renderedPrimarySlotWidthPx + visibleSidecarWidthPx}px`,
-        minWidth: `${sizing.renderedPrimarySlotMinWidthPx + visibleSidecarWidthPx}px`,
-        maxWidth: `${sizing.renderedPrimarySlotMaxWidthPx + visibleSidecarWidthPx}px`,
+        width: `${sizing.renderedPrimarySlotWidthPx + visibleSecondaryWidthPx}px`,
+        minWidth: `${sizing.renderedPrimarySlotMinWidthPx + visibleSecondaryWidthPx}px`,
+        maxWidth: `${sizing.renderedPrimarySlotMaxWidthPx + visibleSecondaryWidthPx}px`,
       };
   if (isMobile && mobileChromeHeight > 0) {
     shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
@@ -568,13 +622,14 @@ export default function PaneShell({
             data-pane-content="true"
             style={bodyStyle}
           >
-            <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-              <PaneMobileChromeControllerContext.Provider
-                value={bodyMode === "document" ? mobileChromeController : null}
-              >
-                {children}
-              </PaneMobileChromeControllerContext.Provider>
-            </PaneChromeOverrideContext.Provider>
+            <PaneShellBodyProviders
+              mobileChromeController={
+                isMobileDocumentPane ? mobileChromeController : null
+              }
+              setChromeOverrides={publishChromeOverrides}
+            >
+              {children}
+            </PaneShellBodyProviders>
           </div>
           {visibleFixedChrome ? (
             <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">
@@ -596,15 +651,15 @@ export default function PaneShell({
           onKeyDown={handleResizeKeyDown}
         />
       </div>
-      {visibleSidecar ? (
-        <SidecarPaneShell
-          paneId={paneId}
-          publication={visibleSidecar.publication}
-          state={visibleSidecar.state}
-          sizing={visibleSidecar.sizing}
-          onActiveSurfaceChange={onSetActiveSidecarSurface}
-          onClose={onCloseSidecar}
-          onResize={onResizeSidecarPane}
+      {visibleSecondary ? (
+        <SecondaryPaneShell
+          secondaryPaneId={visibleSecondary.state.id}
+          publication={visibleSecondary.publication}
+          state={visibleSecondary.state}
+          sizing={visibleSecondary.sizing}
+          onActiveSurfaceChange={onSetSecondarySurface}
+          onClose={onCloseSecondaryPane}
+          onResize={onResizeSecondaryPane}
         />
       ) : null}
     </section>

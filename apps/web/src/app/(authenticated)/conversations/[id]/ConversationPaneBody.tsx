@@ -21,7 +21,6 @@ import { createRandomId } from "@/lib/createRandomId";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
-import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -51,7 +50,6 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import {
   FeedbackNotice,
   toFeedback,
@@ -63,6 +61,7 @@ import {
   restoreBranchScroll,
   type BranchScroll,
 } from "./branchScroll";
+import { useConversationContextSecondary } from "../useConversationContextSecondary";
 import styles from "../page.module.css";
 
 type Conversation = ConversationSummary;
@@ -70,7 +69,7 @@ type Conversation = ConversationSummary;
 type ChatRunData = ChatRunResponse["data"];
 
 // ============================================================================
-// ConversationPaneBody — chat view with inline references sidecar
+// ConversationPaneBody — chat view with inline references secondary
 // ============================================================================
 
 const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
@@ -710,12 +709,12 @@ function ChatView({
       {
         id: "open-references",
         label: "References",
-        onSelect: () => paneRuntime?.openSidecar("conversation-references"),
+        onSelect: () => paneRuntime?.requestSecondarySurface("conversation-references"),
       },
       {
         id: "open-forks",
         label: "Forks",
-        onSelect: () => paneRuntime?.openSidecar("conversation-forks"),
+        onSelect: () => paneRuntime?.requestSecondarySurface("conversation-forks"),
       },
       ...conversationResourceOptions({
         deleting,
@@ -727,64 +726,43 @@ function ChatView({
     [deleting, handleDeleteConversation, paneRuntime],
   );
   usePaneChromeOverride({ options: paneOptions });
-  const sidecarDescriptor = useMemo(
-    () => ({
-      groupId: "conversation-context" as const,
-      defaultSurfaceId: "conversation-references" as const,
-      surfaces: [
-        {
-          id: "conversation-references" as const,
-          body: (
-            <div className={styles.chatSidecarBody}>
-              <ConversationReferencesSidecar
-                references={references}
-                removeReference={removeReference}
-                onOpenResource={handleOpenResource}
-              />
-            </div>
-          ),
-        },
-        {
-          id: "conversation-forks" as const,
-          body: (
-            <div className={styles.chatSidecarBody}>
-              <ConversationForksPanel
-                conversationId={id}
-                forkOptionsByParentId={forkOptionsByParentId}
-                branchGraph={branchGraph}
-                switchableLeafIds={switchableLeafIds}
-                activeLeafMessageId={activeLeafMessageId}
-                selectedPathMessageIds={selectedPathIdsRef.current}
-                onSelectFork={(fork) => {
-                  void switchToFork(fork);
-                }}
-                onSelectGraphLeaf={(leafId) => {
-                  void switchToLeaf(leafId, null);
-                }}
-                onForksChanged={() => {
-                  void reloadConversationTree();
-                }}
-              />
-            </div>
-          ),
-        },
-      ],
-    }),
+  const forksBody = useMemo(
+    () => (
+      <ConversationForksPanel
+        conversationId={id}
+        forkOptionsByParentId={forkOptionsByParentId}
+        branchGraph={branchGraph}
+        switchableLeafIds={switchableLeafIds}
+        activeLeafMessageId={activeLeafMessageId}
+        selectedPathMessageIds={selectedPathIdsRef.current}
+        onSelectFork={(fork) => {
+          void switchToFork(fork);
+        }}
+        onSelectGraphLeaf={(leafId) => {
+          void switchToLeaf(leafId, null);
+        }}
+        onForksChanged={() => {
+          void reloadConversationTree();
+        }}
+      />
+    ),
     [
       activeLeafMessageId,
       branchGraph,
       forkOptionsByParentId,
-      handleOpenResource,
       id,
-      references,
       reloadConversationTree,
-      removeReference,
       switchToFork,
       switchToLeaf,
       switchableLeafIds,
     ],
   );
-  usePaneSidecar(sidecarDescriptor);
+  useConversationContextSecondary({
+    references,
+    removeReference,
+    onOpenResource: handleOpenResource,
+    forksBody,
+  });
 
   // --------------------------------------------------------------------------
   // Render

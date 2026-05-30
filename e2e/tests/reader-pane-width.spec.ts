@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openReaderSidecar } from "./reader";
+import { openReaderSecondary } from "./reader";
 import { activeWorkspacePane, gotoSinglePaneWorkspace } from "./workspace";
 
 interface MediaSeed {
@@ -63,7 +63,7 @@ async function expectReflowableFloor(
   const closedWidth = await paneShell(activePane).evaluate((element) =>
     Math.round(element.getBoundingClientRect().width),
   );
-  await openReaderSidecar(page);
+  await openReaderSecondary(page);
   await expect
     .poll(() =>
       paneShell(activePane).evaluate((element) =>

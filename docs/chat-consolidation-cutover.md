@@ -29,7 +29,7 @@ into god-files. Concrete evidence:
 | **scroll-to-bottom on new message** | ✅ `useLayoutEffect([messages])` (`:428`) | ✅ (`:119`) | ❌ **absent** |
 | **release auto-scroll on manual scroll-up** | ✅ `handleChatScroll` (`:450`) | ✅ (`:161`) | ❌ **never wired** |
 | branch/forks (state, graph, switch, restore) | ✅ | — | — |
-| references sidecar | ✅ | ✅ (refs only) | — (creates with media ref) |
+| references secondary | ✅ | ✅ (refs only) | — (creates with media ref) |
 
 `ReaderChatDetail` declares `shouldScrollRef`/`scrollportRef` (`ReaderChatDetail.tsx:54-55`),
 threads them into `ChatSurface`/`useChatRunTail`, **but has no `useLayoutEffect` that ever writes
@@ -94,7 +94,7 @@ surfaces and are correct. The mess is entirely in the **container, scroll, and g
 - **No backend / endpoint / schema change.** `/chat-runs`, `/conversations`, `/tree`, `/messages`
   (the linear endpoint is simply no longer called from the client; leaving the route is fine),
   `/references`, `/forks`, `/active-path`, `/models` are unchanged.
-- **No change to the references data model or its sidecar rendering.** `ConversationReferencesSidecar`
+- **No change to the references data model or its secondary rendering.** `ConversationReferencesSurface`
   row markup is owned by `docs/item-card-cutover.md` (resource `ItemCard` variant). This cutover keeps
   consuming `useConversationReferences` and rendering whatever that component renders; it does not
   build `ItemCard`/`Disclosure`.
@@ -150,10 +150,10 @@ surfaces and are correct. The mess is entirely in the **container, scroll, and g
 ### 4.2 Surfaces (unchanged externally)
 
 - **Conversation pane** (`/conversations/[id]` and `/conversations/new`): full transcript, composer,
-  branching (fork strips inline + forks sidecar), references sidecar, pane title/options. `new` is the
+  branching (fork strips inline + forks secondary), references secondary, pane title/options. `new` is the
   same surface with no id yet.
-- **Reader doc-chat** (inside the media pane's `reader-doc-chat` sidecar surface): same transcript +
-  composer + pin-scroll, plus a compact header (back, title, "Open in full chat"); no sub-sidecars, no
+- **Reader doc-chat** (inside the media pane's `reader-doc-chat` secondary surface): same transcript +
+  composer + pin-scroll, plus a compact header (back, title, "Open in full chat"); no sub-secondarys, no
   forks chrome; creates the conversation with the document reference on first send.
 
 ---
@@ -178,12 +178,12 @@ scroll-related lives in the view.
         ┌────────────────────────────────┴───────────────────────────────────┐
         │                                                                      │
   components/chat/Conversation.tsx                      components/chat/ReaderChatDetail.tsx
-  (PANE BODY — /conversations/[id] & /new)              (EMBEDDED in reader sidecar)
+  (PANE BODY — /conversations/[id] & /new)              (EMBEDDED in reader secondary)
   · useConversation({ id })                             · useConversation({ id:null|id,
   · useSetPaneTitle / usePaneChromeOverride               initialReferences:[`media:${id}`],
-  · usePaneSidecar(conversation-context:                   readerContext })
+  · usePaneSecondary(conversation-context:                   readerContext })
       references + forks)                                · renders its own <header> (back / open-full)
-  · branching chrome ON                                 · NO pane-chrome hooks (it is inside a sidecar)
+  · branching chrome ON                                 · NO pane-chrome hooks (it is inside a secondary)
         │                                                      │
         └───────────────────────┬──────────────────────────────┘
                                  ▼
@@ -197,9 +197,9 @@ scroll-related lives in the view.
                   · <ModelSettingsPopover/>     · <PendingReferencesBar/>  · <BranchComposerHeader/>
 ```
 
-Why **two adapters, not one component with a flag:** the pane-chrome hooks (`usePaneSidecar`,
+Why **two adapters, not one component with a flag:** the pane-chrome hooks (`usePaneSecondary`,
 `useSetPaneTitle`, `usePaneChromeOverride`) write to the **nearest** pane context. `ReaderChatDetail`
-renders *inside the reader pane's `reader-doc-chat` sidecar body*, so if it called those hooks it would
+renders *inside the reader pane's `reader-doc-chat` secondary body*, so if it called those hooks it would
 clobber the reader pane's own publications. React also forbids conditionally calling hooks. Therefore
 the shared core is the **hook + view**, and the two adapters differ only by which chrome hooks they
 call. `ConversationNewPaneBody` is deleted outright (it is `Conversation` with `conversationId={null}`).
@@ -241,7 +241,7 @@ export interface UseConversationOptions {
   readerContext?: ReaderContextHintInput | null;
   /** Enable branch state + active-path persistence. Pane: true. Reader embed: false. */
   branching?: boolean;
-  /** Fired when a `reference_added` SSE event lands for this conversation (pane upserts the sidecar). */
+  /** Fired when a `reference_added` SSE event lands for this conversation (pane upserts the secondary). */
   onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
   /** Fired the first time a run resolves a concrete conversation id (new-chat navigation). */
   onConversationCreated?: (conversationId: string, runId: string) => void;
@@ -345,7 +345,7 @@ any of this lives:
 - Renders a measured **spacer** element (last child of the transcript) with
   `height = max(0, clientHeight − topInset − contentBelowAnchorTop)`; recomputed via a single
   `ResizeObserver` on the scrollport + transcript (the reuse-able observer pattern already used at
-  `ReaderOverviewRuler.tsx:67` / `AnchoredHighlightsSidecar.tsx:296`).
+  `ReaderOverviewRuler.tsx:67` / `ReaderHighlightsSurface.tsx:296`).
 - Tracks a `pinned` flag; any user-initiated scroll (wheel/touch/keyboard) clears it and the engine does
   not re-pin until the next send. Programmatic scrolls are flagged so they don't clear `pinned`.
 - Computes `isLatestBelowFold` for the **↓ Latest** button (replaces the old 48px near-bottom check).
@@ -373,15 +373,15 @@ export default function Conversation({ conversationId }: { conversationId: strin
   const convo = useConversation({ conversationId, branching: true, onReferenceAdded, onConversationCreated });
   useSetPaneTitle(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
   usePaneChromeOverride({ options: paneOptions });            // references / forks / delete / open-resource
-  usePaneSidecar(conversationContextSidecar(/* references + (branch ? forks) */));
+  usePaneSecondary(conversationContextSecondary(/* references + (branch ? forks) */));
   return <ChatSurface ref={convo.scrollRef} messages={convo.messages} composer={<ChatComposer …/>} … />;
 }
 ```
 
 - Used by **both** `conversations/[id]/page` and `conversations/new/page` (the latter passes `null`).
-- Branching chrome (forks sidecar, fork strips, reply-to-assistant) is wired from `convo.branch`.
-- References sidecar uses `useConversationReferences(convo.conversationId)` exactly as today; rendered by
-  `ConversationReferencesSidecar` (owned by the item-card cutover).
+- Branching chrome (forks secondary, fork strips, reply-to-assistant) is wired from `convo.branch`.
+- References secondary uses `useConversationReferences(convo.conversationId)` exactly as today; rendered by
+  `ConversationReferencesSurface` (owned by the item-card cutover).
 
 ### 6.5 `components/chat/ReaderChatDetail.tsx` — embedded adapter (slimmed)
 
@@ -402,7 +402,7 @@ export default function ReaderChatDetail({ conversationId, mediaId, pendingQuote
 }
 ```
 
-- No pane-chrome hooks (it lives inside the reader pane's sidecar). Pending-quote chips are passed to the
+- No pane-chrome hooks (it lives inside the reader pane's secondary). Pending-quote chips are passed to the
   composer via `pendingReferences` (engine still owns commit on `resolveConversation`).
 - "Open in full chat" calls the existing `onOpenFullChat(convo.conversationId)` callback supplied by
   `MediaPaneBody`.
@@ -472,18 +472,18 @@ above + the existing `ForkGraphOverview` for the graph tab.
 - **Pane runtime** (`lib/panes/paneRuntime.tsx`): the pane adapter uses `useSetPaneTitle(title)`,
   `usePaneChromeOverride({ options })`, `usePaneRouter()` (`push`/`replace` for new-chat navigation),
   and `usePaneRuntime()?.openInNewPane(href, hint, surfaceId)` for opening cited resources. The reader
-  adapter uses **none** of these (it is inside a sidecar body).
-- **Sidecars** (`lib/panes/paneSidecarModel.ts`): the pane adapter publishes
+  adapter uses **none** of these (it is inside a secondary body).
+- **Secondary panes** (`lib/panes/paneSecondaryModel.ts`): the pane adapter publishes
   `groupId: "conversation-context"` with surfaces `"conversation-references"` (always) and
   `"conversation-forks"` (when `branch` present), via
-  `usePaneSidecar({ groupId, defaultSurfaceId: "conversation-references", surfaces })`
-  (`PaneSidecar.tsx:20`). The reader doc-chat continues to be the body of the media pane's
+  `usePaneSecondary({ groupId, defaultSurfaceId: "conversation-references", surfaces })`
+  (`PaneSecondary.tsx:20`). The reader doc-chat continues to be the body of the media pane's
   `"reader-doc-chat"` surface under `"reader-tools"` — i.e. `ReaderChatDetail` is the `body` passed by
-  `MediaPaneBody`'s `usePaneSidecar`. Mobile uses the same surfaces via `MobileSidecarHost`
+  `MediaPaneBody`'s `usePaneSecondary`. Mobile uses the same surfaces via `MobileSecondaryPaneHost`
   (`activeSurface.mobileBody ?? body`).
 - **References** (`conversation-references-cutover.md`): unchanged. The engine forwards `reference_added`
   SSE events to `onReferenceAdded`; the pane adapter `upsert`s into `useConversationReferences`. The
-  sidecar list rendering belongs to `item-card-cutover.md`.
+  secondary list rendering belongs to `item-card-cutover.md`.
 - **Streaming** (`useChatRunTail`/`useChatMessageUpdates`): unchanged except the `shouldScrollRef`
   deletion (§6.3). The engine is the sole caller.
 - **Reader source activation:** both adapters pass `onReaderSourceActivate` down to `ChatSurface →
@@ -501,13 +501,13 @@ above + the existing `ForkGraphOverview` for the graph tab.
 |---|---|---|
 | Scroll model | **Pin-the-question only.** Single owner in `ChatSurface`/`useChatScroll`. | The user's target; one model, no toggles (`simplicity.md`). |
 | Where scroll lives | **In the view, not the consumers.** Delete `shouldScrollRef`, 3× layout effects, 3× `handleChatScroll`, `handleComposerWheel`, `branchScroll.ts`. | One owner per concern (`cleanliness.md`). The dropped copy in `ReaderChatDetail` proves consumer-owned scroll is unmaintainable. |
-| One component vs hook+view | **Hook (`useConversation`) + view (`ChatSurface`) + two thin adapters.** | Pane-chrome hooks must not run inside the reader sidecar body; React forbids conditional hooks. A single component with an `embedded` flag would clobber the reader pane's publications. |
+| One component vs hook+view | **Hook (`useConversation`) + view (`ChatSurface`) + two thin adapters.** | Pane-chrome hooks must not run inside the reader secondary body; React forbids conditional hooks. A single component with an `embedded` flag would clobber the reader pane's publications. |
 | `ConversationNewPaneBody` | **Delete.** New chat = `Conversation` with `conversationId={null}`. | Removes a whole duplicated lifecycle copy. |
 | History load path | **`/tree` everywhere; delete client use of linear `/messages`.** | One load path. Reader ignores fork data when `branching:false`. |
 | Decompose god-files vs leave | **Decompose both** into pure utils + hooks + presentational units. | `cleanliness.md` god-files rule; pure tree utils + draft/model hooks are independently testable. |
 | `ChatComposer` public API | **Unchanged.** Internal split only. | Adapters keep wiring it identically; no call-site churn. |
-| References sidecar rendering | **Owned by `item-card-cutover.md`, not here.** | Avoid a near-duplicate of that in-flight cutover. |
-| Build a generic `useResizeObserver`? | **No — inline the one observer in `useChatScroll`.** | Used once here; matches existing inline RO usage (`ReaderOverviewRuler`, `AnchoredHighlightsSidecar`). Generalize only if a third site needs it. |
+| References secondary rendering | **Owned by `item-card-cutover.md`, not here.** | Avoid a near-duplicate of that in-flight cutover. |
+| Build a generic `useResizeObserver`? | **No — inline the one observer in `useChatScroll`.** | Used once here; matches existing inline RO usage (`ReaderOverviewRuler`, `ReaderHighlightsSurface`). Generalize only if a third site needs it. |
 
 ---
 
@@ -531,7 +531,7 @@ above + the existing `ForkGraphOverview` for the graph tab.
 
 **Out of scope**
 - SSE transport internals; references data model; fork endpoints; `/models`; backend.
-- `ConversationReferencesSidecar` row rendering (`item-card-cutover.md`).
+- `ConversationReferencesSurface` row rendering (`item-card-cutover.md`).
 - `ForkGraphOverview` / `ForkStrip` internals (reused as-is).
 - Any new chat/fork/model feature.
 

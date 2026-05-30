@@ -94,7 +94,7 @@ async function openForksPanel(page: Page) {
     .click();
   await page.getByRole("menuitem", { name: "Forks" }).click();
 
-  const panel = page.getByTestId("workspace-sidecar-pane");
+  const panel = page.getByTestId("workspace-secondary-pane");
   await expect(panel).toBeVisible();
   await expect(
     panel.getByRole("tree", { name: "Conversation forks" }),
@@ -478,7 +478,7 @@ test.describe("conversations", () => {
     }
   });
 
-  test("mobile sidecar exposes forks and switches branches", async ({
+  test("mobile secondary exposes forks and switches branches", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -486,8 +486,8 @@ test.describe("conversations", () => {
     const conversationId = seed.conversation_id;
     try {
       await page.goto(`/conversations/${conversationId}`);
-      await expect(page.getByTestId("workspace-sidecar-pane")).toHaveCount(0);
-      await expect(page.getByTestId("mobile-sidecar-host")).toHaveCount(0);
+      await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
+      await expect(page.getByTestId("mobile-secondary-host")).toHaveCount(0);
 
       await page
         .getByTestId("pane-shell-chrome")
@@ -495,17 +495,17 @@ test.describe("conversations", () => {
         .click();
       await page.getByRole("menuitem", { name: "Forks" }).click();
 
-      const sidecar = page.getByRole("dialog", { name: "Forks" });
-      await expect(sidecar).toBeVisible();
+      const secondary = page.getByRole("dialog", { name: "Forks" });
+      await expect(secondary).toBeVisible();
       await expect(
-        sidecar.getByRole("tree", { name: "Conversation forks" }),
+        secondary.getByRole("tree", { name: "Conversation forks" }),
       ).toBeVisible();
-      await sidecar
+      await secondary
         .getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i })
         .click();
 
-      await sidecar.getByRole("button", { name: "Close Forks" }).click();
-      await expect(sidecar).toHaveCount(0);
+      await secondary.getByRole("button", { name: "Close Forks" }).click();
+      await expect(secondary).toHaveCount(0);
       await expect(
         page.getByText(
           "Quote branch answer highlights the selected source phrase.",

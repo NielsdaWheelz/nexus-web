@@ -382,14 +382,14 @@ async function readLinkedItemOrder(
 }
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
-    await sidecar.getByRole("tab", { name: "Highlights" }).click();
+  const secondary = page.getByTestId("workspace-secondary-pane");
+  if ((await secondary.count()) > 0 && (await secondary.isVisible().catch(() => false))) {
+    await secondary.getByRole("tab", { name: "Highlights" }).click();
   } else {
     await page.getByRole("button", { name: "Open highlights pane" }).click();
   }
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
+  await expect(secondary.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

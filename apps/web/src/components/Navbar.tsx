@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, LogOut, Plus, Sparkles } from "lucide-react"
 import Link from "next/link";
 import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
 import AsterismMark from "@/components/AsterismMark";
@@ -34,7 +35,10 @@ export default function Navbar({ onToggle }: NavbarProps) {
   const { state, navigatePane } = useWorkspaceStore();
 
   const activePane = useMemo(
-    () => state.panes.find((p) => p.id === state.activePaneId) ?? null,
+    () =>
+      getWorkspacePrimaryPanes(state).find(
+        (p) => p.id === state.activePrimaryPaneId,
+      ) ?? null,
     [state],
   );
   const currentPathname = useMemo(

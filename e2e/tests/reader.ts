@@ -1,16 +1,18 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { activeWorkspacePane, gotoSinglePaneWorkspace } from "./workspace";
 
-export function readerSidecarForActivePane(page: Page): Locator {
-  return activeWorkspacePane(page).getByTestId("workspace-sidecar-pane");
+export function readerSecondaryForActivePane(page: Page): Locator {
+  return activeWorkspacePane(page).getByTestId("workspace-secondary-pane");
 }
 
-export async function openReaderSidecar(page: Page): Promise<Locator> {
+export async function openReaderSecondary(page: Page): Promise<Locator> {
   const activePane = activeWorkspacePane(page);
   await expect(activePane).toBeVisible({ timeout: 15_000 });
 
-  const sidecar = readerSidecarForActivePane(page);
-  if ((await sidecar.count()) === 0) {
+  const secondary = readerSecondaryForActivePane(page);
+  try {
+    await expect(secondary).toBeVisible({ timeout: 5_000 });
+  } catch {
     const openButton = activePane
       .getByRole("button", { name: "Open highlights pane" })
       .first();
@@ -18,13 +20,13 @@ export async function openReaderSidecar(page: Page): Promise<Locator> {
     await openButton.click();
   }
 
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  return sidecar;
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
+  return secondary;
 }
 
 export async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = await openReaderSidecar(page);
-  const highlightsTab = sidecar.getByRole("tab", { name: "Highlights" });
+  const secondary = await openReaderSecondary(page);
+  const highlightsTab = secondary.getByRole("tab", { name: "Highlights" });
   if ((await highlightsTab.getAttribute("aria-selected")) !== "true") {
     await highlightsTab.click();
   }

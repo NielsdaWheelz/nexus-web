@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
+  makeWorkspaceState,
   type WorkspaceState,
 } from "./workspace";
 
@@ -20,13 +21,13 @@ function paletteListbox(root: Page | Locator): Locator {
 // Seeds the workspace with a second open pane (/search → "Search") on top of
 // the visited route, so the palette's open-tabs section contains a Search row.
 function workspaceWithSearchPane(): WorkspaceState {
-  return {
-    activePaneId: "pane-libraries",
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane("pane-libraries", "/libraries"),
       makeWorkspacePane("pane-search", "/search"),
     ],
-  };
+    { activePrimaryPaneId: "pane-libraries" },
+  );
 }
 
 test.describe("command palette", () => {

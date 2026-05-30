@@ -12,12 +12,17 @@ import {
 } from "react";
 import {
   MAX_PANES,
+  createSecondaryPaneId,
   createDefaultWorkspaceState,
   createEmptyPaneHistory,
   createPaneId,
+  createWorkspaceStateFromPrimaryPanes,
+  getWorkspacePrimaryPane,
+  getWorkspacePrimaryPanes,
   normalizePaneTitle,
   trimWorkspacePaneHistory,
-  type WorkspacePaneState,
+  type WorkspaceAttachedSecondaryPaneState,
+  type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
@@ -46,13 +51,13 @@ import {
   type PaneChromeDescriptor,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
-import { paneRouteAllowsSidecarGroup } from "@/lib/panes/paneRouteModel";
+import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 import {
-  getSidecarGroupForSurface,
-  getSidecarWidthPolicy,
-  resolveEffectiveSidecarSizing,
-  type WorkspaceSidecarSurfaceId,
-} from "@/lib/panes/paneSidecarModel";
+  getSecondaryGroupForSurface,
+  getSecondaryWidthPolicy,
+  resolveEffectiveSecondarySizing,
+  type WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 
 type PaneNavigationMode = "replace" | "push";
@@ -62,7 +67,7 @@ type WorkspaceAction =
   | { type: "activate_pane"; paneId: string }
   | {
       type: "open_pane";
-      pane: WorkspacePaneState;
+      pane: WorkspacePrimaryPaneState;
       afterPaneId: string | null;
       activate: boolean;
       mode: PaneNavigationMode;
@@ -78,35 +83,80 @@ type WorkspaceAction =
   | { type: "go_forward_pane"; paneId: string }
   | { type: "close_pane"; paneId: string }
   | { type: "resize_primary_pane"; paneId: string; widthPx: number }
-  | { type: "open_sidecar"; paneId: string; surfaceId: WorkspaceSidecarSurfaceId }
-  | { type: "close_sidecar"; paneId: string }
   | {
-      type: "set_active_sidecar_surface";
-      paneId: string;
-      surfaceId: WorkspaceSidecarSurfaceId;
+      type: "request_secondary_surface";
+      primaryPaneId: string;
+      surfaceId: WorkspaceSecondarySurfaceId;
     }
-  | { type: "resize_sidecar"; paneId: string; widthPx: number }
+  | { type: "close_secondary_pane"; secondaryPaneId: string }
+  | { type: "drop_secondary_pane"; secondaryPaneId: string }
+  | {
+      type: "set_secondary_surface";
+      secondaryPaneId: string;
+      surfaceId: WorkspaceSecondarySurfaceId;
+    }
+  | { type: "resize_secondary_pane"; secondaryPaneId: string; widthPx: number }
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
+
+function getAttachedSecondaryPane(
+  state: WorkspaceState,
+  primaryPane: WorkspacePrimaryPaneState,
+): WorkspaceAttachedSecondaryPaneState | null {
+  return primaryPane.attachedSecondaryPaneId
+    ? state.secondaryPanesById[primaryPane.attachedSecondaryPaneId] ?? null
+    : null;
+}
+
+function createWorkspaceState(input: {
+  previousState: WorkspaceState;
+  primaryPanes: WorkspacePrimaryPaneState[];
+  activePrimaryPaneId: string;
+  secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
+}): WorkspaceState {
+  const sourceSecondaryPanesById =
+    input.secondaryPanesById ?? input.previousState.secondaryPanesById;
+  const secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState> = {};
+  const primaryPanes = input.primaryPanes.map((pane) => {
+    if (!pane.attachedSecondaryPaneId) {
+      return pane;
+    }
+    const secondaryPane = sourceSecondaryPanesById[pane.attachedSecondaryPaneId];
+    if (!secondaryPane || secondaryPane.parentPrimaryPaneId !== pane.id) {
+      return { ...pane, attachedSecondaryPaneId: null };
+    }
+    secondaryPanesById[secondaryPane.id] = secondaryPane;
+    return pane;
+  });
+
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: input.activePrimaryPaneId,
+    primaryPanes,
+    secondaryPanesById,
+  });
+}
 
 function ensureActivePaneId(
   state: WorkspaceState,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspaceState {
-  if (!state.panes.length) {
+  const panes = getWorkspacePrimaryPanes(state);
+  if (!panes.length) {
     return createDefaultWorkspaceState(
       WORKSPACE_DEFAULT_FALLBACK_HREF,
       workspacePrimaryMetrics,
     );
   }
   if (
-    state.panes.some((p) => p.id === state.activePaneId && p.visibility === "visible")
+    panes.some(
+      (p) => p.id === state.activePrimaryPaneId && p.visibility === "visible",
+    )
   ) {
     return state;
   }
-  const firstVisiblePane = state.panes.find((p) => p.visibility === "visible");
+  const firstVisiblePane = panes.find((p) => p.visibility === "visible");
   if (firstVisiblePane) {
-    return { ...state, activePaneId: firstVisiblePane.id };
+    return { ...state, activePrimaryPaneId: firstVisiblePane.id };
   }
   return createDefaultWorkspaceState(
     WORKSPACE_DEFAULT_FALLBACK_HREF,
@@ -125,20 +175,21 @@ function trimAndEnsureActivePaneId(
 }
 
 function applyPaneHrefTransition(
-  pane: WorkspacePaneState,
+  pane: WorkspacePrimaryPaneState,
   href: string,
   mode: PaneNavigationMode,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-): WorkspacePaneState {
+  attachedSecondaryPane: WorkspaceAttachedSecondaryPaneState | null,
+): WorkspacePrimaryPaneState {
   if (pane.href === href) {
     return pane;
   }
   const preserveResource = hasSamePaneResource(pane.href, href);
-  const sidecar =
+  const attachedSecondaryPaneId =
     preserveResource &&
-    pane.sidecar &&
-    paneRouteAllowsSidecarGroup(href, pane.sidecar.groupId)
-      ? pane.sidecar
+    attachedSecondaryPane &&
+    paneRouteAllowsSecondaryGroup(href, attachedSecondaryPane.groupId)
+      ? attachedSecondaryPane.id
       : null;
   return {
     ...pane,
@@ -148,7 +199,7 @@ function applyPaneHrefTransition(
       preserveResource,
       workspacePrimaryMetrics,
     ),
-    sidecar,
+    attachedSecondaryPaneId,
     history:
       mode === "push"
         ? { back: [...pane.history.back, pane.href], forward: [] }
@@ -157,15 +208,16 @@ function applyPaneHrefTransition(
 }
 
 function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
-  if (state.panes.length !== 1) {
+  const panes = getWorkspacePrimaryPanes(state);
+  if (panes.length !== 1) {
     return false;
   }
-  const pane = state.panes[0];
+  const pane = panes[0];
   return (
     pane?.visibility === "visible" &&
-    state.activePaneId === pane.id &&
+    state.activePrimaryPaneId === pane.id &&
     pane.href === WORKSPACE_DEFAULT_FALLBACK_HREF &&
-    pane.sidecar === null
+    pane.attachedSecondaryPaneId === null
   );
 }
 
@@ -178,18 +230,22 @@ export function mergeRestoredWorkspaceWithDeepLink(
     return restored;
   }
 
-  const requestedPane = deepLinkIntent.panes.find(
-    (pane) => pane.id === deepLinkIntent.activePaneId && pane.visibility === "visible"
+  const restoredPanes = getWorkspacePrimaryPanes(restored);
+  const deepLinkPanes = getWorkspacePrimaryPanes(deepLinkIntent);
+  const requestedPane = deepLinkPanes.find(
+    (pane) =>
+      pane.id === deepLinkIntent.activePrimaryPaneId &&
+      pane.visibility === "visible",
   );
   if (!requestedPane) {
     return restored;
   }
 
-  const existingPane = restored.panes.find((pane) =>
+  const existingPane = restoredPanes.find((pane) =>
     hasSamePaneResource(pane.href, requestedPane.href)
   );
   if (existingPane) {
-    const panes = restored.panes.map((pane) => {
+    const panes = restoredPanes.map((pane) => {
       if (pane.id !== existingPane.id) {
         return pane;
       }
@@ -198,38 +254,46 @@ export function mergeRestoredWorkspaceWithDeepLink(
         requestedPane.href,
         "replace",
         workspacePrimaryMetrics,
+        getAttachedSecondaryPane(restored, pane),
       );
       return {
         ...transitioned,
-        sidecar: requestedPane.sidecar ?? transitioned.sidecar,
         visibility: "visible" as const,
       };
     });
-    return trimAndEnsureActivePaneId({
-      ...restored,
-      activePaneId: existingPane.id,
-      panes,
-    }, workspacePrimaryMetrics);
+    return trimAndEnsureActivePaneId(
+      createWorkspaceState({
+        previousState: restored,
+        primaryPanes: panes,
+        activePrimaryPaneId: existingPane.id,
+      }),
+      workspacePrimaryMetrics,
+    );
   }
 
-  const requestedPaneId = restored.panes.some((pane) => pane.id === requestedPane.id)
+  const requestedPaneId = restoredPanes.some((pane) => pane.id === requestedPane.id)
     ? createPaneId()
     : requestedPane.id;
-  const paneToAppend: WorkspacePaneState = {
+  const paneToAppend: WorkspacePrimaryPaneState = {
     ...requestedPane,
     id: requestedPaneId,
     visibility: "visible",
+    attachedSecondaryPaneId: null,
   };
   const retainedPaneCount = Math.max(0, MAX_PANES - 1);
   const panes =
-    restored.panes.length >= MAX_PANES
-      ? restored.panes.slice(Math.max(0, restored.panes.length - retainedPaneCount))
-      : restored.panes;
+    restoredPanes.length >= MAX_PANES
+      ? restoredPanes.slice(Math.max(0, restoredPanes.length - retainedPaneCount))
+      : restoredPanes;
 
-  return trimAndEnsureActivePaneId({
-    activePaneId: requestedPaneId,
-    panes: [...panes, paneToAppend],
-  }, workspacePrimaryMetrics);
+  return trimAndEnsureActivePaneId(
+    createWorkspaceState({
+      previousState: restored,
+      activePrimaryPaneId: requestedPaneId,
+      primaryPanes: [...panes, paneToAppend],
+    }),
+    workspacePrimaryMetrics,
+  );
 }
 
 function workspaceReducer(
@@ -242,17 +306,18 @@ function workspaceReducer(
       return trimAndEnsureActivePaneId(action.state, workspacePrimaryMetrics);
 
     case "activate_pane": {
+      const panes = getWorkspacePrimaryPanes(state);
       if (
-        !state.panes.some((p) => p.id === action.paneId && p.visibility === "visible")
+        !panes.some((p) => p.id === action.paneId && p.visibility === "visible")
       ) {
         return state;
       }
-      return { ...state, activePaneId: action.paneId };
+      return { ...state, activePrimaryPaneId: action.paneId };
     }
 
     case "open_pane": {
-      let panes = state.panes;
-      let activePaneId = state.activePaneId;
+      let panes = getWorkspacePrimaryPanes(state);
+      let activePrimaryPaneId = state.activePrimaryPaneId;
       const paneToOpen = {
         ...action.pane,
         primaryWidthPx: clampPaneWidth(
@@ -260,6 +325,7 @@ function workspaceReducer(
           workspacePrimaryMetrics,
         ),
         visibility: "visible" as const,
+        attachedSecondaryPaneId: null,
       };
       const existingPane = panes.find((item) =>
         hasSamePaneResource(item.href, paneToOpen.href)
@@ -275,48 +341,58 @@ function workspaceReducer(
             paneToOpen.href,
             action.mode,
             workspacePrimaryMetrics,
+            getAttachedSecondaryPane(state, item),
           );
           return {
             ...transitioned,
-            sidecar: paneToOpen.sidecar ?? transitioned.sidecar,
             visibility: "visible" as const,
           };
         });
         if (action.activate) {
-          activePaneId = existingPane.id;
+          activePrimaryPaneId = existingPane.id;
         }
         return trimAndEnsureActivePaneId(
-          { ...state, panes, activePaneId },
+          createWorkspaceState({
+            previousState: state,
+            primaryPanes: panes,
+            activePrimaryPaneId,
+          }),
           workspacePrimaryMetrics,
         );
       }
 
       if (panes.length + 1 > MAX_PANES) {
         const keep = MAX_PANES - 1;
-        panes = panes.filter((p) => p.id === activePaneId).concat(
-          panes.filter((p) => p.id !== activePaneId).slice(-(keep - 1))
+        panes = panes.filter((p) => p.id === activePrimaryPaneId).concat(
+          panes.filter((p) => p.id !== activePrimaryPaneId).slice(-(keep - 1))
         );
       }
-      const insertIdx = action.afterPaneId
-        ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
-        : panes.length;
+      const afterPaneIndex = action.afterPaneId
+        ? panes.findIndex((p) => p.id === action.afterPaneId)
+        : -1;
+      const insertIdx = afterPaneIndex >= 0 ? afterPaneIndex + 1 : panes.length;
       panes = [...panes.slice(0, insertIdx), paneToOpen, ...panes.slice(insertIdx)];
       if (action.activate) {
-        activePaneId = paneToOpen.id;
+        activePrimaryPaneId = paneToOpen.id;
       }
 
       return trimAndEnsureActivePaneId(
-        { ...state, panes, activePaneId },
+        createWorkspaceState({
+          previousState: state,
+          primaryPanes: panes,
+          activePrimaryPaneId,
+        }),
         workspacePrimaryMetrics,
       );
     }
 
     case "navigate_pane": {
-      const pane = state.panes.find((p) => p.id === action.paneId);
+      const panes = getWorkspacePrimaryPanes(state);
+      const pane = panes.find((p) => p.id === action.paneId);
       if (!pane) {
         return state;
       }
-      const panes = state.panes.map((p) =>
+      const nextPanes = panes.map((p) =>
         p.id === action.paneId
           ? {
               ...applyPaneHrefTransition(
@@ -324,108 +400,129 @@ function workspaceReducer(
                 action.href,
                 action.mode,
                 workspacePrimaryMetrics,
+                getAttachedSecondaryPane(state, p),
               ),
               visibility: action.activate ? "visible" : p.visibility,
             }
           : p
       );
-      return trimAndEnsureActivePaneId({
-        ...state,
-        panes,
-        activePaneId: action.activate ? action.paneId : state.activePaneId,
-      }, workspacePrimaryMetrics);
+      return trimAndEnsureActivePaneId(
+        createWorkspaceState({
+          previousState: state,
+          primaryPanes: nextPanes,
+          activePrimaryPaneId: action.activate
+            ? action.paneId
+            : state.activePrimaryPaneId,
+        }),
+        workspacePrimaryMetrics,
+      );
     }
 
     case "go_back_pane": {
-      const pane = state.panes.find((p) => p.id === action.paneId);
+      const panes = getWorkspacePrimaryPanes(state);
+      const pane = panes.find((p) => p.id === action.paneId);
       const href = pane?.history.back[pane.history.back.length - 1];
       if (!pane || !href) {
         return state;
       }
-      const panes = state.panes.map((p) =>
-        p.id === action.paneId
-          ? {
-              ...p,
-              href,
-              primaryWidthPx: resolvePaneTransitionWidth(
-                p.primaryWidthPx,
-                hasSamePaneResource(p.href, href),
-                workspacePrimaryMetrics,
-              ),
-              sidecar:
-                hasSamePaneResource(p.href, href) &&
-                p.sidecar &&
-                paneRouteAllowsSidecarGroup(href, p.sidecar.groupId)
-                  ? p.sidecar
-                  : null,
-              visibility: "visible" as const,
-              history: {
-                back: p.history.back.slice(0, -1),
-                forward: [p.href, ...p.history.forward],
-              },
-            }
-          : p
+      const nextPanes = panes.map((p) => {
+        if (p.id !== action.paneId) {
+          return p;
+        }
+        const attachedSecondaryPane = getAttachedSecondaryPane(state, p);
+        const preserveResource = hasSamePaneResource(p.href, href);
+        return {
+          ...p,
+          href,
+          primaryWidthPx: resolvePaneTransitionWidth(
+            p.primaryWidthPx,
+            preserveResource,
+            workspacePrimaryMetrics,
+          ),
+          attachedSecondaryPaneId:
+            preserveResource &&
+            attachedSecondaryPane &&
+            paneRouteAllowsSecondaryGroup(href, attachedSecondaryPane.groupId)
+              ? attachedSecondaryPane.id
+              : null,
+          visibility: "visible" as const,
+          history: {
+            back: p.history.back.slice(0, -1),
+            forward: [p.href, ...p.history.forward],
+          },
+        };
+      });
+      return trimAndEnsureActivePaneId(
+        createWorkspaceState({
+          previousState: state,
+          activePrimaryPaneId: action.paneId,
+          primaryPanes: nextPanes,
+        }),
+        workspacePrimaryMetrics,
       );
-      return trimAndEnsureActivePaneId({
-        ...state,
-        activePaneId: action.paneId,
-        panes,
-      }, workspacePrimaryMetrics);
     }
 
     case "go_forward_pane": {
-      const pane = state.panes.find((p) => p.id === action.paneId);
+      const panes = getWorkspacePrimaryPanes(state);
+      const pane = panes.find((p) => p.id === action.paneId);
       const href = pane?.history.forward[0];
       if (!pane || !href) {
         return state;
       }
-      const panes = state.panes.map((p) =>
-        p.id === action.paneId
-          ? {
-              ...p,
-              href,
-              primaryWidthPx: resolvePaneTransitionWidth(
-                p.primaryWidthPx,
-                hasSamePaneResource(p.href, href),
-                workspacePrimaryMetrics,
-              ),
-              sidecar:
-                hasSamePaneResource(p.href, href) &&
-                p.sidecar &&
-                paneRouteAllowsSidecarGroup(href, p.sidecar.groupId)
-                  ? p.sidecar
-                  : null,
-              visibility: "visible" as const,
-              history: {
-                back: [...p.history.back, p.href],
-                forward: p.history.forward.slice(1),
-              },
-            }
-          : p
+      const nextPanes = panes.map((p) => {
+        if (p.id !== action.paneId) {
+          return p;
+        }
+        const attachedSecondaryPane = getAttachedSecondaryPane(state, p);
+        const preserveResource = hasSamePaneResource(p.href, href);
+        return {
+          ...p,
+          href,
+          primaryWidthPx: resolvePaneTransitionWidth(
+            p.primaryWidthPx,
+            preserveResource,
+            workspacePrimaryMetrics,
+          ),
+          attachedSecondaryPaneId:
+            preserveResource &&
+            attachedSecondaryPane &&
+            paneRouteAllowsSecondaryGroup(href, attachedSecondaryPane.groupId)
+              ? attachedSecondaryPane.id
+              : null,
+          visibility: "visible" as const,
+          history: {
+            back: [...p.history.back, p.href],
+            forward: p.history.forward.slice(1),
+          },
+        };
+      });
+      return trimAndEnsureActivePaneId(
+        createWorkspaceState({
+          previousState: state,
+          activePrimaryPaneId: action.paneId,
+          primaryPanes: nextPanes,
+        }),
+        workspacePrimaryMetrics,
       );
-      return trimAndEnsureActivePaneId({
-        ...state,
-        activePaneId: action.paneId,
-        panes,
-      }, workspacePrimaryMetrics);
     }
 
     case "close_pane": {
-      const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
+      const currentPanes = getWorkspacePrimaryPanes(state);
+      const closedIdx = currentPanes.findIndex((p) => p.id === action.paneId);
       if (closedIdx < 0) {
         return state;
       }
-      let panes = state.panes.filter((p) => p.id !== action.paneId);
+      let panes = currentPanes.filter((p) => p.id !== action.paneId);
       if (!panes.length) {
         return createDefaultWorkspaceState(
           WORKSPACE_DEFAULT_FALLBACK_HREF,
           workspacePrimaryMetrics,
         );
       }
-      let { activePaneId } = state;
+      let { activePrimaryPaneId } = state;
       if (
-        activePaneId === action.paneId ||
-        !panes.some((p) => p.id === activePaneId && p.visibility === "visible")
+        activePrimaryPaneId === action.paneId ||
+        !panes.some((p) => p.id === activePrimaryPaneId && p.visibility === "visible")
       ) {
         let replacementPane = panes.slice(closedIdx).find((p) => p.visibility === "visible");
         if (!replacementPane) {
@@ -438,23 +535,27 @@ function workspaceReducer(
           }
         }
         if (replacementPane) {
-          activePaneId = replacementPane.id;
+          activePrimaryPaneId = replacementPane.id;
         } else {
           const restoredPane = panes[Math.min(closedIdx, panes.length - 1)] ?? panes[0]!;
-          activePaneId = restoredPane.id;
+          activePrimaryPaneId = restoredPane.id;
           panes = panes.map((p) =>
-            p.id === activePaneId ? { ...p, visibility: "visible" } : p
+            p.id === activePrimaryPaneId ? { ...p, visibility: "visible" } : p
           );
         }
       }
       return ensureActivePaneId(
-        { ...state, panes, activePaneId },
+        createWorkspaceState({
+          previousState: state,
+          primaryPanes: panes,
+          activePrimaryPaneId,
+        }),
         workspacePrimaryMetrics,
       );
     }
 
     case "resize_primary_pane": {
-      const panes = state.panes.map((p) =>
+      const panes = getWorkspacePrimaryPanes(state).map((p) =>
         p.id === action.paneId
           ? {
               ...p,
@@ -462,108 +563,160 @@ function workspaceReducer(
             }
           : p
       );
-      return { ...state, panes };
-    }
-
-    case "open_sidecar": {
-      const panes = state.panes.map((pane) => {
-        if (pane.id !== action.paneId) {
-          return pane;
-        }
-        const groupId = getSidecarGroupForSurface(action.surfaceId);
-        if (!paneRouteAllowsSidecarGroup(pane.href, groupId)) {
-          return pane;
-        }
-        const policy = getSidecarWidthPolicy(groupId);
-        const widthPx =
-          pane.sidecar?.groupId === groupId
-            ? resolveEffectiveSidecarSizing({
-                storedWidthPx: pane.sidecar.widthPx,
-                policy,
-              }).widthPx
-            : resolveEffectiveSidecarSizing({
-                storedWidthPx: Number.NaN,
-                policy,
-              }).widthPx;
-        return {
-          ...pane,
-          sidecar: {
-            groupId,
-            activeSurfaceId: action.surfaceId,
-            widthPx,
-            visibility: "visible" as const,
-          },
-        };
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: panes,
+        activePrimaryPaneId: state.activePrimaryPaneId,
       });
-      return { ...state, panes };
     }
 
-    case "close_sidecar": {
-      const panes = state.panes.map((pane) =>
-        pane.id === action.paneId && pane.sidecar
-          ? { ...pane, sidecar: { ...pane.sidecar, visibility: "collapsed" as const } }
-          : pane
-      );
-      return { ...state, panes };
-    }
+    case "request_secondary_surface": {
+      const panes = getWorkspacePrimaryPanes(state);
+      const secondaryPanesById = { ...state.secondaryPanesById };
+      const primaryPane = panes.find((pane) => pane.id === action.primaryPaneId);
+      if (!primaryPane) {
+        return state;
+      }
+      const groupId = getSecondaryGroupForSurface(action.surfaceId);
+      if (!paneRouteAllowsSecondaryGroup(primaryPane.href, groupId)) {
+        return state;
+      }
+      const currentSecondaryPane = getAttachedSecondaryPane(state, primaryPane);
+      const policy = getSecondaryWidthPolicy(groupId);
+      const secondaryPaneId =
+        currentSecondaryPane?.groupId === groupId
+          ? currentSecondaryPane.id
+          : createSecondaryPaneId();
+      secondaryPanesById[secondaryPaneId] = {
+        id: secondaryPaneId,
+        parentPrimaryPaneId: primaryPane.id,
+        groupId,
+        activeSurfaceId: action.surfaceId,
+        widthPx: resolveEffectiveSecondarySizing({
+          storedWidthPx:
+            currentSecondaryPane?.groupId === groupId
+              ? currentSecondaryPane.widthPx
+              : Number.NaN,
+          policy,
+        }).widthPx,
+        visibility: "visible",
+      };
 
-    case "set_active_sidecar_surface": {
-      const panes = state.panes.map((pane) => {
-        if (pane.id !== action.paneId || !pane.sidecar) {
-          return pane;
-        }
-        const groupId = getSidecarGroupForSurface(action.surfaceId);
-        if (groupId !== pane.sidecar.groupId) {
-          return pane;
-        }
-        return {
-          ...pane,
-          sidecar: {
-            ...pane.sidecar,
-            activeSurfaceId: action.surfaceId,
-            visibility: "visible" as const,
-          },
-        };
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: panes.map((pane) =>
+          pane.id === primaryPane.id
+            ? { ...pane, attachedSecondaryPaneId: secondaryPaneId }
+            : pane
+        ),
+        activePrimaryPaneId: state.activePrimaryPaneId,
+        secondaryPanesById,
       });
-      return { ...state, panes };
     }
 
-    case "resize_sidecar": {
-      const panes = state.panes.map((pane) =>
-        pane.id === action.paneId && pane.sidecar
-          ? {
-              ...pane,
-              sidecar: {
-                ...pane.sidecar,
-                widthPx: resolveEffectiveSidecarSizing({
-                  storedWidthPx: action.widthPx,
-                  policy: getSidecarWidthPolicy(pane.sidecar.groupId),
-                }).widthPx,
-              },
-            }
-          : pane
-      );
-      return { ...state, panes };
+    case "close_secondary_pane": {
+      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
+      if (!secondaryPane) {
+        return state;
+      }
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: getWorkspacePrimaryPanes(state),
+        activePrimaryPaneId: state.activePrimaryPaneId,
+        secondaryPanesById: {
+          ...state.secondaryPanesById,
+          [secondaryPane.id]: {
+            ...secondaryPane,
+            visibility: "collapsed",
+          },
+        },
+      });
+    }
+
+    case "drop_secondary_pane": {
+      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
+      if (!secondaryPane) {
+        return state;
+      }
+      const secondaryPanesById = { ...state.secondaryPanesById };
+      delete secondaryPanesById[secondaryPane.id];
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: getWorkspacePrimaryPanes(state).map((pane) =>
+          pane.attachedSecondaryPaneId === secondaryPane.id
+            ? { ...pane, attachedSecondaryPaneId: null }
+            : pane,
+        ),
+        activePrimaryPaneId: state.activePrimaryPaneId,
+        secondaryPanesById,
+      });
+    }
+
+    case "set_secondary_surface": {
+      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
+      if (!secondaryPane) {
+        return state;
+      }
+      const groupId = getSecondaryGroupForSurface(action.surfaceId);
+      if (groupId !== secondaryPane.groupId) {
+        return state;
+      }
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: getWorkspacePrimaryPanes(state),
+        activePrimaryPaneId: state.activePrimaryPaneId,
+        secondaryPanesById: {
+          ...state.secondaryPanesById,
+          [secondaryPane.id]: {
+            ...secondaryPane,
+            activeSurfaceId: action.surfaceId,
+            visibility: "visible",
+          },
+        },
+      });
+    }
+
+    case "resize_secondary_pane": {
+      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
+      if (!secondaryPane) {
+        return state;
+      }
+      return createWorkspaceState({
+        previousState: state,
+        primaryPanes: getWorkspacePrimaryPanes(state),
+        activePrimaryPaneId: state.activePrimaryPaneId,
+        secondaryPanesById: {
+          ...state.secondaryPanesById,
+          [secondaryPane.id]: {
+            ...secondaryPane,
+            widthPx: resolveEffectiveSecondarySizing({
+              storedWidthPx: action.widthPx,
+              policy: getSecondaryWidthPolicy(secondaryPane.groupId),
+            }).widthPx,
+          },
+        },
+      });
     }
 
     case "minimize_pane": {
-      const paneIndex = state.panes.findIndex((p) => p.id === action.paneId);
-      const pane = state.panes[paneIndex];
+      const panes = getWorkspacePrimaryPanes(state);
+      const paneIndex = panes.findIndex((p) => p.id === action.paneId);
+      const pane = panes[paneIndex];
       if (!pane || pane.visibility === "minimized") {
         return state;
       }
-      if (state.panes.filter((p) => p.visibility === "visible").length <= 1) {
+      if (panes.filter((p) => p.visibility === "visible").length <= 1) {
         return state;
       }
 
-      let activePaneId = state.activePaneId;
-      if (pane.id === state.activePaneId) {
-        let replacementPane = state.panes
+      let activePrimaryPaneId = state.activePrimaryPaneId;
+      if (pane.id === state.activePrimaryPaneId) {
+        let replacementPane = panes
           .slice(paneIndex + 1)
           .find((p) => p.visibility === "visible");
         if (!replacementPane) {
           for (let i = paneIndex - 1; i >= 0; i -= 1) {
-            const candidate = state.panes[i];
+            const candidate = panes[i];
             if (candidate?.visibility === "visible") {
               replacementPane = candidate;
               break;
@@ -573,23 +726,30 @@ function workspaceReducer(
         if (!replacementPane) {
           return state;
         }
-        activePaneId = replacementPane.id;
+        activePrimaryPaneId = replacementPane.id;
       }
 
-      const panes = state.panes.map((p) =>
-        p.id === action.paneId ? { ...p, visibility: "minimized" as const } : p
-      );
-      return { ...state, activePaneId, panes };
+      return createWorkspaceState({
+        previousState: state,
+        activePrimaryPaneId,
+        primaryPanes: panes.map((p) =>
+          p.id === action.paneId ? { ...p, visibility: "minimized" as const } : p
+        ),
+      });
     }
 
     case "restore_pane": {
-      if (!state.panes.some((p) => p.id === action.paneId)) {
+      const panes = getWorkspacePrimaryPanes(state);
+      if (!panes.some((p) => p.id === action.paneId)) {
         return state;
       }
-      const panes = state.panes.map((p) =>
-        p.id === action.paneId ? { ...p, visibility: "visible" as const } : p
-      );
-      return { ...state, activePaneId: action.paneId, panes };
+      return createWorkspaceState({
+        previousState: state,
+        activePrimaryPaneId: action.paneId,
+        primaryPanes: panes.map((p) =>
+          p.id === action.paneId ? { ...p, visibility: "visible" as const } : p
+        ),
+      });
     }
   }
 
@@ -604,37 +764,21 @@ function workspaceReducer(
 function buildPaneForOpen(
   href: string,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-  sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
-): WorkspacePaneState {
+): WorkspacePrimaryPaneState {
   const mainId = createPaneId();
-  const groupId = sidecarSurfaceId
-    ? getSidecarGroupForSurface(sidecarSurfaceId)
-    : null;
-  const policy = groupId ? getSidecarWidthPolicy(groupId) : null;
   return {
     id: mainId,
     href,
     primaryWidthPx: getDefaultPaneWidthPx(workspacePrimaryMetrics),
-    sidecar:
-      sidecarSurfaceId && groupId && policy && paneRouteAllowsSidecarGroup(href, groupId)
-        ? {
-            groupId,
-            activeSurfaceId: sidecarSurfaceId,
-            widthPx: resolveEffectiveSidecarSizing({
-              storedWidthPx: Number.NaN,
-              policy,
-            }).widthPx,
-            visibility: "visible",
-          }
-        : null,
     visibility: "visible",
     history: createEmptyPaneHistory(),
+    attachedSecondaryPaneId: null,
   };
 }
 
 function findPaneIdForOpen(
-  panes: WorkspacePaneState[],
-  paneToOpen: WorkspacePaneState
+  panes: WorkspacePrimaryPaneState[],
+  paneToOpen: WorkspacePrimaryPaneState,
 ): string {
   return (
     panes.find((item) => hasSamePaneResource(item.href, paneToOpen.href))?.id ??
@@ -731,7 +875,6 @@ interface WorkspaceStoreValue {
     activate?: boolean;
     replace?: boolean;
     titleHint?: string;
-    sidecarSurfaceId?: WorkspaceSidecarSurfaceId;
   }) => void;
   navigatePane: (
     paneId: string,
@@ -742,13 +885,16 @@ interface WorkspaceStoreValue {
   goForwardPane: (paneId: string) => void;
   closePane: (paneId: string) => void;
   resizePrimaryPane: (paneId: string, widthPx: number) => void;
-  openSidecar: (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => void;
-  closeSidecar: (paneId: string) => void;
-  setActiveSidecarSurface: (
-    paneId: string,
-    surfaceId: WorkspaceSidecarSurfaceId,
+  requestSecondarySurface: (
+    primaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
-  resizeSidecarPane: (paneId: string, widthPx: number) => void;
+  closeSecondaryPane: (secondaryPaneId: string) => void;
+  setSecondarySurface: (
+    secondaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
+  resizeSecondaryPane: (secondaryPaneId: string, widthPx: number) => void;
   minimizePane: (paneId: string) => void;
   restorePane: (paneId: string) => void;
   publishPaneTitle: (input: {
@@ -758,7 +904,11 @@ interface WorkspaceStoreValue {
   }) => void;
 }
 
-const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
+interface WorkspaceHostStoreValue extends WorkspaceStoreValue {
+  dropSecondaryPane: (secondaryPaneId: string) => void;
+}
+
+const WorkspaceStoreContext = createContext<WorkspaceHostStoreValue | null>(null);
 
 export function WorkspaceStoreProvider({
   children,
@@ -785,6 +935,7 @@ export function WorkspaceStoreProvider({
   const pendingTitleHintByResourceKeyRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
+  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
 
   const applyRestoredState = useCallback(
     (restored: WorkspaceState, deepLinkIntent: WorkspaceState) =>
@@ -853,7 +1004,10 @@ export function WorkspaceStoreProvider({
       const href = normalizeWorkspaceHref(detail.href);
       if (!href) return;
       const pane = buildPaneForOpen(href, workspacePrimaryMetrics);
-      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, pane);
+      const targetPaneId = findPaneIdForOpen(
+        getWorkspacePrimaryPanes(stateRef.current),
+        pane,
+      );
       publishPaneTitleHint(targetPaneId, href, detail.titleHint);
       dispatch({
         type: "open_pane",
@@ -896,7 +1050,7 @@ export function WorkspaceStoreProvider({
   // --- Prune stale title caches when panes change ---
   useEffect(() => {
     const currentResourceKeyByPaneId = new Map<string, string>();
-    for (const pane of state.panes) {
+    for (const pane of primaryPanes) {
       currentResourceKeyByPaneId.set(
         pane.id,
         resolvePaneRouteIdentity(pane.href).resourceKey,
@@ -916,7 +1070,7 @@ export function WorkspaceStoreProvider({
       return changed || next.size !== prev.size ? next : prev;
     });
 
-  }, [state.panes]);
+  }, [primaryPanes]);
 
   // --- Apply title hints to the live pane after open-pane de-duplication ---
   useEffect(() => {
@@ -926,7 +1080,7 @@ export function WorkspaceStoreProvider({
     }
 
     const paneByResourceKey = new Map(
-      state.panes.map((pane) => [resolvePaneRouteIdentity(pane.href).resourceKey, pane]),
+      primaryPanes.map((pane) => [resolvePaneRouteIdentity(pane.href).resourceKey, pane]),
     );
     const records: Array<{ paneId: string; record: WorkspacePaneTitleRecord }> = [];
     for (const [resourceKey, title] of pending) {
@@ -953,20 +1107,20 @@ export function WorkspaceStoreProvider({
       }
       return next;
     });
-  }, [state.panes]);
+  }, [primaryPanes]);
 
   // --- Sync state → URL ---
   useEffect(() => {
     if (!readyRef.current || !mounted) return;
-    const active = state.panes.find(
-      (p) => p.id === state.activePaneId && p.visibility === "visible",
+    const active = primaryPanes.find(
+      (p) => p.id === state.activePrimaryPaneId && p.visibility === "visible",
     );
     const href = active?.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
     const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (href !== current) {
       window.history.replaceState(null, "", href);
     }
-  }, [mounted, state]);
+  }, [mounted, primaryPanes, state.activePrimaryPaneId]);
 
   // --- Stable callbacks ---
 
@@ -982,16 +1136,14 @@ export function WorkspaceStoreProvider({
       activate?: boolean;
       replace?: boolean;
       titleHint?: string;
-      sidecarSurfaceId?: WorkspaceSidecarSurfaceId;
     }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
-      const pane = buildPaneForOpen(
-        href,
-        workspacePrimaryMetrics,
-        input.sidecarSurfaceId,
+      const pane = buildPaneForOpen(href, workspacePrimaryMetrics);
+      const targetPaneId = findPaneIdForOpen(
+        getWorkspacePrimaryPanes(stateRef.current),
+        pane,
       );
-      const targetPaneId = findPaneIdForOpen(stateRef.current.panes, pane);
       publishPaneTitleHint(targetPaneId, href, input.titleHint);
       dispatch({
         type: "open_pane",
@@ -1045,27 +1197,33 @@ export function WorkspaceStoreProvider({
     []
   );
 
-  const openSidecar = useCallback(
-    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) =>
-      dispatch({ type: "open_sidecar", paneId, surfaceId }),
+  const requestSecondarySurface = useCallback(
+    (primaryPaneId: string, surfaceId: WorkspaceSecondarySurfaceId) =>
+      dispatch({ type: "request_secondary_surface", primaryPaneId, surfaceId }),
     []
   );
 
-  const closeSidecar = useCallback(
-    (paneId: string) =>
-      dispatch({ type: "close_sidecar", paneId }),
+  const closeSecondaryPane = useCallback(
+    (secondaryPaneId: string) =>
+      dispatch({ type: "close_secondary_pane", secondaryPaneId }),
     []
   );
 
-  const setActiveSidecarSurface = useCallback(
-    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) =>
-      dispatch({ type: "set_active_sidecar_surface", paneId, surfaceId }),
+  const dropSecondaryPane = useCallback(
+    (secondaryPaneId: string) =>
+      dispatch({ type: "drop_secondary_pane", secondaryPaneId }),
     []
   );
 
-  const resizeSidecarPane = useCallback(
-    (paneId: string, widthPx: number) =>
-      dispatch({ type: "resize_sidecar", paneId, widthPx }),
+  const setSecondarySurface = useCallback(
+    (secondaryPaneId: string, surfaceId: WorkspaceSecondarySurfaceId) =>
+      dispatch({ type: "set_secondary_surface", secondaryPaneId, surfaceId }),
+    []
+  );
+
+  const resizeSecondaryPane = useCallback(
+    (secondaryPaneId: string, widthPx: number) =>
+      dispatch({ type: "resize_secondary_pane", secondaryPaneId, widthPx }),
     []
   );
 
@@ -1082,7 +1240,7 @@ export function WorkspaceStoreProvider({
   const publishPaneTitle = useCallback(
     (input: { paneId: string; resourceKey: string; title: string | null }) => {
       const { paneId, resourceKey, title } = input;
-      const pane = stateRef.current.panes.find((p) => p.id === paneId);
+      const pane = getWorkspacePrimaryPane(stateRef.current, paneId);
       if (!pane) return;
       if (resolvePaneRouteIdentity(pane.href).resourceKey !== resourceKey) return;
 
@@ -1108,7 +1266,7 @@ export function WorkspaceStoreProvider({
     []
   );
 
-  const value = useMemo<WorkspaceStoreValue>(
+  const value = useMemo<WorkspaceHostStoreValue>(
     () => ({
       state,
       workspacePrimaryMetrics,
@@ -1120,10 +1278,11 @@ export function WorkspaceStoreProvider({
       goForwardPane,
       closePane,
       resizePrimaryPane,
-      openSidecar,
-      closeSidecar,
-      setActiveSidecarSurface,
-      resizeSidecarPane,
+      requestSecondarySurface,
+      closeSecondaryPane,
+      dropSecondaryPane,
+      setSecondarySurface,
+      resizeSecondaryPane,
       minimizePane,
       restorePane,
       publishPaneTitle,
@@ -1139,10 +1298,11 @@ export function WorkspaceStoreProvider({
       goForwardPane,
       closePane,
       resizePrimaryPane,
-      openSidecar,
-      closeSidecar,
-      setActiveSidecarSurface,
-      resizeSidecarPane,
+      requestSecondarySurface,
+      closeSecondaryPane,
+      dropSecondaryPane,
+      setSecondarySurface,
+      resizeSecondaryPane,
       minimizePane,
       restorePane,
       publishPaneTitle,
@@ -1158,6 +1318,14 @@ export function useWorkspaceStore(): WorkspaceStoreValue {
   const value = useContext(WorkspaceStoreContext);
   if (!value) {
     throw new Error("useWorkspaceStore must be used inside WorkspaceStoreProvider");
+  }
+  return value;
+}
+
+export function useWorkspaceHostStore(): WorkspaceHostStoreValue {
+  const value = useContext(WorkspaceStoreContext);
+  if (!value) {
+    throw new Error("useWorkspaceHostStore must be used inside WorkspaceStoreProvider");
   }
   return value;
 }

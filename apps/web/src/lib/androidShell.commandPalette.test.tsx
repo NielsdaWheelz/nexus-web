@@ -8,33 +8,35 @@ const { apiFetchMock, mockWorkspaceStore, requestOpenInAppPaneMock } = vi.hoiste
   apiFetchMock: vi.fn(),
   mockWorkspaceStore: {
     state: {
-      activePaneId: "pane-a",
-      panes: [
-        {
+      activePrimaryPaneId: "pane-a",
+      primaryPaneOrder: ["pane-a", "pane-b", "pane-c"],
+      primaryPanesById: {
+        "pane-a": {
           id: "pane-a",
           href: "/settings/billing",
           primaryWidthPx: 480,
-          sidecar: null,
+          attachedSecondaryPaneId: null,
           visibility: "visible",
           history: { back: [], forward: [] },
         },
-        {
+        "pane-b": {
           id: "pane-b",
           href: "/libraries",
           primaryWidthPx: 480,
-          sidecar: null,
+          attachedSecondaryPaneId: null,
           visibility: "visible",
           history: { back: [], forward: [] },
         },
-        {
+        "pane-c": {
           id: "pane-c",
           href: "/settings/local-vault",
           primaryWidthPx: 480,
-          sidecar: null,
+          attachedSecondaryPaneId: null,
           visibility: "visible",
           history: { back: [], forward: [] },
         },
-      ],
+      },
+      secondaryPanesById: {},
     },
     runtimeTitleByPaneId: new Map(),
     activatePane: vi.fn(),
@@ -44,10 +46,11 @@ const { apiFetchMock, mockWorkspaceStore, requestOpenInAppPaneMock } = vi.hoiste
     goForwardPane: vi.fn(),
     closePane: vi.fn(),
     resizePrimaryPane: vi.fn(),
-    openSidecar: vi.fn(),
-    closeSidecar: vi.fn(),
-    setActiveSidecarSurface: vi.fn(),
-    resizeSidecarPane: vi.fn(),
+    requestSecondarySurface: vi.fn(),
+    closeSecondaryPane: vi.fn(),
+    dropSecondaryPane: vi.fn(),
+    setSecondarySurface: vi.fn(),
+    resizeSecondaryPane: vi.fn(),
     minimizePane: vi.fn(),
     restorePane: vi.fn(),
     publishPaneTitle: vi.fn(),

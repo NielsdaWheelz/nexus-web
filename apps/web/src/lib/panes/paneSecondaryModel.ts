@@ -1,11 +1,11 @@
 "use client";
 
-export type WorkspaceSidecarGroupId =
+export type WorkspaceSecondaryGroupId =
   | "reader-tools"
   | "conversation-context"
   | "library-tools";
 
-export type WorkspaceSidecarSurfaceId =
+export type WorkspaceSecondarySurfaceId =
   | "reader-highlights"
   | "reader-doc-chat"
   | "conversation-references"
@@ -13,7 +13,7 @@ export type WorkspaceSidecarSurfaceId =
   | "library-chat"
   | "library-intelligence";
 
-export type PaneSidecarIconId =
+export type PaneSecondaryIconId =
   | "bar-chart-3"
   | "file-text"
   | "git-branch"
@@ -21,41 +21,41 @@ export type PaneSidecarIconId =
   | "link-2"
   | "message-square";
 
-export interface WorkspaceSidecarState {
-  groupId: WorkspaceSidecarGroupId;
-  activeSurfaceId: WorkspaceSidecarSurfaceId;
+export interface WorkspaceSecondaryState {
+  groupId: WorkspaceSecondaryGroupId;
+  activeSurfaceId: WorkspaceSecondarySurfaceId;
   widthPx: number;
   visibility: "visible" | "collapsed";
 }
 
-export interface WorkspaceSidecarWidthPolicy {
+export interface WorkspaceSecondaryWidthPolicy {
   defaultWidthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
 }
 
-export interface WorkspaceSidecarSizing {
+export interface WorkspaceSecondarySizing {
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
   storedWidthCorrectionPx: number | null;
 }
 
-export interface PaneSidecarGroupDefinition {
-  id: WorkspaceSidecarGroupId;
+export interface PaneSecondaryGroupDefinition {
+  id: WorkspaceSecondaryGroupId;
   title: string;
-  width: WorkspaceSidecarWidthPolicy;
-  surfaces: readonly WorkspaceSidecarSurfaceId[];
+  width: WorkspaceSecondaryWidthPolicy;
+  surfaces: readonly WorkspaceSecondarySurfaceId[];
 }
 
-export interface PaneSidecarSurfaceDefinition {
-  id: WorkspaceSidecarSurfaceId;
-  groupId: WorkspaceSidecarGroupId;
+export interface PaneSecondarySurfaceDefinition {
+  id: WorkspaceSecondarySurfaceId;
+  groupId: WorkspaceSecondaryGroupId;
   title: string;
-  iconId: PaneSidecarIconId;
+  iconId: PaneSecondaryIconId;
 }
 
-const PANE_SIDECAR_GROUP_BASE = {
+const PANE_SECONDARY_GROUP_BASE = {
   "reader-tools": {
     title: "Reader tools",
     width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
@@ -69,11 +69,11 @@ const PANE_SIDECAR_GROUP_BASE = {
     width: { defaultWidthPx: 420, minWidthPx: 320, maxWidthPx: 760 },
   },
 } as const satisfies Record<
-  WorkspaceSidecarGroupId,
-  { title: string; width: WorkspaceSidecarWidthPolicy }
+  WorkspaceSecondaryGroupId,
+  { title: string; width: WorkspaceSecondaryWidthPolicy }
 >;
 
-const PANE_SIDECAR_SURFACES = {
+const PANE_SECONDARY_SURFACES = {
   "reader-highlights": {
     groupId: "reader-tools",
     title: "Highlights",
@@ -105,74 +105,74 @@ const PANE_SIDECAR_SURFACES = {
     iconId: "bar-chart-3",
   },
 } as const satisfies Record<
-  WorkspaceSidecarSurfaceId,
-  Omit<PaneSidecarSurfaceDefinition, "id">
+  WorkspaceSecondarySurfaceId,
+  Omit<PaneSecondarySurfaceDefinition, "id">
 >;
 
-export function isWorkspaceSidecarGroupId(
+export function isWorkspaceSecondaryGroupId(
   value: unknown,
-): value is WorkspaceSidecarGroupId {
-  return typeof value === "string" && value in PANE_SIDECAR_GROUP_BASE;
+): value is WorkspaceSecondaryGroupId {
+  return typeof value === "string" && value in PANE_SECONDARY_GROUP_BASE;
 }
 
-export function isWorkspaceSidecarSurfaceId(
+export function isWorkspaceSecondarySurfaceId(
   value: unknown,
-): value is WorkspaceSidecarSurfaceId {
-  return typeof value === "string" && value in PANE_SIDECAR_SURFACES;
+): value is WorkspaceSecondarySurfaceId {
+  return typeof value === "string" && value in PANE_SECONDARY_SURFACES;
 }
 
-export function getSidecarSurfaceDefinition(
-  surfaceId: WorkspaceSidecarSurfaceId,
-): PaneSidecarSurfaceDefinition {
+export function getSecondarySurfaceDefinition(
+  surfaceId: WorkspaceSecondarySurfaceId,
+): PaneSecondarySurfaceDefinition {
   return {
     id: surfaceId,
-    ...PANE_SIDECAR_SURFACES[surfaceId],
+    ...PANE_SECONDARY_SURFACES[surfaceId],
   };
 }
 
-export function getSidecarGroupForSurface(
-  surfaceId: WorkspaceSidecarSurfaceId,
-): WorkspaceSidecarGroupId {
-  return PANE_SIDECAR_SURFACES[surfaceId].groupId;
+export function getSecondaryGroupForSurface(
+  surfaceId: WorkspaceSecondarySurfaceId,
+): WorkspaceSecondaryGroupId {
+  return PANE_SECONDARY_SURFACES[surfaceId].groupId;
 }
 
-export function getSidecarSurfaceIdsForGroup(
-  groupId: WorkspaceSidecarGroupId,
-): readonly WorkspaceSidecarSurfaceId[] {
-  return Object.entries(PANE_SIDECAR_SURFACES)
+export function getSecondarySurfaceIdsForGroup(
+  groupId: WorkspaceSecondaryGroupId,
+): readonly WorkspaceSecondarySurfaceId[] {
+  return Object.entries(PANE_SECONDARY_SURFACES)
     .filter(([, definition]) => definition.groupId === groupId)
-    .map(([surfaceId]) => surfaceId as WorkspaceSidecarSurfaceId);
+    .map(([surfaceId]) => surfaceId as WorkspaceSecondarySurfaceId);
 }
 
-export function getSidecarGroupDefinition(
-  groupId: WorkspaceSidecarGroupId,
-): PaneSidecarGroupDefinition {
-  const base = PANE_SIDECAR_GROUP_BASE[groupId];
+export function getSecondaryGroupDefinition(
+  groupId: WorkspaceSecondaryGroupId,
+): PaneSecondaryGroupDefinition {
+  const base = PANE_SECONDARY_GROUP_BASE[groupId];
   return {
     id: groupId,
     title: base.title,
     width: base.width,
-    surfaces: getSidecarSurfaceIdsForGroup(groupId),
+    surfaces: getSecondarySurfaceIdsForGroup(groupId),
   };
 }
 
-export function getSidecarWidthPolicy(
-  groupId: WorkspaceSidecarGroupId,
-): WorkspaceSidecarWidthPolicy {
-  return PANE_SIDECAR_GROUP_BASE[groupId].width;
+export function getSecondaryWidthPolicy(
+  groupId: WorkspaceSecondaryGroupId,
+): WorkspaceSecondaryWidthPolicy {
+  return PANE_SECONDARY_GROUP_BASE[groupId].width;
 }
 
-export function sidecarSurfaceBelongsToGroup(
-  surfaceId: WorkspaceSidecarSurfaceId,
-  groupId: WorkspaceSidecarGroupId,
+export function secondarySurfaceBelongsToGroup(
+  surfaceId: WorkspaceSecondarySurfaceId,
+  groupId: WorkspaceSecondaryGroupId,
 ): boolean {
-  return getSidecarGroupForSurface(surfaceId) === groupId;
+  return getSecondaryGroupForSurface(surfaceId) === groupId;
 }
 
-export function resolveEffectiveSidecarSizing(input: {
+export function resolveEffectiveSecondarySizing(input: {
   storedWidthPx: number;
-  policy: WorkspaceSidecarWidthPolicy;
-}): WorkspaceSidecarSizing {
+  policy: WorkspaceSecondaryWidthPolicy;
+}): WorkspaceSecondarySizing {
   const minWidthPx = Math.ceil(input.policy.minWidthPx);
   const maxWidthPx = Math.max(minWidthPx, Math.ceil(input.policy.maxWidthPx));
   const defaultWidthPx = Math.min(

@@ -35,6 +35,7 @@ import {
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
 } from "@/lib/workspace/store";
+import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import {
   STATIC_COMMANDS,
   matchesCommand,
@@ -86,6 +87,10 @@ export default function CommandPalette() {
     closePane,
     restorePane,
   } = useWorkspaceStore();
+  const workspacePrimaryPanes = useMemo(
+    () => getWorkspacePrimaryPanes(workspaceState),
+    [workspaceState],
+  );
 
   useEffect(() => {
     setKeybindings(loadKeybindings());
@@ -201,15 +206,15 @@ export default function CommandPalette() {
   }, [open, query]);
 
   const openPaneHrefs = useMemo(
-    () => new Set(workspaceState.panes.map((pane) => pane.href)),
-    [workspaceState.panes],
+    () => new Set(workspacePrimaryPanes.map((pane) => pane.href)),
+    [workspacePrimaryPanes],
   );
 
   const commandsBeforeAi = useMemo<PaletteCommand[]>(() => {
     const commands: PaletteCommand[] = [];
     const normalizedQuery = query.trim().toLowerCase();
 
-    for (const pane of workspaceState.panes) {
+    for (const pane of workspacePrimaryPanes) {
       const route = resolvePaneRoute(pane.href);
       if (androidShell && isAndroidShellRestrictedRouteId(route.id)) {
         continue;
@@ -224,7 +229,7 @@ export default function CommandPalette() {
         icon: PanelLeft,
         target: { kind: "action", actionId: `pane-open:${pane.id}` },
         source: "workspace",
-        rank: { scopeBoost: pane.id === workspaceState.activePaneId ? 300 : 0 },
+        rank: { scopeBoost: pane.id === workspaceState.activePrimaryPaneId ? 300 : 0 },
         trailingAction: { actionId: `pane-close:${pane.id}`, ariaLabel: `Close ${title}` },
       });
     }
@@ -305,8 +310,8 @@ export default function CommandPalette() {
     query,
     runtimeTitleByPaneId,
     searchResults,
-    workspaceState.activePaneId,
-    workspaceState.panes,
+    workspaceState.activePrimaryPaneId,
+    workspacePrimaryPanes,
   ]);
 
   const askAiCommand = getAskAiPinnedCommand({
@@ -327,7 +332,7 @@ export default function CommandPalette() {
         ],
         frecencyBoosts,
         currentWorkspaceHref:
-          workspaceState.panes.find((p) => p.id === workspaceState.activePaneId)?.href ?? null,
+          workspacePrimaryPanes.find((p) => p.id === workspaceState.activePrimaryPaneId)?.href ?? null,
       }),
     [
       askAiCommand,
@@ -335,8 +340,8 @@ export default function CommandPalette() {
       frecencyBoosts,
       query,
       seeAllCommand,
-      workspaceState.activePaneId,
-      workspaceState.panes,
+      workspaceState.activePrimaryPaneId,
+      workspacePrimaryPanes,
     ],
   );
 
@@ -425,7 +430,7 @@ export default function CommandPalette() {
         }
         if (actionId.startsWith("pane-open:")) {
           const paneId = actionId.slice("pane-open:".length);
-          const pane = workspaceState.panes.find((item) => item.id === paneId);
+          const pane = workspacePrimaryPanes.find((item) => item.id === paneId);
           if (
             androidShell &&
             pane &&
@@ -450,7 +455,7 @@ export default function CommandPalette() {
         feedback.show(toFeedback(error, { fallback: "Command failed" }));
       }
     },
-    [activatePane, androidShell, feedback, query, restorePane, workspaceState.panes],
+    [activatePane, androidShell, feedback, query, restorePane, workspacePrimaryPanes],
   );
 
   const onTrailingAction = useCallback(
