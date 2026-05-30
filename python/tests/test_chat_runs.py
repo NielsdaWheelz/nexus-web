@@ -1542,9 +1542,7 @@ class TestCitationReferenceWriteThrough:
                 {
                     "tool_call_id": tool_call_id,
                     "chunk_id_str": str(chunk_id),
-                    "context_ref": json.dumps(
-                        {"type": "content_chunk", "id": str(chunk_id)}
-                    ),
+                    "context_ref": json.dumps({"type": "content_chunk", "id": str(chunk_id)}),
                     "result_ref": json.dumps({"id": str(chunk_id)}),
                     "citation_ordinal": citation_ordinal_value,
                 },
@@ -1659,8 +1657,7 @@ class TestCitationReferenceWriteThrough:
             f"got {reference_added_payload!r}"
         )
         assert reference_added_payload["resource_uri"] == f"chunk:{chunk_id}", (
-            f"reference_added payload should carry the cited URI; "
-            f"got {reference_added_payload!r}"
+            f"reference_added payload should carry the cited URI; got {reference_added_payload!r}"
         )
         assert reference_added_payload["conversation_id"] == str(conversation_id), (
             f"reference_added payload should carry the conversation id; "
@@ -1735,6 +1732,5 @@ class TestCitationReferenceWriteThrough:
                 },
             ).scalar_one()
         assert reference_count == 0, (
-            f"Uncited retrievals must not graduate; got {reference_count} rows for "
-            f"chunk:{chunk_id}"
+            f"Uncited retrievals must not graduate; got {reference_count} rows for chunk:{chunk_id}"
         )

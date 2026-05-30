@@ -2071,6 +2071,7 @@ class TestSearchConversationScope:
         media_results = [r for r in data["results"] if r["type"] == "media"]
         assert any(r["id"] == str(media_id) for r in media_results)
 
+
 class TestSearchNoteBlockOwnership:
     """Tests for note-block search under user-owned note visibility."""
 

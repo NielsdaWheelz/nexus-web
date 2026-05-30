@@ -73,7 +73,9 @@ async def _tail_media_events(
     last_payload: dict[str, Any] | None = None
     last_keepalive = time.monotonic()
 
-    async for _ in wait_for_notifications("media_events", str(media_id), KEEPALIVE_INTERVAL_SECONDS):
+    async for _ in wait_for_notifications(
+        "media_events", str(media_id), KEEPALIVE_INTERVAL_SECONDS
+    ):
         if await request.is_disconnected():
             return
 

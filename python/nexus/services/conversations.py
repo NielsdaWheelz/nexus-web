@@ -987,4 +987,3 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
         """,
         {"message_ids": list(message_ids)},
     )
-

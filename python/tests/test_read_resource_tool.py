@@ -95,9 +95,7 @@ def test_read_resource_media_uri_returns_scope_not_readable_error(
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
 
-    assert result.is_error, (
-        f"Media URIs must surface a scope-not-readable error; got {result}"
-    )
+    assert result.is_error, f"Media URIs must surface a scope-not-readable error; got {result}"
     assert result.error_code == "scope_not_readable", (
         f"Expected error_code='scope_not_readable'; got {result.error_code}"
     )
@@ -124,9 +122,7 @@ def test_read_resource_library_uri_returns_scope_not_readable_error(
     assert result.error_code == "scope_not_readable"
 
 
-def test_read_resource_span_returns_body(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -146,9 +142,7 @@ def test_read_resource_span_returns_body(
     assert result.body == span_text, f"Expected full span text; got {result.body!r}"
 
 
-def test_read_resource_highlight_returns_exact_text(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_read_resource_highlight_returns_exact_text(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -168,9 +162,7 @@ def test_read_resource_highlight_returns_exact_text(
     assert result.body == "some highlighted text"
 
 
-def test_read_resource_page_owner_returns_description(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_read_resource_page_owner_returns_description(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     page_id = _make_page(db_session, bootstrapped_user, description="Page body for tool.")
     uri = f"page:{page_id}"
@@ -202,9 +194,7 @@ def test_read_resource_page_non_owner_returns_missing_error(
     assert result.error_code == "missing"
 
 
-def test_read_resource_note_block_owner_returns_body(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_read_resource_note_block_owner_returns_body(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     block_id = _make_note_block(db_session, bootstrapped_user, body="Body via read_resource.")
     uri = f"note_block:{block_id}"

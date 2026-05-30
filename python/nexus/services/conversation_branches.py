@@ -666,8 +666,8 @@ def fork_options_by_parent(
 ) -> dict[UUID, list[ForkOptionOut]]:
     if not parent_message_ids:
         return {}
-    loaded_messages = list(messages) if messages is not None else _conversation_messages(
-        db, conversation_id
+    loaded_messages = (
+        list(messages) if messages is not None else _conversation_messages(db, conversation_id)
     )
     children_by_parent_id = _children_by_parent_id(loaded_messages)
     branch_user_messages = [
@@ -702,10 +702,11 @@ def fork_options_by_parent(
         branch = branch_by_user_message_id.get(user_message.id)
         if branch is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Branch not found")
-        assistant_message = _first_assistant_child(
-            children_by_parent_id.get(user_message.id, [])
-        )
-        options_by_parent.setdefault(user_message.parent_message_id, []).append(
+        assistant_message = _first_assistant_child(children_by_parent_id.get(user_message.id, []))
+        parent_message_id = user_message.parent_message_id
+        if parent_message_id is None:
+            raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Branch user message has no parent")
+        options_by_parent.setdefault(parent_message_id, []).append(
             _fork_option_from_loaded(
                 branch=branch,
                 user_message=user_message,
@@ -731,9 +732,11 @@ def build_path_cache_by_leaf_id(
     for options in fork_options_by_parent_id.values():
         leaf_ids.update(option.leaf_message_id for option in options)
 
-    loaded_messages_by_id = dict(messages_by_id) if messages_by_id is not None else {
-        message.id: message for message in _conversation_messages(db, conversation_id)
-    }
+    loaded_messages_by_id = (
+        dict(messages_by_id)
+        if messages_by_id is not None
+        else {message.id: message for message in _conversation_messages(db, conversation_id)}
+    )
     path_messages_by_leaf_id: dict[UUID, list[Message]] = {
         leaf_id: _message_path_from_loaded(
             loaded_messages_by_id,
@@ -742,13 +745,13 @@ def build_path_cache_by_leaf_id(
         )
         for leaf_id in sorted(leaf_ids, key=str)
     }
-    messages_by_id = _message_outs_by_id(
+    message_outs_by_id = _message_outs_by_id(
         db,
         viewer_id,
         [message for path in path_messages_by_leaf_id.values() for message in path],
     )
     return {
-        str(leaf_id): [messages_by_id[message.id] for message in path]
+        str(leaf_id): [message_outs_by_id[message.id] for message in path]
         for leaf_id, path in path_messages_by_leaf_id.items()
     }
 
@@ -760,7 +763,9 @@ def build_branch_graph(
     active_path_message_ids: set[UUID],
     messages: Sequence[Message] | None = None,
 ) -> BranchGraphOut:
-    messages = list(messages) if messages is not None else _conversation_messages(db, conversation_id)
+    messages = (
+        list(messages) if messages is not None else _conversation_messages(db, conversation_id)
+    )
     if not messages:
         return BranchGraphOut(root_message_id=None)
 

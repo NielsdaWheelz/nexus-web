@@ -13,14 +13,14 @@ Behavior under test:
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
-from sqlalchemy.orm import Session
-
-from nexus.db.models import FragmentBlock
 from nexus.services.context_window import (
     MAX_CONTEXT_CHARS,
     get_context_window,
 )
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from nexus.db.models import FragmentBlock
 from nexus.services.fragment_blocks import (
     insert_fragment_blocks,
     parse_fragment_blocks,

@@ -7503,8 +7503,7 @@ class TestConversationReferencesCutoverMigration0121:
         }
         leftover = dropped & tables
         assert leftover == set(), (
-            f"Migration 0121 should have dropped these tables, but they remain at HEAD: "
-            f"{leftover}"
+            f"Migration 0121 should have dropped these tables, but they remain at HEAD: {leftover}"
         )
 
     def test_0121_creates_conversation_references_with_unique_and_index(self, migrated_engine):
@@ -7548,8 +7547,7 @@ class TestConversationReferencesCutoverMigration0121:
 
         for required in ("id", "conversation_id", "resource_uri", "created_at"):
             assert required in columns, (
-                f"conversation_references must have column '{required}'; "
-                f"got {set(columns)}"
+                f"conversation_references must have column '{required}'; got {set(columns)}"
             )
         for col in ("id", "conversation_id", "resource_uri", "created_at"):
             assert columns[col][1] == "NO", (

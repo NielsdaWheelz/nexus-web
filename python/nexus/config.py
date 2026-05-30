@@ -82,9 +82,7 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: float = Field(
         default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS"
     )
-    database_statement_timeout_ms: int = Field(
-        default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS"
-    )
+    database_statement_timeout_ms: int = Field(default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS")
     database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS")
     # 60s, not aggressive: create_chat_run holds a transaction open across a
     # BYOK key probe (an external call), so this must clear the slowest legit

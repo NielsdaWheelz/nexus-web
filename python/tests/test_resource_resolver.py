@@ -218,9 +218,7 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
 ):
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
-    media_id = create_test_media_in_library(
-        db_session, bootstrapped_user, library_id, title="Dune"
-    )
+    media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id, title="Dune")
 
     resolved = resolve(db_session, f"media:{media_id}", viewer_id=bootstrapped_user)
 
@@ -237,18 +235,14 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
     )
 
 
-def test_resolve_media_unknown_id_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_media_unknown_id_returns_missing(db_session: Session, bootstrapped_user: UUID):
     resolved = resolve(db_session, f"media:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, (
         f"Unknown media URI must resolve as missing, got missing={resolved.missing}"
     )
 
 
-def test_resolve_media_no_permission_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_media_no_permission_returns_missing(db_session: Session, bootstrapped_user: UUID):
     """A media row not in any library the viewer can read is `missing` to them."""
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
@@ -281,9 +275,7 @@ def test_resolve_library_member_returns_summary_pointer(
     )
 
 
-def test_resolve_library_non_member_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_library_non_member_returns_missing(db_session: Session, bootstrapped_user: UUID):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     other_library_id = create_test_library(db_session, other_user_id, "Closed Library")
@@ -293,9 +285,7 @@ def test_resolve_library_non_member_returns_missing(
     assert resolved.missing, "Non-member must see library as missing"
 
 
-def test_resolve_span_inlines_body_under_threshold(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_span_inlines_body_under_threshold(db_session: Session, bootstrapped_user: UUID):
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
     media_id = create_test_media_in_library(
@@ -315,9 +305,7 @@ def test_resolve_span_inlines_body_under_threshold(
     )
 
 
-def test_resolve_span_unknown_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_span_unknown_returns_missing(db_session: Session, bootstrapped_user: UUID):
     resolved = resolve(db_session, f"span:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, "Unknown span URI must resolve as missing"
 
@@ -341,9 +329,7 @@ def test_resolve_highlight_inlines_text(db_session: Session, bootstrapped_user: 
     )
 
 
-def test_resolve_page_owner_inlines_short_description(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_page_owner_inlines_short_description(db_session: Session, bootstrapped_user: UUID):
     page_id = _make_page(db_session, bootstrapped_user, description="Page description body.")
     resolved = resolve(db_session, f"page:{page_id}", viewer_id=bootstrapped_user)
 
@@ -354,9 +340,7 @@ def test_resolve_page_owner_inlines_short_description(
     )
 
 
-def test_resolve_page_non_owner_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_page_non_owner_returns_missing(db_session: Session, bootstrapped_user: UUID):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     page_id = _make_page(db_session, other_user_id, description="Private page.")
@@ -366,14 +350,10 @@ def test_resolve_page_non_owner_returns_missing(
     assert resolved.missing, "Non-owner viewer must see page as missing"
 
 
-def test_resolve_note_block_owner_inlines_body(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_note_block_owner_inlines_body(db_session: Session, bootstrapped_user: UUID):
     block_id = _make_note_block(db_session, bootstrapped_user, body="Note block body.")
 
-    resolved = resolve(
-        db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user
-    )
+    resolved = resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner should resolve note_block; got {resolved}"
     assert resolved.inline_body == "Note block body.", (
@@ -381,16 +361,12 @@ def test_resolve_note_block_owner_inlines_body(
     )
 
 
-def test_resolve_note_block_non_owner_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_note_block_non_owner_returns_missing(db_session: Session, bootstrapped_user: UUID):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     block_id = _make_note_block(db_session, other_user_id, body="Private note.")
 
-    resolved = resolve(
-        db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user
-    )
+    resolved = resolve(db_session, f"note_block:{block_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner must see note_block as missing"
 
@@ -401,12 +377,12 @@ def test_resolve_conversation_owner_returns_summary_no_inline(
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     create_test_message(db_session, conversation_id, seq=1, content="Hello")
 
-    resolved = resolve(
-        db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user
-    )
+    resolved = resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Owner should resolve conversation; got {resolved}"
-    assert resolved.inline_body is None, "Conversation bodies are pointer-only (no transcript inline)"
+    assert resolved.inline_body is None, (
+        "Conversation bodies are pointer-only (no transcript inline)"
+    )
     assert "messages" in resolved.summary, (
         f"Conversation summary should mention message_count; got {resolved.summary!r}"
     )
@@ -419,16 +395,12 @@ def test_resolve_conversation_non_owner_returns_missing(
     ensure_user_and_default_library(db_session, other_user_id)
     conversation_id = create_test_conversation(db_session, other_user_id)
 
-    resolved = resolve(
-        db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user
-    )
+    resolved = resolve(db_session, f"conversation:{conversation_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-owner viewer must see conversation as missing"
 
 
-def test_resolve_message_visible_inlines_short_body(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_message_visible_inlines_short_body(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     message_id = create_test_message(
         db_session,
@@ -447,9 +419,7 @@ def test_resolve_message_visible_inlines_short_body(
     )
 
 
-def test_resolve_unknown_scheme_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_unknown_scheme_returns_missing(db_session: Session, bootstrapped_user: UUID):
     resolved = resolve(db_session, f"unknown_scheme:{uuid4()}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Unknown URI scheme must resolve as missing"
@@ -458,17 +428,13 @@ def test_resolve_unknown_scheme_returns_missing(
     )
 
 
-def test_resolve_invalid_uri_format_returns_missing(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_invalid_uri_format_returns_missing(db_session: Session, bootstrapped_user: UUID):
     resolved = resolve(db_session, "not-a-valid-uri", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Malformed URI must resolve as missing without raising"
 
 
-def test_resolve_batch_groups_by_scheme(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_batch_groups_by_scheme(db_session: Session, bootstrapped_user: UUID):
     """Batch resolution returns one entry per input URI, preserving input order."""
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None

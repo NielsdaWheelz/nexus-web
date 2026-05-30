@@ -53,17 +53,13 @@ def test_add_reference_returns_resolved_row_with_metadata(
     added = add_reference(db_session, conversation_id, uri, viewer_id=bootstrapped_user)
     db_session.commit()
 
-    assert added.resource_uri == uri, (
-        f"Added row should echo the URI; got {added.resource_uri}"
-    )
+    assert added.resource_uri == uri, f"Added row should echo the URI; got {added.resource_uri}"
     assert "Referenced Doc" in added.label, (
         f"Added row label should reflect resolver hydration; got {added.label}"
     )
 
 
-def test_add_reference_idempotent_on_unique_pair(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_add_reference_idempotent_on_unique_pair(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -102,9 +98,7 @@ def test_add_reference_unknown_resource_raises_not_found(
         )
 
 
-def test_add_reference_invalid_uri_raises(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_add_reference_invalid_uri_raises(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
 
     with pytest.raises(InvalidRequestError, match="Invalid resource_uri"):
@@ -137,9 +131,7 @@ def test_add_reference_owner_only_access_blocks_other_users(
         )
 
 
-def test_list_references_returns_added_at_ascending(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_list_references_returns_added_at_ascending(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -164,10 +156,7 @@ def test_list_references_returns_added_at_ascending(
     assert [row.resource_uri for row in rows] == [
         f"media:{first_media_id}",
         f"media:{second_media_id}",
-    ], (
-        "References should be ordered by created_at ASC; "
-        f"got {[row.resource_uri for row in rows]}"
-    )
+    ], f"References should be ordered by created_at ASC; got {[row.resource_uri for row in rows]}"
 
 
 def test_remove_reference_drops_row(db_session: Session, bootstrapped_user: UUID):
@@ -185,20 +174,14 @@ def test_remove_reference_drops_row(db_session: Session, bootstrapped_user: UUID
     remove_reference(db_session, conversation_id, added.id, viewer_id=bootstrapped_user)
 
     rows = list_references(db_session, conversation_id, viewer_id=bootstrapped_user)
-    assert rows == [], (
-        f"Conversation should hold zero references after remove; got {rows}"
-    )
+    assert rows == [], f"Conversation should hold zero references after remove; got {rows}"
 
 
-def test_remove_reference_unknown_id_raises_not_found(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_remove_reference_unknown_id_raises_not_found(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
 
     with pytest.raises(NotFoundError):
-        remove_reference(
-            db_session, conversation_id, uuid4(), viewer_id=bootstrapped_user
-        )
+        remove_reference(db_session, conversation_id, uuid4(), viewer_id=bootstrapped_user)
 
 
 # =============================================================================
@@ -255,8 +238,7 @@ def test_insert_reference_if_absent_returns_none_when_present(
         {"conversation_id": conversation_id, "resource_uri": uri},
     ).scalar_one()
     assert row_count == 1, (
-        f"Unique constraint must keep the row count at 1 after repeat insert; "
-        f"got {row_count}"
+        f"Unique constraint must keep the row count at 1 after repeat insert; got {row_count}"
     )
 
 
@@ -289,12 +271,8 @@ def test_list_conversations_with_reference_returns_owned_holders(
     )
 
     ids = {conv.id for conv in conversations}
-    assert first_conversation_id in ids, (
-        f"Expected first conversation in results; got {ids}"
-    )
-    assert second_conversation_id in ids, (
-        f"Expected second conversation in results; got {ids}"
-    )
+    assert first_conversation_id in ids, f"Expected first conversation in results; got {ids}"
+    assert second_conversation_id in ids, f"Expected second conversation in results; got {ids}"
     assert no_ref_conversation_id not in ids, (
         f"Conversation without the reference should not appear; got {ids}"
     )

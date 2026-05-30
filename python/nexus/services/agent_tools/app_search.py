@@ -387,8 +387,7 @@ def execute_app_search(
                 limit=APP_SEARCH_LIMIT,
             )
             citations = [
-                _citation_from_search_result(result, filters=filters)
-                for result in response.results
+                _citation_from_search_result(result, filters=filters) for result in response.results
             ]
         context_text, context_chars, selected = render_retrieved_context_blocks(
             db,
@@ -477,9 +476,7 @@ def _resolve_scope_uris(
 
     if not scopes:
         return [
-            uri
-            for uri in reference_uris
-            if uri.startswith("media:") or uri.startswith("library:")
+            uri for uri in reference_uris if uri.startswith("media:") or uri.startswith("library:")
         ]
 
     resolved: list[str] = []
@@ -489,13 +486,9 @@ def _resolve_scope_uris(
         if not uri or uri in seen:
             continue
         if not (uri.startswith("media:") or uri.startswith("library:")):
-            raise InvalidScopeError(
-                f"scope must be 'media:UUID' or 'library:UUID': {uri}"
-            )
+            raise InvalidScopeError(f"scope must be 'media:UUID' or 'library:UUID': {uri}")
         if uri not in reference_uris:
-            raise InvalidScopeError(
-                f"scope must be in conversation references: {uri}"
-            )
+            raise InvalidScopeError(f"scope must be in conversation references: {uri}")
         seen.add(uri)
         resolved.append(uri)
     return resolved
@@ -1254,9 +1247,7 @@ def _render_page_block(db: Session, viewer_id: UUID, page_id: UUID) -> str | Non
 
 def _render_note_block_block(db: Session, viewer_id: UUID, block_id: UUID) -> str | None:
     row = db.execute(
-        text(
-            "SELECT user_id, body_text, page_id FROM note_blocks WHERE id = :block_id"
-        ),
+        text("SELECT user_id, body_text, page_id FROM note_blocks WHERE id = :block_id"),
         {"block_id": block_id},
     ).fetchone()
     if row is None or row[0] != viewer_id:
@@ -1301,9 +1292,7 @@ def _render_conversation_block(db: Session, conversation_id: UUID) -> str | None
     return "\n".join(lines)
 
 
-def _render_evidence_span_block(
-    db: Session, viewer_id: UUID, evidence_span_id: UUID
-) -> str | None:
+def _render_evidence_span_block(db: Session, viewer_id: UUID, evidence_span_id: UUID) -> str | None:
     row = db.execute(
         text(
             """
