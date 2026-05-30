@@ -18,10 +18,8 @@ import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
-import {
-  PaneSidecarContext,
-  type PaneSidecarDescriptor,
-} from "@/components/workspace/PaneSidecar";
+import type { PaneSidecarPublication } from "@/components/workspace/PaneSidecar";
+import type { PaneFixedChromePublication } from "@/components/workspace/PaneFixedChrome";
 import SidecarPaneShell from "@/components/workspace/SidecarPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
@@ -30,7 +28,7 @@ import type {
   WorkspaceSidecarSizing,
   WorkspaceSidecarState,
   WorkspaceSidecarSurfaceId,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -77,7 +75,7 @@ export type PaneMobileChromeLockReason =
   | "pdf-selection"
   | "text-selection"
   | "highlight-navigation"
-  | "highlights-drawer"
+  | "mobile-sidecar"
   | "library-picker"
   | "action-menu";
 
@@ -141,6 +139,8 @@ interface PaneShellProps {
   bodyMode: PaneBodyMode;
   sidecar?: WorkspaceSidecarState | null;
   sidecarSizing?: WorkspaceSidecarSizing | null;
+  sidecarPublication?: PaneSidecarPublication | null;
+  fixedChromePublication?: PaneFixedChromePublication | null;
   onResizePrimaryPane: (paneId: string, widthPx: number) => void;
   onResizeSidecarPane?: (paneId: string, widthPx: number) => void;
   onCloseSidecar?: (paneId: string) => void;
@@ -169,6 +169,8 @@ export default function PaneShell({
   bodyMode,
   sidecar = null,
   sidecarSizing = null,
+  sidecarPublication = null,
+  fixedChromePublication = null,
   onResizePrimaryPane,
   onResizeSidecarPane = noopResizeSidecarPane,
   onCloseSidecar = noopCloseSidecar,
@@ -202,8 +204,6 @@ export default function PaneShell({
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
   );
-  const [sidecarDescriptor, setSidecarDescriptor] =
-    useState<PaneSidecarDescriptor | null>(null);
 
   const isMobileDocumentPane = isMobile && bodyMode === "document";
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
@@ -418,10 +418,12 @@ export default function PaneShell({
     !isMobile &&
     sidecar?.visibility === "visible" &&
     sidecarSizing &&
-    sidecarDescriptor?.groupId === sidecar.groupId
-      ? { state: sidecar, sizing: sidecarSizing, descriptor: sidecarDescriptor }
+    sidecarPublication?.groupId === sidecar.groupId &&
+    sidecarPublication.surfaces.some((surface) => surface.id === sidecar.activeSurfaceId)
+      ? { state: sidecar, sizing: sidecarSizing, publication: sidecarPublication }
       : null;
   const visibleSidecarWidthPx = visibleSidecar?.sizing.widthPx ?? 0;
+  const visibleFixedChrome = !isMobile ? fixedChromePublication : null;
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
     : {
@@ -549,22 +551,36 @@ export default function PaneShell({
           ) : null}
         </div>
         <div
-          className={styles.body}
-          id={bodyId}
-          data-testid="pane-shell-body"
-          data-body-mode={bodyMode}
-          data-pane-content="true"
-          style={bodyStyle}
+          className={styles.primaryContentRow}
+          style={{
+            gridTemplateColumns: isMobile
+              ? "minmax(0, 1fr)"
+              : visibleFixedChrome
+              ? `${sizing.primaryWidthPx}px ${visibleFixedChrome.widthPx}px`
+              : `${sizing.primaryWidthPx}px`,
+          }}
         >
-          <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-            <PaneSidecarContext.Provider value={setSidecarDescriptor}>
+          <div
+            className={styles.body}
+            id={bodyId}
+            data-testid="pane-shell-body"
+            data-body-mode={bodyMode}
+            data-pane-content="true"
+            style={bodyStyle}
+          >
+            <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
               <PaneMobileChromeControllerContext.Provider
                 value={bodyMode === "document" ? mobileChromeController : null}
               >
                 {children}
               </PaneMobileChromeControllerContext.Provider>
-            </PaneSidecarContext.Provider>
-          </PaneChromeOverrideContext.Provider>
+            </PaneChromeOverrideContext.Provider>
+          </div>
+          {visibleFixedChrome ? (
+            <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">
+              {visibleFixedChrome.body}
+            </div>
+          ) : null}
         </div>
         <div
           className={styles.resizeHandle}
@@ -583,7 +599,7 @@ export default function PaneShell({
       {visibleSidecar ? (
         <SidecarPaneShell
           paneId={paneId}
-          descriptor={visibleSidecar.descriptor}
+          publication={visibleSidecar.publication}
           state={visibleSidecar.state}
           sizing={visibleSidecar.sizing}
           onActiveSurfaceChange={onSetActiveSidecarSurface}

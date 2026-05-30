@@ -16,7 +16,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link2 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
@@ -140,9 +139,6 @@ export default function ConversationNewPaneBody() {
       surfaces: [
         {
           id: "conversation-references" as const,
-          groupId: "conversation-context" as const,
-          title: "References",
-          icon: Link2,
           body: (
             <div className={styles.chatSidecarBody}>
               <ConversationReferencesSidecar

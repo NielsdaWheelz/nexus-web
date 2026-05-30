@@ -22,8 +22,8 @@ describe("pane sizing", () => {
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
       runtimeLayout: {
         primaryWidth: { kind: "workspace" },
-        fixedPrimaryChromeWidthPx: 0,
       },
+      fixedChromeWidthPx: 0,
       isMobile: false,
     });
 
@@ -34,7 +34,7 @@ describe("pane sizing", () => {
       renderedPrimarySlotWidthPx: 684,
       renderedPrimarySlotMinWidthPx: 684,
       renderedPrimarySlotMaxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
-      fixedPrimaryChromeWidthPx: 0,
+      fixedChromeWidthPx: 0,
       storedWidthCorrectionPx: 684,
     });
   });
@@ -46,8 +46,8 @@ describe("pane sizing", () => {
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
       runtimeLayout: {
         primaryWidth: { kind: "workspace" },
-        fixedPrimaryChromeWidthPx: 28,
       },
+      fixedChromeWidthPx: 28,
       isMobile: false,
     });
 
@@ -57,7 +57,7 @@ describe("pane sizing", () => {
       renderedPrimarySlotWidthPx: 728,
       renderedPrimarySlotMinWidthPx: 712,
       renderedPrimarySlotMaxWidthPx: 2428,
-      fixedPrimaryChromeWidthPx: 28,
+      fixedChromeWidthPx: 28,
       storedWidthCorrectionPx: null,
     });
   });
@@ -69,8 +69,8 @@ describe("pane sizing", () => {
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
       runtimeLayout: {
         primaryWidth: { kind: "intrinsic", widthPx: 2600 },
-        fixedPrimaryChromeWidthPx: 28,
       },
+      fixedChromeWidthPx: 28,
       isMobile: false,
     });
 
@@ -88,8 +88,8 @@ describe("pane sizing", () => {
       routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
       runtimeLayout: {
         primaryWidth: { kind: "intrinsic", widthPx: 900 },
-        fixedPrimaryChromeWidthPx: 28,
       },
+      fixedChromeWidthPx: 28,
       isMobile: true,
     });
 
@@ -97,7 +97,7 @@ describe("pane sizing", () => {
       primaryWidthPx: 684,
       primaryMinWidthPx: 684,
       renderedPrimarySlotWidthPx: 684,
-      fixedPrimaryChromeWidthPx: 0,
+      fixedChromeWidthPx: 0,
       storedWidthCorrectionPx: null,
     });
   });
@@ -106,11 +106,9 @@ describe("pane sizing", () => {
     expect(
       normalizePaneRuntimeLayout({
         primaryWidth: { kind: "intrinsic", widthPx: 500.2 },
-        fixedPrimaryChromeWidthPx: 27.1,
       }),
     ).toEqual({
       primaryWidth: { kind: "intrinsic", widthPx: 501 },
-      fixedPrimaryChromeWidthPx: 28,
     });
   });
 
@@ -118,14 +116,7 @@ describe("pane sizing", () => {
     expect(() =>
       normalizePaneRuntimeLayout({
         primaryWidth: { kind: "intrinsic", widthPx: 0 },
-        fixedPrimaryChromeWidthPx: 0,
       }),
     ).toThrow("positive");
-    expect(() =>
-      normalizePaneRuntimeLayout({
-        primaryWidth: { kind: "workspace" },
-        fixedPrimaryChromeWidthPx: Number.NaN,
-      }),
-    ).toThrow("non-negative");
   });
 });

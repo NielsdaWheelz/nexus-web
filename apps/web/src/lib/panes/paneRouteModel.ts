@@ -1,7 +1,11 @@
 "use client";
 
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import type { WorkspaceSidecarGroupId } from "@/lib/workspace/sidecarSizing";
+import {
+  getSidecarGroupForSurface,
+  type WorkspaceSidecarGroupId,
+  type WorkspaceSidecarSurfaceId,
+} from "@/lib/panes/paneSidecarModel";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -376,4 +380,11 @@ export function paneRouteAllowsSidecarGroup(
   groupId: WorkspaceSidecarGroupId,
 ): boolean {
   return resolvePaneRouteModel(href).definition?.sidecarGroups?.includes(groupId) ?? false;
+}
+
+export function paneRouteAllowsSidecarSurface(
+  href: string,
+  surfaceId: WorkspaceSidecarSurfaceId,
+): boolean {
+  return paneRouteAllowsSidecarGroup(href, getSidecarGroupForSurface(surfaceId));
 }

@@ -10,7 +10,7 @@ import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import type {
   WorkspaceSidecarState,
   WorkspaceSidecarSurfaceId,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 
 export interface PaneScopedRouter {
   canGoBack: boolean;

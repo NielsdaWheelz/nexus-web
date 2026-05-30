@@ -1,7 +1,7 @@
 "use client";
 
 import Button from "@/components/ui/Button";
-import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
+import ReferenceChatList from "@/components/chat/ReferenceChatList";
 import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
 import styles from "./DocChatTab.module.css";
 
@@ -43,36 +43,16 @@ export default function DocChatTab({
           </Button>
         </div>
       ) : null}
-      <div className={styles.scrollArea}>
-        {isLoading ? null : conversations.length === 0 ? (
-          <div className={styles.emptyState}>
-            <p className={styles.emptyText}>
-              No chats reference this document yet.
-            </p>
-            <Button variant="primary" size="sm" onClick={onStartNewChat}>
-              Start new chat about this document
-            </Button>
-          </div>
-        ) : (
-          <>
-            <div className={styles.inlineNewRow}>
-              <Button variant="secondary" size="sm" onClick={onStartNewChat}>
-                + New chat
-              </Button>
-            </div>
-            <ul className={styles.list}>
-              {conversations.map((item) => (
-                <li key={item.id}>
-                  <ReferencingChatRow
-                    item={item}
-                    onTap={() => onOpenChat(item.id)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </div>
+      <ReferenceChatList
+        className={styles.scrollArea}
+        conversations={conversations}
+        density="compact"
+        emptyActionLabel="Start new chat about this document"
+        emptyMessage="No chats reference this document yet."
+        isLoading={isLoading}
+        onOpenChat={onOpenChat}
+        onStartNewChat={onStartNewChat}
+      />
     </div>
   );
 }

@@ -1,21 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
   getSidecarGroupForSurface,
+  getSidecarSurfaceDefinition,
+  getSidecarSurfaceIdsForGroup,
   getSidecarWidthPolicy,
   isWorkspaceSidecarGroupId,
   isWorkspaceSidecarSurfaceId,
   resolveEffectiveSidecarSizing,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 
-describe("sidecar sizing", () => {
+describe("paneSidecarModel", () => {
   it("maps sidecar surfaces to their owning groups", () => {
     expect(getSidecarGroupForSurface("reader-highlights")).toBe("reader-tools");
     expect(getSidecarGroupForSurface("reader-doc-chat")).toBe("reader-tools");
     expect(getSidecarGroupForSurface("conversation-references")).toBe(
       "conversation-context",
     );
+    expect(getSidecarGroupForSurface("conversation-forks")).toBe(
+      "conversation-context",
+    );
     expect(getSidecarGroupForSurface("library-chat")).toBe("library-tools");
     expect(getSidecarGroupForSurface("library-intelligence")).toBe("library-tools");
+  });
+
+  it("owns surface metadata in one place", () => {
+    expect(getSidecarSurfaceDefinition("conversation-forks")).toMatchObject({
+      groupId: "conversation-context",
+      title: "Forks",
+      iconId: "git-branch",
+    });
+    expect(getSidecarSurfaceIdsForGroup("conversation-context")).toEqual([
+      "conversation-references",
+      "conversation-forks",
+    ]);
   });
 
   it("validates sidecar ids", () => {

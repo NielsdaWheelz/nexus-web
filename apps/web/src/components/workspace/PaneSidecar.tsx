@@ -4,40 +4,36 @@ import {
   createContext,
   useContext,
   useLayoutEffect,
-  type ComponentType,
   type ReactNode,
 } from "react";
 import type {
   WorkspaceSidecarGroupId,
   WorkspaceSidecarSurfaceId,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 
-export interface PaneSidecarSurface {
+export interface PaneSidecarSurfacePublication {
   id: WorkspaceSidecarSurfaceId;
-  groupId: WorkspaceSidecarGroupId;
-  title: string;
-  icon: ComponentType<{ size?: number }>;
   body: ReactNode;
   mobileBody?: ReactNode;
 }
 
-export interface PaneSidecarDescriptor {
+export interface PaneSidecarPublication {
   groupId: WorkspaceSidecarGroupId;
-  surfaces: PaneSidecarSurface[];
+  surfaces: PaneSidecarSurfacePublication[];
   defaultSurfaceId: WorkspaceSidecarSurfaceId;
 }
 
 export const PaneSidecarContext = createContext<
-  ((descriptor: PaneSidecarDescriptor | null) => void) | null
+  ((publication: PaneSidecarPublication | null) => void) | null
 >(null);
 
-export function usePaneSidecar(descriptor: PaneSidecarDescriptor | null): void {
-  const setDescriptor = useContext(PaneSidecarContext);
+export function usePaneSidecar(publication: PaneSidecarPublication | null): void {
+  const setPublication = useContext(PaneSidecarContext);
   useLayoutEffect(() => {
-    if (!setDescriptor) {
+    if (!setPublication) {
       return;
     }
-    setDescriptor(descriptor);
-    return () => setDescriptor(null);
-  }, [descriptor, setDescriptor]);
+    setPublication(publication);
+    return () => setPublication(null);
+  }, [publication, setPublication]);
 }

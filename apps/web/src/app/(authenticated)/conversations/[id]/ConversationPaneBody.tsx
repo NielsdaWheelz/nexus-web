@@ -18,9 +18,9 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { createRandomId } from "@/lib/createRandomId";
-import { Link2 } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
@@ -303,6 +303,15 @@ function ChatView({
     treeRequestRef.current = request;
     return request;
   }, [applyConversationTree, id]);
+
+  const reloadConversationTree = useCallback(async () => {
+    treeRequestRef.current = null;
+    try {
+      await loadConversationTree();
+    } catch (err) {
+      setError(toFeedback(err, { fallback: "Failed to refresh forks" }));
+    }
+  }, [loadConversationTree]);
 
   useEffect(() => {
     requestScopeRef.current += 1;
@@ -703,6 +712,11 @@ function ChatView({
         label: "References",
         onSelect: () => paneRuntime?.openSidecar("conversation-references"),
       },
+      {
+        id: "open-forks",
+        label: "Forks",
+        onSelect: () => paneRuntime?.openSidecar("conversation-forks"),
+      },
       ...conversationResourceOptions({
         deleting,
         onDelete: () => {
@@ -720,9 +734,6 @@ function ChatView({
       surfaces: [
         {
           id: "conversation-references" as const,
-          groupId: "conversation-context" as const,
-          title: "References",
-          icon: Link2,
           body: (
             <div className={styles.chatSidecarBody}>
               <ConversationReferencesSidecar
@@ -733,9 +744,45 @@ function ChatView({
             </div>
           ),
         },
+        {
+          id: "conversation-forks" as const,
+          body: (
+            <div className={styles.chatSidecarBody}>
+              <ConversationForksPanel
+                conversationId={id}
+                forkOptionsByParentId={forkOptionsByParentId}
+                branchGraph={branchGraph}
+                switchableLeafIds={switchableLeafIds}
+                activeLeafMessageId={activeLeafMessageId}
+                selectedPathMessageIds={selectedPathIdsRef.current}
+                onSelectFork={(fork) => {
+                  void switchToFork(fork);
+                }}
+                onSelectGraphLeaf={(leafId) => {
+                  void switchToLeaf(leafId, null);
+                }}
+                onForksChanged={() => {
+                  void reloadConversationTree();
+                }}
+              />
+            </div>
+          ),
+        },
       ],
     }),
-    [handleOpenResource, references, removeReference],
+    [
+      activeLeafMessageId,
+      branchGraph,
+      forkOptionsByParentId,
+      handleOpenResource,
+      id,
+      references,
+      reloadConversationTree,
+      removeReference,
+      switchToFork,
+      switchToLeaf,
+      switchableLeafIds,
+    ],
   );
   usePaneSidecar(sidecarDescriptor);
 

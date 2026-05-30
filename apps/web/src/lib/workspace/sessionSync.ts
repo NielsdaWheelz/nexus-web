@@ -74,10 +74,7 @@ export function prepareRestoredState(
     ? sanitized.activePaneId
     : visiblePanes[0].id;
 
-  return {
-    activePaneId,
-    panes,
-  };
+  return { activePaneId, panes };
 }
 
 export function isNonTrivialSession(state: WorkspaceState): boolean {

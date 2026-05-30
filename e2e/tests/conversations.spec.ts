@@ -88,8 +88,14 @@ async function selectTextInMessage(
 }
 
 async function openForksPanel(page: Page) {
-  const panel = page.getByTestId("conversation-context-pane");
-  await panel.getByRole("tab", { name: /Forks/ }).click();
+  await page
+    .getByTestId("pane-shell-chrome")
+    .getByRole("button", { name: "Options" })
+    .click();
+  await page.getByRole("menuitem", { name: "Forks" }).click();
+
+  const panel = page.getByTestId("workspace-sidecar-pane");
+  await expect(panel).toBeVisible();
   await expect(
     panel.getByRole("tree", { name: "Conversation forks" }),
   ).toBeVisible();
@@ -383,7 +389,7 @@ test.describe("conversations", () => {
       );
       expect(beforeForkSwitchScrollTop).toBeGreaterThan(0);
       await quoteForkButton.evaluate((button) => {
-        button.click();
+        (button as HTMLElement).click();
       });
       const quoteSwitchResponse = await quoteSwitchResponsePromise;
       const quoteSwitchBody = await quoteSwitchResponse.text();
@@ -472,7 +478,7 @@ test.describe("conversations", () => {
     }
   });
 
-  test("mobile drawer exposes forks and switches branches", async ({
+  test("mobile sidecar exposes forks and switches branches", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -480,19 +486,26 @@ test.describe("conversations", () => {
     const conversationId = seed.conversation_id;
     try {
       await page.goto(`/conversations/${conversationId}`);
-      await expect(page.getByTestId("conversation-context-pane")).toHaveCount(
-        0,
-      );
+      await expect(page.getByTestId("workspace-sidecar-pane")).toHaveCount(0);
+      await expect(page.getByTestId("mobile-sidecar-host")).toHaveCount(0);
 
-      await page.getByRole("button", { name: "Linked context" }).click();
-      const drawer = page.getByRole("dialog", { name: "Linked context" });
-      await expect(drawer).toBeVisible();
-      await drawer.getByRole("tab", { name: /Forks/ }).click();
-      await drawer
+      await page
+        .getByTestId("pane-shell-chrome")
+        .getByRole("button", { name: "Options" })
+        .click();
+      await page.getByRole("menuitem", { name: "Forks" }).click();
+
+      const sidecar = page.getByRole("dialog", { name: "Forks" });
+      await expect(sidecar).toBeVisible();
+      await expect(
+        sidecar.getByRole("tree", { name: "Conversation forks" }),
+      ).toBeVisible();
+      await sidecar
         .getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i })
         .click();
 
-      await expect(drawer).toHaveCount(0);
+      await sidecar.getByRole("button", { name: "Close Forks" }).click();
+      await expect(sidecar).toHaveCount(0);
       await expect(
         page.getByText(
           "Quote branch answer highlights the selected source phrase.",

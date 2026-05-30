@@ -1,20 +1,43 @@
 "use client";
 
 import { useId, useRef } from "react";
-import { X } from "lucide-react";
+import type { ComponentType } from "react";
+import {
+  BarChart3,
+  FileText,
+  GitBranch,
+  Highlighter,
+  Link2,
+  MessageSquare,
+  X,
+} from "lucide-react";
 import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
-import type { PaneSidecarDescriptor } from "@/components/workspace/PaneSidecar";
+import type { PaneSidecarPublication } from "@/components/workspace/PaneSidecar";
+import { getSidecarSurfaceDefinition } from "@/lib/panes/paneSidecarModel";
 import type {
+  PaneSidecarIconId,
   WorkspaceSidecarSizing,
   WorkspaceSidecarState,
   WorkspaceSidecarSurfaceId,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 import styles from "./SidecarPaneShell.module.css";
+
+const SIDE_CAR_ICONS: Record<
+  PaneSidecarIconId,
+  ComponentType<{ size?: number; "aria-hidden"?: "true" }>
+> = {
+  "bar-chart-3": BarChart3,
+  "file-text": FileText,
+  "git-branch": GitBranch,
+  highlighter: Highlighter,
+  "link-2": Link2,
+  "message-square": MessageSquare,
+};
 
 interface SidecarPaneShellProps {
   paneId: string;
-  descriptor: PaneSidecarDescriptor;
+  publication: PaneSidecarPublication;
   state: WorkspaceSidecarState;
   sizing: WorkspaceSidecarSizing;
   onActiveSurfaceChange: (
@@ -27,7 +50,7 @@ interface SidecarPaneShellProps {
 
 export default function SidecarPaneShell({
   paneId,
-  descriptor,
+  publication,
   state,
   sizing,
   onActiveSurfaceChange,
@@ -37,10 +60,7 @@ export default function SidecarPaneShell({
   const panelId = useId();
   const tabRefs = useRef(new Map<WorkspaceSidecarSurfaceId, HTMLButtonElement>());
   const activeSurface =
-    descriptor.surfaces.find((surface) => surface.id === state.activeSurfaceId) ??
-    descriptor.surfaces.find((surface) => surface.id === descriptor.defaultSurfaceId) ??
-    descriptor.surfaces[0] ??
-    null;
+    publication.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     id: paneId,
     widthPx: sizing.widthPx,
@@ -52,6 +72,8 @@ export default function SidecarPaneShell({
   if (!activeSurface) {
     return null;
   }
+
+  const activeSurfaceDefinition = getSidecarSurfaceDefinition(activeSurface.id);
 
   const selectSurface = (surfaceId: WorkspaceSidecarSurfaceId) => {
     onActiveSurfaceChange(paneId, surfaceId);
@@ -66,13 +88,14 @@ export default function SidecarPaneShell({
         minWidth: sizing.minWidthPx,
         maxWidth: sizing.maxWidthPx,
       }}
-      aria-label={activeSurface.title}
+      aria-label={activeSurfaceDefinition.title}
       data-testid="workspace-sidecar-pane"
     >
       <header className={styles.header}>
         <div className={styles.tabs} role="tablist" aria-label="Sidecar surfaces">
-          {descriptor.surfaces.map((surface, index) => {
-            const Icon = surface.icon;
+          {publication.surfaces.map((surface, index) => {
+            const surfaceDefinition = getSidecarSurfaceDefinition(surface.id);
+            const Icon = SIDE_CAR_ICONS[surfaceDefinition.iconId];
             const active = surface.id === activeSurface.id;
             return (
               <button
@@ -89,8 +112,8 @@ export default function SidecarPaneShell({
                 role="tab"
                 aria-controls={panelId}
                 aria-selected={active}
-                aria-label={surface.title}
-                title={surface.title}
+                aria-label={surfaceDefinition.title}
+                title={surfaceDefinition.title}
                 tabIndex={active ? 0 : -1}
                 className={styles.tab}
                 data-active={active ? "true" : "false"}
@@ -100,22 +123,22 @@ export default function SidecarPaneShell({
                     event.preventDefault();
                     const direction = event.key === "ArrowRight" ? 1 : -1;
                     const nextIndex =
-                      (index + direction + descriptor.surfaces.length) %
-                      descriptor.surfaces.length;
-                    const nextSurface = descriptor.surfaces[nextIndex];
+                      (index + direction + publication.surfaces.length) %
+                      publication.surfaces.length;
+                    const nextSurface = publication.surfaces[nextIndex];
                     if (nextSurface) {
                       selectSurface(nextSurface.id);
                     }
                   } else if (event.key === "Home") {
                     event.preventDefault();
-                    const firstSurface = descriptor.surfaces[0];
+                    const firstSurface = publication.surfaces[0];
                     if (firstSurface) {
                       selectSurface(firstSurface.id);
                     }
                   } else if (event.key === "End") {
                     event.preventDefault();
                     const lastSurface =
-                      descriptor.surfaces[descriptor.surfaces.length - 1];
+                      publication.surfaces[publication.surfaces.length - 1];
                     if (lastSurface) {
                       selectSurface(lastSurface.id);
                     }
@@ -131,7 +154,7 @@ export default function SidecarPaneShell({
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label={`Close ${activeSurface.title}`}
+          aria-label={`Close ${activeSurfaceDefinition.title}`}
           onClick={() => onClose(paneId)}
         >
           <X size={15} aria-hidden="true" />
@@ -148,7 +171,7 @@ export default function SidecarPaneShell({
       <div
         className={styles.resizeHandle}
         role="separator"
-        aria-label={`Resize ${activeSurface.title}`}
+        aria-label={`Resize ${activeSurfaceDefinition.title}`}
         aria-controls={panelId}
         aria-orientation="vertical"
         aria-valuemin={sizing.minWidthPx}

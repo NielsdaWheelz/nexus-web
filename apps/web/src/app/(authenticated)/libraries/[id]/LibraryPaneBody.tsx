@@ -25,12 +25,10 @@ import {
   podcastResourceOptions,
 } from "@/lib/actions/resourceActions";
 import {
-  BarChart3,
   BookOpen,
   FileText,
   Globe,
   Mic,
-  MessageSquare,
   Radio,
   Video,
 } from "lucide-react";
@@ -805,9 +803,6 @@ export default function LibraryPaneBody() {
             surfaces: [
               {
                 id: "library-chat" as const,
-                groupId: "library-tools" as const,
-                title: "Library chat",
-                icon: MessageSquare,
                 body: (
                   <LibraryChatTab
                     libraryId={id}
@@ -817,9 +812,6 @@ export default function LibraryPaneBody() {
               },
               {
                 id: "library-intelligence" as const,
-                groupId: "library-tools" as const,
-                title: "Intelligence",
-                icon: BarChart3,
                 body: <LibraryIntelligenceView libraryId={id} />,
               },
             ],

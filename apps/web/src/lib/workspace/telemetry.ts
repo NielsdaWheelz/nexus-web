@@ -9,7 +9,6 @@ interface WorkspaceTelemetryDetail {
   titleState: "resolved" | "pending";
   routeId: string;
 }
-
 export function emitWorkspaceTelemetry(detail: WorkspaceTelemetryDetail): void {
   if (typeof window === "undefined") {
     return;

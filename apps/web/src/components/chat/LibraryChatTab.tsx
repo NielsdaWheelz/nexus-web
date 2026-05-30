@@ -1,7 +1,6 @@
 "use client";
 
-import Button from "@/components/ui/Button";
-import ReferencingChatRow from "@/components/chat/ReferencingChatRow";
+import ReferenceChatList from "@/components/chat/ReferenceChatList";
 import { apiFetch } from "@/lib/api/client";
 import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
 import styles from "./LibraryChatTab.module.css";
@@ -30,35 +29,14 @@ export default function LibraryChatTab({
   };
 
   return (
-    <div className={styles.tab}>
-      {isLoading ? null : conversations.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyText}>
-            No chats reference this library yet.
-          </p>
-          <Button variant="primary" size="sm" onClick={handleStartNewChat}>
-            Start new chat about this library
-          </Button>
-        </div>
-      ) : (
-        <>
-          <div className={styles.inlineNewRow}>
-            <Button variant="secondary" size="sm" onClick={handleStartNewChat}>
-              + New chat
-            </Button>
-          </div>
-          <ul className={styles.list}>
-            {conversations.map((item) => (
-              <li key={item.id}>
-                <ReferencingChatRow
-                  item={item}
-                  onTap={() => onOpenChat(item.id)}
-                />
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
+    <ReferenceChatList
+      className={styles.tab}
+      conversations={conversations}
+      emptyActionLabel="Start new chat about this library"
+      emptyMessage="No chats reference this library yet."
+      isLoading={isLoading}
+      onOpenChat={onOpenChat}
+      onStartNewChat={handleStartNewChat}
+    />
   );
 }
