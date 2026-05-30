@@ -230,9 +230,11 @@ describe("HighlightNoteEditor persistence", () => {
 });
 
 function noteBlockIdFromEditor(editor: HTMLElement): string {
-  const blockId = within(editor)
-    .getByRole("button", { name: "Open note block" })
-    .getAttribute("data-note-block-open");
+  // Compact highlight notes hide the "Open note block" handle (display:none),
+  // which drops its accessible name, so read the id from the block element.
+  const blockId = editor
+    .querySelector("[data-note-block-id]")
+    ?.getAttribute("data-note-block-id");
   if (!blockId) {
     throw new Error("Expected the editor to render a note block id");
   }

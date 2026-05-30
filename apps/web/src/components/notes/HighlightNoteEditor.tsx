@@ -261,6 +261,7 @@ export default function HighlightNoteEditor({
         ariaLabel="Highlight note"
         createBlockId={newBlockId}
         singleBlock
+        compact
         onDocChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
         onOpenBlock={openBlock}

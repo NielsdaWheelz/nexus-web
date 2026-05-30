@@ -1,8 +1,34 @@
 "use client";
 
-import { X } from "lucide-react";
+import {
+  AlignLeft,
+  File,
+  FileText,
+  Highlighter,
+  Library,
+  Link2,
+  MessageSquare,
+  MessagesSquare,
+  StickyNote,
+  TextQuote,
+  type LucideIcon,
+} from "lucide-react";
+import ItemCard from "@/components/items/ItemCard";
 import type { ConversationReference } from "@/lib/conversations/types";
 import styles from "./ConversationReferencesSidecar.module.css";
+
+const SCHEME_ICONS: Record<string, LucideIcon> = {
+  media: FileText,
+  library: Library,
+  span: TextQuote,
+  chunk: AlignLeft,
+  highlight: Highlighter,
+  page: File,
+  note_block: StickyNote,
+  fragment: TextQuote,
+  conversation: MessagesSquare,
+  message: MessageSquare,
+};
 
 export default function ConversationReferencesSidecar({
   references,
@@ -18,37 +44,45 @@ export default function ConversationReferencesSidecar({
   }
   return (
     <div className={styles.sidecar}>
-      {references.map((reference) => (
-        <div
-          key={reference.id}
-          className={`${styles.row} ${reference.missing ? styles.missing : ""}`.trim()}
-        >
-          <button
-            type="button"
-            className={styles.body}
-            disabled={!onOpenResource || reference.missing}
-            onClick={() => onOpenResource?.(reference.resource_uri)}
-          >
-            <span className={styles.label}>
-              {reference.label}
-              {reference.missing ? " (unavailable)" : null}
-            </span>
-            {reference.summary ? (
-              <span className={styles.summary}>{reference.summary}</span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            className={styles.remove}
-            aria-label="Remove reference"
-            onClick={() => {
-              void removeReference(reference.id);
+      {references.map((reference) => {
+        const Icon = SCHEME_ICONS[reference.resource_uri.split(":")[0]] ?? Link2;
+        return (
+          <ItemCard
+            key={reference.id}
+            className={reference.missing ? styles.missing : undefined}
+            content={{
+              kind: "resource",
+              title: reference.missing
+                ? `${reference.label} (unavailable)`
+                : reference.label,
+              icon: <Icon size={14} aria-hidden="true" />,
             }}
-          >
-            <X size={14} aria-hidden="true" />
-          </button>
-        </div>
-      ))}
+            meta={reference.summary || undefined}
+            onActivate={
+              onOpenResource && !reference.missing
+                ? () => onOpenResource(reference.resource_uri)
+                : undefined
+            }
+            actions={[
+              {
+                id: "open",
+                label: "Open",
+                disabled: !onOpenResource || reference.missing,
+                onSelect: () => onOpenResource?.(reference.resource_uri),
+              },
+              {
+                id: "remove",
+                label: "Remove",
+                tone: "danger",
+                separatorBefore: true,
+                onSelect: () => {
+                  void removeReference(reference.id);
+                },
+              },
+            ]}
+          />
+        );
+      })}
     </div>
   );
 }

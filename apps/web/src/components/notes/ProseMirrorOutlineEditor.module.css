@@ -91,3 +91,21 @@
   margin: 8px 0;
   padding: 8px 10px;
 }
+
+.compact {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.compact :global(.note-block-handle) {
+  display: none;
+}
+
+.compact :global(li[data-note-block-id]) {
+  padding-left: 0;
+}
+
+.compact :global(.note-block-content),
+.compact :global(p) {
+  min-height: 0;
+}

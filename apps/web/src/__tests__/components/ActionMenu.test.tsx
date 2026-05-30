@@ -164,6 +164,38 @@ describe("ActionMenu", () => {
     expect(navigatePane).not.toHaveBeenCalled();
   });
 
+  it("mounts custom render content and closes the menu via the injected closeMenu", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ActionMenu
+        options={[
+          {
+            id: "color",
+            label: "Highlight color",
+            render: ({ closeMenu }) => (
+              <button type="button" onClick={() => closeMenu()}>
+                Apply color
+              </button>
+            ),
+          },
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    const applyColor = screen.getByRole("button", { name: "Apply color" });
+    expect(applyColor).toBeInTheDocument();
+
+    fireEvent.click(applyColor);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Apply color" })
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("does not route disabled portaled menu links", async () => {
     const user = userEvent.setup();
     const navigatePane = vi.fn();

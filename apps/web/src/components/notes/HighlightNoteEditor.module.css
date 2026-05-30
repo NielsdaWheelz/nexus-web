@@ -3,10 +3,6 @@
   gap: var(--space-1);
 }
 
-.shell :global(.ProseMirror) {
-  min-height: 76px;
-}
-
 .shell[data-editable="false"] {
   color: var(--ink-muted);
 }

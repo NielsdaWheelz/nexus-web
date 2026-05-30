@@ -9,6 +9,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { handlePaneInternalHrefClick } from "@/lib/panes/paneLinkNavigation";
@@ -19,6 +20,10 @@ import styles from "./ActionMenu.module.css";
 export interface ActionMenuOption {
   id: string;
   label: string;
+  render?: (controls: {
+    closeMenu: () => void;
+    triggerEl: HTMLButtonElement | null;
+  }) => ReactNode;
   onSelect?: (detail: { triggerEl: HTMLButtonElement | null }) => void;
   href?: string;
   disabled?: boolean;
@@ -229,6 +234,13 @@ export default function ActionMenu({
               {option.separatorBefore && index > 0 ? (
                 <li role="separator" className={styles.separator} />
               ) : null}
+              {option.render ? (
+                <li role="none">
+                  <div role="group" aria-label={option.label}>
+                    {option.render({ closeMenu, triggerEl: toggleRef.current })}
+                  </div>
+                </li>
+              ) : (
               <li role="none">
                 {optionHref ? (
                   <a
@@ -283,6 +295,7 @@ export default function ActionMenu({
                   </button>
                 )}
               </li>
+              )}
             </Fragment>
           );
         })}

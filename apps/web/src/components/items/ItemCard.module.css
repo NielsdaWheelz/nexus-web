@@ -1,0 +1,108 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-1);
+}
+
+.card:hover {
+  background: var(--surface-2);
+}
+
+.selected {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.card:not(.expanded) .body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.meta {
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.note {
+  min-width: 0;
+}
+
+.linked {
+  font-size: var(--text-xs);
+}
+
+.linked summary {
+  color: var(--ink-muted);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-1) 0;
+}
+
+.linked summary::-webkit-details-marker {
+  display: none;
+}
+
+.linked summary:hover {
+  color: var(--ink);
+}
+
+.linked button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.linked button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.linked button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

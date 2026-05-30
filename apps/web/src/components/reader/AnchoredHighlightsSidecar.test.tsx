@@ -83,12 +83,16 @@ function AnchoredHighlightsSidecarHarness({
   canQuoteToChat = true,
   onQuoteToNewChat = () => {},
   onQuoteToExtantChat = () => {},
+  linkedConversations,
+  onOpenConversation = () => {},
 }: {
   focusedId?: string | null;
   onFocusHighlight?: (highlightId: string) => void;
   canQuoteToChat?: boolean;
   onQuoteToNewChat?: (highlightId: string) => void;
   onQuoteToExtantChat?: (highlightId: string) => void;
+  linkedConversations?: NonNullable<AnchoredHighlightRow["linked_conversations"]>;
+  onOpenConversation?: (conversationId: string, title: string) => void;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -113,12 +117,15 @@ function AnchoredHighlightsSidecarHarness({
       <FeedbackProvider>
         <AnchoredHighlightsSidecar
           highlights={[
-            highlight(
-              "h1",
-              "Visible quote",
-              "Before visible context ",
-              " after visible context.",
-            ),
+            {
+              ...highlight(
+                "h1",
+                "Visible quote",
+                "Before visible context ",
+                " after visible context.",
+              ),
+              linked_conversations: linkedConversations ?? [],
+            },
             highlight(
               "h2",
               "Hidden quote",
@@ -145,7 +152,7 @@ function AnchoredHighlightsSidecarHarness({
             revision: 1,
           })}
           onNoteDelete={async () => {}}
-          onOpenConversation={() => {}}
+          onOpenConversation={onOpenConversation}
         />
       </FeedbackProvider>
     </div>
@@ -263,22 +270,34 @@ describe("AnchoredHighlightsSidecar", () => {
     expect(within(row).getByText("Before visible context")).toBeVisible();
     expect(within(row).getByText("Visible quote")).toBeVisible();
     expect(within(row).getByText("after visible context.")).toBeVisible();
-    expect(
-      within(row).queryByRole("button", { name: "Yellow (selected)" }),
-    ).toBeNull();
-    expect(
-      within(row).getByRole("button", {
-        name: "Quote highlight to new chat",
-      }),
-    ).toBeVisible();
-    expect(
-      within(row).getByRole("button", {
-        name: "Quote highlight to existing chat",
-      }),
-    ).toBeVisible();
     expect(within(row).getByRole("button", { name: "Actions" })).toBeVisible();
     expect(
       within(row).getByRole("textbox", { name: "Highlight note" }),
+    ).toBeVisible();
+  });
+
+  it("exposes highlight actions through the row action menu", async () => {
+    const user = userEvent.setup();
+    render(<AnchoredHighlightsSidecarHarness />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+
+    const menu = screen.getByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: "Quote to new chat" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Quote to existing chat" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Edit bounds" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("button", { name: "Yellow (selected)" }),
     ).toBeVisible();
   });
 
@@ -291,7 +310,7 @@ describe("AnchoredHighlightsSidecar", () => {
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
   });
 
-  it("quotes the highlight to a new or existing chat from the row buttons", async () => {
+  it("quotes the highlight to a new or existing chat from the action menu", async () => {
     const user = userEvent.setup();
     const onQuoteToNewChat = vi.fn();
     const onQuoteToExtantChat = vi.fn();
@@ -304,16 +323,20 @@ describe("AnchoredHighlightsSidecar", () => {
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
 
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
     await user.click(
-      within(row).getByRole("button", { name: "Quote highlight to new chat" }),
+      within(screen.getByRole("menu")).getByRole("menuitem", {
+        name: "Quote to new chat",
+      }),
     );
     expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
     expect(onQuoteToNewChat).toHaveBeenCalledWith("h1");
     expect(onQuoteToExtantChat).not.toHaveBeenCalled();
 
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
     await user.click(
-      within(row).getByRole("button", {
-        name: "Quote highlight to existing chat",
+      within(screen.getByRole("menu")).getByRole("menuitem", {
+        name: "Quote to existing chat",
       }),
     );
     expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
@@ -321,18 +344,41 @@ describe("AnchoredHighlightsSidecar", () => {
     expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
   });
 
-  it("hides the quote-to-chat buttons when quoting is disabled", async () => {
+  it("hides the quote-to-chat options when quoting is disabled", async () => {
+    const user = userEvent.setup();
     render(<AnchoredHighlightsSidecarHarness canQuoteToChat={false} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+
+    const menu = screen.getByRole("menu");
     expect(
-      within(row).queryByRole("button", { name: "Quote highlight to new chat" }),
+      within(menu).queryByRole("menuitem", { name: "Quote to new chat" }),
     ).toBeNull();
     expect(
-      within(row).queryByRole("button", {
-        name: "Quote highlight to existing chat",
-      }),
+      within(menu).queryByRole("menuitem", { name: "Quote to existing chat" }),
     ).toBeNull();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
+  });
+
+  it("opens a linked conversation from the card disclosure", async () => {
+    const user = userEvent.setup();
+    const onOpenConversation = vi.fn();
+    render(
+      <AnchoredHighlightsSidecarHarness
+        linkedConversations={[
+          { conversation_id: "c1", title: "Linked chat" },
+        ]}
+        onOpenConversation={onOpenConversation}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByText("1 linked"));
+    await user.click(within(row).getByRole("button", { name: "Linked chat" }));
+    expect(onOpenConversation).toHaveBeenCalledWith("c1", "Linked chat");
   });
 
   it("keeps the note editor key stable after a first linked-note save", async () => {
