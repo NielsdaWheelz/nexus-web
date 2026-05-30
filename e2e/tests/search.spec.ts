@@ -1,6 +1,17 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface NonPdfSeed {
   media_id: string;
@@ -32,10 +43,17 @@ const RESULT_TYPE_LABELS = [
   "Authors",
   "Media",
   "Podcasts",
+  "Episodes",
+  "Videos",
   "Evidence",
+  "Fragments",
   "Pages",
   "Notes",
+  "Highlights",
   "Messages",
+  "Evidence spans",
+  "Conversations",
+  "Web",
 ];
 
 function readSeed<T>(name: SeedName): T {
@@ -48,21 +66,38 @@ function escapeRegExp(value: string): string {
 }
 
 function submitSearch(page: Page): Locator {
-  return page.getByRole("button", { name: "Search", exact: true });
+  return activeWorkspacePane(page).getByRole("button", {
+    name: "Search",
+    exact: true,
+  });
 }
 
-async function searchFor(page: Page, query: string): Promise<void> {
-  await page.goto("/search");
-  const searchInput = page.getByPlaceholder("Search your Nexus content...");
+async function searchFor(
+  page: Page,
+  testInfo: TestInfo,
+  query: string,
+): Promise<void> {
+  await gotoSinglePaneWorkspace(
+    page,
+    workspaceE2eDeviceId(testInfo, "e2e-search"),
+    "/search",
+  );
+  const searchPane = activeWorkspacePane(page);
+  const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
   await submitSearch(page).click();
 }
 
 async function setOnlyContentChunkFilter(page: Page): Promise<void> {
-  const resultTypes = page.getByRole("group", { name: "Result types" });
+  const resultTypes = activeWorkspacePane(page).getByRole("group", {
+    name: "Result types",
+  });
   for (const label of RESULT_TYPE_LABELS) {
-    const checkbox = resultTypes.getByRole("checkbox", { name: label });
+    const checkbox = resultTypes.getByRole("checkbox", {
+      name: label,
+      exact: true,
+    });
     if ((await checkbox.count()) === 0) {
       continue;
     }
@@ -76,6 +111,7 @@ async function setOnlyContentChunkFilter(page: Page): Promise<void> {
 
 async function clickCitationResult(
   page: Page,
+  testInfo: TestInfo,
   {
     mediaId,
     query,
@@ -86,62 +122,80 @@ async function clickCitationResult(
     resultText?: RegExp;
   }
 ): Promise<URL> {
-  await page.goto("/search");
+  await gotoSinglePaneWorkspace(
+    page,
+    workspaceE2eDeviceId(testInfo, "e2e-search"),
+    "/search",
+  );
   await setOnlyContentChunkFilter(page);
 
-  const searchInput = page.getByPlaceholder("Search your Nexus content...");
+  const searchPane = activeWorkspacePane(page);
+  const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
   await submitSearch(page).click();
 
-  const citationLink = page
-    .locator(`a[href^="/media/${mediaId}"][href*="evidence="]`)
+  const citationLink = searchPane
+    .locator(`a[href*="/media/${mediaId}#evidence-"]`)
     .first();
   await expect(citationLink).toBeVisible({ timeout: 15_000 });
   await expect(citationLink).toContainText(resultText ?? new RegExp(escapeRegExp(query), "i"));
 
   await citationLink.click();
-  await expect(page).toHaveURL(new RegExp(`/media/${escapeRegExp(mediaId)}\\?`));
+  await expect(page).toHaveURL(new RegExp(`/media/${escapeRegExp(mediaId)}#evidence-`));
 
   const url = new URL(page.url());
   expect(url.pathname).toBe(`/media/${mediaId}`);
-  expect(url.searchParams.get("evidence")).toBeTruthy();
+  expect(url.hash).toMatch(/^#evidence-/);
   return url;
 }
 
 async function expectVisibleEvidenceHighlight(page: Page, expectedText: string): Promise<void> {
+  const activePane = activeWorkspacePane(page);
   await expect(
-    page.locator('[data-highlight-anchor^="evidence-"]').first()
+    activePane.locator('[data-highlight-anchor^="evidence-"]').first()
   ).toBeAttached({ timeout: 15_000 });
-  await expect(page.locator(".hl-evidence").first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(new RegExp(escapeRegExp(expectedText), "i")).first()).toBeVisible();
+  await expect(activePane.locator(".hl-evidence").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    activePane.getByText(new RegExp(escapeRegExp(expectedText), "i")).first()
+  ).toBeVisible();
 }
 
 test.describe("search", () => {
-  test("search returns results", async ({ page }) => {
+  test("search returns results", async ({ page }, testInfo) => {
     const seed = readSeed<NonPdfSeed>("non-pdf-media.json");
 
-    await searchFor(page, seed.quote_exact);
+    await searchFor(page, testInfo, seed.quote_exact);
 
-    await expect(page.locator("a[href^='/media/']").first()).toBeVisible({
+    await expect(activeWorkspacePane(page).locator("a[href^='/media/']").first()).toBeVisible({
       timeout: 10_000,
     });
   });
 
-  test("no-results behavior", async ({ page }) => {
-    await searchFor(page, "xyznonexistent12345");
+  test("no-results behavior", async ({ page }, testInfo) => {
+    await searchFor(page, testInfo, "xyznonexistent12345");
 
-    await expect(page.getByText("No results found.")).toBeVisible();
+    await expect(activeWorkspacePane(page).getByText("No results found.")).toBeVisible();
   });
 
-  test("explicit empty type filters return no results", async ({ page }) => {
-    await page.goto("/search");
-    const searchInput = page.getByPlaceholder("Search your Nexus content...");
+  test("explicit empty type filters return no results", async ({ page }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-search"),
+      "/search",
+    );
+    const searchPane = activeWorkspacePane(page);
+    const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
     await expect(searchInput).toBeVisible();
 
-    const resultTypes = page.getByRole("group", { name: "Result types" });
+    const resultTypes = searchPane.getByRole("group", { name: "Result types" });
     for (const label of RESULT_TYPE_LABELS) {
-      const checkbox = resultTypes.getByRole("checkbox", { name: label });
+      const checkbox = resultTypes.getByRole("checkbox", {
+        name: label,
+        exact: true,
+      });
       if ((await checkbox.count()) > 0) {
         await checkbox.uncheck();
       }
@@ -150,78 +204,89 @@ test.describe("search", () => {
     await searchInput.fill("e2e non-pdf");
     await submitSearch(page).click();
 
-    await expect(page.getByText("No results found.")).toBeVisible();
+    await expect(searchPane.getByText("No results found.")).toBeVisible();
   });
 
-  test("note rows surface quote context before metadata", async ({ page }) => {
+  test("note rows surface quote context before metadata", async ({ page }, testInfo) => {
     const seed = readSeed<NonPdfSeed>("non-pdf-media.json");
 
-    await searchFor(page, "seeded note for non-pdf linked-items e2e");
+    await searchFor(page, testInfo, "seeded note for non-pdf linked-items e2e");
 
     await expect(
-      page.getByRole("link", { name: new RegExp(escapeRegExp(seed.quote_exact), "i") }).first()
+      activeWorkspacePane(page)
+        .getByRole("link", { name: new RegExp(escapeRegExp(seed.quote_exact), "i") })
+        .first()
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("web citation search result opens the evidence highlight", async ({ page }) => {
+  test("web citation search result opens the evidence highlight", async ({
+    page,
+  }, testInfo) => {
     const seed = readSeed<NonPdfSeed>("non-pdf-media.json");
 
-    const url = await clickCitationResult(page, {
+    const url = await clickCitationResult(page, testInfo, {
       mediaId: seed.media_id,
       query: seed.quote_exact,
     });
 
-    expect(url.searchParams.get("fragment")).toBeTruthy();
+    expect(url.hash).toMatch(/^#evidence-/);
     await expectVisibleEvidenceHighlight(page, seed.quote_exact);
   });
 
-  test("EPUB citation search result opens the evidence highlight", async ({ page }) => {
+  test("EPUB citation search result opens the evidence highlight", async ({
+    page,
+  }, testInfo) => {
     const seed = readSeed<EpubSeed>("epub-media.json");
     const query = "Anchor target landing paragraph";
 
-    const url = await clickCitationResult(page, {
+    const url = await clickCitationResult(page, testInfo, {
       mediaId: seed.media_id,
       query,
       resultText: /Anchor target landing/i,
     });
 
-    expect(url.searchParams.get("loc") ?? url.searchParams.get("fragment")).toBeTruthy();
+    expect(url.hash).toMatch(/^#evidence-/);
     await expectVisibleEvidenceHighlight(page, query);
-    await expect(page.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible();
+    await expect(
+      activeWorkspacePane(page).getByRole("heading", {
+        name: seed.toc_anchor_heading,
+      })
+    ).toBeVisible();
   });
 
-  test("PDF citation search result opens the cited page", async ({ page }) => {
+  test("PDF citation search result opens the cited page", async ({ page }, testInfo) => {
     const seed = readSeed<PdfSeed>("pdf-media.json");
     const query = "This file is generated";
 
-    const url = await clickCitationResult(page, {
+    const url = await clickCitationResult(page, testInfo, {
       mediaId: seed.media_id,
       query,
       resultText: /generated by/i,
     });
 
-    const pageNumber = url.searchParams.get("page");
-    expect(pageNumber).toBeTruthy();
-    await expect(page.getByTestId(`pdf-page-surface-${pageNumber}`)).toBeVisible({
+    expect(url.hash).toMatch(/^#evidence-/);
+    const activePane = activeWorkspacePane(page);
+    await expect(activePane.getByText(/E2E PDF signed-url expiry seed/i).first()).toBeVisible({
       timeout: 20_000,
     });
-    await expect(page.getByText(/E2E PDF signed-url expiry seed/i).first()).toBeVisible();
   });
 
   test("YouTube transcript citation search result opens and seeks to evidence", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeed<YoutubeSeed>("youtube-media.json");
 
-    const url = await clickCitationResult(page, {
+    const url = await clickCitationResult(page, testInfo, {
       mediaId: seed.media_id,
       query: seed.seek_segment_text,
     });
 
-    expect(url.searchParams.get("t_start_ms")).toBe(String(seed.seek_segment_start_ms));
+    expect(url.hash).toMatch(/^#evidence-/);
     await expectVisibleEvidenceHighlight(page, seed.seek_segment_text.replace(/\.$/, ""));
 
-    const playerFrame = page.locator('iframe[title="YouTube video player"]');
+    const playerFrame = activeWorkspacePane(page).locator(
+      'iframe[title="YouTube video player"]'
+    );
     await expect(playerFrame).toBeVisible();
     await expect
       .poll(async () => (await playerFrame.getAttribute("src")) ?? "", { timeout: 10_000 })

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
-  EMAIL_CHANGE_SUCCESS_MESSAGE,
+  EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
   EMAIL_IN_USE_MESSAGE,
 } from "@/lib/auth/messages";
 
@@ -33,7 +33,9 @@ import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 describe("SettingsAccountPaneBody", () => {
   it("renders the Email and Display name forms with the initial email prop and the loaded display name", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({ data: { display_name: "Ada Lovelace" } });
+    apiFetch.mockResolvedValue({
+      data: { email: "ada@example.com", display_name: "Ada Lovelace" },
+    });
 
     render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
 
@@ -56,7 +58,9 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows a success notice when the email-change action resolves ok", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({ data: { display_name: "Ada" } });
+    apiFetch.mockResolvedValue({
+      data: { email: "ada@example.com", display_name: "Ada" },
+    });
     changeEmailAction.mockReset();
     changeEmailAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
@@ -70,7 +74,7 @@ describe("SettingsAccountPaneBody", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(EMAIL_CHANGE_SUCCESS_MESSAGE)
+        screen.getByText(EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE)
       ).toBeInTheDocument();
     });
     expect(changeEmailAction).toHaveBeenCalledWith({
@@ -80,7 +84,9 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows the action's error notice when the email-change action returns ok=false", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({ data: { display_name: "Ada" } });
+    apiFetch.mockResolvedValue({
+      data: { email: "ada@example.com", display_name: "Ada" },
+    });
     changeEmailAction.mockReset();
     changeEmailAction.mockResolvedValue({
       ok: false,
@@ -102,8 +108,12 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows a success notice when the display-name PATCH resolves ok", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValueOnce({ data: { display_name: "Ada" } });
-    apiFetch.mockResolvedValueOnce({ data: { display_name: "Ada New" } });
+    apiFetch.mockResolvedValueOnce({
+      data: { email: "ada@example.com", display_name: "Ada" },
+    });
+    apiFetch.mockResolvedValueOnce({
+      data: { email: "ada@example.com", display_name: "Ada New" },
+    });
     const user = userEvent.setup();
 
     render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
@@ -128,7 +138,9 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows the failure message when the display-name PATCH rejects", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValueOnce({ data: { display_name: "Ada" } });
+    apiFetch.mockResolvedValueOnce({
+      data: { email: "ada@example.com", display_name: "Ada" },
+    });
     apiFetch.mockRejectedValueOnce(new Error("patch failed"));
     const user = userEvent.setup();
 

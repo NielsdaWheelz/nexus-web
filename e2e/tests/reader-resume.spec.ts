@@ -1,6 +1,18 @@
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
+import { stateChangingApiHeaders } from "./api";
 
 interface ReaderResumeSeed {
   web_media_id: string;
@@ -109,7 +121,10 @@ async function patchReaderProfile(
   request: APIRequestContext,
   data: Partial<ReaderProfileResponse["data"]>
 ): Promise<void> {
-  const response = await request.patch("/api/me/reader-profile", { data });
+  const response = await request.patch("/api/me/reader-profile", {
+    data,
+    headers: stateChangingApiHeaders(),
+  });
   expect(response.ok()).toBeTruthy();
 }
 
@@ -130,6 +145,7 @@ async function putReaderState(
 ): Promise<void> {
   const response = await request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
+    headers: stateChangingApiHeaders(),
   });
   expect(response.ok()).toBeTruthy();
 }
@@ -175,6 +191,10 @@ function isPdfReaderResumeState(
   return state?.kind === "pdf";
 }
 
+function readerResumeDeviceId(testInfo: TestInfo): string {
+  return workspaceE2eDeviceId(testInfo, "e2e-reader-resume");
+}
+
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return pdfControlsToolbar(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
@@ -182,7 +202,7 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
 }
 
 function pdfControlsToolbar(page: Page) {
-  return page.getByRole("toolbar", { name: "PDF controls" }).first();
+  return activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" }).first();
 }
 
 async function clickPdfControl(page: Page, ariaLabel: string): Promise<void> {
@@ -210,7 +230,9 @@ async function clickPdfControl(page: Page, ariaLabel: string): Promise<void> {
 }
 
 async function readRenderedPageScale(page: Page, pageNumber: number): Promise<number | null> {
-  const pageSurface = page.locator(`[data-testid="pdf-page-surface-${pageNumber}"]`).first();
+  const pageSurface = activeWorkspacePane(page)
+    .locator(`[data-testid="pdf-page-surface-${pageNumber}"]`)
+    .first();
   await expect(pageSurface).toBeVisible();
   const raw = await pageSurface.getAttribute("data-nexus-page-scale");
   const parsed = Number.parseFloat(raw ?? "");
@@ -220,13 +242,17 @@ async function readRenderedPageScale(page: Page, pageNumber: number): Promise<nu
 test.describe("reader settings + resume", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("reader settings persist and survive reload", async ({ page }) => {
+  test("reader settings persist and survive reload", async ({ page }, testInfo) => {
     const baseline = await fetchReaderProfile(page.request);
     const targetTheme = baseline.theme === "light" ? "dark" : "light";
 
     try {
-      await page.goto("/settings/reader");
-      const themeSelect = page.locator("#theme");
+      await gotoSinglePaneWorkspace(
+        page,
+        readerResumeDeviceId(testInfo),
+        "/settings/reader",
+      );
+      const themeSelect = activeWorkspacePane(page).locator("#theme");
       await expect(themeSelect).toBeVisible();
 
       await themeSelect.selectOption(targetTheme);
@@ -243,7 +269,9 @@ test.describe("reader settings + resume", () => {
     }
   });
 
-  test("web article resumes from canonical text locator after reflow", async ({ page }) => {
+  test("web article resumes from canonical text locator after reflow", async ({
+    page,
+  }, testInfo) => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.web_media_id;
     const baseline = await fetchReaderProfile(page.request);
@@ -251,12 +279,17 @@ test.describe("reader settings + resume", () => {
 
     try {
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.goto(`/media/${mediaId}`);
-      await expect(page.getByText("reader resume paragraph 001")).toBeVisible({
+      await gotoSinglePaneWorkspace(
+        page,
+        readerResumeDeviceId(testInfo),
+        `/media/${mediaId}`,
+      );
+      const activePane = activeWorkspacePane(page);
+      await expect(activePane.getByText("reader resume paragraph 001")).toBeVisible({
         timeout: 15_000,
       });
 
-      const anchor = page.getByText(seed.web_anchor_text).first();
+      const anchor = activePane.getByText(seed.web_anchor_text).first();
       await anchor.scrollIntoViewIfNeeded();
 
       await expect
@@ -280,7 +313,7 @@ test.describe("reader settings + resume", () => {
         timeout: 15_000,
       });
       await expect(anchor).toBeInViewport();
-      const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+      const chrome = activePane.locator('[data-testid="pane-shell-chrome"]').first();
       await expect(chrome).toBeVisible();
       const anchorBox = await anchor.boundingBox();
       const chromeBox = await chrome.boundingBox();
@@ -290,7 +323,7 @@ test.describe("reader settings + resume", () => {
         expect(anchorBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
       }
 
-      const documentViewport = page.getByTestId("document-viewport");
+      const documentViewport = activePane.getByTestId("document-viewport");
       await documentViewport.evaluate((element) => {
         if (!(element instanceof HTMLElement)) {
           return;
@@ -298,7 +331,7 @@ test.describe("reader settings + resume", () => {
         element.scrollTop = 0;
         element.dispatchEvent(new Event("scroll", { bubbles: true }));
       });
-      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+      await expect(activePane.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
         "data-mobile-chrome-hidden",
         "false"
       );
@@ -319,7 +352,7 @@ test.describe("reader settings + resume", () => {
         element.scrollTop = scrollTop;
         element.dispatchEvent(new Event("scroll", { bubbles: true }));
       }, chromeHeight + 40);
-      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+      await expect(activePane.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
         "data-mobile-chrome-hidden",
         "true"
       );
@@ -344,7 +377,7 @@ test.describe("reader settings + resume", () => {
         element.scrollTop = scrollTop;
         element.dispatchEvent(new Event("scroll", { bubbles: true }));
       }, chromeHeight + 18);
-      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+      await expect(activePane.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
         "data-mobile-chrome-hidden",
         "false"
       );
@@ -355,7 +388,7 @@ test.describe("reader settings + resume", () => {
     }
   });
 
-  test("epub section locator resumes after reload", async ({ page }) => {
+  test("epub section locator resumes after reload", async ({ page }, testInfo) => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.epub_media_id;
     const chapterTwo = seed.epub_chapter_titles[1];
@@ -365,11 +398,18 @@ test.describe("reader settings + resume", () => {
       chapterTwo
     );
 
-    await page.goto(`/media/${mediaId}`);
-    const sectionSelect = page.getByLabel("Select section");
+    await gotoSinglePaneWorkspace(
+      page,
+      readerResumeDeviceId(testInfo),
+      `/media/${mediaId}`,
+    );
+    const activePane = activeWorkspacePane(page);
+    const sectionSelect = activePane.getByLabel("Select section");
     await expect(sectionSelect).toBeVisible();
     await sectionSelect.selectOption({ label: chapterTwo });
-    await expect(page.getByRole("heading", { name: chapterTwo })).toBeVisible({ timeout: 10_000 });
+    await expect(activePane.getByRole("heading", { name: chapterTwo })).toBeVisible({
+      timeout: 10_000,
+    });
 
     await expect
       .poll(async () => {
@@ -390,10 +430,12 @@ test.describe("reader settings + resume", () => {
     });
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: chapterTwo })).toBeVisible({ timeout: 15_000 });
+    await expect(activeWorkspacePane(page).getByRole("heading", { name: chapterTwo })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
-  test("pdf locator resumes page and zoom after reload", async ({ page }) => {
+  test("pdf locator resumes page and zoom after reload", async ({ page }, testInfo) => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.pdf_media_id;
     const expectedPageCount = seed.pdf_page_count;
@@ -406,7 +448,11 @@ test.describe("reader settings + resume", () => {
       zoom: 1,
     });
 
-    await page.goto(`/media/${mediaId}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      readerResumeDeviceId(testInfo),
+      `/media/${mediaId}`,
+    );
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
 
     await clickPdfControl(page, "Next page");
@@ -450,7 +496,9 @@ test.describe("reader settings + resume", () => {
       .toBe(true);
   });
 
-  test("pdf page changes persist without reopening the document", async ({ page }) => {
+  test("pdf page changes persist without reopening the document", async ({
+    page,
+  }, testInfo) => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.pdf_media_id;
     const expectedPageCount = seed.pdf_page_count;
@@ -471,14 +519,18 @@ test.describe("reader settings + resume", () => {
       zoom: 1,
     });
 
-    await page.goto(`/media/${mediaId}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      readerResumeDeviceId(testInfo),
+      `/media/${mediaId}`,
+    );
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => fileRequestCount)
       .toBeGreaterThan(0);
     const initialFileRequestCount = fileRequestCount;
 
-    await page.getByRole("button", { name: "Next page" }).click();
+    await activeWorkspacePane(page).getByRole("button", { name: "Next page" }).click();
     await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 10_000 });
 
     await expect

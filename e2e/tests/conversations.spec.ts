@@ -3,8 +3,14 @@ import {
   seedBranchingConversation,
   seedScrollConversation,
 } from "./conversation-tree-seed";
+import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import { selectExactVisibleText } from "./selection";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -16,6 +22,7 @@ async function createConversationViaApi(page: Page) {
   await ensureAppContext(page);
   const createResponse = await page.request.post("/api/conversations", {
     maxRedirects: 0,
+    headers: stateChangingApiHeaders(),
   });
   const status = createResponse.status();
   const body = await createResponse.text();
@@ -45,6 +52,7 @@ async function deleteConversationViaApi(page: Page, conversationId: string) {
     try {
       const response = await page.request.delete(
         `/api/conversations/${conversationId}`,
+        { headers: stateChangingApiHeaders() },
       );
       if (!response.ok() && response.status() !== 404) {
         const body = await response.text();
@@ -88,7 +96,7 @@ async function selectTextInMessage(
 }
 
 async function openForksPanel(page: Page) {
-  await page
+  await activeWorkspacePane(page)
     .getByTestId("pane-shell-chrome")
     .getByRole("button", { name: "Options" })
     .click();
@@ -196,20 +204,27 @@ test.describe("conversations", () => {
 
   test("new chat docks the composer below the empty transcript", async ({
     page,
-  }) => {
-    await page.goto("/conversations/new");
+  }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-conversations-new"),
+      "/conversations/new",
+    );
 
-    const paneBody = page.getByTestId("pane-shell-body");
-    const scrollport = page.getByRole("region", { name: "Chat conversation" });
-    const composerDock = page.getByTestId("chat-composer-dock");
+    const activePane = activeWorkspacePane(page);
+    const paneBody = activePane.getByTestId("pane-shell-body");
+    const scrollport = activePane.getByRole("region", {
+      name: "Chat conversation",
+    });
+    const composerDock = activePane.getByTestId("chat-composer-dock");
 
     await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
     await expect(scrollport).toBeVisible();
     await expect(
-      page.getByRole("log", { name: "Chat messages" }),
+      activePane.getByRole("log", { name: "Chat messages" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("textbox", { name: "Ask anything" }),
+      activePane.getByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
     await expect(composerDock).toBeVisible();
     await expect
@@ -231,19 +246,26 @@ test.describe("conversations", () => {
 
   test("main chat pane owns message and composer scrolling", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = await seedScrollConversation(page, 50);
     const conversationId = seed.conversation_id;
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-scroll"),
+        `/conversations/${conversationId}`,
+      );
 
-      const paneBody = page.getByTestId("pane-shell-body");
-      const scrollport = page.getByRole("region", {
+      const activePane = activeWorkspacePane(page);
+      const paneBody = activePane.getByTestId("pane-shell-body");
+      const scrollport = activePane.getByRole("region", {
         name: "Chat conversation",
       });
-      const log = page.getByRole("log", { name: "Chat messages" });
-      const composerDock = page.getByTestId("chat-composer-dock");
-      const finalMessage = messageRow(page, seed.active_leaf_message_id);
+      const log = activePane.getByRole("log", { name: "Chat messages" });
+      const composerDock = activePane.getByTestId("chat-composer-dock");
+      const finalMessage = activePane.locator(
+        `[data-message-id="${seed.active_leaf_message_id}"]`,
+      );
 
       await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
       await expect(scrollport).toBeVisible();
@@ -304,7 +326,7 @@ test.describe("conversations", () => {
       const beforeComposerWheel = await scrollport.evaluate(
         (node) => node.scrollTop,
       );
-      await page.getByRole("textbox", { name: "Ask anything" }).hover();
+      await activePane.getByRole("textbox", { name: "Ask anything" }).hover();
       await page.mouse.wheel(0, -700);
       await expect
         .poll(async () => scrollport.evaluate((node) => node.scrollTop))
@@ -433,14 +455,25 @@ test.describe("conversations", () => {
       await panel
         .getByRole("textbox", { name: "Rename fork Quote branch" })
         .fill("Renamed quote fork");
+      const renameResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes(`/api/conversations/${conversationId}/forks/`) &&
+          response.request().method() === "PATCH",
+      );
       await panel
         .getByRole("button", { name: "Save fork Quote branch" })
         .click();
+      const renameResponse = await renameResponsePromise;
+      const renameBody = await renameResponse.text();
+      expect(
+        renameResponse.ok(),
+        `PATCH fork rename failed: status=${renameResponse.status()}; body=${renameBody.slice(0, 500)}`,
+      ).toBeTruthy();
       await expect(
         panel.getByRole("button", {
           name: "Switch to fork Renamed quote fork",
         }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 10_000 });
 
       await panel.getByRole("tab", { name: "Graph" }).click();
       await panel
@@ -489,7 +522,7 @@ test.describe("conversations", () => {
       await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
       await expect(page.getByTestId("mobile-secondary-host")).toHaveCount(0);
 
-      await page
+      await activeWorkspacePane(page)
         .getByTestId("pane-shell-chrome")
         .getByRole("button", { name: "Options" })
         .click();

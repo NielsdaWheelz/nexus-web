@@ -18,6 +18,7 @@ import {
   Palette,
   Search,
   Settings,
+  UserCog,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
 import DailyNotePaneBody from "@/app/(authenticated)/daily/DailyNotePaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
+import SettingsAccountPaneBody from "@/app/(authenticated)/settings/account/SettingsAccountPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
 import SettingsAppearancePaneBody from "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody";
@@ -186,6 +188,14 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
     getChrome: () => ({
       title: "Settings",
       subtitle: "Account-level controls and integration configuration.",
+    }),
+  },
+  settingsAccount: {
+    icon: UserCog,
+    render: () => <SettingsAccountPaneBody />,
+    getChrome: () => ({
+      title: "Account",
+      subtitle: "Email and profile settings for this account.",
     }),
   },
   settingsBilling: {

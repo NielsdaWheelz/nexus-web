@@ -50,7 +50,7 @@ test.describe("authentication", () => {
     }
   });
 
-  test("unauthenticated users are redirected to login with OAuth buttons and a preserved return path", async ({
+  test("unauthenticated users are redirected to login with password and OAuth controls plus a preserved return path", async ({
     browser,
   }) => {
     const context = await browser.newContext({
@@ -68,8 +68,11 @@ test.describe("authentication", () => {
     await expect(
       page.getByRole("button", { name: /continue with github/i })
     ).toBeVisible();
-    await expect(page.getByLabel(/email/i)).toHaveCount(0);
-    await expect(page.getByLabel(/password/i)).toHaveCount(0);
+    await expect(page.getByLabel(/email/i)).toBeVisible();
+    await expect(page.getByLabel(/password/i)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^continue$/i })
+    ).toBeVisible();
     await context.close();
   });
 

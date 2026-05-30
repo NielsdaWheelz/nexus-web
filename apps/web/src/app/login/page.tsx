@@ -8,6 +8,7 @@ import {
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
 import {
+  AUTH_ENDED_FEEDBACK_COOKIE,
   SESSION_ENDED_MESSAGE,
   toPublicAuthErrorMessage,
 } from "@/lib/auth/messages";
@@ -42,15 +43,20 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     DEFAULT_AUTH_REDIRECT
   );
 
-  const session = readSupabaseSessionCookie((await cookies()).getAll());
+  const cookieStore = await cookies();
+  const requestCookies = cookieStore.getAll();
+  const session = readSupabaseSessionCookie(requestCookies);
   if (session.state === "active") {
     redirect(nextPath);
   }
 
+  const sessionEndedFeedbackCookie =
+    cookieStore.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
   const initialFeedback = toInitialFeedback(
     toPublicAuthErrorMessage(
       getFirstSearchParamValue(params.error_description) ??
-        getFirstSearchParamValue(params.error)
+        getFirstSearchParamValue(params.error) ??
+        (sessionEndedFeedbackCookie ? SESSION_ENDED_MESSAGE : null)
     )
   );
 

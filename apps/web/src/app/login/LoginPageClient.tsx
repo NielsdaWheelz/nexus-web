@@ -153,7 +153,15 @@ export default function LoginPageClient({
           <FeedbackNotice severity="error" title={formError} />
         ) : null}
 
-        <form className={styles.form} onSubmit={handleSubmit}>
+        <form
+          aria-label={isCreate ? "Credential account creation" : "Credential sign in"}
+          className={styles.form}
+          method="post"
+          action="/auth/password"
+          onSubmit={handleSubmit}
+        >
+          <input type="hidden" name="mode" value={isCreate ? "create" : "signin"} />
+          <input type="hidden" name="next" value={nextPath} />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Email</span>
             <input

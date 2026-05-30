@@ -10,6 +10,7 @@ export const OAUTH_START_FAILURE_MESSAGE =
 // /auth/refresh route sets this exact string as the `error_description` it
 // redirects with.
 export const SESSION_ENDED_MESSAGE = "Your session ended. Please sign in again.";
+export const AUTH_ENDED_FEEDBACK_COOKIE = "nexus.auth-ended.v1";
 
 export const PASSWORD_SIGN_IN_FAILURE_MESSAGE = "Email or password is incorrect.";
 export const PASSWORD_SIGN_UP_FAILURE_MESSAGE = "We couldn't create your account. Please try again.";
@@ -22,7 +23,8 @@ export const PASSWORD_SET_SUCCESS_MESSAGE = "Password set.";
 export const PASSWORD_REMOVE_SUCCESS_MESSAGE = "Password removed.";
 export const EMAIL_CHANGE_FAILURE_MESSAGE = "We couldn't update your email. Please try again.";
 export const EMAIL_IN_USE_MESSAGE = "An account with that email already exists.";
-export const EMAIL_CHANGE_SUCCESS_MESSAGE = "Email updated.";
+export const EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE =
+  "Check your new email to confirm the change.";
 export const DISPLAY_NAME_CHANGE_FAILURE_MESSAGE = "We couldn't update your display name. Please try again.";
 export const DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE = "Display name updated.";
 export const KEEP_ONE_SIGN_IN_METHOD_MESSAGE = "Keep at least one sign-in method.";
@@ -110,8 +112,8 @@ export function toPublicAuthErrorMessage(
     return EMAIL_IN_USE_MESSAGE;
   }
 
-  if (trimmed === EMAIL_CHANGE_SUCCESS_MESSAGE) {
-    return EMAIL_CHANGE_SUCCESS_MESSAGE;
+  if (trimmed === EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE) {
+    return EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE;
   }
 
   if (trimmed === DISPLAY_NAME_CHANGE_FAILURE_MESSAGE) {

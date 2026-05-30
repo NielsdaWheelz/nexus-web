@@ -1,10 +1,17 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { stateChangingApiHeaders } from "./api";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 async function createLibraryViaUi(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   prefix: string
 ): Promise<{ id: string; name: string; role: string }> {
-  const nameInput = page.getByPlaceholder("New library name...");
+  const activePane = activeWorkspacePane(page);
+  const nameInput = activePane.getByPlaceholder("New library name...");
   await expect(nameInput).toBeVisible();
   const libraryName = `${prefix} ${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
   await nameInput.fill(libraryName);
@@ -14,7 +21,7 @@ async function createLibraryViaUi(
       response.request().method() === "POST" &&
       response.status() === 201
   );
-  await page.getByRole("button", { name: /^create$/i }).click();
+  await activePane.getByRole("button", { name: /^create$/i }).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok()).toBeTruthy();
   const payload = (await createResponse.json()) as {
@@ -25,8 +32,12 @@ async function createLibraryViaUi(
 }
 
 test.describe("libraries", () => {
-  test("create library", async ({ page }) => {
-    await page.goto("/libraries");
+  test("create library", async ({ page }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-libraries"),
+      "/libraries",
+    );
     let createdId: string | null = null;
     try {
       const created = await createLibraryViaUi(page, "Test Library");
@@ -37,26 +48,37 @@ test.describe("libraries", () => {
       expect(getResponse.ok()).toBeTruthy();
     } finally {
       if (createdId) {
-        await page.request.delete(`/api/libraries/${createdId}`);
+        await page.request.delete(`/api/libraries/${createdId}`, {
+          headers: stateChangingApiHeaders(),
+        });
       }
     }
   });
 
-  test("browse and select library", async ({ page }) => {
-    await page.goto("/libraries");
+  test("browse and select library", async ({ page }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-libraries"),
+      "/libraries",
+    );
+    const activePane = activeWorkspacePane(page);
     // The default library always exists — look for the default badge text.
-    const defaultBadge = page.getByText(/^default$/i);
+    const defaultBadge = activePane.getByText(/^default$/i);
     await expect(defaultBadge).toBeVisible();
     // Click the first library link to navigate to its detail page
-    const libraryLink = page.locator("a[href^='/libraries/']").first();
+    const libraryLink = activePane.locator("a[href^='/libraries/']").first();
     await expect(libraryLink).toBeVisible();
     await libraryLink.click();
     await expect(page).toHaveURL(/libraries\/.+/);
   });
 
-  test("membership management guardrail", async ({ page }) => {
+  test("membership management guardrail", async ({ page }, testInfo) => {
     // Create a non-default library so the Rename UI is visible
-    await page.goto("/libraries");
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-libraries"),
+      "/libraries",
+    );
     let createdId: string | null = null;
     try {
       const created = await createLibraryViaUi(page, "Mgmt Test");
@@ -70,13 +92,16 @@ test.describe("libraries", () => {
       const renamed = `${created.name} Renamed`;
       const renameResponse = await page.request.patch(`/api/libraries/${created.id}`, {
         data: { name: renamed },
+        headers: stateChangingApiHeaders(),
       });
       expect(renameResponse.ok()).toBeTruthy();
       const renamedPayload = (await renameResponse.json()) as { data: { name: string } };
       expect(renamedPayload.data.name).toBe(renamed);
     } finally {
       if (createdId) {
-        await page.request.delete(`/api/libraries/${createdId}`);
+        await page.request.delete(`/api/libraries/${createdId}`, {
+          headers: stateChangingApiHeaders(),
+        });
       }
     }
   });

@@ -89,7 +89,7 @@ def ingest_epub(
 
         assert isinstance(result, EpubExtractionResult)
 
-        _persist_epub_metadata(db, media, result)
+        persist_epub_metadata(db, media, result)
 
         media.processing_status = ProcessingStatus.ready_for_reading
         media.processing_completed_at = now
@@ -150,7 +150,7 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
         db.close()
 
 
-def _persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
+def persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
     """Persist EPUB OPF metadata to media and contributor credits."""
     if result.title:
         media.title = result.title

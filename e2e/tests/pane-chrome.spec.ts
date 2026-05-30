@@ -1,17 +1,16 @@
 import {
   test,
   expect,
+  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  makeWorkspacePane,
-  makeWorkspaceState,
-  pinDeviceId,
-  seedWorkspaceSession,
-  type WorkspaceState,
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
 } from "./workspace";
 
 interface SeededPdfMedia {
@@ -36,31 +35,26 @@ function readSeed<T>(seedFile: string): T {
 }
 
 function paneChromeDeviceId(testInfo: TestInfo): string {
-  const slug = testInfo.titlePath
-    .join("-")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 96);
-  return `e2e-pane-chrome-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
+  return workspaceE2eDeviceId(testInfo, "e2e-pane-chrome");
 }
 
-function trivialWorkspaceSession(): WorkspaceState {
-  return makeWorkspaceState(
-    [
-      makeWorkspacePane("pane-chrome-default", "/libraries", {
-        primaryWidthPx: 480,
-      }),
-    ],
-    { activePrimaryPaneId: "pane-chrome-default" },
-  );
+async function gotoPaneChromePath(
+  page: Page,
+  testInfo: TestInfo,
+  href: string,
+): Promise<Locator> {
+  await gotoSinglePaneWorkspace(page, paneChromeDeviceId(testInfo), href, {
+    paneId: "pane-chrome-default",
+    primaryWidthPx: 480,
+  });
+  return activeWorkspacePane(page);
 }
 
 async function useMobileViewport(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
 }
 
-async function setScrollTop(locator: ReturnType<Page["locator"]>, scrollTop: number): Promise<void> {
+async function setScrollTop(locator: Locator, scrollTop: number): Promise<void> {
   await locator.evaluate((element, nextTop) => {
     if (!(element instanceof HTMLElement)) {
       return;
@@ -71,7 +65,7 @@ async function setScrollTop(locator: ReturnType<Page["locator"]>, scrollTop: num
 }
 
 async function expectScrollTop(
-  locator: ReturnType<Page["locator"]>,
+  locator: Locator,
   scrollTop: number
 ): Promise<void> {
   await expect.poll(() => locator.evaluate((element) => (element as HTMLElement).scrollTop)).toBe(
@@ -81,14 +75,14 @@ async function expectScrollTop(
 
 async function paneChromeHeight(page: Page): Promise<number> {
   return Math.ceil(
-    await page.getByTestId("pane-shell-chrome").evaluate((element) =>
+    await activeWorkspacePane(page).getByTestId("pane-shell-chrome").evaluate((element) =>
       element.getBoundingClientRect().height
     )
   );
 }
 
 function paneShell(page: Page) {
-  return page.locator('[data-pane-shell="true"]').first();
+  return activeWorkspacePane(page).locator('[data-pane-shell="true"]').first();
 }
 
 async function expectPaneChromeHidden(page: Page, hidden: boolean): Promise<void> {
@@ -102,7 +96,7 @@ async function expectToolbarToFitPaneChrome(
   page: Page,
   toolbarLabel: "PDF controls" | "EPUB controls",
 ): Promise<void> {
-  const toolbar = page.getByRole("toolbar", { name: toolbarLabel });
+  const toolbar = activeWorkspacePane(page).getByRole("toolbar", { name: toolbarLabel });
   await expect(toolbar).toBeVisible();
   const fits = await toolbar.evaluate((element) => {
     const chrome = element.closest<HTMLElement>('[data-testid="pane-shell-chrome"]');
@@ -121,20 +115,14 @@ async function expectToolbarToFitPaneChrome(
 }
 
 test.describe("pane chrome", () => {
-  test.beforeEach(async ({ page }, testInfo) => {
-    const deviceId = paneChromeDeviceId(testInfo);
-    await pinDeviceId(page, deviceId);
-    await seedWorkspaceSession(page.request, deviceId, trivialWorkspaceSession());
-  });
-
   test("mobile document panes keep scroll position stable while chrome hides and reveals deliberately", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await useMobileViewport(page);
 
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
-    await page.goto(`/media/${nonPdfSeed.media_id}`);
-    const documentViewport = page.getByTestId("document-viewport");
+    const activePane = await gotoPaneChromePath(page, testInfo, `/media/${nonPdfSeed.media_id}`);
+    const documentViewport = activePane.getByTestId("document-viewport");
     await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() =>
@@ -176,16 +164,16 @@ test.describe("pane chrome", () => {
 
   test("mobile PDF panes use the PDF scroller as the chrome visibility owner", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await useMobileViewport(page);
     await page.emulateMedia({ reducedMotion: "no-preference" });
 
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
-    await page.goto(`/media/${pdfSeed.media_id}`);
-    const pdfViewport = page.getByLabel("PDF document");
+    const activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    const pdfViewport = activePane.getByLabel("PDF document");
     await expect(pdfViewport).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
-    await expect(page.locator('[data-testid^="pdf-page-surface-"]').first()).toBeVisible({
+    await expect(activePane.getByRole("button", { name: "Next page" })).toBeVisible();
+    await expect(activePane.locator('[data-testid^="pdf-page-surface-"]').first()).toBeVisible({
       timeout: 20_000,
     });
     await expect
@@ -209,13 +197,15 @@ test.describe("pane chrome", () => {
     await expectPaneChromeHidden(page, false);
   });
 
-  test("mobile reduced-motion keeps document chrome pinned visible", async ({ page }) => {
+  test("mobile reduced-motion keeps document chrome pinned visible", async ({
+    page,
+  }, testInfo) => {
     await useMobileViewport(page);
     await page.emulateMedia({ reducedMotion: "reduce" });
 
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
-    await page.goto(`/media/${nonPdfSeed.media_id}`);
-    const documentViewport = page.getByTestId("document-viewport");
+    let activePane = await gotoPaneChromePath(page, testInfo, `/media/${nonPdfSeed.media_id}`);
+    const documentViewport = activePane.getByTestId("document-viewport");
     await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() =>
@@ -228,11 +218,11 @@ test.describe("pane chrome", () => {
     await expectScrollTop(documentViewport, nonPdfChromeHeight + 40);
 
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
-    await page.goto(`/media/${pdfSeed.media_id}`);
-    const pdfViewport = page.getByLabel("PDF document");
+    activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    const pdfViewport = activePane.getByLabel("PDF document");
     await expect(pdfViewport).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
-    await expect(page.locator('[data-testid^="pdf-page-surface-"]').first()).toBeVisible({
+    await expect(activePane.getByRole("button", { name: "Next page" })).toBeVisible();
+    await expect(activePane.locator('[data-testid^="pdf-page-surface-"]').first()).toBeVisible({
       timeout: 20_000,
     });
     await expect
@@ -249,57 +239,61 @@ test.describe("pane chrome", () => {
     await expectScrollTop(pdfViewport, pdfChromeHeight + 40);
   });
 
-  test("shows page/chapter navigation only for supported media kinds", async ({ page }) => {
+  test("shows page/chapter navigation only for supported media kinds", async ({
+    page,
+  }, testInfo) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
     const readerResumeSeed = readSeed<SeededReaderResumeMedia>("reader-resume-media.json");
     const youtubeSeed = readSeed<SeededYoutubeMedia>("youtube-media.json");
 
-    await page.goto(`/media/${pdfSeed.media_id}`);
-    await expect(page.getByRole("button", { name: "Previous page" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
+    let activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    await expect(activePane.getByRole("button", { name: "Previous page" })).toBeVisible();
+    await expect(activePane.getByRole("button", { name: "Next page" })).toBeVisible();
     await expect(
-      page.locator('[aria-label^="Page "][aria-label*=" of "]').first()
+      activePane.locator('[aria-label^="Page "][aria-label*=" of "]').first()
     ).toBeVisible();
 
-    await page.goto(`/media/${readerResumeSeed.epub_media_id}`);
-    await expect(page.getByRole("button", { name: "Previous section" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next section" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Previous page" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Next page" })).toHaveCount(0);
+    activePane = await gotoPaneChromePath(page, testInfo, `/media/${readerResumeSeed.epub_media_id}`);
+    await expect(activePane.getByRole("button", { name: "Previous section" })).toBeVisible();
+    await expect(activePane.getByRole("button", { name: "Next section" })).toBeVisible();
+    await expect(activePane.getByRole("button", { name: "Previous page" })).toHaveCount(0);
+    await expect(activePane.getByRole("button", { name: "Next page" })).toHaveCount(0);
 
-    await page.goto(`/media/${youtubeSeed.media_id}`);
-    await expect(page.getByRole("button", { name: "Previous page" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Next page" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Previous section" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Next section" })).toHaveCount(0);
+    activePane = await gotoPaneChromePath(page, testInfo, `/media/${youtubeSeed.media_id}`);
+    await expect(activePane.getByRole("button", { name: "Previous page" })).toHaveCount(0);
+    await expect(activePane.getByRole("button", { name: "Next page" })).toHaveCount(0);
+    await expect(activePane.getByRole("button", { name: "Previous section" })).toHaveCount(0);
+    await expect(activePane.getByRole("button", { name: "Next section" })).toHaveCount(0);
   });
 
-  test("clears reader toolbar when same-pane navigation leaves media", async ({ page }) => {
+  test("clears reader toolbar when same-pane navigation leaves media", async ({
+    page,
+  }, testInfo) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
 
-    await page.goto(`/media/${pdfSeed.media_id}`);
-    await expect(page.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
+    const activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
 
-    await page.getByRole("link", { name: "Search" }).click();
+    await page.locator("nav").getByRole("link", { name: "Search" }).click();
 
     await expect(page).toHaveURL(/\/search/);
-    await expect(page.getByRole("toolbar", { name: "PDF controls" })).toHaveCount(0);
+    await expect(activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" })).toHaveCount(0);
   });
 
-  test("keeps reader toolbar inside a narrow pane", async ({ page }) => {
+  test("keeps reader toolbar inside a narrow pane", async ({ page }, testInfo) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
     const readerResumeSeed = readSeed<SeededReaderResumeMedia>(
       "reader-resume-media.json",
     );
 
-    await page.goto(`/media/${pdfSeed.media_id}`);
+    let activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
     const paneResizeHandle = page
       .getByRole("separator", { name: /^Resize pane / })
       .first();
     await paneResizeHandle.focus();
     await paneResizeHandle.press("End");
 
-    const pdfToolbar = page.getByRole("toolbar", { name: "PDF controls" });
+    const pdfToolbar = activePane.getByRole("toolbar", { name: "PDF controls" });
     await expect(
       pdfToolbar.getByRole("button", { name: "Previous page" }),
     ).toBeVisible();
@@ -314,8 +308,8 @@ test.describe("pane chrome", () => {
     ).toBeVisible();
     await expectToolbarToFitPaneChrome(page, "PDF controls");
 
-    await page.goto(`/media/${readerResumeSeed.epub_media_id}`);
-    const epubToolbar = page.getByRole("toolbar", { name: "EPUB controls" });
+    activePane = await gotoPaneChromePath(page, testInfo, `/media/${readerResumeSeed.epub_media_id}`);
+    const epubToolbar = activePane.getByRole("toolbar", { name: "EPUB controls" });
     await expect(
       epubToolbar.getByRole("button", { name: "Previous section" }),
     ).toBeVisible();

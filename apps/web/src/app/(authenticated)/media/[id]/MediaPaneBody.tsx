@@ -77,6 +77,7 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   usePaneParam,
+  usePaneSearchParams,
   useSetPaneTitle,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -160,6 +161,7 @@ import ContributorCreditList from "@/components/contributors/ContributorCreditLi
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
+  buildEpubLocationHref,
   type NavigationTocNodeLike,
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
@@ -297,8 +299,6 @@ interface EpubSectionContent {
 }
 
 interface PdfHighlightsPaneState {
-  activePage: number;
-  highlights: PdfHighlightOut[];
   version: number;
 }
 
@@ -330,8 +330,6 @@ const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
 
 const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
-  activePage: 1,
-  highlights: [],
   version: 0,
 };
 
@@ -407,6 +405,7 @@ export default function MediaPaneBody({
     throw new Error("media route requires an id");
   }
 
+  const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
   const paneMobileChrome = usePaneMobileChromeController();
   const {
@@ -417,12 +416,20 @@ export default function MediaPaneBody({
     clearTarget,
   } = useReaderTarget(id);
   const requestedFragmentId =
-    target?.kind === "fragment" ? target.value : null;
+    target?.kind === "fragment"
+      ? target.value
+      : (paneSearchParams.get("fragment")?.trim() || null);
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
   const requestedEvidenceId =
     target?.kind === "evidence" ? target.value : null;
-  const requestedReaderLoc = target?.kind === "loc" ? target.value : null;
+  const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
+  const requestedReaderLoc =
+    target?.kind === "loc"
+      ? target.value
+      : requestedLocParam.length > 0
+        ? requestedLocParam
+        : null;
   const requestedPdfPageNumber =
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
@@ -663,7 +670,10 @@ export default function MediaPaneBody({
   const [secondaryChat, setSecondaryChat] = useState<{
     conversationId: string | null;
     quoteUri: string | null;
+    quoteLabel: string | null;
   } | null>(null);
+  const docChatSurfaceActivatedRef = useRef(false);
+  const appliedRequestedReaderLocRef = useRef<string | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -1412,9 +1422,18 @@ export default function MediaPaneBody({
   useEffect(() => {
     if (!isEpub || !epubSections || epubSections.length === 0) return;
     const locParam = activeRequestedReaderLoc;
-    if (!locParam || locParam === activeSectionId) return;
+    if (!locParam) {
+      appliedRequestedReaderLocRef.current = null;
+      return;
+    }
+    if (locParam === activeSectionId) {
+      appliedRequestedReaderLocRef.current = locParam;
+      return;
+    }
+    if (appliedRequestedReaderLocRef.current === locParam) return;
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
+    appliedRequestedReaderLocRef.current = locParam;
     beginRestoreSession("opening_target");
     setActiveSectionId(section.section_id);
     setEpubRestoreRequest(
@@ -1437,6 +1456,7 @@ export default function MediaPaneBody({
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
     setActiveWebSectionId(null);
+    appliedRequestedReaderLocRef.current = null;
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
@@ -1455,7 +1475,7 @@ export default function MediaPaneBody({
     const section = webSections.find(
       (item) => item.section_id === activeRequestedReaderLoc,
     );
-    if (!section) {
+    if (!section?.fragment_id) {
       setActiveWebSectionId(null);
       feedback.show({
         severity: "warning",
@@ -1464,11 +1484,17 @@ export default function MediaPaneBody({
       return;
     }
 
+    setTarget({
+      kind: "fragment",
+      value: section.fragment_id,
+      origin: "manual",
+    });
     setActiveWebSectionId(section.section_id);
   }, [
     activeRequestedReaderLoc,
     feedback,
     media?.kind,
+    setTarget,
     webSections,
   ]);
 
@@ -2989,12 +3015,6 @@ export default function MediaPaneBody({
   const applyToAllHighlightSlots = useCallback(
     (transform: HighlightNoteBlockTransform) => {
       if (isPdf) {
-        setPdfHighlightsPaneState((current) => {
-          const next = transform(current.highlights);
-          return next === current.highlights
-            ? current
-            : { ...current, highlights: next };
-        });
         setPdfDocumentHighlights((current) => transform(current));
         return;
       }
@@ -3057,22 +3077,44 @@ export default function MediaPaneBody({
     revealDocChatSecondary();
   }, [revealDocChatSecondary]);
 
+  const quoteLabelForHighlightId = useCallback(
+    (highlightId: string): string => {
+      return (
+        mediaHighlights.find((item) => item.id === highlightId)?.exact ??
+        "Selected quote"
+      );
+    },
+    [mediaHighlights],
+  );
+
   // Open an existing conversation inline in the secondary, carrying any pending quote.
   const openChatInSecondary = useCallback(
     (conversationId: string) => {
-      setSecondaryChat({ conversationId, quoteUri: pendingQuoteUri });
+      setSecondaryChat({
+        conversationId,
+        quoteUri: pendingQuoteUri,
+        quoteLabel: pendingQuoteUri?.startsWith("highlight:")
+          ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+          : null,
+      });
       setPendingQuoteUri(null);
       revealDocChatSecondary();
     },
-    [pendingQuoteUri, revealDocChatSecondary],
+    [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary],
   );
 
   // Start a new (unsent) conversation inline in the secondary, carrying any pending quote.
   const startChatInSecondary = useCallback(() => {
-    setSecondaryChat({ conversationId: null, quoteUri: pendingQuoteUri });
+    setSecondaryChat({
+      conversationId: null,
+      quoteUri: pendingQuoteUri,
+      quoteLabel: pendingQuoteUri?.startsWith("highlight:")
+        ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+        : null,
+    });
     setPendingQuoteUri(null);
     revealDocChatSecondary();
-  }, [pendingQuoteUri, revealDocChatSecondary]);
+  }, [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3092,6 +3134,8 @@ export default function MediaPaneBody({
         (item) => item.section_id === sectionId,
       );
       if (!section) return;
+      appliedRequestedReaderLocRef.current = sectionId;
+      paneRuntime?.router.push(buildEpubLocationHref(id, sectionId));
       beginRestoreSession("opening_target");
       setEpubRestoreRequest(
         buildManualSectionRestoreRequest(sectionId, anchorId),
@@ -3102,7 +3146,7 @@ export default function MediaPaneBody({
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections],
+    [activeSectionId, beginRestoreSession, epubSections, id, paneRuntime],
   );
 
   const navigateToWebSection = useCallback(
@@ -3110,19 +3154,35 @@ export default function MediaPaneBody({
       const section = webSections?.find(
         (item) => item.section_id === sectionId,
       );
-      if (!section) {
+      if (!section?.fragment_id) {
+        feedback.show({
+          severity: "warning",
+          title: "Section unavailable.",
+        });
         return;
       }
       cancelRestoreSession();
       clearFocus();
       clearRetainedSelection(false);
       setHighlights([]);
+      setTarget({
+        kind: "fragment",
+        value: section.fragment_id,
+        origin: "manual",
+      });
       setActiveWebSectionId(section.section_id);
+      const params = new URLSearchParams({ loc: section.section_id });
+      params.set("fragment", section.fragment_id);
+      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
     },
     [
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
+      feedback,
+      id,
+      paneRuntime,
+      setTarget,
       webSections,
     ],
   );
@@ -3190,8 +3250,7 @@ export default function MediaPaneBody({
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
       setPdfHighlightsPaneState((current) => ({
-        activePage: nextPage,
-        highlights: nextHighlights,
+        ...current,
         version: current.version + 1,
       }));
       setPdfDocumentHighlights((current) => {
@@ -3529,10 +3588,11 @@ export default function MediaPaneBody({
       setSecondaryChat({
         conversationId: null,
         quoteUri: `highlight:${highlightId}`,
+        quoteLabel: quoteLabelForHighlightId(highlightId),
       });
       revealDocChatSecondary();
     },
-    [revealDocChatSecondary],
+    [quoteLabelForHighlightId, revealDocChatSecondary],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
@@ -3545,15 +3605,31 @@ export default function MediaPaneBody({
     [revealDocChatSecondary],
   );
 
-  // Drop the parked quote and the inline chat once the doc-chat list is no
-  // longer the visible surface (tab switch, secondary close).
+  // Drop parked doc-chat state only after the doc-chat secondary has actually
+  // been visible once. Surface activation is host-owned and asynchronous; clearing
+  // immediately after a request would discard a pending quote before the
+  // requested secondary can render it.
   useEffect(() => {
     const docChatVisible = activeReaderSecondarySurface === "reader-doc-chat";
-    if (!docChatVisible) {
-      setPendingQuoteUri(null);
-      setSecondaryChat(null);
+    if (docChatVisible) {
+      docChatSurfaceActivatedRef.current = true;
+      return;
     }
-  }, [activeReaderSecondarySurface, secondaryChat]);
+
+    const hasDocChatDraft = pendingQuoteUri !== null || secondaryChat !== null;
+    if (!hasDocChatDraft) {
+      docChatSurfaceActivatedRef.current = false;
+      return;
+    }
+
+    if (!docChatSurfaceActivatedRef.current) {
+      return;
+    }
+
+    docChatSurfaceActivatedRef.current = false;
+    setPendingQuoteUri(null);
+    setSecondaryChat(null);
+  }, [activeReaderSecondarySurface, pendingQuoteUri, secondaryChat]);
 
   useEffect(() => {
     const handleChatShortcut = (event: KeyboardEvent) => {
@@ -4292,6 +4368,8 @@ export default function MediaPaneBody({
         return;
       }
 
+      const params = new URLSearchParams({ fragment: fragmentId });
+      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
       pendingRulerPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
@@ -4306,6 +4384,7 @@ export default function MediaPaneBody({
       isTranscriptMedia,
       mediaHighlights,
       navigateToSection,
+      paneRuntime,
       setTarget,
     ],
   );
@@ -4377,7 +4456,7 @@ export default function MediaPaneBody({
                 ? "Showing highlights visible in the active section viewport."
                 : "Showing highlights visible in the reader viewport."
           }
-          pdfActivePage={isPdf ? pdfHighlightsPaneState.activePage : null}
+          pdfActivePage={isPdf ? (pdfControlsState?.pageNumber ?? null) : null}
           highlights={anchoredHighlights}
           contentRef={isPdf ? pdfContentRef : contentRef}
           focusedId={focusState.focusedId}
@@ -4415,7 +4494,7 @@ export default function MediaPaneBody({
       isPdf,
       media?.capabilities?.can_quote,
       pdfContentRef,
-      pdfHighlightsPaneState.activePage,
+      pdfControlsState?.pageNumber,
       quoteHighlightToExtantChat,
       quoteHighlightToNewChat,
       showHighlightsPane,
@@ -4452,6 +4531,7 @@ export default function MediaPaneBody({
               conversationId={secondaryChat.conversationId}
               mediaId={id}
               pendingQuoteUri={secondaryChat.quoteUri}
+              pendingQuoteLabel={secondaryChat.quoteLabel}
               onBack={() => setSecondaryChat(null)}
               onOpenFullChat={(cid) => {
                 setSecondaryChat(null);

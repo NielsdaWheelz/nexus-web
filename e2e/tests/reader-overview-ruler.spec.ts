@@ -1,6 +1,12 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
+import { stateChangingApiHeaders } from "./api";
 
 interface ReaderOverviewRulerSeed {
   media_id: string;
@@ -44,23 +50,33 @@ function readReaderOverviewRulerSeed(): ReaderOverviewRulerSeed {
 }
 
 function inlineHighlight(page: Page, highlightId: string): Locator {
-  return page
+  return activeWorkspacePane(page)
     .locator(`[data-active-highlight-ids~="${highlightId}"]`)
     .first();
 }
 
 function rulerTick(page: Page, highlightId: string): Locator {
-  return page.getByTestId(`reader-overview-tick-${highlightId}`);
+  return activeWorkspacePane(page).getByTestId(`reader-overview-tick-${highlightId}`);
 }
 
 test.describe("reader overview ruler", () => {
   test("ruler shows ticks across the whole document and jumps to an off-screen highlight", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readReaderOverviewRulerSeed();
+    const resetResponse = await page.request.put(`/api/media/${seed.media_id}/reader-state`, {
+      data: null,
+      headers: stateChangingApiHeaders(),
+    });
+    expect(resetResponse.ok()).toBeTruthy();
 
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto(`/media/${seed.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-overview-ruler"),
+      `/media/${seed.media_id}`,
+    );
+    const activePane = activeWorkspacePane(page);
 
     // The reader renders only the first fragment on open: its near highlight is
     // on screen, the far fragment's highlight is not in the DOM at all.
@@ -71,7 +87,7 @@ test.describe("reader overview ruler", () => {
     ).toHaveCount(0);
 
     // The overview ruler is present on desktop, with its open-highlights button.
-    const ruler = page.getByTestId("reader-overview-ruler");
+    const ruler = activePane.getByTestId("reader-overview-ruler");
     await expect(ruler).toBeVisible();
     await expect(
       ruler.getByRole("button", { name: "Open highlights pane" }),
@@ -105,7 +121,7 @@ test.describe("reader overview ruler", () => {
     await expect(farHighlight).toBeInViewport({ timeout: 15_000 });
 
     // The old in-view gutter is gone — no element and no test id anywhere.
-    await expect(page.getByTestId("reader-gutter")).toHaveCount(0);
-    await expect(page.locator(".reader-gutter")).toHaveCount(0);
+    await expect(activePane.getByTestId("reader-gutter")).toHaveCount(0);
+    await expect(activePane.locator(".reader-gutter")).toHaveCount(0);
   });
 });

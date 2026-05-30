@@ -1,7 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { selectTextFromElementStart } from "./selection";
+import { selectFreshVisibleTextSnippet } from "./selection";
+import {
+  activePaneSelector,
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -18,7 +24,7 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
 }
 
 async function openAddContentDialog(page: Page) {
-  await page.getByRole("button", { name: "Add content" }).click();
+  await page.locator("nav").getByRole("button", { name: "Add content" }).click();
   return page.getByRole("dialog", { name: "Add content" });
 }
 
@@ -29,8 +35,12 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 }
 
 test.describe("web articles", () => {
-  test("add article from URL", async ({ page }) => {
-    await page.goto("/libraries");
+  test("add article from URL", async ({ page }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-web-articles"),
+      "/libraries",
+    );
     const addContentDialog = await openAddContentDialog(page);
     const urlInput = addContentDialog.getByRole("textbox", { name: "URLs" });
     await expect(urlInput).toBeVisible();
@@ -39,39 +49,54 @@ test.describe("web articles", () => {
     await expect(workspacePaneButton(page, /^https:\/\/example\.com\b/)).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByRole("heading", { name: "https://example.com" })).toBeVisible({
+    const activePane = activeWorkspacePane(page);
+    await expect(
+      activePane.getByRole("heading", { name: "https://example.com" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(activePane.getByText(/processing|pending/i)).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText(/processing|pending/i)).toBeVisible({ timeout: 15_000 });
   });
 
-  test("open and view seeded web article", async ({ page }) => {
+  test("open and view seeded web article", async ({ page }, testInfo) => {
     const seed = readSeededNonPdfMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-web-articles"),
+      `/media/${seed.media_id}`,
+    );
     await expect(
-      page.locator("[data-testid='media-content'], .content-pane, article, main")
-        .filter({ hasText: /e2e non-pdf/ })
+      activeWorkspacePane(page).getByText(seed.quote_exact),
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("web article highlights are present", async ({ page }) => {
+  test("web article highlights are present", async ({ page }, testInfo) => {
     const seed = readSeededNonPdfMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-web-articles"),
+      `/media/${seed.media_id}`,
+    );
     // Highlights render as spans with data-active-highlight-ids attribute
     await expect(
-      page.locator("[data-active-highlight-ids]").first()
+      activeWorkspacePane(page).locator("[data-active-highlight-ids]").first()
     ).toBeVisible({ timeout: 10_000 });
   });
 
   test("creates highlight from paragraph text selection without OUTSIDE_CONTENT warning", async ({
     page,
-  }) => {
+  }, testInfo) => {
     test.slow();
 
     const seed = readSeededNonPdfMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-web-articles"),
+      `/media/${seed.media_id}`,
+    );
+    const activePane = activeWorkspacePane(page);
 
-    const beforeCount = await page.locator("[data-active-highlight-ids]").count();
+    const beforeCount = await activePane.locator("[data-active-highlight-ids]").count();
 
     const existingResponse = await page.request.get(
       `/api/fragments/${seed.fragment_id}/highlights`
@@ -85,40 +110,14 @@ test.describe("web articles", () => {
       existingPayload.data.highlights.map((highlight) => highlight.exact)
     );
 
-    const paragraphs = page.locator('[class*="fragments"] p');
+    const paragraphs = activePane.locator('[class*="fragments"] p');
     await expect(paragraphs.first()).toBeVisible({ timeout: 10_000 });
 
-    const paragraphCount = await paragraphs.count();
-    let paragraphIndex = -1;
-    let selectionLength = 0;
-
-    for (let index = 0; index < paragraphCount; index += 1) {
-      const paragraph = paragraphs.nth(index);
-      if ((await paragraph.locator("[data-active-highlight-ids]").count()) > 0) {
-        continue;
-      }
-
-      const paragraphText = (await paragraph.innerText()).trim();
-      for (let len = 12; len <= Math.min(paragraphText.length, 64); len += 4) {
-        const candidate = paragraphText.slice(0, len).trim();
-        if (candidate.length >= 2 && !existingExacts.has(candidate)) {
-          paragraphIndex = index;
-          selectionLength = len;
-          break;
-        }
-      }
-
-      if (paragraphIndex >= 0) {
-        break;
-      }
-    }
-    expect(paragraphIndex).toBeGreaterThanOrEqual(0);
-
-    const selectedText = await selectTextFromElementStart(
+    const selectedText = await selectFreshVisibleTextSnippet(
       page,
-      '[class*="fragments"] p',
-      paragraphIndex,
-      selectionLength,
+      activePaneSelector('[class*="fragments"] p'),
+      Array.from(existingExacts),
+      { method: "range" },
     );
     expect(selectedText.trim().length).toBeGreaterThanOrEqual(2);
 
@@ -165,7 +164,7 @@ test.describe("web articles", () => {
     ).toHaveCount(0);
 
     await expect
-      .poll(async () => page.locator("[data-active-highlight-ids]").count(), {
+      .poll(async () => activePane.locator("[data-active-highlight-ids]").count(), {
         timeout: 20_000,
       })
       .toBeGreaterThan(beforeCount);

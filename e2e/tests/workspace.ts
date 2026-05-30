@@ -1,4 +1,10 @@
-import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
@@ -168,6 +174,23 @@ export async function gotoWithWorkspaceSession(
 
 export function activeWorkspacePane(page: Page): Locator {
   return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR).first();
+}
+
+export function activePaneSelector(selector: string): string {
+  return `${ACTIVE_WORKSPACE_PANE_SELECTOR} ${selector}`;
+}
+
+export function workspaceE2eDeviceId(
+  testInfo: TestInfo,
+  prefix = "e2e-workspace",
+): string {
+  const slug = testInfo.titlePath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return `${prefix}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
 }
 
 export function workspacePaneButton(page: Page, name: RegExp | string): Locator {

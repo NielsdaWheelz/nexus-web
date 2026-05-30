@@ -2,8 +2,13 @@ import { type NextRequest, NextResponse } from "next/server";
 import {
   DEFAULT_AUTH_REDIRECT,
   buildLoginRedirectUrl,
+  buildLoginUrlWithError,
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
+import {
+  AUTH_ENDED_FEEDBACK_COOKIE,
+  SESSION_ENDED_MESSAGE,
+} from "@/lib/auth/messages";
 import {
   clearSupabaseAuthCookies,
   readSupabaseSessionCookie,
@@ -28,6 +33,7 @@ const PUBLIC_ROUTES = new Set([
   "/auth/handoff",
   "/auth/native/google",
   "/auth/oauth",
+  "/auth/password",
   "/auth/refresh",
   "/auth/signout",
   "/extension/connect/start",
@@ -38,10 +44,27 @@ const PUBLIC_ROUTES = new Set([
 // path for `ended` and `anonymous`.
 function clearAndRedirectToLogin(
   request: NextRequest,
-  cookieNames: string[]
+  cookieNames: string[],
+  options?: { sessionEndedFeedback?: boolean }
 ): NextResponse {
-  const response = NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
+  const response = NextResponse.redirect(
+    options?.sessionEndedFeedback
+      ? buildLoginUrlWithError(
+          request.nextUrl.origin,
+          `${request.nextUrl.pathname}${request.nextUrl.search}`,
+          SESSION_ENDED_MESSAGE
+        )
+      : buildLoginRedirectUrl(request.nextUrl)
+  );
   clearSupabaseAuthCookies(response, cookieNames);
+  if (options?.sessionEndedFeedback) {
+    response.cookies.set(AUTH_ENDED_FEEDBACK_COOKIE, "1", {
+      httpOnly: true,
+      maxAge: 60,
+      path: "/",
+      sameSite: "lax",
+    });
+  }
   return response;
 }
 
@@ -86,12 +109,19 @@ export function updateSession(
     REQUEST_PATH_HEADER,
     `${request.nextUrl.pathname}${request.nextUrl.search}`
   );
+  const hasSessionEndedFeedback =
+    request.cookies.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
 
   const session = readSupabaseSessionCookie(request.cookies.getAll());
   switch (session.state) {
     case "active":
       return passThrough();
     case "refreshable": {
+      if (hasSessionEndedFeedback) {
+        return clearAndRedirectToLogin(request, session.cookieNames, {
+          sessionEndedFeedback: true,
+        });
+      }
       // A prefetch must never drive a token refresh: let a hovered link's
       // prefetch pass and the page gate handles the real navigation.
       if (request.headers.has(PREFETCH_HEADER)) {
@@ -115,7 +145,12 @@ export function updateSession(
         reason: session.reason,
         path: pathname,
       });
-      return clearAndRedirectToLogin(request, session.cookieNames);
+      return clearAndRedirectToLogin(request, session.cookieNames, {
+        sessionEndedFeedback:
+          hasSessionEndedFeedback ||
+          session.state === "ended" ||
+          (session.state === "anonymous" && session.cookieNames.length > 0),
+      });
   }
 
   const exhaustive: never = session;

@@ -132,7 +132,7 @@ dev:
 			echo "Error: MinIO bucket init failed" >&2; exit 1; \
 		fi
 	@echo "Starting Supabase local Auth..."
-	@supabase start -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit,postgrest
+	@supabase start -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest
 	@supabase_status=$$(supabase status --output json 2>&1 | grep -v '^Stopped services:'); \
 		supabase_url=$$(printf '%s\n' "$$supabase_status" | grep -o '"API_URL": *"[^"]*"' | sed 's/"API_URL": *"//;s/"$$//' || true); \
 		if [ -z "$$supabase_url" ]; then \

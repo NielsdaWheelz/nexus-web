@@ -43,6 +43,7 @@ export type PaneRouteId =
   | "daily"
   | "dailyDate"
   | "settings"
+  | "settingsAccount"
   | "settingsBilling"
   | "settingsReader"
   | "settingsAppearance"
@@ -235,6 +236,14 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     id: "settings",
     pattern: ["settings"],
     staticTitle: "Settings",
+    titleMode: "static",
+    bodyMode: "standard",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
+    id: "settingsAccount",
+    pattern: ["settings", "account"],
+    staticTitle: "Account",
     titleMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,

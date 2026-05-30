@@ -361,6 +361,102 @@ function databaseHasSeededBilling(dbUrl) {
   }
 }
 
+function databaseHasSeededEpubTitle(dbUrl) {
+  if (!seedArtifactsExist()) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
+  const epub = readJson(EPUB_SEED);
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "seed=json.loads(os.environ['NEXUS_E2E_EPUB_SEED']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select title from media where id = %s::uuid",
+        ) +
+        ", (seed['media_id'],));" +
+        "row=cur.fetchone();" +
+        "print(row[0] if row else '');" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const title = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_EPUB_SEED: JSON.stringify(epub),
+      },
+    })
+      .toString()
+      .trim();
+    return title === "E2E Test EPUB";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] EPUB title readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function databaseHasSeededOpenAiKey(dbUrl, ownerUserId) {
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import os;" +
+        "from uuid import UUID;" +
+        "from sqlalchemy import select;" +
+        "from nexus.db.models import UserApiKey;" +
+        "from nexus.db.session import create_session_factory;" +
+        "from nexus.services.user_keys import get_usable_key_providers;" +
+        "db=create_session_factory()();" +
+        "user_id=UUID(os.environ['NEXUS_E2E_OWNER_USER_ID']);" +
+        "key=db.scalar(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == 'openai'));" +
+        "usable=get_usable_key_providers(db, user_id);" +
+        "print('1' if key is not None and key.key_fingerprint == 'ture' and 'openai' in usable else '0');" +
+        "db.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_OWNER_USER_ID: ownerUserId,
+      },
+    })
+      .toString()
+      .trim();
+    return raw === "1";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] API-key readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
   if (!seedArtifactsExist()) {
     return false;
@@ -555,8 +651,10 @@ export default function globalSetup() {
 
   if (
     databaseHasSeededMedia(dbUrl, e2eOwnerUserId) &&
+    databaseHasSeededEpubTitle(dbUrl) &&
     databaseHasReadyEvidenceIndexes(dbUrl) &&
     databaseHasSeededBilling(dbUrl) &&
+    databaseHasSeededOpenAiKey(dbUrl, e2eOwnerUserId) &&
     databaseHasSeededYoutubeTranscriptStates(dbUrl) &&
     databaseHasCleanSeededHighlightFixtures(dbUrl)
   ) {

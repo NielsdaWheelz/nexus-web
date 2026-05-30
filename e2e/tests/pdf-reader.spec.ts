@@ -107,22 +107,23 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
   throw new Error(`Missing PDF controls action: ${ariaLabel}`);
 }
 
-function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to document chat" });
-}
-
-function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to library chat" });
-}
-
 function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
 }
 
+async function quoteRowToNewChat(page: Page, row: Locator): Promise<void> {
+  const actionsButton = rowActionsButton(row);
+  await actionsButton.scrollIntoViewIfNeeded();
+  await expect(actionsButton).toBeEnabled();
+  await actionsButton.click();
+  const quoteItem = page.getByRole("menuitem", { name: "Quote to new chat" }).first();
+  await expect(quoteItem).toBeVisible();
+  await expect(quoteItem).toBeEnabled();
+  await quoteItem.click();
+}
+
 async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(row).toBeVisible();
-  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
-  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
@@ -132,7 +133,9 @@ async function expectDocChatPendingContext(page: Page, exact: string): Promise<v
   await expect(
     secondary.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(secondary.getByLabel("Conversation context")).toContainText(exact);
+  await expect(
+    secondary.getByLabel("Attached to next message"),
+  ).toContainText(exact);
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
@@ -300,18 +303,17 @@ test.describe("pdf reader", () => {
       // Normalize deterministically so this test validates highlight persistence only.
       await ensureOnPage(page, 2, expectedPageCount);
 
-      await openHighlightsPane(page);
-      const linkedRow = page.getByTestId(`anchored-highlight-row-${createdHighlightId}`);
+      const highlightsPane = await openHighlightsPane(page);
+      const linkedRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${createdHighlightId}`,
+      );
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.click();
       await expectHighlightRowToBeExpanded(linkedRow);
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
-      const chatButton = rowAddHighlightToDocumentChatButton(linkedRow);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-      await chatButton.scrollIntoViewIfNeeded();
-      await expect(chatButton).toBeEnabled();
-      await chatButton.click();
+      await quoteRowToNewChat(page, linkedRow);
       await expectDocChatPendingContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -408,10 +410,14 @@ test.describe("pdf reader", () => {
 
       await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
-      await openHighlightsPane(page);
+      const highlightsPane = await openHighlightsPane(page);
 
-      const onPageRow = page.getByTestId(`anchored-highlight-row-${pageOneHighlightId}`);
-      const offPageRow = page.getByTestId(`anchored-highlight-row-${pageTwoHighlightId}`);
+      const onPageRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${pageOneHighlightId}`,
+      );
+      const offPageRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${pageTwoHighlightId}`,
+      );
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toHaveCount(0);
 

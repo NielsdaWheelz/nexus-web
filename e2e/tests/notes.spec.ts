@@ -8,7 +8,14 @@ import {
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
+import { openHighlightsPane } from "./reader";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -95,6 +102,7 @@ async function createFreshHighlight(
       end_offset: startOffset + length,
       color: "green",
     },
+    headers: stateChangingApiHeaders(),
   });
   await expectOk(createResponse, "Create fresh fragment highlight");
   const payload = (await createResponse.json()) as HighlightPayload;
@@ -121,17 +129,6 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
   expect(response.status(), `${label}: ${await response.text()}`).toBe(200);
 }
 
-async function openHighlightsPane(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "Open highlights pane" }).click();
-  const secondary = page.getByTestId("workspace-secondary-pane");
-  await expect(secondary).toBeVisible({ timeout: 10_000 });
-  await expect(secondary.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  return page.getByTestId("anchored-highlights-container").first();
-}
-
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<void> {
   const segment = contentPane.locator(`[data-active-highlight-ids~="${highlightId}"]`).first();
   await expect(segment).toBeAttached({ timeout: 10_000 });
@@ -144,9 +141,10 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 test.describe("notes cutover", () => {
   test("creates a linked highlight note, persists object refs, opens note blocks, and accepts note context", async ({
     page,
-  }) => {
+  }, testInfo) => {
     test.slow();
     const seeded = readSeededNonPdfMedia();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-notes");
     const noteText = `E2E linked highlight note ${Date.now()}`;
     const mediaRefText = `[[media:${seeded.media_id}|Source media]]`;
     let highlightId: string | null = null;
@@ -164,8 +162,8 @@ test.describe("notes cutover", () => {
       highlightId = highlight.id;
       highlightFragmentId = highlight.fragmentId;
 
-      await page.goto(`/media/${seeded.media_id}`);
-      const contentPane = page.locator('div[class*="fragments"]');
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
+      const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
       await scrollHighlightIntoView(contentPane, highlight.id);
       const highlightsPane = await openHighlightsPane(page);
@@ -192,27 +190,35 @@ test.describe("notes cutover", () => {
       noteBlockId = linkedNote.noteBlockId;
       expect(linkedNote.bodyText).toContain(noteText);
 
-      await page.goto(`/notes/${noteBlockId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
-      const notesOutline = page.getByRole("textbox", { name: "Notes outline" });
+      const notePane = activeWorkspacePane(page);
+      const notesOutline = notePane.getByRole("textbox", { name: "Notes outline" });
       await expect(notesOutline).toContainText(noteText, { timeout: 10_000 });
       await expect(notesOutline.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
         "Source media"
       );
       await expect(
-        page.locator(`section[aria-label="Backlinks"] a[href="/media/${seeded.media_id}"]`)
+        notePane.locator(`section[aria-label="Backlinks"] a[href="/media/${seeded.media_id}"]`)
       ).toBeVisible({ timeout: 10_000 });
 
       const conversationResponse = await page.request.post("/api/conversations", {
         data: { initial_references: [`note_block:${noteBlockId}`] },
+        headers: stateChangingApiHeaders(),
       });
       await expectOk(conversationResponse, "Create note-backed conversation");
       const conversationPayload = (await conversationResponse.json()) as {
         data: { id: string };
       };
       conversationId = conversationPayload.data.id;
-      await page.goto(`/conversations/${conversationId}`);
-      await expect(page.getByLabel("Conversation context")).toContainText(noteText, {
+      await gotoSinglePaneWorkspace(page, deviceId, `/conversations/${conversationId}`);
+      const activeConversationPane = activeWorkspacePane(page);
+      await activeConversationPane.getByRole("button", { name: "Options" }).click();
+      await page.getByRole("menuitem", { name: "References" }).click();
+      const referencesPane = activeConversationPane.getByTestId("workspace-secondary-pane");
+      await expect(referencesPane).toBeVisible({ timeout: 10_000 });
+      await expect(referencesPane).toHaveAttribute("aria-label", "References");
+      await expect(referencesPane).toContainText(noteText, {
         timeout: 10_000,
       });
     } catch (error) {

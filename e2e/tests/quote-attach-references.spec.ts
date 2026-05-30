@@ -4,6 +4,7 @@ import path from "node:path";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
+import { activePaneSelector, activeWorkspacePane } from "./workspace";
 
 interface NonPdfSeed {
   media_id: string;
@@ -30,7 +31,7 @@ async function readReferences(
 ): Promise<ChatReferencesResponse["data"]> {
   const resourceUri = `media:${mediaId}`;
   const response = await page.request.get(
-    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=200`,
+    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=100`,
   );
   const body = await response.text();
   expect(
@@ -49,7 +50,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     const seed = readNonPdfSeed();
     await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
 
-    const contentPane = page.locator('div[class*="fragments"]');
+    const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     // Select fresh text in the article body (not over the seeded highlights).
@@ -67,7 +68,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     );
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
-      'div[class*="fragments"]',
+      activePaneSelector('div[class*="fragments"]'),
       blockedExacts,
       { method: "range" },
     );

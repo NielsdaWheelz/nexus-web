@@ -115,7 +115,7 @@ describe("updateSession", () => {
     );
 
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Flibraries"
+      "http://localhost:3000/login?next=%2Flibraries&error_description=Your+session+ended.+Please+sign+in+again."
     );
     expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
     expect(warn).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe("updateSession", () => {
     );
 
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fconversations%3Fview%3Dcompact"
+      "http://localhost:3000/login?next=%2Fconversations%3Fview%3Dcompact&error_description=Your+session+ended.+Please+sign+in+again."
     );
     expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -191,6 +191,7 @@ describe("updateSession", () => {
       "http://localhost:3000/auth/handoff",
       "http://localhost:3000/auth/native/google",
       "http://localhost:3000/auth/oauth",
+      "http://localhost:3000/auth/password",
       "http://localhost:3000/auth/refresh",
       "http://localhost:3000/auth/signout",
       "http://localhost:3000/extension/connect/start",
@@ -199,6 +200,22 @@ describe("updateSession", () => {
     expect(
       responses.every((response) => !response.headers.get("location"))
     ).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes anonymous password form posts through to the auth route", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/auth/password", {
+        method: "POST",
+      }),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBeNull();
+    expect(
+      response.headers.get("x-middleware-request-x-nexus-request-path")
+    ).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

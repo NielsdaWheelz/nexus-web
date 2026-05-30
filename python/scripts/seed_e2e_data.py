@@ -34,7 +34,7 @@ import fitz
 import httpx
 from sqlalchemy import select, text
 
-from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus, UserApiKey
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -43,6 +43,7 @@ from nexus.services.content_indexing import (
     rebuild_fragment_content_index,
     rebuild_transcript_content_index,
 )
+from nexus.services.crypto import CryptoError, encrypt_api_key
 from nexus.services.epub_ingest import EpubExtractionError
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
@@ -52,7 +53,7 @@ from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
-from nexus.tasks.ingest_epub import run_epub_ingest_sync
+from nexus.tasks.ingest_epub import persist_epub_metadata, run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
 E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
@@ -88,6 +89,7 @@ YOUTUBE_TRANSCRIPT_SEGMENTS = [
         "t_end_ms": 17_000,
     },
 ]
+E2E_OPENAI_API_KEY = "sk-e2e-openai-fixture"
 
 
 def _load_supabase_auth_config() -> tuple[str, str]:
@@ -501,6 +503,7 @@ def _write_epub_seed_file(
     seed_payload = {
         "media_fixture_kind": "synthetic",
         "media_id": media_id,
+        "title": "E2E Test EPUB",
         "chapter_count": chapter_count,
         "chapter_titles": chapter_titles,
         "toc_anchor_label": toc_anchor_label,
@@ -682,6 +685,33 @@ def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
         reason="E2E seed access",
         actor_label="seed_e2e_data",
     )
+
+
+def _ensure_e2e_openai_key(db, user_id: UUID) -> None:
+    """Seed a deterministic BYOK row for API-key and chat-composer E2E."""
+    key = db.scalar(
+        select(UserApiKey).where(
+            UserApiKey.user_id == user_id,
+            UserApiKey.provider == "openai",
+        )
+    )
+    if key is None:
+        key = UserApiKey(user_id=user_id, provider="openai")
+        db.add(key)
+
+    try:
+        encrypted_key, nonce, version, fingerprint = encrypt_api_key(E2E_OPENAI_API_KEY)
+    except CryptoError as error:
+        raise RuntimeError(
+            "NEXUS_KEY_ENCRYPTION_KEY is required for E2E API-key fixtures"
+        ) from error
+
+    key.encrypted_key = encrypted_key
+    key.key_nonce = nonce
+    key.master_key_version = version
+    key.key_fingerprint = fingerprint
+    key.status = "untested"
+    key.revoked_at = None
 
 
 def _upsert_media_transcript_state(
@@ -1151,6 +1181,7 @@ def _seed_epub_media(session_factory, user_id: UUID) -> None:
         if media is None:
             raise RuntimeError(f"Seeded EPUB media row disappeared: {epub_media_id_str}")
 
+        persist_epub_metadata(db, media, extraction_result)
         now = datetime.now(UTC)
         media.processing_status = ProcessingStatus.ready_for_reading
         media.failure_stage = None
@@ -1279,6 +1310,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
         if media is None:
             raise RuntimeError(f"Reader-resume EPUB media missing: {epub_media_id_str}")
 
+        persist_epub_metadata(db, media, extraction_result)
         now = datetime.now(UTC)
         media.processing_status = ProcessingStatus.ready_for_reading
         media.failure_stage = None
@@ -1542,6 +1574,7 @@ def main() -> None:
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
         _ensure_ai_plus_billing(db, user_id)
+        _ensure_e2e_openai_key(db, user_id)
         init_data = init_upload(
             db=db,
             viewer_id=user_id,

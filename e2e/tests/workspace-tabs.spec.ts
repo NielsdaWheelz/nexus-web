@@ -8,9 +8,12 @@ import {
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -25,6 +28,15 @@ interface SeededEpubMedia {
 
 interface SeededNonPdfMedia {
   media_id: string;
+}
+
+interface EpubNavigationResponse {
+  data: {
+    sections: Array<{
+      section_id: string;
+      label: string;
+    }>;
+  };
 }
 
 interface LibraryListResponse {
@@ -72,13 +84,7 @@ function escapeRegExp(value: string): string {
 }
 
 function workspaceTabsDeviceId(testInfo: TestInfo): string {
-  const slug = testInfo.titlePath
-    .join("-")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 96);
-  return `e2e-workspace-tabs-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
+  return workspaceE2eDeviceId(testInfo, "e2e-workspace-tabs");
 }
 
 // A two-pane session (Libraries active, Search alongside) shared by the tests
@@ -134,8 +140,20 @@ test.describe("workspace tabs", () => {
 
   test("desktop: opening a second pane from a link adds a tab to the strip", async ({
     page,
-  }) => {
-    await page.goto("/libraries");
+  }, testInfo) => {
+    const librariesResponse = await page.request.get("/api/libraries");
+    expect(librariesResponse.ok()).toBeTruthy();
+    const libraries = (await librariesResponse.json()) as LibraryListResponse;
+    const defaultLibrary = libraries.data.find((library) => library.is_default);
+    if (!defaultLibrary) {
+      throw new Error("Default library missing from E2E seed.");
+    }
+
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -145,12 +163,14 @@ test.describe("workspace tabs", () => {
     await expect(workspacePaneButton(page, /^Search\b/)).toHaveCount(0);
 
     // Shift-click opens a new pane (the standard in-app gesture).
-    const searchLink = page.getByRole("link", { name: "Search" }).first();
-    await expect(searchLink).toBeVisible();
-    await searchLink.click({ modifiers: ["Shift"] });
+    const libraryLink = activeWorkspacePane(page)
+      .getByRole("link", { name: defaultLibrary.name })
+      .first();
+    await expect(libraryLink).toBeVisible();
+    await libraryLink.click({ modifiers: ["Shift"] });
 
-    // A Search tab now appears in the strip.
-    await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible({
+    // A new library tab now appears in the strip.
+    await expect(workspacePaneButton(page, new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`))).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -226,11 +246,14 @@ test.describe("workspace tabs", () => {
 
   test("desktop: a dynamic media pane tab shows the resolved resource title after load", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
 
-    // Navigate directly so the workspace opens the media pane.
-    await page.goto(`/media/${epub.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      `/media/${epub.media_id}`,
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -272,7 +295,7 @@ test.describe("workspace tabs", () => {
         ],
         { activePrimaryPaneId: "pane-media" },
       ),
-      "/libraries",
+      `/media/${epub.media_id}`,
     );
 
     const strip = workspacePaneStrip(page);
@@ -302,10 +325,14 @@ test.describe("workspace tabs", () => {
 
   test("desktop: epub title stays resolved after canonical loc navigation and content load", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
 
-    await page.goto(`/media/${epub.media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      `/media/${epub.media_id}`,
+    );
 
     const activator = activeWorkspacePaneButton(page);
     await expect(activator).toBeVisible({ timeout: 15_000 });
@@ -323,15 +350,27 @@ test.describe("workspace tabs", () => {
     const resolvedTitle = await paneButtonLabel(activator);
     const resolvedHeadingTitle = resolvedTitle.replace(/\s+Active pane\.$/, "");
 
-    await expect
-      .poll(
-        () => new URL(page.url()).searchParams.get("loc") ?? "",
-        { timeout: 20_000, intervals: [500, 500, 1_000] },
-      )
-      .not.toBe("");
+    const navigationResponse = await page.request.get(
+      `/api/media/${epub.media_id}/navigation`,
+    );
+    expect(navigationResponse.ok()).toBeTruthy();
+    const navigation = (await navigationResponse.json()) as EpubNavigationResponse;
+    const firstSection =
+      navigation.data.sections.find((section) => section.label === epub.chapter_titles[0]) ??
+      navigation.data.sections[0];
+    if (!firstSection) {
+      throw new Error(`No EPUB navigation sections seeded for ${epub.media_id}`);
+    }
+
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      `/media/${epub.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`,
+    );
+    expect(new URL(page.url()).searchParams.get("loc")).toBe(firstSection.section_id);
 
     await expect(
-      page.getByRole("heading", { name: epub.chapter_titles[0] }),
+      activeWorkspacePane(page).getByRole("heading", { name: epub.chapter_titles[0] }),
     ).toBeVisible({ timeout: 20_000 });
 
     await expect(activator).not.toHaveAttribute("aria-busy");
@@ -342,7 +381,7 @@ test.describe("workspace tabs", () => {
       })
       .toBe(resolvedTitle);
     await expect(
-      page.getByRole("heading", {
+      activeWorkspacePane(page).getByRole("heading", {
         name: new RegExp(`^${escapeRegExp(resolvedHeadingTitle)}$`),
       }),
     ).toBeVisible();
@@ -350,7 +389,7 @@ test.describe("workspace tabs", () => {
 
   test("desktop: library epub title hint appears before media load", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
@@ -360,11 +399,17 @@ test.describe("workspace tabs", () => {
       throw new Error("Default library missing from E2E seed.");
     }
 
-    await page.goto(`/libraries/${defaultLibrary.id}`);
-    const row = page.getByRole("link", { name: /E2E Test EPUB/ }).first();
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      `/libraries/${defaultLibrary.id}`,
+    );
+    const row = activeWorkspacePane(page)
+      .getByRole("link", { name: /E2E Test EPUB/ })
+      .first();
     await expect(row).toBeVisible({ timeout: 20_000 });
 
-    let releaseMediaLoad: (() => void) | null = null;
+    let releaseMediaLoad: () => void = () => {};
     const mediaLoadBlocked = new Promise<void>((resolve) => {
       releaseMediaLoad = resolve;
     });
@@ -394,7 +439,7 @@ test.describe("workspace tabs", () => {
         .toContain("E2E Test EPUB");
       await expect(activator).not.toHaveAttribute("aria-busy");
     } finally {
-      releaseMediaLoad?.();
+      releaseMediaLoad();
     }
   });
 

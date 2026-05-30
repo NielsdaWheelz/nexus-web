@@ -1,6 +1,13 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  activeWorkspacePane,
+  pinDeviceId,
+  seedWorkspaceSession,
+  singlePaneWorkspaceState,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededYoutubeMedia {
   media_id: string;
@@ -43,6 +50,18 @@ function readSeededYoutubeMedia(): SeededYoutubeMedia {
   return parsed;
 }
 
+async function gotoYoutubeCspSinglePane(
+  page: Page,
+  testInfo: TestInfo,
+  href: string,
+) {
+  await page.goto("about:blank");
+  const deviceId = workspaceE2eDeviceId(testInfo, "e2e-youtube-csp");
+  await pinDeviceId(page, deviceId);
+  await seedWorkspaceSession(page.request, deviceId, singlePaneWorkspaceState(href));
+  return page.goto(href);
+}
+
 function parseCspDirectives(cspHeader: string): Map<string, string[]> {
   const directives = new Map<string, string[]>();
   for (const directive of cspHeader
@@ -58,7 +77,7 @@ function parseCspDirectives(cspHeader: string): Map<string, string[]> {
 test.describe("youtube transcript runtime csp", () => {
   test("enforces exact frame-src allowlist at runtime and blocks disallowed embeds", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededYoutubeMedia();
 
     await page.addInitScript(() => {
@@ -81,7 +100,11 @@ test.describe("youtube transcript runtime csp", () => {
       });
     });
 
-    const response = await page.goto(`/media/${seed.media_id}`);
+    const response = await gotoYoutubeCspSinglePane(
+      page,
+      testInfo,
+      `/media/${seed.media_id}`,
+    );
     expect(response).not.toBeNull();
     const cspHeader = await response!.headerValue("content-security-policy");
     expect(cspHeader).toBeTruthy();
@@ -126,25 +149,26 @@ test.describe("youtube transcript runtime csp", () => {
 
   test("keeps youtube transcript embed + click-to-seek working with csp enabled", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededYoutubeMedia();
     const expectedStartSeconds = Math.floor(seed.seek_segment_start_ms / 1000);
 
-    await page.goto(`/media/${seed.media_id}`);
+    await gotoYoutubeCspSinglePane(page, testInfo, `/media/${seed.media_id}`);
     await expect(page).toHaveURL(new RegExp(`/media/${seed.media_id}`), {
       timeout: 20_000,
     });
-    await expect(page.getByText("Loading media...")).toHaveCount(0, {
+    const activePane = activeWorkspacePane(page);
+    await expect(activePane.getByText("Loading media...")).toHaveCount(0, {
       timeout: 20_000,
     });
-    const playerFrame = page.locator('iframe[title="YouTube video player"]');
+    const playerFrame = activePane.locator('iframe[title="YouTube video player"]');
     await expect(playerFrame).toBeVisible({ timeout: 20_000 });
     await expect(playerFrame).toHaveAttribute(
       "src",
       new RegExp(escapeRegExp(seed.embed_url))
     );
 
-    const seekSegmentButton = page.getByRole("button", {
+    const seekSegmentButton = activePane.getByRole("button", {
       name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
     });
     await expect(seekSegmentButton).toBeVisible();

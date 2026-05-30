@@ -3,6 +3,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -39,7 +40,7 @@ test.describe("workspace canvas", () => {
   test.beforeEach(async ({ page }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-canvas"),
       OVERFLOWING_WORKSPACE_STATE,
       "/libraries",
     );
@@ -104,6 +105,9 @@ test.describe("workspace canvas", () => {
       "data-active",
       "true",
     );
+    await paneWrap(page, "pane-libraries")
+      .getByTestId("pane-shell-chrome")
+      .focus();
 
     // pane-next moves the active pane forward and centres it.
     await page.keyboard.press(stepChord);
