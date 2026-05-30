@@ -84,7 +84,11 @@ import {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
+import {
+  usePaneSidecar,
+  type PaneSidecarPublication,
+  type PaneSidecarSurfacePublication,
+} from "@/components/workspace/PaneSidecar";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
@@ -122,7 +126,7 @@ import {
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
-import ReaderContentsNav from "./ReaderContentsNav";
+import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
 import TextDocumentReader from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
@@ -521,16 +525,13 @@ export default function MediaPaneBody({
   const [restorePhase, setRestorePhase] = useState<ReaderRestorePhase>("idle");
   const [activeEpubSection, setActiveEpubSection] =
     useState<EpubSectionContent | null>(null);
-  const [tocWarning, setTocWarning] = useState(false);
   const [epubSectionLoading, setEpubSectionLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
-  const [epubTocExpanded, setEpubTocExpanded] = useState(false);
 
   // ---- Web article navigation state ----
   const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
     null,
   );
-  const [webTocExpanded, setWebTocExpanded] = useState(false);
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(null);
@@ -1276,7 +1277,6 @@ export default function MediaPaneBody({
     appliedEpubNavigationRef.current = epubSections;
 
     const sessionId = beginRestoreSession("resolving");
-    setTocWarning(false);
     setEpubError(null);
 
     const restoreRequest = resolveInitialEpubRestoreRequest({
@@ -1437,7 +1437,6 @@ export default function MediaPaneBody({
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
     setActiveWebSectionId(null);
-    setWebTocExpanded(false);
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
@@ -3149,6 +3148,7 @@ export default function MediaPaneBody({
   const hasEpubToc = epubToc !== null && epubToc.length > 0;
   const hasWebToc =
     webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
+  const contentsAvailable = hasEpubToc || hasWebToc;
 
   const epubTextDocumentContentState = (() => {
     if (epubNavigationResource.status === "error") {
@@ -3433,7 +3433,6 @@ export default function MediaPaneBody({
       setFragments([]);
       setActiveSectionId(null);
       setActiveWebSectionId(null);
-      setWebTocExpanded(false);
       setEpubError(null);
       if (!media) return;
       const targetId = media.id;
@@ -3739,6 +3738,66 @@ export default function MediaPaneBody({
     mediaHeaderOptions.splice(mediaDangerOptionIndex, 0, ...mediaReaderOptions);
   }
 
+  const closeSidecarOnMobile = useCallback(() => {
+    if (isMobileViewport) paneRuntime?.closeSidecar();
+  }, [isMobileViewport, paneRuntime]);
+
+  const contentsSurfaceBody = useMemo(
+    () => (
+      <div className={styles.readerSidecarBody}>
+        {isEpub ? (
+          <ReaderContentsNav
+            nodes={epubToc ?? []}
+            activeSectionId={activeSectionId}
+            onNavigate={({ sectionId, anchorId }) => {
+              navigateToSection(sectionId, anchorId);
+              closeSidecarOnMobile();
+            }}
+          />
+        ) : (
+          <ReaderContentsNav
+            nodes={webToc ?? []}
+            activeSectionId={activeWebSectionId}
+            onNavigate={({ sectionId }) => {
+              navigateToWebSection(sectionId);
+              closeSidecarOnMobile();
+            }}
+          />
+        )}
+      </div>
+    ),
+    [
+      isEpub,
+      epubToc,
+      webToc,
+      activeSectionId,
+      activeWebSectionId,
+      navigateToSection,
+      navigateToWebSection,
+      closeSidecarOnMobile,
+    ],
+  );
+
+  const contentsSurfaceActive =
+    activeReaderSidecarSurface === "reader-contents";
+
+  const toggleContents = useCallback(() => {
+    if (contentsSurfaceActive) paneRuntime?.closeSidecar();
+    else paneRuntime?.openSidecar("reader-contents");
+  }, [contentsSurfaceActive, paneRuntime]);
+
+  const contentsToolbarButton = contentsAvailable ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      leadingIcon={<ListTree size={16} aria-hidden="true" />}
+      onClick={toggleContents}
+      aria-pressed={contentsSurfaceActive}
+    >
+      Contents
+    </Button>
+  ) : null;
+
   const mediaToolbar =
     isPdf && canRead && pdfControlsState ? (
       <div
@@ -3799,17 +3858,7 @@ export default function MediaPaneBody({
         aria-label="EPUB controls"
       >
         <div className={styles.mediaToolbarRow}>
-          {(hasEpubToc || tocWarning) ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<ListTree size={16} aria-hidden="true" />}
-              onClick={() => setEpubTocExpanded((value) => !value)}
-              aria-pressed={epubTocExpanded}
-            >
-              Contents
-            </Button>
-          ) : null}
+          {contentsToolbarButton}
           <Button
             variant="ghost"
             size="sm"
@@ -3879,15 +3928,7 @@ export default function MediaPaneBody({
         aria-label="Article controls"
       >
         <div className={styles.mediaToolbarRow}>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<ListTree size={16} aria-hidden="true" />}
-            onClick={() => setWebTocExpanded((value) => !value)}
-            aria-pressed={webTocExpanded}
-          >
-            Contents
-          </Button>
+          {contentsToolbarButton}
         </div>
       </div>
     ) : null;
@@ -3901,17 +3942,6 @@ export default function MediaPaneBody({
     options: mediaHeaderOptions,
     meta: mediaHeaderMeta,
   });
-
-  // Keep the sidecar on an available tab when focus mode or media state
-  // hides highlights.
-  useEffect(() => {
-    if (showHighlightsPane) {
-      return;
-    }
-    if (paneRuntime?.sidecar?.groupId === "reader-tools") {
-      paneRuntime.closeSidecar();
-    }
-  }, [paneRuntime, showHighlightsPane]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -4345,68 +4375,83 @@ export default function MediaPaneBody({
     ],
   );
 
-  const readerSidecarDescriptor = useMemo(
+  const readerSidecarSurfaces = useMemo<PaneSidecarSurfacePublication[]>(() => {
+    const surfaces: PaneSidecarSurfacePublication[] = [];
+    if (showHighlightsPane) {
+      surfaces.push({
+        id: "reader-highlights",
+        body: (
+          <div className={styles.readerSidecarBody}>
+            {highlightsSidecarBody ?? (
+              <div className={styles.readerSidecarEmpty}>
+                Highlights are unavailable for this document.
+              </div>
+            )}
+          </div>
+        ),
+      });
+    }
+    if (contentsAvailable) {
+      surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
+    }
+    if (showHighlightsPane) {
+      surfaces.push({
+        id: "reader-doc-chat",
+        body: (
+          <div className={styles.readerSidecarBody}>
+            {sidecarChat ? (
+              <ReaderChatDetail
+                key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
+                conversationId={sidecarChat.conversationId}
+                mediaId={id}
+                pendingQuoteUri={sidecarChat.quoteUri}
+                onBack={() => setSidecarChat(null)}
+                onOpenFullChat={(cid) => {
+                  setSidecarChat(null);
+                  handleOpenFullChat(cid);
+                }}
+                onReaderSourceActivate={handleReaderSourceActivate}
+              />
+            ) : (
+              <DocChatTab
+                mediaId={id}
+                onOpenChat={openChatInSidecar}
+                onStartNewChat={startChatInSidecar}
+                pendingQuoteUri={pendingQuoteUri}
+                onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+              />
+            )}
+          </div>
+        ),
+      });
+    }
+    return surfaces;
+  }, [
+    showHighlightsPane,
+    contentsAvailable,
+    highlightsSidecarBody,
+    contentsSurfaceBody,
+    sidecarChat,
+    id,
+    handleOpenFullChat,
+    handleReaderSourceActivate,
+    openChatInSidecar,
+    startChatInSidecar,
+    pendingQuoteUri,
+  ]);
+
+  const readerSidecarDescriptor = useMemo<PaneSidecarPublication | null>(
     () =>
-      showHighlightsPane
-        ? {
-            groupId: "reader-tools" as const,
-            defaultSurfaceId: "reader-highlights" as const,
-            surfaces: [
-              {
-                id: "reader-highlights" as const,
-                body: (
-                  <div className={styles.readerSidecarBody}>
-                    {highlightsSidecarBody ?? (
-                      <div className={styles.readerSidecarEmpty}>
-                        Highlights are unavailable for this document.
-                      </div>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                id: "reader-doc-chat" as const,
-                body: (
-                  <div className={styles.readerSidecarBody}>
-                    {sidecarChat ? (
-                      <ReaderChatDetail
-                        key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
-                        conversationId={sidecarChat.conversationId}
-                        mediaId={id}
-                        pendingQuoteUri={sidecarChat.quoteUri}
-                        onBack={() => setSidecarChat(null)}
-                        onOpenFullChat={(cid) => {
-                          setSidecarChat(null);
-                          handleOpenFullChat(cid);
-                        }}
-                        onReaderSourceActivate={handleReaderSourceActivate}
-                      />
-                    ) : (
-                      <DocChatTab
-                        mediaId={id}
-                        onOpenChat={openChatInSidecar}
-                        onStartNewChat={startChatInSidecar}
-                        pendingQuoteUri={pendingQuoteUri}
-                        onPendingQuoteResolved={() => setPendingQuoteUri(null)}
-                      />
-                    )}
-                  </div>
-                ),
-              },
-            ],
-          }
-        : null,
-    [
-      handleOpenFullChat,
-      handleReaderSourceActivate,
-      highlightsSidecarBody,
-      id,
-      openChatInSidecar,
-      pendingQuoteUri,
-      sidecarChat,
-      showHighlightsPane,
-      startChatInSidecar,
-    ],
+      readerSidecarSurfaces.length === 0
+        ? null
+        : {
+            groupId: "reader-tools",
+            defaultSurfaceId: showHighlightsPane
+              ? "reader-highlights"
+              : readerSidecarSurfaces[0].id,
+            surfaces: readerSidecarSurfaces,
+          },
+    [readerSidecarSurfaces, showHighlightsPane],
   );
   usePaneSidecar(readerSidecarDescriptor);
   const fixedChromePublication = useMemo(
@@ -4687,19 +4732,6 @@ export default function MediaPaneBody({
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={epubTextDocumentContentState}
-              contentsNav={
-                hasEpubToc || tocWarning ? (
-                  <ReaderContentsNav
-                    nodes={epubToc ?? []}
-                    activeSectionId={activeSectionId}
-                    expanded={epubTocExpanded}
-                    warning={tocWarning}
-                    onNavigate={({ sectionId, anchorId }) =>
-                      navigateToSection(sectionId, anchorId)
-                    }
-                  />
-                ) : null
-              }
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
               onInternalLinkClick={(href) => {
@@ -4725,17 +4757,6 @@ export default function MediaPaneBody({
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={webTextDocumentContentState}
-              contentsNav={
-                hasWebToc ? (
-                  <ReaderContentsNav
-                    nodes={webToc ?? []}
-                    activeSectionId={activeWebSectionId}
-                    expanded={webTocExpanded}
-                    warning={false}
-                    onNavigate={({ sectionId }) => navigateToWebSection(sectionId)}
-                  />
-                ) : null
-              }
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
             />

@@ -48,6 +48,23 @@ the reader has two right-side highlight surfaces with distinct scopes.
   reader menu or by tapping an existing highlight; the drawer is the same
   `AnchoredHighlightsSidecar` component on the same visible-only model.
 
+### contents surface
+
+the document table of contents (epub + web article) is the reader-tools
+"Contents" sidecar surface (`ReaderContentsNav`), a third surface beside
+Highlights and Document chat under `docs/workspace-sidecar-pane-cutover.md`.
+
+- it is on-demand: a single reader toolbar "Contents" button toggles it
+  open/closed. it is not always-on like the overview ruler.
+- it is available independent of highlights: it shows whenever the document
+  has TOC nodes, including focus mode where highlights are hidden.
+- selecting an entry runs the existing section/anchor navigation; navigation
+  and pane-history behaviour are unchanged (see pane history).
+- mobile reaches Contents through the same sidecar drawer as highlights.
+- it has no internal scroll container: the sidecar body is the single scroll
+  owner. the reader prose keeps a single scroll owner (`.documentViewport`);
+  the TOC is not rendered inline.
+
 ### workspace pane sizing
 
 The authenticated workspace owns one reader text floor for every non-PDF

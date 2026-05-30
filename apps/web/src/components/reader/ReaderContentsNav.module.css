@@ -1,0 +1,46 @@
+.tocList {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+}
+
+.tocList .tocList {
+  padding: 0 0 0 var(--space-3);
+}
+
+.tocItem {
+  margin: 0;
+  padding: 0;
+}
+
+.tocLink {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--reader-accent, var(--accent));
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background var(--duration-fast) var(--ease-glide);
+}
+
+.tocLink:hover {
+  background: var(--reader-surface, var(--surface-2));
+}
+
+.tocLink.tocActive {
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  font-weight: var(--weight-semibold);
+}
+
+.tocLabel {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
+  cursor: default;
+}

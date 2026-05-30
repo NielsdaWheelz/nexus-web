@@ -6,6 +6,7 @@ import {
   GitBranch,
   Highlighter,
   Link2,
+  ListTree,
   MessageSquare,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const SIDE_CAR_ICONS: Record<
   "git-branch": GitBranch,
   highlighter: Highlighter,
   "link-2": Link2,
+  "list-tree": ListTree,
   "message-square": MessageSquare,
 };
 

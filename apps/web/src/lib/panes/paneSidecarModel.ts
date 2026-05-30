@@ -8,6 +8,7 @@ export type WorkspaceSidecarGroupId =
 export type WorkspaceSidecarSurfaceId =
   | "reader-highlights"
   | "reader-doc-chat"
+  | "reader-contents"
   | "conversation-references"
   | "conversation-forks"
   | "library-chat"
@@ -19,6 +20,7 @@ export type PaneSidecarIconId =
   | "git-branch"
   | "highlighter"
   | "link-2"
+  | "list-tree"
   | "message-square";
 
 export interface WorkspaceSidecarState {
@@ -83,6 +85,11 @@ const PANE_SIDECAR_SURFACES = {
     groupId: "reader-tools",
     title: "Document chat",
     iconId: "file-text",
+  },
+  "reader-contents": {
+    groupId: "reader-tools",
+    title: "Contents",
+    iconId: "list-tree",
   },
   "conversation-references": {
     groupId: "conversation-context",
