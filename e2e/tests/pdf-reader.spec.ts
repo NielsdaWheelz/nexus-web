@@ -230,7 +230,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
+  test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }, testInfo) => {
     test.slow();
     const seeded = readSeededPdfMedia();
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
@@ -239,7 +239,7 @@ test.describe("pdf reader", () => {
     let createdHighlightId: string | null = null;
     let productError: unknown = null;
     try {
-      await gotoSinglePaneWorkspace(page, "/libraries");
+      await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
       await resetPdfReaderState(page, expectedMediaId);
       await page.getByRole("button", { name: "Add content" }).click();
       const addContentDialog = page.getByRole("dialog", { name: "Add content" });
@@ -255,7 +255,7 @@ test.describe("pdf reader", () => {
       await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after upload redirect to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
-      await gotoSinglePaneWorkspace(page, `/media/${expectedMediaId}`);
+      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${expectedMediaId}`);
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -338,11 +338,11 @@ test.describe("pdf reader", () => {
 
   test("pdf highlights stay scoped to the active page and appear after page navigation", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, "/libraries");
+    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     test.skip(
       expectedPageCount < 2,
@@ -406,7 +406,7 @@ test.describe("pdf reader", () => {
         throw new Error("Expected created PDF highlight ids for active-page scoping coverage");
       }
 
-      await gotoSinglePaneWorkspace(page, `/media/${mediaId}`);
+      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
       await openHighlightsPane(page);
 
@@ -458,20 +458,22 @@ test.describe("pdf reader", () => {
     }
   });
 
-  test("password-protected seeded pdf shows deterministic failure semantics", async ({ page }) => {
+  test("password-protected seeded pdf shows deterministic failure semantics", async ({
+    page,
+  }, testInfo) => {
     const seeded = readSeededPdfMedia();
-    await gotoSinglePaneWorkspace(page, `/media/${seeded.password_media_id}`);
+    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${seeded.password_media_id}`);
     await expect(page.getByText("This PDF is password-protected")).toBeVisible();
     await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
   });
 
   test("recovers after signed URL expiry during active reading session", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, "/libraries");
+    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     const fileEndpointPath = `/api/media/${mediaId}/file`;
     let fileEndpointRequests = 0;
@@ -493,7 +495,7 @@ test.describe("pdf reader", () => {
       }
     });
 
-    await gotoSinglePaneWorkspace(page, `/media/${mediaId}`);
+    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
       timeout: 20_000,
     });

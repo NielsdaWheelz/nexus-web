@@ -19,10 +19,6 @@ import {
   type WorkspaceSidecarState,
 } from "@/lib/workspace/sidecarSizing";
 
-export const WORKSPACE_SCHEMA_VERSION = 8;
-export const WORKSPACE_VERSION_PARAM = "wsv";
-export const WORKSPACE_STATE_PARAM = "ws";
-
 export const MAX_PANES = 12;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
 export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
@@ -45,7 +41,6 @@ export interface WorkspacePaneState {
 }
 
 export interface WorkspaceState {
-  schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activePaneId: string;
   panes: WorkspacePaneState[];
 }
@@ -117,7 +112,6 @@ export function createDefaultWorkspaceState(
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const id = createPaneId();
   return {
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: id,
     panes: [
       {
@@ -259,7 +253,7 @@ export function sanitizeWorkspaceState(
     normalizeWorkspaceHref(options.fallbackHref, options) ??
     WORKSPACE_DEFAULT_FALLBACK_HREF;
 
-  if (!isRecord(value) || value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
+  if (!isRecord(value)) {
     return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
@@ -302,7 +296,6 @@ export function sanitizeWorkspaceState(
   }
 
   return trimWorkspacePaneHistory({
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId,
     panes,
   });

@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import { getInstallationId } from "@/lib/workspace/deviceId";
 import {
   getWorkspaceSession,
-  isColdOpen,
   isNonTrivialSession,
   prepareRestoredState,
   putWorkspaceSession,
@@ -33,10 +32,6 @@ export function useWorkspaceSession(
   // default workspace cannot overwrite the saved session.
   useEffect(() => {
     if (!mounted) {
-      return;
-    }
-    if (!isColdOpen()) {
-      captureArmedRef.current = true;
       return;
     }
 

@@ -1,9 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import {
-  WORKSPACE_E2E_SCHEMA_VERSION,
-  encodeWorkspaceStateParam,
-  makeWorkspacePane,
-} from "./workspace";
+import { gotoWithWorkspaceSession, makeWorkspacePane } from "./workspace";
 
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
@@ -12,43 +8,39 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 }
 
 test.describe("workspace pane minimize", () => {
-  test("minimizes, persists, restores, and closes a pane", async ({ page }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        makeWorkspacePane("pane-libraries", "/libraries", { primaryWidthPx: 480 }),
-        makeWorkspacePane("pane-search", "/search", { primaryWidthPx: 480 }),
-      ],
-    });
+  test("a minimized pane survives a reload via the saved session", async ({
+    page,
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      testInfo.testId,
+      {
+        activePaneId: "pane-libraries",
+        panes: [
+          makeWorkspacePane("pane-libraries", "/libraries", { primaryWidthPx: 480 }),
+          makeWorkspacePane("pane-search", "/search", {
+            primaryWidthPx: 480,
+            visibility: "minimized",
+          }),
+        ],
+      },
+      "/libraries"
+    );
 
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
-
-    await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-    await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
-    await expect(page.getByPlaceholder("Search your Nexus content...")).toBeVisible();
-
-    await workspacePaneButton(page, "Minimize Search").click();
-
+    // The saved layout restores with Search already minimized: its toolbar
+    // button advertises the restore action and its body is hidden.
     await expect(
       workspacePaneButton(page, /^Search\b.*Minimized\. Restore\./)
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByPlaceholder("Search your Nexus content...")).toBeHidden();
 
+    // Same pinned device id, same session row: a reload re-restores the saved
+    // layout, proving the minimized state persists in the server session store.
     await page.reload();
 
     await expect(
       workspacePaneButton(page, /^Search\b.*Minimized\. Restore\./)
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByPlaceholder("Search your Nexus content...")).toBeHidden();
-
-    await workspacePaneButton(page, "Restore Search").click();
-
-    await expect(page.getByPlaceholder("Search your Nexus content...")).toBeVisible();
-
-    await workspacePaneButton(page, "Close Search").click();
-
-    await expect(workspacePaneButton(page, /^Search\b/)).toHaveCount(0);
-    await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
   });
 });

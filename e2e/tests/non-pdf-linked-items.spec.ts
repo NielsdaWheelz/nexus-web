@@ -129,14 +129,14 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 test.describe("non-pdf linked-items", () => {
   test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seeded = readSeededNonPdfMedia();
     const mediaUrl = `/media/${seeded.media_id}`;
     const contentPane = page.locator('div[class*="fragments"]');
     const quoteNote = "Seeded note for non-PDF linked-items e2e.";
     const focusNote = "Seeded focus note for non-PDF linked-items e2e.";
 
-    await gotoSinglePaneWorkspace(page, mediaUrl);
+    await gotoSinglePaneWorkspace(page, testInfo.testId, mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
     const highlightsPane = await openHighlightsPane(page);
 

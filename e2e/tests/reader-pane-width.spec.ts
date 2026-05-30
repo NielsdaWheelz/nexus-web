@@ -38,8 +38,12 @@ async function waitForReflowableReader(activePane: Locator): Promise<void> {
   });
 }
 
-async function expectReflowableFloor(page: Page, mediaId: string): Promise<void> {
-  await gotoSinglePaneWorkspace(page, `/media/${mediaId}`, { primaryWidthPx: 320 });
+async function expectReflowableFloor(
+  page: Page,
+  deviceId: string,
+  mediaId: string,
+): Promise<void> {
+  await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`, { primaryWidthPx: 320 });
   const activePane = activeWorkspacePane(page);
   await waitForReflowableReader(activePane);
 
@@ -81,21 +85,23 @@ async function expectReflowableFloor(page: Page, mediaId: string): Promise<void>
 test.describe("reader pane width floor", () => {
   test("web article panes cannot stay below the configured text floor", async ({
     page,
-  }) => {
-    await expectReflowableFloor(page, readSeed("non-pdf-media.json").media_id);
+  }, testInfo) => {
+    await expectReflowableFloor(page, testInfo.testId, readSeed("non-pdf-media.json").media_id);
   });
 
   test("EPUB panes cannot stay below the configured text floor", async ({
     page,
-  }) => {
-    await expectReflowableFloor(page, readSeed("epub-media.json").media_id);
+  }, testInfo) => {
+    await expectReflowableFloor(page, testInfo.testId, readSeed("epub-media.json").media_id);
   });
 
   test("PDF panes use intrinsic page width and transcripts use the workspace floor", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const pdf = readSeed("pdf-media.json");
-    await gotoSinglePaneWorkspace(page, `/media/${pdf.media_id}`, { primaryWidthPx: 320 });
+    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${pdf.media_id}`, {
+      primaryWidthPx: 320,
+    });
     let activePane = activeWorkspacePane(page);
     await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible({
       timeout: 20_000,
@@ -109,7 +115,9 @@ test.describe("reader pane width floor", () => {
       .toBe(pdfFloor);
 
     const youtube = readSeed("youtube-media.json");
-    await gotoSinglePaneWorkspace(page, `/media/${youtube.media_id}`, { primaryWidthPx: 320 });
+    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${youtube.media_id}`, {
+      primaryWidthPx: 320,
+    });
     activePane = activeWorkspacePane(page);
     await expect(activePane.getByTestId("document-viewport")).toBeVisible({
       timeout: 20_000,
@@ -128,11 +136,14 @@ test.describe("reader pane width floor", () => {
 
   test("mobile reflowable readers use viewport width instead of desktop floors", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await gotoSinglePaneWorkspace(page, `/media/${readSeed("non-pdf-media.json").media_id}`, {
-      primaryWidthPx: 320,
-    });
+    await gotoSinglePaneWorkspace(
+      page,
+      testInfo.testId,
+      `/media/${readSeed("non-pdf-media.json").media_id}`,
+      { primaryWidthPx: 320 },
+    );
 
     const activePane = activeWorkspacePane(page);
     await expect(activePane.getByTestId("document-viewport")).toBeVisible({

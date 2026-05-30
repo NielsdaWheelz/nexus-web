@@ -12,7 +12,6 @@ const hostMocks = vi.hoisted(() => ({
   runtimeLayout: null as PaneRuntimeLayout | null,
   store: {
     state: {
-      schemaVersion: 8,
       panes: [
         {
           id: "pane-1",
@@ -193,7 +192,6 @@ function setPaneHref(
   history: { back: string[]; forward: string[] } = { back: [], forward: [] }
 ) {
   hostMocks.store.state = {
-    schemaVersion: 8,
     panes: [
       {
         id: "pane-1",

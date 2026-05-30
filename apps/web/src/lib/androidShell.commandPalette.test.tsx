@@ -8,7 +8,6 @@ const { apiFetchMock, mockWorkspaceStore, requestOpenInAppPaneMock } = vi.hoiste
   apiFetchMock: vi.fn(),
   mockWorkspaceStore: {
     state: {
-      schemaVersion: 8,
       activePaneId: "pane-a",
       panes: [
         {
