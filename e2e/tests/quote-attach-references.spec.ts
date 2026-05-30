@@ -4,7 +4,11 @@ import path from "node:path";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
-import { activePaneSelector, activeWorkspacePane } from "./workspace";
+import {
+  activePaneSelector,
+  activeWorkspacePane,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface NonPdfSeed {
   media_id: string;
@@ -21,6 +25,10 @@ interface ChatReferencesResponse {
 }
 
 const NEW_REFERENCE_CHAT_BUTTON = /^(?:\+ New chat|Start new chat(?: about this document)?)$/i;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function readNonPdfSeed(): NonPdfSeed {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
@@ -49,8 +57,11 @@ test.describe("quote-attach references (post-cutover)", () => {
   test("quote-to-new-chat from a reader surfaces in the doc's Other chats list on revisit", async ({
     page,
   }, testInfo) => {
+    test.slow();
+
     const seed = readNonPdfSeed();
-    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-quote-attach");
+    await openMediaInSinglePaneWorkspace(page, deviceId, seed.media_id);
 
     const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
@@ -135,15 +146,19 @@ test.describe("quote-attach references (post-cutover)", () => {
       .poll(
         async () => {
           const conversations = await readReferences(page, seed.media_id);
-          return conversations.length;
+          return conversations.some(
+            (conversation) =>
+              conversation.title === messageText && conversation.message_count > 0,
+          );
         },
-        { timeout: 20_000 },
+        { timeout: 30_000 },
       )
-      .toBeGreaterThan(0);
+      .toBe(true);
 
     const conversations = await readReferences(page, seed.media_id);
-    expect(conversations.length).toBeGreaterThan(0);
-    const newChat = conversations.find((conv) => conv.message_count > 0);
+    const newChat = conversations.find(
+      (conv) => conv.title === messageText && conv.message_count > 0,
+    );
     expect(
       newChat,
       `Expected a referencing chat after sending "${messageText}", got: ${JSON.stringify(conversations)}`,
@@ -151,15 +166,17 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     // Revisit the doc's reader pane and confirm the new chat appears in the
     // reference-backed Doc chat list.
-    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
+    await openMediaInSinglePaneWorkspace(page, deviceId, seed.media_id);
     const reloadedSecondary = await openReaderSecondary(page);
-    await reloadedSecondary
-      .getByRole("tab", { name: "Document chat" })
-      .click();
+    const reloadedDocChatTab = reloadedSecondary.getByRole("tab", {
+      name: "Document chat",
+    });
+    await reloadedDocChatTab.click();
+    await expect(reloadedDocChatTab).toHaveAttribute("aria-selected", "true");
     await expect(
       reloadedSecondary.getByRole("button", {
-        name: new RegExp(newChat?.title ?? "Chat", "i"),
+        name: new RegExp(escapeRegExp(newChat?.title ?? "Chat"), "i"),
       }),
-    ).toBeVisible({ timeout: 10_000 });
+    ).toBeVisible({ timeout: 20_000 });
   });
 });

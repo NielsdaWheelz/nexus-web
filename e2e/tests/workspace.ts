@@ -169,7 +169,7 @@ export async function gotoWithWorkspaceSession(
   await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
   await seedWorkspaceSession(page.request, deviceId, state);
-  await page.goto(path);
+  await page.goto(path, { waitUntil: "domcontentloaded" });
 }
 
 export function activeWorkspacePane(page: Page): Locator {
@@ -190,7 +190,7 @@ export function workspaceE2eDeviceId(
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 96);
-  return `${prefix}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
+  return `${prefix}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${testInfo.retry}-${slug}`;
 }
 
 export function workspacePaneButton(page: Page, name: RegExp | string): Locator {

@@ -153,6 +153,7 @@ test.describe("workspace tabs", () => {
       page,
       workspaceTabsDeviceId(testInfo),
       "/libraries",
+      { history: { back: ["/browse"], forward: [] } },
     );
 
     const strip = workspacePaneStrip(page);
