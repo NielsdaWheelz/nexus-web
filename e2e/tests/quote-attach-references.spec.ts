@@ -45,9 +45,9 @@ test.describe("quote-attach references (post-cutover)", () => {
   // appears in M's "Other chats" list on the next visit to its reader pane.
   test("quote-to-new-chat from a reader surfaces in the doc's Other chats list on revisit", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readNonPdfSeed();
-    await openMediaInSinglePaneWorkspace(page, seed.media_id);
+    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
 
     const contentPane = page.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
@@ -135,7 +135,7 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     // Revisit the doc's reader pane and confirm the new chat appears in the
     // reference-backed Doc chat list.
-    await openMediaInSinglePaneWorkspace(page, seed.media_id);
+    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
     const reloadedSidecar = await openReaderSidecar(page);
     await reloadedSidecar
       .getByRole("tab", { name: "Document chat" })

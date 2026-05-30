@@ -1,12 +1,11 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  WORKSPACE_SCHEMA_VERSION,
   type WorkspacePaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
-  mergeRestoredWorkspaceWithUrlIntent,
+  mergeRestoredWorkspaceWithDeepLink,
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
   WorkspaceStoreProvider,
@@ -116,9 +115,8 @@ function titleRecord(
   };
 }
 
-describe("mergeRestoredWorkspaceWithUrlIntent", () => {
+describe("mergeRestoredWorkspaceWithDeepLink", () => {
   const restored: WorkspaceState = {
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: "pane-saved-libraries",
     panes: [
       pane("pane-saved-libraries", "/libraries"),
@@ -127,35 +125,33 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   };
 
   it("keeps a neutral /libraries open as pure saved-session restore", () => {
-    const urlIntent: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    const deepLink: WorkspaceState = {
       activePaneId: "pane-url-libraries",
       panes: [pane("pane-url-libraries", "/libraries")],
     };
 
     expect(
-      mergeRestoredWorkspaceWithUrlIntent(
+      mergeRestoredWorkspaceWithDeepLink(
         restored,
-        urlIntent,
+        deepLink,
         workspacePrimaryMetrics,
       ),
     ).toBe(restored);
   });
 
-  it("adds an explicit direct URL as the active pane instead of letting restore override it", () => {
-    const urlIntent: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+  it("adds an explicit deep link as the active pane instead of letting restore override it", () => {
+    const deepLink: WorkspaceState = {
       activePaneId: "pane-url-media",
       panes: [pane("pane-url-media", "/media/media-123", { primaryWidthPx: 1280 })],
     };
 
-    const merged = mergeRestoredWorkspaceWithUrlIntent(
+    const merged = mergeRestoredWorkspaceWithDeepLink(
       restored,
-      urlIntent,
+      deepLink,
       workspacePrimaryMetrics,
     );
 
-    expect(merged.panes.map((pane) => pane.href)).toEqual([
+    expect(merged.panes.map((item) => item.href)).toEqual([
       "/libraries",
       "/notes",
       "/media/media-123",
@@ -164,8 +160,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   });
 
   it("treats a default URL pane with sidecar state as explicit intent", () => {
-    const urlIntent: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    const deepLink: WorkspaceState = {
       activePaneId: "pane-url-libraries",
       panes: [
         pane("pane-url-libraries", "/libraries", {
@@ -179,20 +174,19 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       ],
     };
 
-    const merged = mergeRestoredWorkspaceWithUrlIntent(
+    const merged = mergeRestoredWorkspaceWithDeepLink(
       restored,
-      urlIntent,
+      deepLink,
       workspacePrimaryMetrics,
     );
 
     expect(merged).not.toBe(restored);
     expect(merged.activePaneId).toBe("pane-saved-libraries");
-    expect(merged.panes[0]?.sidecar).toEqual(urlIntent.panes[0]?.sidecar);
+    expect(merged.panes[0]?.sidecar).toEqual(deepLink.panes[0]?.sidecar);
   });
 
-  it("reuses and activates the saved pane for same-resource direct URLs", () => {
+  it("reuses and activates the saved pane for same-resource deep links", () => {
     const savedWithMedia: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-saved-libraries",
       panes: [
         ...restored.panes,
@@ -203,8 +197,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
         }),
       ],
     };
-    const urlIntent: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    const deepLink: WorkspaceState = {
       activePaneId: "pane-url-media",
       panes: [
         pane("pane-url-media", "/media/media-123?loc=chapter-2", {
@@ -213,15 +206,15 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       ],
     };
 
-    const merged = mergeRestoredWorkspaceWithUrlIntent(
+    const merged = mergeRestoredWorkspaceWithDeepLink(
       savedWithMedia,
-      urlIntent,
+      deepLink,
       workspacePrimaryMetrics,
     );
 
     expect(merged.panes).toHaveLength(3);
     expect(merged.activePaneId).toBe("pane-saved-media");
-    expect(merged.panes.find((pane) => pane.id === "pane-saved-media")).toMatchObject({
+    expect(merged.panes.find((item) => item.id === "pane-saved-media")).toMatchObject({
       href: "/media/media-123?loc=chapter-2",
       visibility: "visible",
       primaryWidthPx: 960,
@@ -891,6 +884,78 @@ describe("WorkspaceStoreProvider", () => {
         titleSource: "hint",
       });
     });
+    flushWorkspaceSession();
+  });
+
+  it("deep-links into a stored multi-pane session and focuses the requested pane", async () => {
+    window.history.replaceState({}, "", "/conversations/conversation-1");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
+        return jsonResponse({ data: null });
+      }
+      if (url.pathname === "/api/me/workspace-session") {
+        return jsonResponse({
+          data: {
+            own: {
+              state: {
+                activePaneId: "pane-libraries",
+                panes: [
+                  pane("pane-libraries", "/libraries"),
+                  pane("pane-conversation", "/conversations/conversation-1"),
+                  pane("pane-notes", "/notes"),
+                ],
+              },
+            },
+            most_recent_elsewhere: null,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    });
+
+    let store: WorkspaceStore | null = null;
+    render(
+      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
+      </WorkspaceStoreProvider>,
+    );
+    const workspace = () => {
+      if (!store) {
+        throw new Error("Workspace store has not mounted yet");
+      }
+      return store;
+    };
+
+    await waitFor(() => {
+      expect(workspace().state.panes.map((item) => item.href)).toEqual([
+        "/libraries",
+        "/conversations/conversation-1",
+        "/notes",
+      ]);
+      expect(activeHref(workspace())).toBe("/conversations/conversation-1");
+    });
+    expect(window.location.search).not.toContain("wsv");
+    expect(window.location.search).not.toContain("ws=");
+    flushWorkspaceSession();
+  });
+
+  it("projects the active pane href to the address bar via replaceState, never pushState", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+    const pushStateSpy = vi.spyOn(window.history, "pushState");
+
+    act(() => {
+      workspace().openPane({ href: "/conversations/conversation-1?run=run-1" });
+    });
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-1");
+      expect(window.location.pathname).toBe("/conversations/conversation-1");
+      expect(window.location.search).toBe("?run=run-1");
+    });
+    expect(window.location.search).not.toContain("wsv");
+    expect(window.location.search).not.toContain("ws=");
+    expect(pushStateSpy).not.toHaveBeenCalled();
     flushWorkspaceSession();
   });
 });

@@ -1,21 +1,17 @@
 import {
   test,
   expect,
-  type APIRequestContext,
   type Page,
   type TestInfo,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  WORKSPACE_E2E_SCHEMA_VERSION,
   makeWorkspacePane,
+  pinDeviceId,
+  seedWorkspaceSession,
   type WorkspaceState,
 } from "./workspace";
-import { stateChangingApiHeaders } from "./api";
-
-const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
-const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -50,35 +46,9 @@ function paneChromeDeviceId(testInfo: TestInfo): string {
 
 function trivialWorkspaceSession(): WorkspaceState {
   return {
-    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-chrome-default",
     panes: [makeWorkspacePane("pane-chrome-default", "/libraries", { primaryWidthPx: 480 })],
   };
-}
-
-async function pinDeviceId(page: Page, testInfo: TestInfo): Promise<void> {
-  await page.addInitScript(
-    ([key, id]) => {
-      try {
-        localStorage.setItem(key, id);
-      } catch {
-        /* private mode / quota - ignored */
-      }
-    },
-    [INSTALLATION_ID_STORAGE_KEY, paneChromeDeviceId(testInfo)]
-  );
-}
-
-async function putWorkspaceSession(
-  request: APIRequestContext,
-  testInfo: TestInfo,
-  state: WorkspaceState
-): Promise<void> {
-  const response = await request.put(WORKSPACE_SESSION_PATH, {
-    headers: stateChangingApiHeaders(),
-    data: { device_id: paneChromeDeviceId(testInfo), state },
-  });
-  expect(response.ok()).toBeTruthy();
 }
 
 async function useMobileViewport(page: Page): Promise<void> {
@@ -147,8 +117,9 @@ async function expectToolbarToFitPaneChrome(
 
 test.describe("pane chrome", () => {
   test.beforeEach(async ({ page }, testInfo) => {
-    await pinDeviceId(page, testInfo);
-    await putWorkspaceSession(page.request, testInfo, trivialWorkspaceSession());
+    const deviceId = paneChromeDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
+    await seedWorkspaceSession(page.request, deviceId, trivialWorkspaceSession());
   });
 
   test("mobile document panes keep scroll position stable while chrome hides and reveals deliberately", async ({

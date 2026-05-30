@@ -5,7 +5,6 @@ import {
   workspaceStatesEqual,
 } from "@/lib/workspace/sessionSync";
 import {
-  WORKSPACE_SCHEMA_VERSION,
   type WorkspacePaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -39,7 +38,6 @@ const mediaPane: WorkspacePaneState = {
 describe("isNonTrivialSession", () => {
   it("treats a single /libraries pane as trivial", () => {
     const state: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [librariesPane],
     };
@@ -48,7 +46,6 @@ describe("isNonTrivialSession", () => {
 
   it("treats a single non-/libraries pane as non-trivial", () => {
     const state: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [mediaPane],
     };
@@ -57,7 +54,6 @@ describe("isNonTrivialSession", () => {
 
   it("treats two or more panes as non-trivial", () => {
     const state: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [librariesPane, { ...mediaPane }],
     };
@@ -66,7 +62,6 @@ describe("isNonTrivialSession", () => {
 
   it("treats a single /libraries pane with history as non-trivial", () => {
     const state: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [{ ...librariesPane, history: { back: ["/media/123"], forward: [] } }],
     };
@@ -75,7 +70,6 @@ describe("isNonTrivialSession", () => {
 
   it("treats a single /libraries pane with sidecar state as non-trivial", () => {
     const state: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         {
@@ -96,40 +90,22 @@ describe("isNonTrivialSession", () => {
 describe("workspaceStatesEqual", () => {
   it("returns true for identical states", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     expect(workspaceStatesEqual(a, b)).toBe(true);
   });
 
-  it("returns false when schemaVersion differs", () => {
-    const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION - 1,
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    } as unknown as WorkspaceState;
-    expect(workspaceStatesEqual(a, b)).toBe(false);
-  });
-
   it("returns false when activePaneId differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-other",
       panes: [{ ...mediaPane }],
     };
@@ -138,12 +114,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when pane count differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }, { ...librariesPane }],
     };
@@ -152,12 +126,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when a pane id differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, id: "pane-different" }],
     };
@@ -166,12 +138,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when a pane href differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, href: "/media/456" }],
     };
@@ -180,12 +150,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when a pane primaryWidthPx differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, primaryWidthPx: 900 }],
     };
@@ -194,7 +162,6 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when a pane sidecar differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [
         {
@@ -227,12 +194,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when a pane visibility differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, visibility: "minimized" }],
     };
@@ -241,12 +206,10 @@ describe("workspaceStatesEqual", () => {
 
   it("returns false when pane history differs", () => {
     const a: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, history: { back: ["/libraries"], forward: [] } }],
     };
     const b: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...mediaPane, history: { back: [], forward: ["/libraries"] } }],
     };
@@ -257,7 +220,6 @@ describe("workspaceStatesEqual", () => {
 describe("prepareRestoredState", () => {
   it("round-trips a well-formed raw WorkspaceState", () => {
     const raw: WorkspaceState = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [{ ...librariesPane }, { ...mediaPane }],
     };

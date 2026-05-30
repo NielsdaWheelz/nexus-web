@@ -3,8 +3,6 @@
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import {
-  WORKSPACE_SCHEMA_VERSION,
-  WORKSPACE_STATE_PARAM,
   createDefaultWorkspaceState,
   hasPaneHistory,
   sanitizeWorkspaceState,
@@ -48,13 +46,6 @@ export async function putWorkspaceSession(
   await apiFetch(WORKSPACE_SESSION_PATH, { method: "PUT", body });
 }
 
-export function isColdOpen(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return !new URL(window.location.href).searchParams.has(WORKSPACE_STATE_PARAM);
-}
-
 export function prepareRestoredState(
   raw: unknown,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
@@ -84,7 +75,6 @@ export function prepareRestoredState(
     : visiblePanes[0].id;
 
   return {
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId,
     panes,
   };
@@ -106,9 +96,6 @@ export function workspaceStatesEqual(
   a: WorkspaceState,
   b: WorkspaceState
 ): boolean {
-  if (a.schemaVersion !== b.schemaVersion) {
-    return false;
-  }
   if (a.activePaneId !== b.activePaneId) {
     return false;
   }

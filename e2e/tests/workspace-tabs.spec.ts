@@ -1,9 +1,16 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  WORKSPACE_E2E_SCHEMA_VERSION,
-  encodeWorkspaceStateParam,
+  gotoWithWorkspaceSession,
+  makeWorkspacePane,
+  type WorkspaceState,
 } from "./workspace";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +70,28 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function workspaceTabsDeviceId(testInfo: TestInfo): string {
+  const slug = testInfo.titlePath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return `e2e-workspace-tabs-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
+}
+
+// A two-pane session (Libraries active, Search alongside) shared by the tests
+// that exercise the strip's multi-tab behavior.
+function librariesAndSearchSession(): WorkspaceState {
+  return {
+    activePaneId: "pane-libraries",
+    panes: [
+      makeWorkspacePane("pane-libraries", "/libraries"),
+      makeWorkspacePane("pane-search", "/search"),
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -74,29 +103,13 @@ test.describe("workspace tabs", () => {
 
   test("desktop: static panes show their name immediately in the strip", async ({
     page,
-  }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      librariesAndSearchSession(),
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -147,29 +160,13 @@ test.describe("workspace tabs", () => {
 
   test("desktop: the active pane's activator carries aria-current=page", async ({
     page,
-  }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      librariesAndSearchSession(),
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -199,29 +196,13 @@ test.describe("workspace tabs", () => {
 
   test("desktop: closing a pane removes its tab from the strip", async ({
     page,
-  }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      librariesAndSearchSession(),
+      "/libraries",
+    );
 
     await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
 
@@ -276,24 +257,22 @@ test.describe("workspace tabs", () => {
 
   test("desktop: epub tab eventually carries a real book title, not \"Media\"", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
 
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-media",
-      panes: [
-        {
-          id: "pane-media",
-          href: `/media/${epub.media_id}`,
-          primaryWidthPx: 720,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      {
+        activePaneId: "pane-media",
+        panes: [
+          makeWorkspacePane("pane-media", `/media/${epub.media_id}`, {
+            primaryWidthPx: 720,
+          }),
+        ],
+      },
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -424,29 +403,13 @@ test.describe("workspace tabs", () => {
 
   test("desktop: Delete key on a focused tab closes that pane", async ({
     page,
-  }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      librariesAndSearchSession(),
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -471,29 +434,13 @@ test.describe("workspace tabs", () => {
 
   test("desktop: ArrowRight moves between tab activators, skipping action buttons", async ({
     page,
-  }) => {
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-libraries",
-      panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          primaryWidthPx: 560,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      librariesAndSearchSession(),
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -531,24 +478,22 @@ test.describe("workspace tabs", () => {
 
   test("desktop: a pending dynamic tab carries aria-busy and an aria-label; both clear on resolution", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const nonPdf = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
 
-    const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-      activePaneId: "pane-media",
-      panes: [
-        {
-          id: "pane-media",
-          href: `/media/${nonPdf.media_id}`,
-          primaryWidthPx: 720,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      ],
-    });
-
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceTabsDeviceId(testInfo),
+      {
+        activePaneId: "pane-media",
+        panes: [
+          makeWorkspacePane("pane-media", `/media/${nonPdf.media_id}`, {
+            primaryWidthPx: 720,
+          }),
+        ],
+      },
+      "/libraries",
+    );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();

@@ -3,7 +3,6 @@ import {
   MAX_PANES,
   MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_TOTAL_PANE_HISTORY_ENTRIES,
-  WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   sanitizeWorkspaceState,
 } from "@/lib/workspace/schema";
@@ -31,7 +30,6 @@ function sanitize(
 describe("workspace schema", () => {
   it("creates a default workspace with the workspace primary width", () => {
     const state = createDefaultWorkspaceState("/media/abc", workspacePrimaryMetrics);
-    expect(state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
     expect(state.panes).toHaveLength(1);
     expect(state.panes[0]?.href).toBe("/media/abc");
     expect(state.panes[0]?.primaryWidthPx).toBe(workspacePrimaryMetrics.primaryDefaultWidthPx);
@@ -46,18 +44,8 @@ describe("workspace schema", () => {
     expect(normalizeWorkspaceHref("javascript:alert(1)")).toBeNull();
   });
 
-  it("falls back to a safe default when schemaVersion mismatches", () => {
-    const state = sanitize(
-      { schemaVersion: 999, activePaneId: "x", panes: [] },
-      { fallbackHref: "/conversations" },
-    );
-    expect(state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
-    expect(state.panes[0]?.href).toBe("/conversations");
-  });
-
   it("rejects pane payloads without visibility", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [{ id: "pane-1", href: "/media/1", primaryWidthPx: 480 }],
     });
@@ -66,7 +54,6 @@ describe("workspace schema", () => {
 
   it("rejects pane payloads without pane history", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         { id: "pane-1", href: "/media/1", primaryWidthPx: 480, visibility: "visible" },
@@ -78,7 +65,6 @@ describe("workspace schema", () => {
   it("sanitizes pane history hrefs", () => {
     const state = sanitize(
       {
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
           {
@@ -104,7 +90,6 @@ describe("workspace schema", () => {
   it("rejects malformed pane history hrefs", () => {
     const state = sanitize(
       {
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
           {
@@ -123,7 +108,6 @@ describe("workspace schema", () => {
 
   it("caps pane count during sanitization", () => {
     const oversized = {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-0",
       panes: Array.from({ length: MAX_PANES + 10 }, (_, i) => ({
         id: `pane-${i}`,
@@ -139,7 +123,6 @@ describe("workspace schema", () => {
 
   it("clamps persisted pane widths to the workspace floor", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         { id: "pane-1", href: "/libraries", primaryWidthPx: 10, visibility: "visible", history: { back: [], forward: [] } },
@@ -152,7 +135,6 @@ describe("workspace schema", () => {
 
   it("rejects old-shape panes that omit primaryWidthPx", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         { id: "pane-1", href: "/media/1", visibility: "visible", history: { back: [], forward: [] } },
@@ -168,7 +150,6 @@ describe("workspace schema", () => {
 
   it("sanitizes compatible sidecar state", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         {
@@ -196,7 +177,6 @@ describe("workspace schema", () => {
 
   it("drops incompatible sidecar state", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-1",
       panes: [
         {
@@ -239,7 +219,6 @@ describe("workspace schema", () => {
 
   it("keeps minimized panes when the active pane is visible", () => {
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-2",
       panes: [
         { id: "pane-1", href: "/libraries", primaryWidthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
@@ -253,7 +232,6 @@ describe("workspace schema", () => {
   it("falls back when the requested active pane is minimized", () => {
     const state = sanitize(
       {
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
           { id: "pane-1", href: "/libraries", primaryWidthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
@@ -270,7 +248,6 @@ describe("workspace schema", () => {
   it("trims pane history deterministically", () => {
     const history = Array.from({ length: 20 }, (_, index) => `/media/${index}`);
     const state = sanitize({
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-0",
       panes: Array.from({ length: 5 }, (_, index) => ({
         id: `pane-${index}`,

@@ -34,7 +34,8 @@ export async function openHighlightsPane(page: Page): Promise<Locator> {
 
 export async function openMediaInSinglePaneWorkspace(
   page: Page,
+  deviceId: string,
   mediaId: string,
 ): Promise<void> {
-  await gotoSinglePaneWorkspace(page, `/media/${mediaId}`);
+  await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
 }

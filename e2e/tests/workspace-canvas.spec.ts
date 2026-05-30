@@ -1,8 +1,8 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
-  WORKSPACE_E2E_SCHEMA_VERSION,
-  encodeWorkspaceStateParam,
+  gotoWithWorkspaceSession,
   makeWorkspacePane,
+  type WorkspaceState,
 } from "./workspace";
 
 function workspacePaneStrip(page: Page): Locator {
@@ -25,19 +25,23 @@ async function paneBoxX(pane: Locator): Promise<number> {
 
 // Three same-width panes side by side overflow the 1280px desktop viewport,
 // so the canvas is genuinely scrollable.
-const OVERFLOWING_WORKSPACE = encodeWorkspaceStateParam({
-  schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
+const OVERFLOWING_WORKSPACE_STATE: WorkspaceState = {
   activePaneId: "pane-libraries",
   panes: [
     makeWorkspacePane("pane-libraries", "/libraries"),
     makeWorkspacePane("pane-search", "/search"),
     makeWorkspacePane("pane-settings", "/settings"),
   ],
-});
+};
 
 test.describe("workspace canvas", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${OVERFLOWING_WORKSPACE}`);
+  test.beforeEach(async ({ page }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      testInfo.testId,
+      OVERFLOWING_WORKSPACE_STATE,
+      "/libraries",
+    );
 
     // Wait for every pane wrap to mount before driving the canvas.
     await expect(paneWrap(page, "pane-libraries")).toBeVisible();

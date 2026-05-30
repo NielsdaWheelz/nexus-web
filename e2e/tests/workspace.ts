@@ -1,8 +1,13 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { stateChangingApiHeaders } from "./api";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-export const WORKSPACE_E2E_SCHEMA_VERSION = 8;
+// The app stores the device id under this key in localStorage. Pinning it lets
+// a test key its server-session capture + restore to an id it controls.
+export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
+
+const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
 export interface WorkspacePaneHistory {
   back: string[];
@@ -19,7 +24,6 @@ export interface WorkspacePaneState {
 }
 
 export interface WorkspaceState {
-  schemaVersion: typeof WORKSPACE_E2E_SCHEMA_VERSION;
   activePaneId: string;
   panes: WorkspacePaneState[];
 }
@@ -43,43 +47,63 @@ export function makeWorkspacePane(
   };
 }
 
-export function encodeWorkspaceStateParam(value: WorkspaceState): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-export function workspaceUrlForState(
-  href: string,
-  state: WorkspaceState,
-): string {
-  const url = new URL(href, "http://nexus-e2e.local");
-  url.searchParams.set("wsv", String(WORKSPACE_E2E_SCHEMA_VERSION));
-  url.searchParams.set("ws", encodeWorkspaceStateParam(state));
-  return `${url.pathname}${url.search}${url.hash}`;
-}
-
 export function singlePaneWorkspaceState(
   href: string,
   options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
   const paneId = options?.paneId ?? "pane-e2e-primary";
-  const primaryWidthPx = options?.primaryWidthPx ?? 684;
   return {
-    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: paneId,
     panes: [
       makeWorkspacePane(paneId, href, {
-        primaryWidthPx,
+        primaryWidthPx: options?.primaryWidthPx ?? 684,
         history: options?.history,
       }),
     ],
   };
 }
 
-export function workspaceUrlForSinglePane(
-  href: string,
-  options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
-): string {
-  return workspaceUrlForState(href, singlePaneWorkspaceState(href, options));
+// Pin the device id before any navigation so capture + restore key off the id
+// the test controls. Runs as an init script, i.e. before any page load.
+export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
+  await page.addInitScript(
+    ([key, id]) => {
+      try {
+        localStorage.setItem(key, id);
+      } catch {
+        /* private mode / quota — ignored */
+      }
+    },
+    [INSTALLATION_ID_STORAGE_KEY, deviceId],
+  );
+}
+
+// Seed the server session store for a device. This is the canonical multi-pane
+// setup now that layout never travels in the URL.
+export async function seedWorkspaceSession(
+  request: APIRequestContext,
+  deviceId: string,
+  state: WorkspaceState,
+): Promise<void> {
+  const response = await request.put(WORKSPACE_SESSION_PATH, {
+    headers: stateChangingApiHeaders(),
+    data: { device_id: deviceId, state },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
+// Pin the device, seed its session, then open `path`. The canonical way to
+// stage a multi-pane workspace for a test now that layout lives only in the
+// server session store.
+export async function gotoWithWorkspaceSession(
+  page: Page,
+  deviceId: string,
+  state: WorkspaceState,
+  path: string,
+): Promise<void> {
+  await pinDeviceId(page, deviceId);
+  await seedWorkspaceSession(page.request, deviceId, state);
+  await page.goto(path);
 }
 
 export function activeWorkspacePane(page: Page): Locator {
@@ -94,9 +118,10 @@ export function workspacePaneButton(page: Page, name: RegExp | string): Locator 
 
 export async function gotoSinglePaneWorkspace(
   page: Page,
+  deviceId: string,
   href: string,
   options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): Promise<void> {
-  await page.goto(workspaceUrlForSinglePane(href, options));
+  await gotoWithWorkspaceSession(page, deviceId, singlePaneWorkspaceState(href, options), href);
   await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });
 }

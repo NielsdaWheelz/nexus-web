@@ -15,9 +15,9 @@ function readNonPdfSeed(): NonPdfSeed {
 test.describe("reader pane tabs (references cutover)", () => {
   test("opens the reader pane and exposes highlights plus reference-backed document chat", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readNonPdfSeed();
-    await openMediaInSinglePaneWorkspace(page, seed.media_id);
+    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
 
     const sidecar = await openReaderSidecar(page);
     const tablist = sidecar.getByRole("tablist", { name: "Sidecar surfaces" });

@@ -6,16 +6,13 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import {
-  WORKSPACE_E2E_SCHEMA_VERSION,
-  encodeWorkspaceStateParam,
   makeWorkspacePane,
-  workspaceUrlForState,
+  pinDeviceId,
+  seedWorkspaceSession,
+  workspacePaneButton,
   type WorkspaceState,
 } from "./workspace";
-import { stateChangingApiHeaders } from "./api";
 
-// The app stores this under `nexus.installationId.v1` in localStorage.
-const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
 interface WorkspaceSessionEntry {
@@ -34,7 +31,6 @@ interface WorkspaceSessionResponse {
 // A non-trivial two-pane session: more than one pane makes it worth restoring.
 function twoPaneSession(): WorkspaceState {
   return {
-    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
     panes: [
       makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
@@ -43,27 +39,10 @@ function twoPaneSession(): WorkspaceState {
   };
 }
 
-// A distinct two-pane session whose second pane differs from `twoPaneSession`.
-// Seeding this lets a test prove the deep-link URL — not the saved session —
-// drove what rendered.
-function conversationsPaneSession(): WorkspaceState {
-  return {
-    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
-    activePaneId: "pane-session-libraries",
-    panes: [
-      makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
-      makeWorkspacePane("pane-session-conversations", "/conversations", {
-        primaryWidthPx: 520,
-      }),
-    ],
-  };
-}
-
 // A trivial single default pane — `isNonTrivialSession` treats this as nothing
 // worth restoring, so it is the right value to reset to during cleanup.
 function trivialSession(): WorkspaceState {
   return {
-    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-default",
     panes: [makeWorkspacePane("pane-session-default", "/libraries", { primaryWidthPx: 480 })],
   };
@@ -79,33 +58,6 @@ function workspaceSessionRestoreDeviceId(testInfo: TestInfo): string {
   return `e2e-workspace-session-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
 }
 
-// Pin the device id before any navigation so capture + restore key off the
-// id the test controls.
-async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
-  await page.addInitScript(
-    ([key, id]) => {
-      try {
-        localStorage.setItem(key, id);
-      } catch {
-        /* private mode / quota — ignored */
-      }
-    },
-    [INSTALLATION_ID_STORAGE_KEY, deviceId]
-  );
-}
-
-async function putWorkspaceSession(
-  request: APIRequestContext,
-  deviceId: string,
-  state: WorkspaceState
-): Promise<void> {
-  const response = await request.put(WORKSPACE_SESSION_PATH, {
-    headers: stateChangingApiHeaders(),
-    data: { device_id: deviceId, state },
-  });
-  expect(response.ok()).toBeTruthy();
-}
-
 async function fetchWorkspaceSession(
   request: APIRequestContext,
   deviceId: string
@@ -118,20 +70,30 @@ async function fetchWorkspaceSession(
   return payload.data;
 }
 
-function workspacePaneButton(page: Page, name: RegExp | string) {
+// Create a conversation that is NOT part of any seeded session, so a deep link
+// to it exercises the merge-an-absent-resource path.
+async function createConversation(page: Page): Promise<string> {
+  const response = await page.request.post("/api/conversations", { maxRedirects: 0 });
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as { data: { id: string } };
+  return payload.data.id;
+}
+
+function activeWorkspacePaneButton(page: Page) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
-    .getByRole("button", { name });
+    .locator('button[aria-current="page"]')
+    .first();
 }
 
 test.describe("workspace session restore", () => {
   test("cold open silently restores a saved session", async ({ page }, testInfo) => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
-    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
+    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
 
     try {
-      // Cold open: a base URL with no `ws=` param.
+      // Cold open the active pane's own route; siblings hydrate from the session.
       await page.goto("/libraries");
 
       // The saved two-pane workspace is restored silently — no banner, no
@@ -143,10 +105,11 @@ test.describe("workspace session restore", () => {
         timeout: 15_000,
       });
 
-      // Applying the restored state writes it into the URL as a `ws=` param.
-      await expect(page).toHaveURL(/[?&]ws=/);
+      // Layout never travels in the URL: the address bar is just the active
+      // pane's path, with no encoded-state query param.
+      await expect(page).toHaveURL(/\/libraries$/);
     } finally {
-      await putWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 
@@ -155,10 +118,10 @@ test.describe("workspace session restore", () => {
     await pinDeviceId(page, deviceId);
     // Start from a trivial session so the cold open arms capture without
     // restoring anything.
-    await putWorkspaceSession(page.request, deviceId, trivialSession());
+    await seedWorkspaceSession(page.request, deviceId, trivialSession());
 
     try {
-      await page.goto(workspaceUrlForState("/libraries", trivialSession()));
+      await page.goto("/libraries");
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
 
       // Open a second pane: shift-click an in-pane library link.
@@ -183,59 +146,82 @@ test.describe("workspace session restore", () => {
         )
         .toBeGreaterThan(1);
     } finally {
-      await putWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 
-  test("a ws= URL is authoritative and silent restore does not override it", async ({
+  test("a deep link to a resource absent from the session appends it as the active pane", async ({
     page,
   }, testInfo) => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
-    // Seed a saved session that is DISTINCT from the deep link below: silent
-    // restore, if it ran, would surface a "Notes" pane.
-    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
+    // Seed a two-pane session (Libraries + Notes) that does NOT contain the
+    // conversation we are about to deep-link to.
+    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
 
     try {
-      // The deep link carries its own panes (Libraries + Conversations).
-      const deepLinkState = encodeWorkspaceStateParam(conversationsPaneSession());
-      await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${deepLinkState}`);
+      const conversationId = await createConversation(page);
+      await page.goto(`/conversations/${conversationId}`);
 
-      // The URL is authoritative: its panes render and silent restore stays
-      // out of the way — the saved session's "Notes" pane never appears.
-      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Chats\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveCount(0);
-    } finally {
-      await putWorkspaceSession(page.request, deviceId, trivialSession());
-    }
-  });
-
-  test("a direct URL without ws is active and preserves the saved workspace", async ({
-    page,
-  }, testInfo) => {
-    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
-    await pinDeviceId(page, deviceId);
-    // A direct app URL is still user intent, even without an encoded workspace
-    // state. Restore may preserve saved panes, but it must not replace the
-    // requested route with the saved active pane.
-    await putWorkspaceSession(page.request, deviceId, twoPaneSession());
-
-    try {
-      await page.goto("/conversations");
-
-      await expect(workspacePaneButton(page, /^Chats\b/)).toBeVisible({
+      // The restored layout is preserved — both saved panes still appear — and
+      // the deep-linked conversation is added as a third, active pane.
+      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
         timeout: 15_000,
       });
       await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible({
         timeout: 15_000,
       });
-      await expect(workspacePaneButton(page, /^Chats\b/)).toHaveAttribute(
-        "aria-current",
-        "page",
+      await expect(
+        page
+          .getByRole("toolbar", { name: "Workspace panes" })
+          .getByRole("button", { name: /^Close / })
+      ).toHaveCount(3);
+
+      // The deep-linked pane is the active one, and the address bar is just its
+      // path — no encoded-state param ever.
+      await expect(activeWorkspacePaneButton(page)).toBeVisible();
+      await expect(page).toHaveURL(
+        new RegExp(`/conversations/${conversationId}$`)
       );
     } finally {
-      await putWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, deviceId, trivialSession());
+    }
+  });
+
+  test("a deep link to a resource already in the session focuses its existing pane", async ({
+    page,
+  }, testInfo) => {
+    const deviceId = workspaceSessionRestoreDeviceId(testInfo);
+    await pinDeviceId(page, deviceId);
+    // Seed a two-pane session whose first pane is the active one (Libraries).
+    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
+
+    try {
+      // Deep-link to /notes, which IS already a pane in the saved session.
+      await page.goto("/notes");
+
+      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+
+      // No duplicate pane is added — still exactly two panes — and the existing
+      // Notes pane becomes active.
+      await expect(
+        page
+          .getByRole("toolbar", { name: "Workspace panes" })
+          .getByRole("button", { name: /^Close / })
+      ).toHaveCount(2);
+      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveAttribute(
+        "aria-current",
+        "page",
+        { timeout: 15_000 }
+      );
+      await expect(page).toHaveURL(/\/notes$/);
+    } finally {
+      await seedWorkspaceSession(page.request, deviceId, trivialSession());
     }
   });
 });
