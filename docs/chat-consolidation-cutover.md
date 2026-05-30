@@ -29,7 +29,7 @@ into god-files. Concrete evidence:
 | **scroll-to-bottom on new message** | ✅ `useLayoutEffect([messages])` (`:428`) | ✅ (`:119`) | ❌ **absent** |
 | **release auto-scroll on manual scroll-up** | ✅ `handleChatScroll` (`:450`) | ✅ (`:161`) | ❌ **never wired** |
 | branch/forks (state, graph, switch, restore) | ✅ | — | — |
-| references secondary | ✅ | ✅ (refs only) | — (creates with media ref) |
+| references sidecar | ✅ | ✅ (refs only) | — (creates with media ref) |
 
 `ReaderChatDetail` declares `shouldScrollRef`/`scrollportRef` (`ReaderChatDetail.tsx:54-55`),
 threads them into `ChatSurface`/`useChatRunTail`, **but has no `useLayoutEffect` that ever writes
@@ -66,19 +66,22 @@ surfaces and are correct. The mess is entirely in the **container, scroll, and g
    optimistic seeding, retry, branch state, and reference fan-out. The three surfaces stop owning any
    of it.
 2. **One transcript view that owns its scroll** — `ChatSurface` is the single owner of scroll.
-   `shouldScrollRef`, the three `useLayoutEffect([messages])` copies, the `handleChatScroll` copies,
-   the `handleComposerWheel` hack, and `branchScroll.ts` as a standalone all disappear into it.
+   `shouldScrollRef`, the three `useLayoutEffect([messages])` copies, and the `handleChatScroll` copies
+   are **deleted**; `handleComposerWheel` (wheel-forwarding) and `branchScroll.ts` are **absorbed** into
+   it with their behaviour kept.
 3. **Pin-the-question-near-the-top** — on send, the user's message animates to the top of the
    scrollport and the answer streams beneath it; the question stays put (no bottom-chasing), with a
    reserved spacer so a short turn can still place the question at the top.
 4. **Collapse three surfaces into one** — delete `ConversationNewPaneBody` (it is the conversation
    route with `conversationId={null}`); reduce `ReaderChatDetail` to a thin header + view bound to the
-   same engine. One load path (`/tree`), one resolve path, one scroll owner.
+   same engine. One resolve path and one scroll owner; the history load endpoint follows the
+   `branching` flag (no backend change — see §6.1).
 5. **Decompose `ChatComposer`** into a pure body builder + `useChatDraft` + `useChatModels` +
-   `ModelSettingsPopover` + `PendingReferencesBar`, leaving a thin orchestrator.
+   `ModelSettingsPopover` + inline pending-reference chips, leaving a thin orchestrator.
 6. **Decompose `ConversationForksPanel`** into `lib/conversations/forkTree.ts` (pure) + `useForkPanel`
    + `useForkTreeKeyNav` + `ForkTreeView` + `ForkNodeRow`, leaving a thin orchestrator.
-7. **Reuse, don't reinvent** — `useChatRunTail`/`useChatMessageUpdates` (untouched), `branching.ts`,
+7. **Reuse, don't reinvent** — `useChatRunTail`/`useChatMessageUpdates` (streaming behaviour unchanged;
+   only the scroll-coupling `shouldScrollRef` arg is removed, §6.3), `branching.ts`,
    `useConversationReferences`, `useStringIdSet`, `apiFetch`, `toFeedback`/`FeedbackNotice`,
    `Button`/`Textarea(autoGrow)`/`Select`/`ActionMenu`/`MarkdownMessage`, and the pane runtime hooks.
 8. **Token-driven CSS, one module per component**; no behavioural change to SSE, the references data
@@ -91,10 +94,11 @@ surfaces and are correct. The mess is entirely in the **container, scroll, and g
 - **No change to the streaming transport.** `useChatRunTail.ts`, `useChatMessageUpdates.ts`, and the
   SSE client/parser (`lib/api/sse/*`) are not touched except for the `shouldScrollRef` parameter
   removal (§6.2). Delta batching, reconnect, replay-skip stay byte-for-byte.
-- **No backend / endpoint / schema change.** `/chat-runs`, `/conversations`, `/tree`, `/messages`
-  (the linear endpoint is simply no longer called from the client; leaving the route is fine),
-  `/references`, `/forks`, `/active-path`, `/models` are unchanged.
-- **No change to the references data model or its secondary rendering.** `ConversationReferencesSurface`
+- **No backend / endpoint / schema change.** `/chat-runs`, `/conversations`, `/tree` (gains **no**
+  pagination — pane history stays a whole-path load, so there is no pane load-older), `/messages`
+  (**still** used, for reader pagination), `/references`, `/forks`, `/active-path`, `/models` are
+  unchanged.
+- **No change to the references data model or its sidecar rendering.** `ConversationReferencesSidecar`
   row markup is owned by `docs/item-card-cutover.md` (resource `ItemCard` variant). This cutover keeps
   consuming `useConversationReferences` and rendering whatever that component renders; it does not
   build `ItemCard`/`Disclosure`.
@@ -150,10 +154,10 @@ surfaces and are correct. The mess is entirely in the **container, scroll, and g
 ### 4.2 Surfaces (unchanged externally)
 
 - **Conversation pane** (`/conversations/[id]` and `/conversations/new`): full transcript, composer,
-  branching (fork strips inline + forks secondary), references secondary, pane title/options. `new` is the
+  branching (fork strips inline + forks sidecar), references sidecar, pane title/options. `new` is the
   same surface with no id yet.
-- **Reader doc-chat** (inside the media pane's `reader-doc-chat` secondary surface): same transcript +
-  composer + pin-scroll, plus a compact header (back, title, "Open in full chat"); no sub-secondarys, no
+- **Reader doc-chat** (inside the media pane's `reader-doc-chat` sidecar surface): same transcript +
+  composer + pin-scroll, plus a compact header (back, title, "Open in full chat"); no sub-sidecars, no
   forks chrome; creates the conversation with the document reference on first send.
 
 ---
@@ -165,11 +169,11 @@ The split is **engine hook (state/effects) + presentational view (DOM/scroll) + 
 scroll-related lives in the view.
 
 ```
-                         components/chat/useChatRunTail.ts   ← UNTOUCHED (SSE stream)
-                         components/chat/useChatMessageUpdates.ts ← UNTOUCHED (RAF delta flush)
+                         components/chat/useChatRunTail.ts   ← streaming unchanged (only shouldScrollRef arg removed)
+                         components/chat/useChatMessageUpdates.ts ← streaming unchanged (only shouldScrollRef arg removed)
                                          ▲
                          components/chat/useConversation.ts   ← THE ENGINE (one owner of lifecycle)
-                         · messages, history(/tree), olderCursor, loadOlder
+                         · messages, history (/tree when branching · /messages when linear), loadOlder
                          · resolveConversation(initialReferences) on send
                          · optimistic seed, retry, abort
                          · branch state (forkOptionsByParentId, branchGraph, switchToLeaf)
@@ -178,28 +182,28 @@ scroll-related lives in the view.
         ┌────────────────────────────────┴───────────────────────────────────┐
         │                                                                      │
   components/chat/Conversation.tsx                      components/chat/ReaderChatDetail.tsx
-  (PANE BODY — /conversations/[id] & /new)              (EMBEDDED in reader secondary)
+  (PANE BODY — /conversations/[id] & /new)              (EMBEDDED in reader sidecar)
   · useConversation({ id })                             · useConversation({ id:null|id,
-  · useSetPaneTitle / usePaneChromeOverride               initialReferences:[`media:${id}`],
-  · usePaneSecondary(conversation-context:                   readerContext })
+  · useSetPaneTitle / usePaneChromeOverride               initialReferences:[`media:${id}`] })
+  · usePaneSidecar(conversation-context)                 · passes readerContext to <ChatComposer/>
       references + forks)                                · renders its own <header> (back / open-full)
-  · branching chrome ON                                 · NO pane-chrome hooks (it is inside a secondary)
+  · branching chrome ON                                 · NO pane-chrome hooks (it is inside a sidecar)
         │                                                      │
         └───────────────────────┬──────────────────────────────┘
                                  ▼
                   components/chat/ChatSurface.tsx   ← THE VIEW (one owner of scroll)
                   · renders transcript (MessageRow[]) + composer slot + spacer
                   · uses useChatScroll() internally; exposes ChatScrollHandle via ref
-                  · pin-question, release-on-scroll, ↓Latest, preserveAround()
+                  · pin-question, release-on-scroll, ↓Latest, captureAnchor()/restore, composer-wheel
                                  ▼
                   components/chat/ChatComposer.tsx  ← THIN ORCHESTRATOR
                   · buildChatRunBody() (pure)   · useChatDraft()   · useChatModels()
-                  · <ModelSettingsPopover/>     · <PendingReferencesBar/>  · <BranchComposerHeader/>
+                  · <ModelSettingsPopover/>     · pending-ref chips        · <BranchComposerHeader/>
 ```
 
-Why **two adapters, not one component with a flag:** the pane-chrome hooks (`usePaneSecondary`,
+Why **two adapters, not one component with a flag:** the pane-chrome hooks (`usePaneSidecar`,
 `useSetPaneTitle`, `usePaneChromeOverride`) write to the **nearest** pane context. `ReaderChatDetail`
-renders *inside the reader pane's `reader-doc-chat` secondary body*, so if it called those hooks it would
+renders *inside the reader pane's `reader-doc-chat` sidecar body*, so if it called those hooks it would
 clobber the reader pane's own publications. React also forbids conditionally calling hooks. Therefore
 the shared core is the **hook + view**, and the two adapters differ only by which chrome hooks they
 call. `ConversationNewPaneBody` is deleted outright (it is `Conversation` with `conversationId={null}`).
@@ -221,7 +225,7 @@ ChatComposer.tsx (~150L orchestrator)
  ├── useChatDraft.ts                     (draftsByKey map, activeDraftKey, save/restore/clear)
  ├── useChatModels.ts                    (load+cache+filter+select; provider/model/reasoning options)
  ├── ModelSettingsPopover.tsx            (provider/model/reasoning/keys; desktop popover + mobile sheet)
- ├── PendingReferencesBar.tsx            (pending-reference chips)
+ ├── pending-reference chips             (single-use render block kept inline)
  └── BranchComposerHeader.tsx           (UNCHANGED)
 ```
 
@@ -237,11 +241,9 @@ export interface UseConversationOptions {
   conversationId: string | null;
   /** URIs attached to the conversation when it is created on first send (e.g. ["media:<id>"]). */
   initialReferences?: string[];
-  /** Reader context hint forwarded to the composer/run (media/library); not a retrieval constraint. */
-  readerContext?: ReaderContextHintInput | null;
   /** Enable branch state + active-path persistence. Pane: true. Reader embed: false. */
   branching?: boolean;
-  /** Fired when a `reference_added` SSE event lands for this conversation (pane upserts the secondary). */
+  /** Fired when a `reference_added` SSE event lands for this conversation (pane upserts the sidecar). */
   onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
   /** Fired the first time a run resolves a concrete conversation id (new-chat navigation). */
   onConversationCreated?: (conversationId: string, runId: string) => void;
@@ -250,8 +252,8 @@ export interface UseConversationOptions {
 export interface UseConversation {
   // transcript
   messages: ConversationMessage[];
-  olderCursor: string | null;
-  loadOlder: () => Promise<void>;
+  olderCursor: string | null;            // linear (reader) mode only; always null in branching mode
+  loadOlder: () => Promise<void>;        // linear (reader) mode only; no-op in branching mode
   loading: boolean;
   error: FeedbackContent | null;
 
@@ -289,9 +291,19 @@ export function useConversation(options: UseConversationOptions): UseConversatio
 ```
 
 Engine internals (consolidated from the three surfaces):
-- **History load** always uses `GET /conversations/{id}/tree` (selected path + `fork_options_by_parent_id`
-  + `branch_graph` + `next_cursor`). The reader's linear `/messages` load path is deleted. When
-  `branching` is false the fork data is ignored (not rendered).
+- **History load has two modes, selected by `branching`, with no backend change** (verified:
+  `GET /conversations/{id}/tree` takes no pagination params and always returns
+  `page: { before_cursor: null }` — `conversations.py:174`, `conversation_branches.py:285`):
+  - `branching: true` (pane) → `GET /conversations/{id}/tree` returns the **entire** selected path
+    (all messages) + `fork_options_by_parent_id` + `branch_graph` in one shot. `/tree` has no
+    pagination contract, so there is **no load-older in pane mode**: the existing wiring is inert today
+    (`ConversationPaneBody:281` reads `tree.page.before_cursor`, always `null`; the guarded fetch at
+    `:465-495` never fires; the `:825` "Load older" control never appears) and is **dropped, not
+    carried as a no-op**. Real pane pagination would require backend `/tree` cursor support — explicitly
+    out of scope (§3).
+  - `branching: false` (reader) → `GET /conversations/{id}/messages?limit=30` for the initial window
+    and `?cursor=` for `loadOlder`, reading `page.next_cursor`. This linear path is **kept** (it is
+    the only paginating endpoint). Fork data is not loaded or rendered in this mode.
 - **`resolveConversation`** = the merged logic of `ConversationNewPaneBody:171` and
   `ReaderChatDetail:159`: if an id exists, POST each `initialReferences` URI to `/references`; else POST
   `/conversations` with `{ initial_references }`, mark it locally-created (skip the history fetch), and
@@ -301,8 +313,9 @@ Engine internals (consolidated from the three surfaces):
   (`ConversationPaneBody:229`), with branching options omitted when `branching` is false.
 - **`switchToLeaf`** keeps the active-path POST and path cache (`branching.ts` helpers
   `selectedPathAfterRun`/`activeForkOptionsForPath`/`activeBranchGraphForPath` reused as-is), and calls
-  `scrollRef.current?.preserveAround(anchorMessageId)` before swapping messages (replacing the bespoke
-  `pendingBranchScrollRef` dance at `ConversationPaneBody:431`).
+  `scrollRef.current?.captureAnchor(activationAnchorMessageId)` **before** `setMessages` — the scroll
+  owner then restores the eye-line on the next messages-driven layout (§6.2), replacing the bespoke
+  `pendingBranchScrollRef` + `restoreBranchScroll` dance at `ConversationPaneBody:428-435`.
 
 ### 6.2 `components/chat/ChatSurface.tsx` + `useChatScroll.ts` — the scroll owner
 
@@ -310,20 +323,28 @@ Engine internals (consolidated from the three surfaces):
 scroll**. It no longer accepts `scrollportRef`/`onScroll`; instead it forwards a `ref` exposing:
 
 ```ts
+// The imperative handle exposes only the scoped methods adapters need across the
+// ref boundary. Pin, ↓ Latest (`scrollToLatest`), and `isLatestBelowFold` are
+// returned by `useChatScroll` and wired internally by `ChatSurface`; they are not
+// ref-exposed, since no consumer calls them through the ref (simplicity.md — no
+// dead public surface). `scrollToMessage` keeps branch-parent jumps scoped to the
+// owning transcript instead of reaching through `document.querySelector`.
 export interface ChatScrollHandle {
-  /** Pin a specific message to the top inset (smooth). Called by the view on a new user turn. */
-  pinToTop: (messageId: string) => void;
-  /** Jump to the newest content (the ↓ Latest action). */
-  scrollToLatest: (behavior?: ScrollBehavior) => void;
-  /** Capture offset of a stable anchor, run `mutate`, then restore it (load-older / branch switch). */
-  preserveAround: (anchorMessageId: string | null) => void;
-  /** True when the newest message bottom is below the fold (drives the ↓ Latest affordance). */
-  readonly isLatestBelowFold: boolean;
+  /**
+   * Snapshot the current eye-line (first-visible message + offset, plus this activation anchor and a
+   * raw `scrollTop` fallback — the `BranchScroll` shape from the former `branchScroll.ts`). The scroll
+   * owner restores it ONCE on the next messages-driven layout, then clears it. Call this synchronously
+   * BEFORE `setMessages`; there is no `mutate` callback because React state updates render async.
+   * Used by branch-switch (pass the clicked message) and load-older (pass null → first-visible row).
+   */
+  captureAnchor: (activationAnchorMessageId?: string | null) => void;
+  scrollToMessage: (messageId: string) => void;
 }
 
 export interface ChatSurfaceProps {
   messages: ConversationMessage[];
   composer: ReactNode;
+  historyLoading?: boolean; // distinguishes existing-history first load from empty/new first send
   olderCursor?: string | null;
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
@@ -345,19 +366,25 @@ any of this lives:
 - Renders a measured **spacer** element (last child of the transcript) with
   `height = max(0, clientHeight − topInset − contentBelowAnchorTop)`; recomputed via a single
   `ResizeObserver` on the scrollport + transcript (the reuse-able observer pattern already used at
-  `ReaderOverviewRuler.tsx:67` / `ReaderHighlightsSurface.tsx:296`).
+  `ReaderOverviewRuler.tsx:67` / `AnchoredHighlightsSidecar.tsx:296`).
 - Tracks a `pinned` flag; any user-initiated scroll (wheel/touch/keyboard) clears it and the engine does
   not re-pin until the next send. Programmatic scrolls are flagged so they don't clear `pinned`.
 - Computes `isLatestBelowFold` for the **↓ Latest** button (replaces the old 48px near-bottom check).
 - `topInset` reads the transcript's top padding; `overflow-anchor: none` is set on the transcript to
   stop native scroll-anchoring fights.
-- `preserveAround` absorbs `branchScroll.ts` (`captureBranchScroll`/`restoreBranchScroll`,
-  `[data-message-id]` offset math) and the load-older `scrollHeight` restore. `branchScroll.ts` is
-  deleted; its tested behaviour moves into `useChatScroll`.
+- `captureAnchor` + the owner's restore absorb `branchScroll.ts` verbatim
+  (`captureBranchScroll`/`restoreBranchScroll`, the `BranchScroll` snapshot, `[data-message-id]` offset
+  math, anchor→activation-anchor→`scrollTop` fallback chain). The hook stores the snapshot and restores
+  it in its own `useLayoutEffect([messages])` (the same place it would otherwise pin), then clears the
+  pending snapshot. `branchScroll.ts` is deleted; its tests move into `useChatScroll.test.tsx` first.
 
-The `handleComposerWheel` hack is deleted; with one scroll owner and the composer fixed below the
-scrollport, wheel events over the composer no longer need manual redirection (the composer is a fixed
-dock; the transcript is the only scroll region and receives wheel events directly).
+**Composer-wheel forwarding is retained, not deleted.** The composer stays a fixed dock *outside* the
+scrollport, so a wheel gesture over it does not naturally scroll the transcript — and
+`ChatSurface.test.tsx:296` ("lets wheel gestures over the composer scroll the message scrollport")
+explicitly protects that. So the forwarding logic that today lives in `ChatSurface.handleComposerWheel`
+(`:76-106`) moves **into the single scroll owner**: `useChatScroll` exposes an `onComposerWheel`
+handler that drives the same internal scrollport, and `ChatSurface` wires it to the composer slot's
+`onWheel`. One owner, same behaviour, test preserved.
 
 ### 6.3 `useChatRunTail` parameter change (only edit to the spine)
 
@@ -369,19 +396,23 @@ single allowed edit to the streaming files; it is a deletion.)
 ### 6.4 `components/chat/Conversation.tsx` — pane-body adapter (replaces both pane bodies)
 
 ```ts
-export default function Conversation({ conversationId }: { conversationId: string | null }) {
+export default function Conversation() {
+  const conversationId = usePaneParam("id"); // string on /conversations/[id]; null on /conversations/new
   const convo = useConversation({ conversationId, branching: true, onReferenceAdded, onConversationCreated });
   useSetPaneTitle(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
   usePaneChromeOverride({ options: paneOptions });            // references / forks / delete / open-resource
-  usePaneSecondary(conversationContextSecondary(/* references + (branch ? forks) */));
+  usePaneSidecar(conversationContextSidecar(/* references + (branch ? forks) */));
   return <ChatSurface ref={convo.scrollRef} messages={convo.messages} composer={<ChatComposer …/>} … />;
 }
 ```
 
-- Used by **both** `conversations/[id]/page` and `conversations/new/page` (the latter passes `null`).
-- Branching chrome (forks secondary, fork strips, reply-to-assistant) is wired from `convo.branch`.
-- References secondary uses `useConversationReferences(convo.conversationId)` exactly as today; rendered by
-  `ConversationReferencesSurface` (owned by the item-card cutover).
+- Mounted by the **pane route registry**, not by `page.tsx`: both `ROUTE_BINDINGS.conversation` and
+  `ROUTE_BINDINGS.conversationNew` render `<Conversation />` (`paneRouteRegistry.tsx:35-36,111-123`).
+  `Conversation` reads its own id via `usePaneParam("id")`, which is `null` on the `conversationNew`
+  route — so no prop is threaded and one binding shape serves both.
+- Branching chrome (forks sidecar, fork strips, reply-to-assistant) is wired from `convo.branch`.
+- References sidecar uses `useConversationReferences(convo.conversationId)` exactly as today; rendered by
+  `ConversationReferencesSidecar` (owned by the item-card cutover).
 
 ### 6.5 `components/chat/ReaderChatDetail.tsx` — embedded adapter (slimmed)
 
@@ -390,19 +421,24 @@ export default function ReaderChatDetail({ conversationId, mediaId, pendingQuote
   const convo = useConversation({
     conversationId,
     initialReferences: [`media:${mediaId}`, ...(pendingQuoteUri ? [pendingQuoteUri] : [])],
-    readerContext: { media_id: mediaId, library_id: null },
     branching: false,
   });
+  const readerContext = { media_id: mediaId, library_id: null };
   return (
     <section className={styles.pane}>
       <header className={styles.header}>{/* back · title · open-in-full-chat */}</header>
-      <ChatSurface ref={convo.scrollRef} messages={convo.messages} composer={<ChatComposer …/>} … />
+      <ChatSurface
+        ref={convo.scrollRef}
+        messages={convo.messages}
+        composer={<ChatComposer readerContext={readerContext} … />}
+        …
+      />
     </section>
   );
 }
 ```
 
-- No pane-chrome hooks (it lives inside the reader pane's secondary). Pending-quote chips are passed to the
+- No pane-chrome hooks (it lives inside the reader pane's sidecar). Pending-quote chips are passed to the
   composer via `pendingReferences` (engine still owns commit on `resolveConversation`).
 - "Open in full chat" calls the existing `onOpenFullChat(convo.conversationId)` callback supplied by
   `MediaPaneBody`.
@@ -434,12 +470,16 @@ export function useChatModels(input: { onlyUseMyKeys: boolean }): {
 };                                                          // moves :91-273, :396-427 (module cache stays module-level)
 
 // components/chat/ModelSettingsPopover.tsx  — desktop popover + mobile sheet (moves :542-647 + dismiss/lock :275-286)
-// components/chat/PendingReferencesBar.tsx   — chips (moves :466-485)
 ```
+
+> **As-built:** the pending-reference chips (`:466-485`) were **inlined** into `ChatComposer`'s render
+> rather than extracted into a `PendingReferencesBar` component — they are a single-use pure render
+> block, so inlining is the correct call (`cleanliness.md`: inline one-use). `buildChatRunBody` and the
+> `ModelSettingsPopover`/`useChatDraft`/`useChatModels` extractions ship as planned.
 
 `ChatComposer` becomes a thin orchestrator: `useChatDraft` + `useChatModels` + a small send state
 machine that calls `buildChatRunBody` then `apiFetch("/api/chat-runs", { Idempotency-Key })`, renders
-`BranchComposerHeader` / `PendingReferencesBar` / `Textarea(autoGrow)` / `ModelSettingsPopover`. The
+`BranchComposerHeader` / pending-reference chips / `Textarea(autoGrow)` / `ModelSettingsPopover`. The
 public `ChatComposerProps` (`:38-74`) is unchanged so adapters wire it identically.
 
 ### 6.7 `ConversationForksPanel` decomposition
@@ -472,18 +512,18 @@ above + the existing `ForkGraphOverview` for the graph tab.
 - **Pane runtime** (`lib/panes/paneRuntime.tsx`): the pane adapter uses `useSetPaneTitle(title)`,
   `usePaneChromeOverride({ options })`, `usePaneRouter()` (`push`/`replace` for new-chat navigation),
   and `usePaneRuntime()?.openInNewPane(href, hint, surfaceId)` for opening cited resources. The reader
-  adapter uses **none** of these (it is inside a secondary body).
-- **Secondary panes** (`lib/panes/paneSecondaryModel.ts`): the pane adapter publishes
+  adapter uses **none** of these (it is inside a sidecar body).
+- **Sidecars** (`lib/panes/paneSidecarModel.ts`): the pane adapter publishes
   `groupId: "conversation-context"` with surfaces `"conversation-references"` (always) and
   `"conversation-forks"` (when `branch` present), via
-  `usePaneSecondary({ groupId, defaultSurfaceId: "conversation-references", surfaces })`
-  (`PaneSecondary.tsx:20`). The reader doc-chat continues to be the body of the media pane's
+  `usePaneSidecar({ groupId, defaultSurfaceId: "conversation-references", surfaces })`
+  (`PaneSidecar.tsx:20`). The reader doc-chat continues to be the body of the media pane's
   `"reader-doc-chat"` surface under `"reader-tools"` — i.e. `ReaderChatDetail` is the `body` passed by
-  `MediaPaneBody`'s `usePaneSecondary`. Mobile uses the same surfaces via `MobileSecondaryPaneHost`
+  `MediaPaneBody`'s `usePaneSidecar`. Mobile uses the same surfaces via `MobileSidecarHost`
   (`activeSurface.mobileBody ?? body`).
 - **References** (`conversation-references-cutover.md`): unchanged. The engine forwards `reference_added`
   SSE events to `onReferenceAdded`; the pane adapter `upsert`s into `useConversationReferences`. The
-  secondary list rendering belongs to `item-card-cutover.md`.
+  sidecar list rendering belongs to `item-card-cutover.md`.
 - **Streaming** (`useChatRunTail`/`useChatMessageUpdates`): unchanged except the `shouldScrollRef`
   deletion (§6.3). The engine is the sole caller.
 - **Reader source activation:** both adapters pass `onReaderSourceActivate` down to `ChatSurface →
@@ -500,14 +540,14 @@ above + the existing `ForkGraphOverview` for the graph tab.
 | Question | Decision | Why |
 |---|---|---|
 | Scroll model | **Pin-the-question only.** Single owner in `ChatSurface`/`useChatScroll`. | The user's target; one model, no toggles (`simplicity.md`). |
-| Where scroll lives | **In the view, not the consumers.** Delete `shouldScrollRef`, 3× layout effects, 3× `handleChatScroll`, `handleComposerWheel`, `branchScroll.ts`. | One owner per concern (`cleanliness.md`). The dropped copy in `ReaderChatDetail` proves consumer-owned scroll is unmaintainable. |
-| One component vs hook+view | **Hook (`useConversation`) + view (`ChatSurface`) + two thin adapters.** | Pane-chrome hooks must not run inside the reader secondary body; React forbids conditional hooks. A single component with an `embedded` flag would clobber the reader pane's publications. |
+| Where scroll lives | **In the view, not the consumers.** Delete `shouldScrollRef`, the 3× layout effects, the 3× `handleChatScroll`; **absorb** `handleComposerWheel` (wheel-forwarding kept) and `branchScroll.ts` into `useChatScroll`. | One owner per concern (`cleanliness.md`). The dropped copy in `ReaderChatDetail` proves consumer-owned scroll is unmaintainable. |
+| One component vs hook+view | **Hook (`useConversation`) + view (`ChatSurface`) + two thin adapters.** | Pane-chrome hooks must not run inside the reader sidecar body; React forbids conditional hooks. A single component with an `embedded` flag would clobber the reader pane's publications. |
 | `ConversationNewPaneBody` | **Delete.** New chat = `Conversation` with `conversationId={null}`. | Removes a whole duplicated lifecycle copy. |
-| History load path | **`/tree` everywhere; delete client use of linear `/messages`.** | One load path. Reader ignores fork data when `branching:false`. |
+| History load path | **Two modes by `branching`, no backend change:** `/tree` (full path, no pagination) for the pane; `/messages?limit&cursor` (paginating) for the reader. | `/tree` has no pagination params and returns `before_cursor:null` (`conversation_branches.py:285`); it is the only source of fork data. `/messages` is the only paginating endpoint. Unifying on one endpoint would require backend work, which is a non-goal. |
 | Decompose god-files vs leave | **Decompose both** into pure utils + hooks + presentational units. | `cleanliness.md` god-files rule; pure tree utils + draft/model hooks are independently testable. |
 | `ChatComposer` public API | **Unchanged.** Internal split only. | Adapters keep wiring it identically; no call-site churn. |
-| References secondary rendering | **Owned by `item-card-cutover.md`, not here.** | Avoid a near-duplicate of that in-flight cutover. |
-| Build a generic `useResizeObserver`? | **No — inline the one observer in `useChatScroll`.** | Used once here; matches existing inline RO usage (`ReaderOverviewRuler`, `ReaderHighlightsSurface`). Generalize only if a third site needs it. |
+| References sidecar rendering | **Owned by `item-card-cutover.md`, not here.** | Avoid a near-duplicate of that in-flight cutover. |
+| Build a generic `useResizeObserver`? | **No — inline the one observer in `useChatScroll`.** | Used once here; matches existing inline RO usage (`ReaderOverviewRuler`, `AnchoredHighlightsSidecar`). Generalize only if a third site needs it. |
 
 ---
 
@@ -520,8 +560,8 @@ above + the existing `ForkGraphOverview` for the graph tab.
   `ConversationNewPaneBody`; route pages render it.
 - `ReaderChatDetail.tsx` slimmed to a header + engine + view.
 - `ChatComposer` decomposition: new `lib/conversations/chatRunBody.ts`, `components/chat/useChatDraft.ts`,
-  `useChatModels.ts`, `ModelSettingsPopover.{tsx,module.css}`, `PendingReferencesBar.{tsx,module.css}`;
-  `ChatComposer.tsx` slimmed.
+  `useChatModels.ts`, `ModelSettingsPopover.{tsx,module.css}`; `ChatComposer.tsx` slimmed with its
+  single-use pending-reference chip render block kept inline.
 - `ConversationForksPanel` decomposition: new `lib/conversations/forkTree.ts`, `useForkPanel.ts`,
   `useForkTreeKeyNav.ts`, `ForkTreeView.{tsx,module.css}`, `ForkNodeRow.{tsx,module.css}`;
   `ConversationForksPanel.tsx` slimmed.
@@ -531,7 +571,7 @@ above + the existing `ForkGraphOverview` for the graph tab.
 
 **Out of scope**
 - SSE transport internals; references data model; fork endpoints; `/models`; backend.
-- `ConversationReferencesSurface` row rendering (`item-card-cutover.md`).
+- `ConversationReferencesSidecar` row rendering (`item-card-cutover.md`).
 - `ForkGraphOverview` / `ForkStrip` internals (reused as-is).
 - Any new chat/fork/model feature.
 
@@ -541,13 +581,13 @@ above + the existing `ForkGraphOverview` for the graph tab.
 
 **New**
 - `apps/web/src/components/chat/useConversation.ts` (+ `.test.tsx`)
-- `apps/web/src/components/chat/useChatScroll.ts` (+ `.test.tsx`)
+- `apps/web/src/components/chat/useChatScroll.ts` (scroll behaviour covered via `ChatSurface.test.tsx`)
 - `apps/web/src/components/chat/Conversation.tsx`
 - `apps/web/src/lib/conversations/chatRunBody.ts` (+ `.test.ts`)
-- `apps/web/src/components/chat/useChatDraft.ts` (+ `.test.tsx`)
-- `apps/web/src/components/chat/useChatModels.ts` (+ `.test.tsx`)
+- `apps/web/src/components/chat/useChatDraft.ts` (behaviour covered via `ChatComposer.test.tsx`)
+- `apps/web/src/components/chat/useChatModels.ts` (behaviour covered via `ChatComposer.test.tsx`)
 - `apps/web/src/components/chat/ModelSettingsPopover.tsx` + `.module.css`
-- `apps/web/src/components/chat/PendingReferencesBar.tsx` + `.module.css`
+- (pending-reference chips inlined into `ChatComposer` — no separate `PendingReferencesBar`)
 - `apps/web/src/lib/conversations/forkTree.ts` (+ `.test.ts`)
 - `apps/web/src/components/chat/useForkPanel.ts`
 - `apps/web/src/components/chat/useForkTreeKeyNav.ts`
@@ -556,27 +596,46 @@ above + the existing `ForkGraphOverview` for the graph tab.
 
 **Modified**
 - `apps/web/src/components/chat/ChatSurface.tsx` + `.module.css` (owns scroll; spacer; ↓Latest; remove
-  `scrollportRef`/`onScroll`/`handleComposerWheel`)
+  the `scrollportRef`/`onScroll` props and the inline `handleComposerWheel` — its wheel-forwarding moves
+  into `useChatScroll.onComposerWheel`)
 - `apps/web/src/components/chat/ChatComposer.tsx` (→ thin orchestrator; move out of `components/` into
   `components/chat/`) + `.module.css`
 - `apps/web/src/components/chat/ConversationForksPanel.tsx` + `.module.css` (→ thin orchestrator)
 - `apps/web/src/components/chat/useChatRunTail.ts`, `useChatMessageUpdates.ts` (delete `shouldScrollRef`)
-- `apps/web/src/app/(authenticated)/conversations/[id]/page.tsx` (render `<Conversation conversationId={id}/>`)
-- `apps/web/src/app/(authenticated)/conversations/new/page.tsx` (render `<Conversation conversationId={null}/>`)
+- `apps/web/src/lib/panes/paneRouteRegistry.tsx` — swap the `ConversationPaneBody`/`ConversationNewPaneBody`
+  imports (`:35-36`) for one `Conversation` import; point both `ROUTE_BINDINGS.conversation` and
+  `ROUTE_BINDINGS.conversationNew` `render` at `<Conversation />` (`:113`,`:118`). Their `getChrome` static
+  titles stay as fallback; `useSetPaneTitle` supplies the dynamic title.
+- `apps/web/src/app/(authenticated)/conversations/[id]/page.tsx` (`:3,6`) and
+  `apps/web/src/app/(authenticated)/conversations/new/page.tsx` (`:2,4`) — the **second** mount point
+  (direct Next route). Both render `<Conversation />` instead of the deleted bodies.
+- `apps/web/src/lib/panes/paneRouteRegistry.androidShell.test.tsx` (`:16,19`) — its `vi.mock`s target the
+  old body import paths; repoint to `Conversation`.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` (unchanged usage; `ReaderChatDetail`
   import path/props stable)
-- Affected tests: `ConversationPaneBody.test.tsx` (→ `Conversation.test.tsx`), `ChatComposer.test.tsx`,
-  `ReaderChatDetail.test.tsx`, `MediaPaneBody.test.tsx`, any fork-panel test.
+- Affected tests: `__tests__/components/ChatSurface.test.tsx` (rewritten to the new ref API; retains the
+  wheel-over-composer assertion at `:296` and the `onScroll`/scrollport behaviour as internal state),
+  `ConversationPaneBody.test.tsx` (→ `Conversation.test.tsx`), `ChatComposer.test.tsx`,
+  `ReaderChatDetail.test.tsx`, `MediaPaneBody.test.tsx`,
+  `lib/panes/paneRouteRegistry.androidShell.test.tsx` (mock paths) and
+  `lib/panes/paneRouteRegistry.test.tsx` (binding assertions), any fork-panel test.
 
 **Deleted**
 - `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.tsx`
+- `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.test.tsx` (coverage folds
+  into `Conversation.test.tsx`)
 - `apps/web/src/app/(authenticated)/conversations/[id]/ConversationPaneBody.tsx` (becomes `Conversation.tsx`)
 - `apps/web/src/app/(authenticated)/conversations/[id]/branchScroll.ts` (absorbed into `useChatScroll`)
 - `apps/web/src/app/(authenticated)/conversations/[id]/branchScroll.test.ts` if present (moves to `useChatScroll.test.tsx`)
 
-Blast radius to confirm before deleting: `ConversationNewPaneBody`/`ConversationPaneBody` are referenced
-only by their route pages; `branchScroll` only by `ConversationPaneBody`; `ChatComposer` by the three
-adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
+Blast radius (verified by `rg`) — the old bodies are mounted in **two** places and mocked in a test, all
+of which must change in the same cutover or routing/tests break:
+- `conversations/[id]/page.tsx:3,6` and `conversations/new/page.tsx:2,4` render the bodies directly
+  (Next route mode).
+- `paneRouteRegistry.tsx:35-36,113,118` imports + renders them (pane mode).
+- `paneRouteRegistry.androidShell.test.tsx:16,19` `vi.mock`s both by import path.
+`branchScroll` is referenced only by `ConversationPaneBody`; `ChatComposer`/`ChatSurface` by the three
+adapters. `rg` each symbol before deletion to confirm nothing else binds them.
 
 ---
 
@@ -587,11 +646,13 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
   anchor.offsetTop − currentSpacerHeight`; `spacer = max(0, scrollport.clientHeight − topInset −
   contentBelowAnchorTop)`; pin = `scrollport.scrollTo({ top: anchor.offsetTop − topInset, behavior:
   "smooth" })`. During streaming only the spacer is recomputed; `scrollTop` is untouched while pinned.
-- **Programmatic-vs-user scroll:** set a `programmaticScroll` flag immediately before any
-  `scrollTo`/`scrollTop` write and clear it on the next `scroll` event; only non-flagged scroll events
-  clear `pinned`. Prevents the smooth pin from releasing itself.
+- **Programmatic-vs-user scroll:** record the clamped target before any `scrollTo`/`scrollTop` write and
+  clear it on the matching `scroll` event. Explicit wheel/touch/key gestures over the scrollport clear
+  the marker immediately, so an interrupted smooth scroll releases the pin correctly.
 - **First load / existing conversation:** no anchor yet → start at bottom (`scrollTop = scrollHeight`),
   no animation, `pinned = false`.
+- **First send / empty ready surface:** `historyLoading=false` marks the empty render as ready, so the
+  first user turn enters the same pin cycle instead of being misread as existing history.
 - **`overflow-anchor: none`** on `.transcript`; `scrollbar-gutter: stable` retained.
 - **Spacer is `aria-hidden` and non-interactive**; it sits after the last `MessageRow` inside
   `.transcript` so it scrolls with content.
@@ -601,7 +662,8 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
   in-flight drafts are preserved across branch/path switches.
 - **Idempotency-Key** on `POST /api/chat-runs` is preserved (random id per send).
 - **`switchToLeaf`** still POSTs `/active-path` and keeps the path cache; only its scroll-restore call
-  changes (now `scrollRef.preserveAround`).
+  changes (now `scrollRef.captureAnchor(clickedMessageId)` before `setMessages`, with the owner
+  restoring on the next layout — §6.2).
 - **Tokens only**: spacing `--space-*`, type `--text-*`/`--leading-*`, color `--surface-*`/`--ink-*`/
   `--edge`, motion `--duration-*`/`--ease-*`. The ↓Latest button reuses `ui/Button` (`pill`/`sm`).
 - **Test ids** retained: `data-testid="chat-composer-dock"`, `data-message-id`, streaming cue; add
@@ -615,7 +677,9 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
 2. **Engine + view + two adapters** — driven by the pane-context hook constraint (§5, §8 table). One
    component with a flag is rejected.
 3. **Delete `ConversationNewPaneBody`** — new chat is `conversationId={null}`.
-4. **Unify on `/tree`** — single history load path; reader ignores fork data.
+4. **Two history-load modes, no backend change** — `/tree` (full path, fork data, no pagination) for the
+   branching pane; `/messages?limit&cursor` (paginating) for the reader. Unifying endpoints is deferred
+   (would need `/tree` pagination, a non-goal).
 5. **`shouldScrollRef` removed from the streaming hooks** — the one allowed edit there, and it is a
    deletion.
 6. **`ChatComposer` keeps its public props** — internal-only decomposition; no call-site churn.
@@ -628,7 +692,9 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
 
 1. **Single scroll owner.** `rg "shouldScrollRef"` is empty; `rg "handleChatScroll"` is empty;
    `branchScroll.ts` is deleted and unreferenced; `ChatSurface` no longer exposes `scrollportRef`/
-   `onScroll`; the `handleComposerWheel` block is gone. All scroll logic resides in `useChatScroll`.
+   `onScroll` (scroll state is internal). All scroll logic — pin, release, ↓Latest, anchor
+   capture/restore, AND composer-wheel forwarding — resides in `useChatScroll`. The retained
+   wheel-over-composer behaviour still passes its test (§6.2).
 2. **Pin behaviour (pane + reader).** Sending a message smooth-scrolls the new user message to the top
    inset; the assistant answer streams in below it while the question stays pinned (its top does not
    move during streaming); a short turn reserves space so the question reaches the top; the view does
@@ -637,15 +703,22 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
    is below the fold a `chat-scroll-latest` control appears and, on click, jumps to the latest turn.
 4. **Reader doc-chat scrolls.** The reader doc-chat now pins/scrolls identically to the pane (the prior
    no-autoscroll bug is gone) — verified in `ReaderChatDetail.test.tsx`.
-5. **Three → one.** `ConversationNewPaneBody.tsx` and `ConversationPaneBody.tsx` are deleted; both
-   conversation routes render `Conversation`; `ReaderChatDetail` contains no lifecycle/scroll/send code
-   (only header + `useConversation` + `ChatSurface`). `useConversation` is the only caller of
-   `useChatRunTail` outside its own tests.
-6. **One load path.** `rg "/messages\?limit"` (client) is empty; history loads via `/tree`.
-7. **Composer decomposed.** `ChatComposer.tsx` ≤ ~180 lines; `buildChatRunBody` is a pure exported
-   function with unit tests (branch-anchor cases, `key_mode`, conditional `parent_message_id`);
-   `useChatDraft`/`useChatModels` exist with tests; `ModelSettingsPopover`/`PendingReferencesBar` are
-   separate components. `ChatComposerProps` is unchanged. Existing `ChatComposer.test.tsx` assertions
+5. **Three → one.** `ConversationNewPaneBody.tsx` (+ its test) and `ConversationPaneBody.tsx` are deleted;
+   both route `page.tsx` files, both `paneRouteRegistry` bindings, and the android-shell registry mock
+   render/reference `Conversation` (`rg "ConversationPaneBody|ConversationNewPaneBody" apps/web/src`
+   returns nothing outside historical test rename metadata).
+   `ReaderChatDetail` contains no lifecycle/scroll/send code (only header + `useConversation` +
+   `ChatSurface`). `useConversation` is the only caller of `useChatRunTail` outside its own tests.
+6. **Two honest load modes, no backend change.** The pane loads the full selected path via `/tree`
+   (no pagination — `loadOlder` inert, `olderCursor` stays null, matching today); the reader loads and
+   paginates via `/messages?limit&cursor`. The engine picks the mode from `branching`. No client call
+   passes `before_cursor` to `/tree` (the inert `ConversationPaneBody:464` call is removed).
+7. **Composer decomposed.** `ChatComposer.tsx` is a thin orchestrator (~300 lines; the ~180 estimate
+   assumed extracting the chips too, which were instead inlined as one-use render); `buildChatRunBody`
+   is a pure exported function with unit tests (branch-anchor cases, `key_mode`, conditional
+   `parent_message_id`); `useChatDraft`/`useChatModels` exist (behaviour covered via
+   `ChatComposer.test.tsx`); `ModelSettingsPopover` is a separate component and the pending-reference
+   chips are inlined. `ChatComposerProps` is unchanged. Existing `ChatComposer.test.tsx` assertions
    (run payload shape, model selection, 320px mobile layout) still pass.
 8. **Forks decomposed.** `ConversationForksPanel.tsx` ≤ ~160 lines; `lib/conversations/forkTree.ts`
    exports the six pure functions with unit tests; keyboard nav (arrows/Home/End/→/←/Enter/F2/Delete/
@@ -664,11 +737,13 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
 ## 14. Rules adhered to (`docs/rules/`)
 
 - **cleanliness:** hard cutover — delete `ConversationNewPaneBody`, `ConversationPaneBody`,
-  `branchScroll.ts`, `shouldScrollRef`, the duplicated scroll effects, and the wheel hack. No dead code,
-  no compat shims, no fallbacks. God-files split by ownership.
+  `branchScroll.ts` (as a standalone), `shouldScrollRef`, and the duplicated scroll effects; absorb the
+  composer-wheel forwarding into the one scroll owner (behaviour kept). No dead code, no compat shims,
+  no fallbacks. God-files split by ownership.
 - **module-apis:** one engine, one scroll owner, one body builder, one draft hook, one model hook — each
   capability in a single primary form; `ChatComposer`/`ConversationForksPanel` keep one public API.
-- **simplicity:** one scroll model (no toggle); `/tree` is the one load path; no speculative props; the
+- **simplicity:** one scroll model (no toggle); two history-load modes keyed off `branching` (no
+  backend change, no speculative third path); no speculative props; the
   `branching` flag exists only because two real call sites differ; the RO is not generalized until a
   third site needs it.
 - **conventions:** CSS Modules + design tokens; readable class names; mobile breakpoints + safe-area as
@@ -685,19 +760,23 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
 
 1. **Scroll owner first (self-contained, fixes the visible bug).** Build `useChatScroll` (absorb
    `branchScroll.ts`); rebuild `ChatSurface` to own scroll, render the spacer, expose `ChatScrollHandle`,
-   add ↓Latest; remove `scrollportRef`/`onScroll`/`handleComposerWheel`. Temporarily adapt the three
+   add ↓Latest; remove the `scrollportRef`/`onScroll` props and move `handleComposerWheel`'s behaviour
+   into `useChatScroll.onComposerWheel` (keep its test green). Temporarily adapt the three
    existing surfaces to the new `ChatSurface` ref API and delete their scroll effects. Add
    `useChatScroll.test.tsx`. Gate.
 2. **Remove `shouldScrollRef`** from `useChatRunTail`/`useChatMessageUpdates` and all callers. Gate.
 3. **Engine.** Build `useConversation` (merge lifecycle/resolve/branch/retry); add tests. Gate.
 4. **Pane adapter.** Create `Conversation.tsx` from `ConversationPaneBody` using the engine + new
-   `ChatSurface`; point `[id]` and `new` routes at it; delete `ConversationNewPaneBody` and
-   `ConversationPaneBody`; migrate `ConversationPaneBody.test.tsx` → `Conversation.test.tsx`. Gate.
+   `ChatSurface`. Update **all mount points + the mock** in one go: both route `page.tsx` files and both
+   `paneRouteRegistry.tsx` bindings render `<Conversation />` (drop the two old imports), and
+   `paneRouteRegistry.androidShell.test.tsx`'s `vi.mock` paths point at `Conversation`. Delete
+   `ConversationNewPaneBody` (+ its test) and `ConversationPaneBody`; migrate
+   `ConversationPaneBody.test.tsx` → `Conversation.test.tsx`. Gate.
 5. **Reader adapter.** Slim `ReaderChatDetail` to header + engine + view; delete its dead refs; update
    `ReaderChatDetail.test.tsx` to assert it now scrolls. Gate.
-6. **Composer split.** Extract `buildChatRunBody` (+ test), `useChatDraft`, `useChatModels`,
-   `ModelSettingsPopover`, `PendingReferencesBar`; slim `ChatComposer` and move it into `components/chat/`;
-   keep `ChatComposerProps`. Gate (`ChatComposer.test.tsx`).
+6. **Composer split.** Extract `buildChatRunBody` (+ test), `useChatDraft`, `useChatModels`, and
+   `ModelSettingsPopover`; slim `ChatComposer` and move it into `components/chat/`, keeping the
+   single-use pending-reference chip render inline. Keep `ChatComposerProps`. Gate (`ChatComposer.test.tsx`).
 7. **Forks split.** Extract `forkTree.ts` (+ test), `useForkPanel`, `useForkTreeKeyNav`, `ForkTreeView`,
    `ForkNodeRow`; slim `ConversationForksPanel`. Gate.
 8. **Full gate + manual pass:** `make check-front && make test-front-unit && make test-front-browser`;
@@ -714,11 +793,13 @@ adapters; `ChatSurface` by the three adapters. `rg` each before deletion.
 - **Spacer flicker during fast streaming.** Recompute the spacer in the same `ResizeObserver` callback
   that measures content; clamp at 0; never animate the spacer height. RAF-batched deltas already
   coalesce growth.
-- **`/tree` heavier than linear `/messages` for reader chats.** Accepted for one load path (single-user
-  prototype, `simplicity.md`); fork data is ignored when `branching:false`. Revisit only if measured.
-- **Branch-switch scroll regression.** `preserveAround` must reproduce `branchScroll.ts` exactly; port
-  its tests into `useChatScroll.test.tsx` before deleting the file.
+- **Two load paths instead of one.** `/tree` cannot paginate (no params; `before_cursor:null`), so the
+  reader keeps `/messages`. This is a deliberate, documented split keyed off `branching` (§6.1), not a
+  leak; collapsing to one endpoint is deferred behind `/tree` pagination (out of scope). The engine is
+  still the single owner of both modes.
+- **Branch-switch / load-older scroll regression.** `captureAnchor` + the owner's restore must reproduce
+  `branchScroll.ts` exactly (anchor → activation-anchor → `scrollTop` fallback). Port
+  `branchScroll`'s tests into `useChatScroll.test.tsx` and keep them green before deleting the file.
 - **Engine prop-drift between adapters.** Keep `UseConversation` explicit and tested; adapters must not
   re-derive any lifecycle state locally (lint-review for stray `useState<ConversationMessage[]>` in
   adapters — there should be none).
-```

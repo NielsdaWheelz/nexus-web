@@ -13,10 +13,7 @@ vi.mock("@/app/(authenticated)/media/[id]/MediaPaneBody", () => ({
 vi.mock("@/app/(authenticated)/conversations/ConversationsPaneBody", () => ({
   default: () => null,
 }));
-vi.mock("@/app/(authenticated)/conversations/[id]/ConversationPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/conversations/new/ConversationNewPaneBody", () => ({
+vi.mock("@/components/chat/Conversation", () => ({
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/browse/BrowsePaneBody", () => ({

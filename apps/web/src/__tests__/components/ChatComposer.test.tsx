@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatComposer from "@/components/ChatComposer";
+import ChatComposer from "@/components/chat/ChatComposer";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { BranchDraft } from "@/lib/conversations/types";
 

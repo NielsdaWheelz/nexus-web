@@ -22,6 +22,8 @@ from uuid import UUID, uuid4
 # These values are placeholders - tests use MockJwtVerifier, not real JWKS.
 if not os.environ.get("NEXUS_ENV"):
     os.environ["NEXUS_ENV"] = "test"
+if not os.environ.get("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = "postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test"
 if not os.environ.get("SUPABASE_JWKS_URL"):
     os.environ["SUPABASE_JWKS_URL"] = "http://localhost:54321/auth/v1/.well-known/jwks.json"
 if not os.environ.get("SUPABASE_ISSUER"):
@@ -34,6 +36,7 @@ os.environ["PODCASTS_ENABLED"] = "true"
 os.environ.setdefault("PODCAST_INDEX_API_KEY", "test-podcast-index-key")
 os.environ.setdefault("PODCAST_INDEX_API_SECRET", "test-podcast-index-secret")
 os.environ.setdefault("YOUTUBE_DATA_API_KEY", "test-youtube-data-key")
+os.environ.setdefault("X_API_BEARER_TOKEN", "test-x-api-bearer-token")
 
 # Add repo root to sys.path for importing top-level packages (e.g., apps)
 _repo_root = Path(__file__).parent.parent.parent

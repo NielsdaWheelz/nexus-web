@@ -1498,6 +1498,7 @@ def repair_podcast_transcript_semantic_index_now(
     *,
     media_id: UUID,
     request_reason: str = "operator_requeue",
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(UTC)
     normalized_reason = (
@@ -1648,6 +1649,7 @@ def repair_podcast_transcript_semantic_index_now(
             "podcast_semantic_repair_failed",
             media_id=str(media_id),
             transcript_version_id=str(transcript_version_id),
+            request_id=request_id,
             error=str(exc),
         )
         error_code = exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value

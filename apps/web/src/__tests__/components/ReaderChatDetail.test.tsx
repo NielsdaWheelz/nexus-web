@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
+// useChatRunTail is the SSE/streaming boundary; mock it so the engine's
+// optimistic seed runs without a live stream. fetch is the only other boundary.
 const tailMocks = vi.hoisted(() => ({
   tailChatRun: vi.fn(),
   abortAll: vi.fn(),
@@ -90,7 +92,7 @@ const assistantMessage = message(
   "user-1",
 );
 
-function stubFetch() {
+function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessage]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -104,7 +106,7 @@ function stubFetch() {
             id: CID,
             title: "My chat title",
             sharing: "private",
-            message_count: 2,
+            message_count: history.length,
             created_at: timestamp,
             updated_at: timestamp,
           },
@@ -112,7 +114,7 @@ function stubFetch() {
       }
       if (path === `/api/conversations/${CID}/messages`) {
         return jsonResponse({
-          data: [userMessage, assistantMessage],
+          data: history,
           page: { next_cursor: null },
         });
       }
@@ -263,5 +265,296 @@ describe("ReaderChatDetail", () => {
     );
 
     expect(await screen.findByText("Selected quote")).toBeVisible();
+  });
+
+  it("does not attach the quote URI on send after its chip is removed", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === `/api/conversations/${CID}` && method === "GET") {
+          return jsonResponse({
+            data: {
+              id: CID,
+              title: "My chat title",
+              sharing: "private",
+              message_count: 0,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+          });
+        }
+        if (path === `/api/conversations/${CID}/messages` && method === "GET") {
+          return jsonResponse({ data: [], page: { next_cursor: null } });
+        }
+        if (
+          path === `/api/conversations/${CID}/references` &&
+          method === "POST"
+        ) {
+          return jsonResponse({ data: {} });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          return jsonResponse({
+            data: {
+              conversation: { id: CID, title: "My chat title" },
+              user_message: message("user-2", 3, "user", "Hi"),
+              assistant_message: message(
+                "assistant-2",
+                4,
+                "assistant",
+                "",
+                "user-2",
+                "pending",
+              ),
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReaderChatDetail
+        conversationId={CID}
+        mediaId={MEDIA_ID}
+        pendingQuoteUri="highlight:HID"
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    // Remove the quote chip before sending — it must drop out of what gets
+    // attached (the chip is the source of truth for the removable quote).
+    await user.click(
+      await screen.findByRole("button", { name: "Remove Selected quote" }),
+    );
+    expect(screen.queryByText("Selected quote")).toBeNull();
+
+    const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
+    await user.type(textbox, "Hi");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+
+    // The quote URI must never have been POSTed to the references endpoint.
+    const quoteRefPosted = fetchMock.mock.calls.some(([input, init]) => {
+      if (
+        pathOf(input) !== `/api/conversations/${CID}/references` ||
+        init?.method !== "POST"
+      ) {
+        return false;
+      }
+      return String(init.body).includes("highlight:HID");
+    });
+    expect(quoteRefPosted).toBe(false);
+  });
+
+  it("clears the pending quote chip after a successful send", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === `/api/conversations/${CID}` && method === "GET") {
+          return jsonResponse({
+            data: {
+              id: CID,
+              title: "My chat title",
+              sharing: "private",
+              message_count: 0,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+          });
+        }
+        if (path === `/api/conversations/${CID}/messages` && method === "GET") {
+          return jsonResponse({ data: [], page: { next_cursor: null } });
+        }
+        if (
+          path === `/api/conversations/${CID}/references` &&
+          method === "POST"
+        ) {
+          return jsonResponse({ data: {} });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          return jsonResponse({
+            data: {
+              conversation: { id: CID, title: "My chat title" },
+              user_message: message("user-2", 3, "user", "Hi"),
+              assistant_message: message(
+                "assistant-2",
+                4,
+                "assistant",
+                "",
+                "user-2",
+                "pending",
+              ),
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReaderChatDetail
+        conversationId={CID}
+        mediaId={MEDIA_ID}
+        pendingQuoteUri="highlight:HID"
+        onBack={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Selected quote")).toBeVisible();
+
+    const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
+    await user.type(textbox, "Hi");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    // The quote was attached on this send (chip held it at resolve time)...
+    await waitFor(() => {
+      const quoteRefPosted = fetchMock.mock.calls.some(([input, init]) => {
+        if (
+          pathOf(input) !== `/api/conversations/${CID}/references` ||
+          init?.method !== "POST"
+        ) {
+          return false;
+        }
+        return String(init.body).includes("highlight:HID");
+      });
+      expect(quoteRefPosted).toBe(true);
+    });
+    // ...and the chip clears afterward so it is not re-attached next send.
+    await waitFor(() => {
+      expect(screen.queryByText("Selected quote")).toBeNull();
+    });
+  });
+
+  it("pins a newly sent user message near the top inset (the prior no-autoscroll bug is fixed)", async () => {
+    const user = userEvent.setup();
+
+    // A tall history so the scrollport overflows and pinning is observable.
+    const history: ConversationMessage[] = [
+      message("user-1", 1, "user", "First question"),
+      message(
+        "assistant-1",
+        2,
+        "assistant",
+        `Long first answer ${"reading material ".repeat(60)}`,
+        "user-1",
+      ),
+    ];
+    stubFetch(history);
+
+    // On send the composer POSTs /api/chat-runs; the engine then seeds the
+    // optimistic user+assistant pair, which the view pins to the top.
+    const sentUser = message("user-2", 3, "user", "Second question");
+    // A tall answer so the new turn overflows the viewport and the question must
+    // scroll up to the top inset (rather than the whole short turn fitting).
+    const sentAssistant = message(
+      "assistant-2",
+      4,
+      "assistant",
+      `Streaming answer ${"reading material ".repeat(80)}`,
+      "user-2",
+      "pending",
+    );
+    vi.mocked(fetch).mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === `/api/conversations/${CID}` && method === "GET") {
+          return jsonResponse({
+            data: {
+              id: CID,
+              title: "My chat title",
+              sharing: "private",
+              message_count: history.length,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+          });
+        }
+        if (path === `/api/conversations/${CID}/messages` && method === "GET") {
+          return jsonResponse({ data: history, page: { next_cursor: null } });
+        }
+        if (
+          path === `/api/conversations/${CID}/references` &&
+          method === "POST"
+        ) {
+          return jsonResponse({ data: {} });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          return jsonResponse({
+            data: {
+              conversation: { id: CID, title: "My chat title" },
+              user_message: sentUser,
+              assistant_message: sentAssistant,
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
+
+    render(
+      <div style={{ display: "flex", height: "240px" }}>
+        <ReaderChatDetail
+          conversationId={CID}
+          mediaId={MEDIA_ID}
+          onBack={vi.fn()}
+          onOpenFullChat={vi.fn()}
+        />
+      </div>,
+    );
+
+    const scrollport = await screen.findByRole("region", {
+      name: "Chat conversation",
+    });
+    // First load of an existing conversation opens at the bottom.
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+
+    const textbox = await screen.findByRole("textbox", { name: "Ask anything" });
+    await user.type(textbox, "Second question");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    // The new user message is seeded and rendered. Scope the query to the
+    // scrollport so it resolves the message row, not the composer textarea (which
+    // still holds the typed "Second question" and sits in the docked composer).
+    const anchor = await within(scrollport).findByText("Second question");
+
+    // The sent question pins to the top of the scrollport rather than staying at
+    // the bottom — the reader doc-chat now auto-scrolls like the full pane. We
+    // measure in viewport space (getBoundingClientRect) so the assertion is
+    // independent of the row's positioned offsetParent: the question's top must
+    // land in the top region of the scrollport, not chased below the fold.
+    await waitFor(() => {
+      const portRect = scrollport.getBoundingClientRect();
+      const top = anchor.getBoundingClientRect().top - portRect.top;
+      // The question's body sits at the top edge of the scrollport (within a few
+      // px for inset/header rounding) and far above the fold — pinned at the top,
+      // not chased to the bottom (which was the prior bug, ~portHeight).
+      expect(top >= -4 && top < portRect.height / 2).toBe(true);
+    });
   });
 });

@@ -1,27 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import ChatComposer from "@/components/ChatComposer";
+import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import { useChatRunTail } from "@/components/chat/useChatRunTail";
-import {
-  FeedbackNotice,
-  toFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { useConversation } from "@/components/chat/useConversation";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import { apiFetch } from "@/lib/api/client";
-import type {
-  ChatRunResponse,
-  ConversationMessage,
-  ConversationMessagesResponse,
-} from "@/lib/conversations/types";
-import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./ReaderChatDetail.module.css";
-
-const MESSAGE_PAGE_SIZE = 30;
 
 interface ReaderChatDetailProps {
   /** Existing conversation, or null for a chat not yet created (created on first send). */
@@ -33,17 +20,22 @@ interface ReaderChatDetailProps {
   pendingQuoteLabel?: string | null;
   onBack: () => void;
   onOpenFullChat: (conversationId: string) => void;
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onReaderSourceActivate?: (
+    target: ReaderSourceTarget,
+    event?: React.MouseEvent,
+  ) => void;
 }
 
 /**
- * A conversation rendered inline inside the reader's document-chat secondary: full chat
- * history + composer, plus a link out to the full conversation pane. Composes
- * the same primitives as the full pane (ChatSurface + ChatComposer +
- * useChatRunTail) without the pane's branching/chrome.
+ * A conversation rendered inline inside the reader's document-chat sidecar: a
+ * compact header (back / title / open-in-full-chat) over the shared chat engine
+ * (useConversation) and view (ChatSurface). All lifecycle, scroll, send and
+ * retry logic lives in the engine and the view — this adapter only owns the
+ * header chrome and the local pending-quote chip.
  *
- * The conversation and any pending quote are created/attached on the first send
- * (via the composer's onResolveConversation), never eagerly.
+ * The conversation, the document reference, and any pending quote are
+ * created/attached on the first send (via useConversation.resolveConversation),
+ * never eagerly.
  */
 export default function ReaderChatDetail({
   conversationId,
@@ -54,19 +46,15 @@ export default function ReaderChatDetail({
   onOpenFullChat,
   onReaderSourceActivate,
 }: ReaderChatDetailProps) {
-  const scrollportRef = useRef<HTMLDivElement>(null);
-  const shouldScrollRef = useRef(true);
-  const locallyCreatedConversationIdsRef = useRef<Set<string>>(new Set());
-
-  const [activeConversationId, setActiveConversationId] =
-    useState(conversationId);
-  const [title, setTitle] = useState("New chat");
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [olderCursor, setOlderCursor] = useState<string | null>(null);
-  const [loadingMessages, setLoadingMessages] = useState(
-    Boolean(conversationId),
+  const readerContext = useMemo(
+    () => ({ media_id: mediaId, library_id: null }),
+    [mediaId],
   );
-  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
+
+  // The pending-quote chip is the source of truth for the removable quote: the
+  // engine attaches exactly what the chip currently holds. The media reference
+  // always attaches (it is not removable); the quote is the removable part, so
+  // removing the chip drops the quote from what gets committed on send.
   const [pendingReferences, setPendingReferences] = useState<
     Array<{ uri: string; label: string }>
   >(() =>
@@ -74,150 +62,24 @@ export default function ReaderChatDetail({
       ? [{ uri: pendingQuoteUri, label: pendingQuoteLabel ?? "Selected quote" }]
       : [],
   );
-  const retryingAssistantMessageIds = useStringIdSet();
 
-  const activeReplyParentMessageId = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.role === "assistant" && message.status === "complete") {
-        return message.id;
-      }
-    }
-    return null;
-  }, [messages]);
+  const initialReferences = useMemo(
+    () => [`media:${mediaId}`, ...pendingReferences.map((ref) => ref.uri)],
+    [mediaId, pendingReferences],
+  );
 
-  const { abortAll, tailChatRun } = useChatRunTail({
-    setMessages,
-    shouldScrollRef,
+  const convo = useConversation({
+    conversationId,
+    initialReferences,
+    branching: false,
   });
 
-  useEffect(() => {
-    if (!activeConversationId) return;
-    let cancelled = false;
-    apiFetch<{ data: { title: string } }>(
-      `/api/conversations/${activeConversationId}`,
-    )
-      .then((response) => {
-        if (!cancelled) setTitle(response.data.title);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [activeConversationId]);
-
-  // Load history for an existing conversation. Skip locally-created ones — their
-  // messages were seeded optimistically on send.
-  useEffect(() => {
-    if (
-      !activeConversationId ||
-      locallyCreatedConversationIdsRef.current.has(activeConversationId)
-    ) {
-      setLoadingMessages(false);
-      return;
-    }
-    let cancelled = false;
-    setLoadingMessages(true);
-    setLoadError(null);
-    apiFetch<ConversationMessagesResponse>(
-      `/api/conversations/${activeConversationId}/messages?limit=${MESSAGE_PAGE_SIZE}`,
-    )
-      .then((response) => {
-        if (cancelled) return;
-        setMessages(response.data);
-        setOlderCursor(response.page.next_cursor);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setLoadError(
-          toFeedback(err, { fallback: "Failed to load chat history" }),
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingMessages(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeConversationId]);
-
-  const loadOlder = useCallback(async () => {
-    if (!activeConversationId || !olderCursor) return;
-    const params = new URLSearchParams({
-      limit: String(MESSAGE_PAGE_SIZE),
-      cursor: olderCursor,
-    });
-    const response = await apiFetch<ConversationMessagesResponse>(
-      `/api/conversations/${activeConversationId}/messages?${params}`,
-    );
-    setMessages((prev) => {
-      const existingIds = new Set(prev.map((m) => m.id));
-      const next = response.data.filter((m) => !existingIds.has(m.id));
-      return [...next, ...prev];
-    });
-    setOlderCursor(response.page.next_cursor);
-    shouldScrollRef.current = false;
-  }, [activeConversationId, olderCursor]);
-
-  // Commit pending references and resolve the conversation to send to: attach to
-  // the existing conversation, or create one referencing the document + quote.
-  const resolveConversation = useCallback(async (): Promise<string> => {
-    const refUris = pendingReferences.map((ref) => ref.uri);
-    if (activeConversationId) {
-      for (const uri of refUris) {
-        await apiFetch(`/api/conversations/${activeConversationId}/references`, {
-          method: "POST",
-          body: JSON.stringify({ resource_uri: uri }),
-        });
-      }
-      setPendingReferences([]);
-      return activeConversationId;
-    }
-    const created = await apiFetch<{ data: { id: string } }>(
-      "/api/conversations",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          initial_references: [`media:${mediaId}`, ...refUris],
-        }),
-      },
-    );
-    locallyCreatedConversationIdsRef.current.add(created.data.id);
-    setActiveConversationId(created.data.id);
-    setPendingReferences([]);
-    return created.data.id;
-  }, [activeConversationId, mediaId, pendingReferences]);
-
-  const handleChatRunCreated = useCallback(
-    (runData: ChatRunResponse["data"]) => {
-      shouldScrollRef.current = true;
-      locallyCreatedConversationIdsRef.current.add(runData.conversation.id);
-      setActiveConversationId(runData.conversation.id);
-      if (!runData.user_message.parent_message_id) {
-        setMessages([runData.user_message, runData.assistant_message]);
-      }
-      abortAll();
-      void tailChatRun(runData);
-    },
-    [abortAll, tailChatRun],
-  );
-
-  const handleRetryAssistantResponse = useCallback(
-    async (assistantMessageId: string) => {
-      if (retryingAssistantMessageIds.has(assistantMessageId)) return;
-      retryingAssistantMessageIds.add(assistantMessageId);
-      try {
-        const response = await apiFetch<ChatRunResponse>(
-          `/api/messages/${assistantMessageId}/retry`,
-          { method: "POST" },
-        );
-        handleChatRunCreated(response.data);
-      } finally {
-        retryingAssistantMessageIds.remove(assistantMessageId);
-      }
-    },
-    [handleChatRunCreated, retryingAssistantMessageIds],
-  );
+  const parentMessageId = convo.replyParentMessageId;
+  const resolvedConversationId = convo.conversationId;
+  const draftKey =
+    conversationId === null && convo.messages.length === 0
+      ? `reader-doc:${mediaId}:new`
+      : undefined;
 
   return (
     <section className={styles.pane} role="region" aria-label="Chat detail">
@@ -231,13 +93,13 @@ export default function ReaderChatDetail({
         >
           <ArrowLeft size={16} aria-hidden="true" />
         </Button>
-        <h2 className={styles.title}>{title}</h2>
-        {activeConversationId ? (
+        <h2 className={styles.title}>{convo.title}</h2>
+        {resolvedConversationId ? (
           <Button
             variant="secondary"
             size="sm"
             leadingIcon={<ExternalLink size={14} aria-hidden="true" />}
-            onClick={() => onOpenFullChat(activeConversationId)}
+            onClick={() => onOpenFullChat(resolvedConversationId)}
           >
             Open in full chat
           </Button>
@@ -246,38 +108,41 @@ export default function ReaderChatDetail({
         )}
       </header>
 
-      {loadError ? (
+      {convo.error ? (
         <div className={styles.status}>
-          <FeedbackNotice feedback={loadError} />
+          <FeedbackNotice feedback={convo.error} />
         </div>
       ) : null}
 
       <ChatSurface
-        messages={messages}
-        scrollportRef={scrollportRef}
-        olderCursor={olderCursor}
-        onLoadOlder={loadOlder}
-        onRetryAssistantResponse={handleRetryAssistantResponse}
-        retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
+        ref={convo.scrollRef}
+        messages={convo.messages}
+        historyLoading={convo.loading}
+        olderCursor={convo.olderCursor}
+        onLoadOlder={convo.loadOlder}
+        onRetryAssistantResponse={convo.retryAssistantResponse}
+        retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
         onReaderSourceActivate={onReaderSourceActivate}
         emptyState={
-          loadingMessages ? (
+          convo.loading ? (
             <FeedbackNotice severity="info" title="Loading chat history..." />
           ) : null
         }
         composer={
           <ChatComposer
-            conversationId={activeConversationId}
-            parentMessageId={activeReplyParentMessageId}
-            readerContext={{ media_id: mediaId, library_id: null }}
+            conversationId={convo.conversationId}
+            draftKey={draftKey}
+            parentMessageId={parentMessageId}
+            readerContext={readerContext}
             pendingReferences={pendingReferences}
             onRemovePendingReference={(uri) =>
               setPendingReferences((prev) =>
                 prev.filter((ref) => ref.uri !== uri),
               )
             }
-            onResolveConversation={resolveConversation}
-            onChatRunCreated={handleChatRunCreated}
+            onResolveConversation={convo.resolveConversation}
+            onChatRunCreated={convo.onChatRunCreated}
+            onMessageSent={() => setPendingReferences([])}
             autoFocus
           />
         }
