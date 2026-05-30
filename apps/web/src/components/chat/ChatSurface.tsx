@@ -1,14 +1,13 @@
 "use client";
 
 import {
-  useCallback,
+  forwardRef,
+  useImperativeHandle,
   useMemo,
   useRef,
   type ReactNode,
-  type RefObject,
-  type UIEventHandler,
-  type WheelEvent,
 } from "react";
+import { ArrowDown } from "lucide-react";
 import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
@@ -16,149 +15,163 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
+import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
-export default function ChatSurface({
-  messages,
-  scrollportRef,
-  onScroll,
-  olderCursor,
-  onLoadOlder,
-  emptyState,
-  composer,
-  forkOptionsByParentId = {},
-  switchableLeafIds,
-  onSelectFork,
-  onReplyToAssistant,
-  onRetryAssistantResponse,
-  retryingAssistantMessageIds,
-  onReaderSourceActivate,
-}: {
+export type { ChatScrollHandle } from "./useChatScroll";
+
+export interface ChatSurfaceProps {
   messages: ConversationMessage[];
-  scrollportRef?: RefObject<HTMLDivElement | null>;
-  onScroll?: UIEventHandler<HTMLDivElement>;
+  composer: ReactNode;
+  historyLoading?: boolean;
   olderCursor?: string | null;
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
-  composer: ReactNode;
   forkOptionsByParentId?: Record<string, ForkOption[]>;
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   retryingAssistantMessageIds?: Set<string>;
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
-}) {
-  const transcriptScrollportRef = useRef<HTMLDivElement | null>(null);
-  const setScrollportRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      transcriptScrollportRef.current = node;
-      if (scrollportRef) {
-        scrollportRef.current = node;
-      }
+  onReaderSourceActivate?: (
+    target: ReaderSourceTarget,
+    event?: React.MouseEvent,
+  ) => void;
+}
+
+const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
+  function ChatSurface(
+    {
+      messages,
+      composer,
+      historyLoading = false,
+      olderCursor,
+      onLoadOlder,
+      emptyState,
+      forkOptionsByParentId = {},
+      switchableLeafIds,
+      onSelectFork,
+      onReplyToAssistant,
+      onRetryAssistantResponse,
+      retryingAssistantMessageIds,
+      onReaderSourceActivate,
     },
-    [scrollportRef],
-  );
-  const retryAssistantIdByUserId = useMemo(() => {
-    const retryByUserId = new Map<string, string>();
-    for (const message of messages) {
-      if (
-        message.role === "assistant" &&
-        message.can_retry_response === true &&
-        message.parent_message_id
-      ) {
-        retryByUserId.set(message.parent_message_id, message.id);
+    ref,
+  ) {
+    const scrollportRef = useRef<HTMLDivElement | null>(null);
+    const transcriptRef = useRef<HTMLDivElement | null>(null);
+    const {
+      spacerHeight,
+      isLatestBelowFold,
+      scrollToLatest,
+      onComposerWheel,
+      onScroll,
+      releasePin,
+      captureAnchor,
+      scrollToMessage,
+    } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
+
+    useImperativeHandle(
+      ref,
+      () => ({ captureAnchor, scrollToMessage }),
+      [captureAnchor, scrollToMessage],
+    );
+
+    const retryAssistantIdByUserId = useMemo(() => {
+      const retryByUserId = new Map<string, string>();
+      for (const message of messages) {
+        if (
+          message.role === "assistant" &&
+          message.can_retry_response === true &&
+          message.parent_message_id
+        ) {
+          retryByUserId.set(message.parent_message_id, message.id);
+        }
       }
-    }
-    return retryByUserId;
-  }, [messages]);
+      return retryByUserId;
+    }, [messages]);
 
-  const handleComposerWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.deltaY === 0) return;
-
-    let target = event.target instanceof Element ? event.target : null;
-    while (target && target !== event.currentTarget) {
-      if (
-        target instanceof HTMLElement &&
-        target.scrollHeight > target.clientHeight &&
-        ((event.deltaY < 0 && target.scrollTop > 0) ||
-          (event.deltaY > 0 &&
-            target.scrollTop + target.clientHeight < target.scrollHeight))
-      ) {
-        return;
-      }
-      target = target.parentElement;
-    }
-
-    const scrollport = transcriptScrollportRef.current;
-    if (!scrollport) return;
-
-    if (
-      (event.deltaY < 0 && scrollport.scrollTop <= 0) ||
-      (event.deltaY > 0 &&
-        scrollport.scrollTop + scrollport.clientHeight >= scrollport.scrollHeight)
-    ) {
-      return;
-    }
-
-    scrollport.scrollTop += event.deltaY;
-    event.preventDefault();
-  };
-
-  return (
-    <div className={styles.surface}>
-      <div
-        ref={setScrollportRef}
-        className={styles.scrollport}
-        role="region"
-        tabIndex={0}
-        aria-label="Chat conversation"
-        onScroll={onScroll}
-      >
+    return (
+      <div className={styles.surface}>
         <div
-          className={styles.transcript}
-          role="log"
-          aria-label="Chat messages"
+          ref={scrollportRef}
+          className={styles.scrollport}
+          role="region"
+          tabIndex={0}
+          aria-label="Chat conversation"
+          onScroll={onScroll}
+          onWheel={releasePin}
+          onTouchMove={releasePin}
+          onKeyDown={releasePin}
         >
-          {olderCursor && onLoadOlder ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label="Load older messages"
-              onClick={onLoadOlder}
-            >
-              Load older messages
-            </Button>
-          ) : null}
+          <div
+            ref={transcriptRef}
+            className={styles.transcript}
+            role="log"
+            aria-label="Chat messages"
+          >
+            {olderCursor && onLoadOlder ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Load older messages"
+                onClick={onLoadOlder}
+              >
+                Load older messages
+              </Button>
+            ) : null}
 
-          {messages.length === 0 && emptyState ? (
-            <div className={styles.emptyState}>{emptyState}</div>
-          ) : null}
+            {messages.length === 0 && emptyState ? (
+              <div className={styles.emptyState}>{emptyState}</div>
+            ) : null}
 
-          {messages.map((msg) => (
-            <MessageRow
-              key={msg.id}
-              message={msg}
-              forkOptions={forkOptionsByParentId[msg.id] ?? []}
-              switchableLeafIds={switchableLeafIds}
-              onSelectFork={onSelectFork}
-              onReplyToAssistant={onReplyToAssistant}
-              retryAssistantMessageId={retryAssistantIdByUserId.get(msg.id)}
-              retryingAssistantMessageIds={retryingAssistantMessageIds}
-              onRetryAssistantResponse={onRetryAssistantResponse}
-              onReaderSourceActivate={onReaderSourceActivate}
+            {messages.map((msg) => (
+              <MessageRow
+                key={msg.id}
+                message={msg}
+                forkOptions={forkOptionsByParentId[msg.id] ?? []}
+                switchableLeafIds={switchableLeafIds}
+                onSelectFork={onSelectFork}
+                onReplyToAssistant={onReplyToAssistant}
+                retryAssistantMessageId={retryAssistantIdByUserId.get(msg.id)}
+                retryingAssistantMessageIds={retryingAssistantMessageIds}
+                onRetryAssistantResponse={onRetryAssistantResponse}
+                onReaderSourceActivate={onReaderSourceActivate}
+              />
+            ))}
+
+            <div
+              className={styles.spacer}
+              aria-hidden="true"
+              style={{ height: spacerHeight }}
             />
-          ))}
+          </div>
+
+          {isLatestBelowFold ? (
+            <div className={styles.latestDock}>
+              <Button
+                variant="pill"
+                size="sm"
+                data-testid="chat-scroll-latest"
+                leadingIcon={<ArrowDown size={14} aria-hidden="true" />}
+                onClick={scrollToLatest}
+              >
+                Latest
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          className={styles.composerSlot}
+          data-testid="chat-composer-dock"
+          onWheel={onComposerWheel}
+        >
+          {composer}
         </div>
       </div>
+    );
+  },
+);
 
-      <div
-        className={styles.composerSlot}
-        data-testid="chat-composer-dock"
-        onWheel={handleComposerWheel}
-      >
-        {composer}
-      </div>
-    </div>
-  );
-}
+export default ChatSurface;

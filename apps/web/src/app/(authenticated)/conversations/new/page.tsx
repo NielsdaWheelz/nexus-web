@@ -1,5 +1,7 @@
 "use client";
-import ConversationNewPaneBody from "./ConversationNewPaneBody";
+
+import Conversation from "@/components/chat/Conversation";
+
 export default function NewConversationPage() {
-  return <ConversationNewPaneBody />;
+  return <Conversation />;
 }

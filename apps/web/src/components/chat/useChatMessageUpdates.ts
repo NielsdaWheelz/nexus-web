@@ -5,7 +5,6 @@ import {
   useEffect,
   useRef,
   type Dispatch,
-  type MutableRefObject,
   type SetStateAction,
 } from "react";
 import {
@@ -158,11 +157,9 @@ function messageDocumentWithRetrievals(
 
 export function useChatMessageUpdates({
   setMessages,
-  shouldScrollRef,
   onReferenceAdded,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
-  shouldScrollRef?: MutableRefObject<boolean>;
   onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
 }) {
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
@@ -195,12 +192,9 @@ export function useChatMessageUpdates({
 
   const handleOptimisticMessages = useCallback(
     (userMsg: ConversationMessage, assistantMsg: ConversationMessage) => {
-      if (shouldScrollRef) {
-        shouldScrollRef.current = true;
-      }
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
     },
-    [setMessages, shouldScrollRef],
+    [setMessages],
   );
 
   const handleMetaReceived = useCallback(

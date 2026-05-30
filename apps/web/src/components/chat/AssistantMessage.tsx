@@ -40,7 +40,7 @@ export default function AssistantMessage({
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  onCitationActivate?: (target: ReaderSourceTarget) => void;
+  onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
   errorLabel: string;
   timestampLabel: string;
 }) {

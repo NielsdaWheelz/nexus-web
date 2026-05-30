@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type MutableRefObject,
   type SetStateAction,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
@@ -59,7 +58,6 @@ function chatStreamRetryDelayMs(attempt: number): number {
 export function useChatRunTail({
   setMessages,
   setForkOptionsByParentId,
-  shouldScrollRef,
   onRunFinished,
   onFirstDelta,
   onRunDone,
@@ -69,7 +67,6 @@ export function useChatRunTail({
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
   setForkOptionsByParentId?: Dispatch<SetStateAction<Record<string, ForkOption[]>>>;
-  shouldScrollRef: MutableRefObject<boolean>;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
@@ -90,7 +87,7 @@ export function useChatRunTail({
     handleReferenceAdded,
     handleDone,
     flushDeltas,
-  } = useChatMessageUpdates({ setMessages, shouldScrollRef, onReferenceAdded });
+  } = useChatMessageUpdates({ setMessages, onReferenceAdded });
 
   const mergeRunMessages = useCallback(
     (

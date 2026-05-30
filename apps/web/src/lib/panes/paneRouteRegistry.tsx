@@ -33,8 +33,7 @@ import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
 import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
-import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
-import ConversationNewPaneBody from "@/app/(authenticated)/conversations/new/ConversationNewPaneBody";
+import Conversation from "@/components/chat/Conversation";
 import BrowsePaneBody from "@/app/(authenticated)/browse/BrowsePaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
@@ -112,12 +111,12 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   conversationNew: {
     icon: MessageSquare,
-    render: () => <ConversationNewPaneBody />,
+    render: () => <Conversation />,
     getChrome: () => ({ title: "New chat" }),
   },
   conversation: {
     icon: MessageSquare,
-    render: () => <ConversationPaneBody />,
+    render: () => <Conversation />,
     getChrome: () => ({
       title: "Chat",
       subtitle: "Conversation transcript and composer.",

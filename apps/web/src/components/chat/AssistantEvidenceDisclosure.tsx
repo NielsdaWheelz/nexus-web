@@ -14,7 +14,7 @@ export default function AssistantEvidenceDisclosure({
 }: {
   message: ConversationMessage;
   answerRef?: Ref<HTMLDivElement>;
-  onCitationActivate?: (target: ReaderSourceTarget) => void;
+  onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
 }) {
   const answerContent = useMemo(
     () =>

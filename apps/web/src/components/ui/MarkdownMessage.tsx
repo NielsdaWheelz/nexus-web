@@ -154,7 +154,7 @@ const baseComponents: MarkdownComponents = {
 };
 const CitationContext = createContext<{
   citationByIndex?: Map<number, ReaderCitationData>;
-  onActivate?: (target: ReaderSourceTarget) => void;
+  onActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
 }>({});
 
 function citationIndexFromHref(href: string | undefined): number | null {
@@ -223,7 +223,10 @@ function MarkdownMessageInner({
 }: {
   content: string;
   citations?: ReaderCitationData[];
-  onCitationActivate?: (target: ReaderSourceTarget) => void;
+  onCitationActivate?: (
+    target: ReaderSourceTarget,
+    event?: React.MouseEvent,
+  ) => void;
 }) {
   const citationByIndex =
     useMemo(

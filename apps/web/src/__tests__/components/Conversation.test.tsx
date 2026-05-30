@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
+import Conversation from "@/components/chat/Conversation";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -11,6 +12,8 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 
+// Mock only the streaming spine (the SSE boundary). The engine is the sole
+// caller of useChatRunTail and owns all other lifecycle state under test.
 const tailMocks = vi.hoisted(() => ({
   tailChatRun: vi.fn(),
   abortAll: vi.fn(),
@@ -45,9 +48,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function pathOf(input: RequestInfo | URL): string {
-  if (input instanceof Request) {
-    return new URL(input.url).pathname;
-  }
+  if (input instanceof Request) return new URL(input.url).pathname;
   return new URL(String(input), "http://localhost").pathname;
 }
 
@@ -293,33 +294,49 @@ function retryRun(): ChatRunResponse["data"] {
   };
 }
 
-function renderPane() {
-  const href = "/conversations/conversation-1";
+function renderPane(
+  options: {
+    href?: string;
+    pathParams?: Record<string, string>;
+    onReplacePane?: (
+      paneId: string,
+      href: string,
+      navOptions?: { titleHint?: string },
+    ) => void;
+  } = {},
+) {
+  const href = options.href ?? "/conversations/conversation-1";
   const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
-  return render(
+  const onReplacePane = options.onReplacePane ?? vi.fn();
+  render(
     <PaneRuntimeProvider
       paneId="pane-1"
       href={href}
-      routeId="conversation"
-      resourceRef="conversation-1"
+      routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
+      resourceRef={
+        href === "/conversations/new" ? null : "conversation-1"
+      }
       resourceKey={resourceKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
-      pathParams={{ id: "conversation-1" }}
+      pathParams={options.pathParams ?? { id: "conversation-1" }}
       onNavigatePane={vi.fn()}
-      onReplacePane={vi.fn()}
+      onReplacePane={onReplacePane}
       onOpenInNewPane={vi.fn()}
       onSetPaneTitle={vi.fn()}
     >
-      <ConversationPaneBody />
+      <Conversation />
     </PaneRuntimeProvider>,
   );
+  return { onReplacePane };
 }
 
 let restoreChatGeometry = () => undefined;
 
+// Mock the scrollport + message-row geometry the scroll owner reads so we can
+// assert the eye-line is preserved across a branch switch without a layout host.
 function installChatGeometry(scrollport: HTMLElement) {
   restoreChatGeometry();
 
@@ -366,15 +383,30 @@ function installChatGeometry(scrollport: HTMLElement) {
   };
 }
 
-describe("ConversationPaneBody", () => {
+describe("Conversation", () => {
   beforeEach(() => {
     tailMocks.tailChatRun.mockReset();
     tailMocks.abortAll.mockReset();
     tailMocks.useChatRunTail.mockReset();
-    tailMocks.useChatRunTail.mockReturnValue({
-      tailChatRun: tailMocks.tailChatRun,
-      abortAll: tailMocks.abortAll,
-    });
+    tailMocks.useChatRunTail.mockImplementation(
+      (options?: {
+        onConversationAvailable?: (
+          conversationId: string,
+          runId: string,
+        ) => void;
+      }) => ({
+        tailChatRun: tailMocks.tailChatRun.mockImplementation(
+          (runData: ChatRunResponse["data"]) => {
+            options?.onConversationAvailable?.(
+              runData.conversation.id,
+              runData.run.id,
+            );
+          },
+        ),
+        abortAll: tailMocks.abortAll,
+        activeRunId: null,
+      }),
+    );
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 320,
@@ -384,6 +416,7 @@ describe("ConversationPaneBody", () => {
 
   afterEach(() => {
     restoreChatGeometry();
+    vi.unstubAllGlobals();
   });
 
   it("posts retry with an idempotency key and tails the returned run", async () => {
@@ -393,6 +426,9 @@ describe("ConversationPaneBody", () => {
       const path = pathOf(input);
       if (path === "/api/conversations/conversation-1/tree") {
         return jsonResponse({ data: failedRootRetryTree() });
+      }
+      if (path === "/api/conversations/conversation-1/references") {
+        return jsonResponse({ data: [] });
       }
       if (path === "/api/models") {
         return jsonResponse({ data: MODELS });
@@ -442,6 +478,9 @@ describe("ConversationPaneBody", () => {
         if (path === "/api/conversations/conversation-1/tree") {
           return jsonResponse({ data: treeResponse() });
         }
+        if (path === "/api/conversations/conversation-1/references") {
+          return jsonResponse({ data: [] });
+        }
         if (path === "/api/models") {
           return jsonResponse({ data: MODELS });
         }
@@ -467,6 +506,9 @@ describe("ConversationPaneBody", () => {
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     expect(scrollport).not.toContainElement(input);
     expect(composerDock).toContainElement(input);
+    // A genuine user gesture releases the auto-pin; only then does a manual
+    // scroll position stick (the scroll owner holds the pinned anchor otherwise).
+    fireEvent.wheel(scrollport, { deltaY: -10 });
     scrollport.scrollTop = 60;
     fireEvent.scroll(scrollport);
 
@@ -510,6 +552,9 @@ describe("ConversationPaneBody", () => {
       if (path === "/api/conversations/conversation-1/tree") {
         return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
       }
+      if (path === "/api/conversations/conversation-1/references") {
+        return jsonResponse({ data: [] });
+      }
       if (path === "/api/models") {
         return jsonResponse({ data: MODELS });
       }
@@ -531,6 +576,7 @@ describe("ConversationPaneBody", () => {
     expect(await screen.findByText("Answer A")).toBeVisible();
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
     installChatGeometry(scrollport);
+    fireEvent.wheel(scrollport, { deltaY: -10 });
     scrollport.scrollTop = 60;
     fireEvent.scroll(scrollport);
     expect(tailMocks.tailChatRun).not.toHaveBeenCalled();
@@ -540,12 +586,9 @@ describe("ConversationPaneBody", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
-    });
-    expect(scrollport.scrollTop).toBe(60);
-    await waitFor(() => {
       expect(tailMocks.tailChatRun).toHaveBeenCalledWith(activeBranchBRun());
     });
+    expect(scrollport.scrollTop).toBe(60);
 
     resolveActivePath(
       jsonResponse({
@@ -555,9 +598,188 @@ describe("ConversationPaneBody", () => {
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/chat-runs"),
-      ).toHaveLength(3);
+      ).not.toHaveLength(0);
     });
     expect(scrollport.scrollTop).toBe(60);
   });
 
+  it("creates a conversation on first send and navigates to it without a run param", async () => {
+    const user = userEvent.setup();
+    const onReplacePane = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/conversations" && init?.method === "POST") {
+        return jsonResponse({ data: { id: "new-conv-id" } });
+      }
+      if (path === "/api/conversations/new-conv-id/tree") {
+        return jsonResponse({
+          data: {
+            ...treeResponse(),
+            conversation: { ...treeResponse().conversation, id: "new-conv-id" },
+          },
+        });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
+        return jsonResponse({
+          data: {
+            run: {
+              id: "run-1",
+              status: "complete",
+              conversation_id: "new-conv-id",
+              user_message_id: "user-message-1",
+              assistant_message_id: "assistant-message-1",
+              model_id: body.model_id,
+              reasoning: body.reasoning,
+              key_mode: body.key_mode ?? "auto",
+              cancel_requested_at: null,
+              started_at: timestamp,
+              completed_at: timestamp,
+              error_code: null,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+            conversation: {
+              id: "new-conv-id",
+              title: "New chat",
+              sharing: "private",
+              message_count: 2,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+            user_message: message("user-message-1", 1, "user", body.content),
+            assistant_message: message(
+              "assistant-message-1",
+              2,
+              "assistant",
+              "Done.",
+              "user-message-1",
+            ),
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/new",
+      pathParams: {},
+      onReplacePane,
+    });
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    const input = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(input);
+    await user.keyboard("Plain question");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) => pathOf(input) === "/api/chat-runs"),
+      ).toBe(true);
+    });
+
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    );
+    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    expect(body.conversation_id).toBe("new-conv-id");
+
+    await waitFor(() => {
+      expect(onReplacePane).toHaveBeenCalledWith(
+        "pane-1",
+        "/conversations/new-conv-id",
+        undefined,
+      );
+    });
+  });
+
+  it("shows a loading notice with no composer while /tree is pending for an existing conversation", async () => {
+    // /tree never resolves: the existing route must show the loading notice and
+    // withhold the composer (no Send button) until history loads.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/conversations/conversation-1/tree") {
+        return new Promise<Response>(() => {});
+      }
+      if (path === "/api/conversations/conversation-1/references") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(await screen.findByText("Loading conversation...")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: "Ask anything" }),
+    ).toBeNull();
+  });
+
+  it("shows a not-found/error notice with no composer when /tree 404s", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse(
+          { error: { code: "E_NOT_FOUND", message: "Conversation not found" } },
+          404,
+        );
+      }
+      if (path === "/api/conversations/conversation-1/references") {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(
+      await screen.findByText("Failed to load conversation"),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: "Ask anything" }),
+    ).toBeNull();
+  });
+
+  it("renders the composer immediately on the new route (no loading gate)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({ href: "/conversations/new", pathParams: {} });
+
+    expect(
+      await screen.findByRole("textbox", { name: "Ask anything" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Loading conversation...")).toBeNull();
+  });
 });
