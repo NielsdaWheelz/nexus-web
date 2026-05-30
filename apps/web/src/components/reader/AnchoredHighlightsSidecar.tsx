@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import { MessageSquare, MessageSquarePlus, MessagesSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -19,8 +19,9 @@ import {
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import Button from "@/components/ui/Button";
-import HighlightSnippet from "@/components/ui/HighlightSnippet";
-import HighlightActionsMenu from "./HighlightActionsMenu";
+import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
+import ItemCard from "@/components/items/ItemCard";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
@@ -561,146 +562,116 @@ export default function AnchoredHighlightsSidecar({
       const linkedNotes = highlight.linked_note_blocks ?? [];
       const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
 
+      const actions: ActionMenuOption[] = [];
+      if (canQuoteToChat) {
+        actions.push({
+          id: "quote-new",
+          label: "Quote to new chat",
+          onSelect: () => onQuoteToNewChat(highlight.id),
+        });
+        actions.push({
+          id: "quote-existing",
+          label: "Quote to existing chat",
+          onSelect: () => onQuoteToExtantChat(highlight.id),
+        });
+      }
+      if (canEditHighlight) {
+        actions.push({
+          id: "edit-bounds",
+          label:
+            isFocused && isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
+          onSelect: () => {
+            if (isFocused && isEditingBounds) {
+              onCancelEditBounds();
+            } else {
+              onFocusHighlight(highlight.id);
+              onStartEditBounds();
+            }
+          },
+        });
+        actions.push({
+          id: "color",
+          label: "Highlight color",
+          render: ({ closeMenu }) => (
+            <HighlightColorPicker
+              selectedColor={highlight.color}
+              disabled={changingColor}
+              disabledColors={[highlight.color]}
+              onSelectColor={(color) => {
+                void handleColorChange(highlight, color);
+                closeMenu();
+              }}
+            />
+          ),
+        });
+        actions.push({
+          id: "delete",
+          label: deleting ? "Deleting…" : "Delete highlight",
+          tone: "danger",
+          separatorBefore: true,
+          disabled: deleting,
+          onSelect: () => {
+            void handleDelete(highlight);
+          },
+        });
+      }
+
       return (
-        <div
+        <ItemCard
           key={highlight.id}
-          ref={setRowRef(highlight.id)}
-          data-highlight-id={highlight.id}
-          data-testid={`anchored-highlight-row-${highlight.id}`}
-          className={`${styles.linkedItemRow} ${className} ${
-            isFocused ? styles.rowFocused : ""
-          }`.trim()}
+          content={{
+            kind: "highlight",
+            prefix: highlight.prefix,
+            exact: highlight.exact,
+            suffix: highlight.suffix,
+            color: highlight.color,
+          }}
+          actions={actions.length ? actions : undefined}
+          note={notesToRender.map((note) => {
+            const noteEditorKey = getNoteEditorKey(highlight.id, note);
+            return (
+              <div
+                key={noteEditorKey}
+                data-note-editor-key={noteEditorKey}
+                data-testid={`highlight-note-editor-${noteEditorKey}`}
+              >
+                <HighlightNoteEditor
+                  highlightId={highlight.id}
+                  note={note}
+                  editable
+                  onSave={handleNoteSave}
+                  onDelete={onNoteDelete}
+                  onLocalChange={scheduleNoteLayoutMeasure}
+                />
+              </div>
+            );
+          })}
+          linkedItems={highlight.linked_conversations?.map((conversation) => ({
+            id: conversation.conversation_id,
+            icon: <MessageSquare size={14} aria-hidden="true" />,
+            label: conversation.title,
+            onActivate: () =>
+              onOpenConversation(
+                conversation.conversation_id,
+                conversation.title,
+              ),
+          }))}
+          meta={
+            isFocused && isEditingBounds
+              ? "Select new text in the reader to replace this highlight."
+              : undefined
+          }
+          selected={isFocused}
+          expanded={isFocused}
+          rootRef={setRowRef(highlight.id)}
           style={style}
+          className={className || undefined}
+          highlightId={highlight.id}
+          testId={`anchored-highlight-row-${highlight.id}`}
+          onActivate={() => handleRowClick(highlight.id)}
           onMouseEnter={() => handleRowMouseEnter(highlight.id)}
           onMouseLeave={handleRowMouseLeave}
-          onClick={(event) => {
-            const target = event.target;
-            if (
-              target instanceof Element &&
-              target.closest(
-                'a, button, input, textarea, select, [contenteditable="true"], .ProseMirror',
-              )
-            ) {
-              return;
-            }
-            handleRowClick(highlight.id);
-          }}
-        >
-          <div className={styles.rowTop}>
-            <button
-              type="button"
-              className={styles.contextButton}
-              onClick={() => handleRowClick(highlight.id)}
-              aria-pressed={isFocused}
-            >
-              <HighlightSnippet
-                prefix={highlight.prefix}
-                exact={highlight.exact}
-                suffix={highlight.suffix}
-                color={highlight.color}
-                className={styles.contextText}
-              />
-            </button>
-
-            <div className={styles.rowActions}>
-              {canQuoteToChat ? (
-                <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    iconOnly
-                    className={styles.chatButton}
-                    aria-label="Quote highlight to new chat"
-                    onClick={() => onQuoteToNewChat(highlight.id)}
-                  >
-                    <MessageSquarePlus size={14} aria-hidden="true" />
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    iconOnly
-                    className={styles.chatButton}
-                    aria-label="Quote highlight to existing chat"
-                    onClick={() => onQuoteToExtantChat(highlight.id)}
-                  >
-                    <MessagesSquare size={14} aria-hidden="true" />
-                  </Button>
-                </>
-              ) : null}
-              {canEditHighlight ? (
-                <HighlightActionsMenu
-                  color={highlight.color}
-                  changingColor={changingColor}
-                  deleting={deleting}
-                  isEditingBounds={isFocused && isEditingBounds}
-                  onStartEditBounds={() => {
-                    onFocusHighlight(highlight.id);
-                    onStartEditBounds();
-                  }}
-                  onCancelEditBounds={onCancelEditBounds}
-                  onColorChange={(color) => {
-                    void handleColorChange(highlight, color);
-                  }}
-                  onDelete={() => {
-                    void handleDelete(highlight);
-                  }}
-                />
-              ) : null}
-            </div>
-          </div>
-
-          {isFocused && isEditingBounds ? (
-            <p className={styles.editHint}>
-              Select new text in the reader to replace this highlight.
-            </p>
-          ) : null}
-
-          <div className={styles.noteEditorList}>
-            {notesToRender.map((note) => {
-              const noteEditorKey = getNoteEditorKey(highlight.id, note);
-              return (
-                <div
-                  key={noteEditorKey}
-                  data-note-editor-key={noteEditorKey}
-                  data-testid={`highlight-note-editor-${noteEditorKey}`}
-                  className={styles.noteEditor}
-                >
-                  <HighlightNoteEditor
-                    highlightId={highlight.id}
-                    note={note}
-                    editable={true}
-                    onSave={handleNoteSave}
-                    onDelete={onNoteDelete}
-                    onLocalChange={scheduleNoteLayoutMeasure}
-                  />
-                </div>
-              );
-            })}
-          </div>
-
-          {highlight.linked_conversations &&
-          highlight.linked_conversations.length > 0 ? (
-            <div className={styles.conversationList}>
-              {highlight.linked_conversations.map((conversation) => (
-                <Button
-                  key={conversation.conversation_id}
-                  variant="secondary"
-                  size="sm"
-                  className={styles.conversationButton}
-                  onClick={() =>
-                    onOpenConversation(
-                      conversation.conversation_id,
-                      conversation.title,
-                    )
-                  }
-                  leadingIcon={<MessageSquare size={14} />}
-                >
-                  <span>{conversation.title}</span>
-                </Button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        />
       );
     },
     [
@@ -832,7 +803,7 @@ export default function AnchoredHighlightsSidecar({
           if (!highlight) {
             return null;
           }
-          return renderRow(highlight, "", {
+          return renderRow(highlight, styles.row, {
             transform: `translateY(${row.top}px)`,
           });
         })}

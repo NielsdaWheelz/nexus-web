@@ -23,6 +23,7 @@ interface ProseMirrorOutlineEditorProps {
   ariaLabel?: string;
   createBlockId?: () => string;
   singleBlock?: boolean;
+  compact?: boolean;
   searchObjects?: (query: string) => Promise<HydratedObjectRef[]>;
   onDocChange?: (doc: ProseMirrorNode) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -53,6 +54,7 @@ export default function ProseMirrorOutlineEditor({
   ariaLabel = "Notes outline",
   createBlockId,
   singleBlock = false,
+  compact = false,
   searchObjects = searchObjectRefs,
   onDocChange,
   onFocusChange,
@@ -199,7 +201,7 @@ export default function ProseMirrorOutlineEditor({
         ],
       }),
       attributes: {
-        class: styles.editorView,
+        class: compact ? `${styles.editorView} ${styles.compact}` : styles.editorView,
         role: "textbox",
         "aria-label": ariaLabel,
         "aria-multiline": "true",
@@ -298,7 +300,7 @@ export default function ProseMirrorOutlineEditor({
         viewRef.current = null;
       }
     };
-  }, [ariaLabel, createBlockId, resourceKey, singleBlock]);
+  }, [ariaLabel, compact, createBlockId, resourceKey, singleBlock]);
 
   return (
     <div ref={shellRef} className={styles.editorShell}>

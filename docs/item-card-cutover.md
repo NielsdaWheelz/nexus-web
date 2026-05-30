@@ -319,10 +319,12 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
 - `apps/web/src/components/items/ItemCard.tsx`
 - `apps/web/src/components/items/ItemCard.module.css`
 - `apps/web/src/components/items/ItemCard.test.tsx`
-- `apps/web/src/components/ui/Disclosure.tsx`
-- `apps/web/src/components/ui/Disclosure.module.css`
-- `apps/web/src/components/ui/Disclosure.test.tsx`
-- `apps/web/src/lib/resources/resourceKind.ts` (single-owner scheme→glyph/label map, all 10 schemes + fallback)
+- `apps/web/src/components/chat/ConversationReferencesSidecar.test.tsx`
+
+> **As built — minimalism deviations** (the implementing goal's "treat every abstraction as a cost / inline one-use" directive overrode the spec, since each proposed primitive had exactly one consumer):
+> - **No `ui/Disclosure` component.** The collapsible linked-items list is a native `<details>/<summary>` inlined in `ItemCard` — zero JS, keyboard-operable and accessible by default (AC6 satisfied via native disclosure semantics rather than `aria-expanded`/`aria-controls`).
+> - **No `lib/resources/resourceKind.ts` helper.** The scheme→icon map (all 10 schemes + `Link2` fallback) is an inline `const SCHEME_ICONS` in its only consumer, `ConversationReferencesSidecar.tsx`.
+> - `HighlightNoteEditor` hardcodes `compact` on its internal editor (highlight notes are always compact) instead of threading a prop through its own API.
 
 **Modified**
 - `apps/web/src/components/ui/ActionMenu.tsx` (+ `render` option) · `ActionMenu.test.tsx`
