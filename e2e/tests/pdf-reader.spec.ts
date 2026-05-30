@@ -5,9 +5,13 @@ import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
   openHighlightsPane,
-  readerSidecarForActivePane,
+  readerSecondaryForActivePane,
 } from "./reader";
-import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
+import {
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+  workspacePaneButton,
+} from "./workspace";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -107,32 +111,35 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
   throw new Error(`Missing PDF controls action: ${ariaLabel}`);
 }
 
-function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to document chat" });
-}
-
-function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to library chat" });
-}
-
 function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
 }
 
+async function quoteRowToNewChat(page: Page, row: Locator): Promise<void> {
+  const actionsButton = rowActionsButton(row);
+  await actionsButton.scrollIntoViewIfNeeded();
+  await expect(actionsButton).toBeEnabled();
+  await actionsButton.click();
+  const quoteItem = page.getByRole("menuitem", { name: "Quote to new chat" }).first();
+  await expect(quoteItem).toBeVisible();
+  await expect(quoteItem).toBeEnabled();
+  await quoteItem.click();
+}
+
 async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(row).toBeVisible();
-  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
-  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const sidecar = readerSidecarForActivePane(page);
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  const secondary = readerSecondaryForActivePane(page);
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    sidecar.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(sidecar.getByLabel("Conversation context")).toContainText(exact);
+  await expect(
+    secondary.getByLabel("Attached to next message"),
+  ).toContainText(exact);
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
@@ -236,10 +243,11 @@ test.describe("pdf reader", () => {
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
     const expectedMediaId = seeded.media_id;
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
     let createdHighlightId: string | null = null;
     let productError: unknown = null;
     try {
-      await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+      await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
       await resetPdfReaderState(page, expectedMediaId);
       await page.getByRole("button", { name: "Add content" }).click();
       const addContentDialog = page.getByRole("dialog", { name: "Add content" });
@@ -255,7 +263,7 @@ test.describe("pdf reader", () => {
       await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after upload redirect to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
-      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${expectedMediaId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${expectedMediaId}`);
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -300,18 +308,17 @@ test.describe("pdf reader", () => {
       // Normalize deterministically so this test validates highlight persistence only.
       await ensureOnPage(page, 2, expectedPageCount);
 
-      await openHighlightsPane(page);
-      const linkedRow = page.getByTestId(`anchored-highlight-row-${createdHighlightId}`);
+      const highlightsPane = await openHighlightsPane(page);
+      const linkedRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${createdHighlightId}`,
+      );
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.click();
       await expectHighlightRowToBeExpanded(linkedRow);
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
-      const chatButton = rowAddHighlightToDocumentChatButton(linkedRow);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-      await chatButton.scrollIntoViewIfNeeded();
-      await expect(chatButton).toBeEnabled();
-      await chatButton.click();
+      await quoteRowToNewChat(page, linkedRow);
       await expectDocChatPendingContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -342,7 +349,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
+    await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     test.skip(
       expectedPageCount < 2,
@@ -406,12 +414,16 @@ test.describe("pdf reader", () => {
         throw new Error("Expected created PDF highlight ids for active-page scoping coverage");
       }
 
-      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
-      await openHighlightsPane(page);
+      const highlightsPane = await openHighlightsPane(page);
 
-      const onPageRow = page.getByTestId(`anchored-highlight-row-${pageOneHighlightId}`);
-      const offPageRow = page.getByTestId(`anchored-highlight-row-${pageTwoHighlightId}`);
+      const onPageRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${pageOneHighlightId}`,
+      );
+      const offPageRow = highlightsPane.getByTestId(
+        `anchored-highlight-row-${pageTwoHighlightId}`,
+      );
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toHaveCount(0);
 
@@ -462,7 +474,11 @@ test.describe("pdf reader", () => {
     page,
   }, testInfo) => {
     const seeded = readSeededPdfMedia();
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${seeded.password_media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-pdf-reader"),
+      `/media/${seeded.password_media_id}`,
+    );
     await expect(page.getByText("This PDF is password-protected")).toBeVisible();
     await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
   });
@@ -473,7 +489,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
+    await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     const fileEndpointPath = `/api/media/${mediaId}/file`;
     let fileEndpointRequests = 0;
@@ -495,7 +512,7 @@ test.describe("pdf reader", () => {
       }
     });
 
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
       timeout: 20_000,
     });

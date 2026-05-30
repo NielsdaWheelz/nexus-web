@@ -1,4 +1,11 @@
-import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type Response,
+  type TestInfo,
+} from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
@@ -8,6 +15,14 @@ type WorkspacePaneVisibility = "visible" | "minimized";
 export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
+const DEVICE_ID_WINDOW_NAME_PREFIX = "nexus:e2e:workspace-device:";
+const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
+const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
+  back: ["/browse"],
+  forward: [],
+};
+const WORKSPACE_SESSION_SEED_ATTEMPTS = 3;
+export const ACTIVE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-active="true"]';
 
 export interface WorkspacePaneHistory {
   back: string[];
@@ -18,14 +33,31 @@ export interface WorkspacePaneState {
   id: string;
   href: string;
   primaryWidthPx: number;
-  sidecar: null;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
+  attachedSecondaryPaneId: string | null;
+}
+
+export interface WorkspaceAttachedSecondaryPaneState {
+  id: string;
+  parentPrimaryPaneId: string;
+  groupId: "reader-tools" | "conversation-context" | "library-tools";
+  activeSurfaceId:
+    | "reader-highlights"
+    | "reader-doc-chat"
+    | "conversation-references"
+    | "conversation-forks"
+    | "library-chat"
+    | "library-intelligence";
+  widthPx: number;
+  visibility: "visible" | "collapsed";
 }
 
 export interface WorkspaceState {
-  activePaneId: string;
-  panes: WorkspacePaneState[];
+  activePrimaryPaneId: string;
+  primaryPaneOrder: string[];
+  primaryPanesById: Record<string, WorkspacePaneState>;
+  secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState>;
 }
 
 export function makeWorkspacePane(
@@ -41,9 +73,26 @@ export function makeWorkspacePane(
     id,
     href,
     primaryWidthPx: options?.primaryWidthPx ?? 560,
-    sidecar: null,
     visibility: options?.visibility ?? "visible",
     history: options?.history ?? { back: [], forward: [] },
+    attachedSecondaryPaneId: null,
+  };
+}
+
+export function makeWorkspaceState(
+  primaryPanes: WorkspacePaneState[],
+  options?: {
+    activePrimaryPaneId?: string;
+    secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
+  },
+): WorkspaceState {
+  return {
+    activePrimaryPaneId: options?.activePrimaryPaneId ?? primaryPanes[0]!.id,
+    primaryPaneOrder: primaryPanes.map((pane) => pane.id),
+    primaryPanesById: Object.fromEntries(
+      primaryPanes.map((pane) => [pane.id, pane]),
+    ),
+    secondaryPanesById: options?.secondaryPanesById ?? {},
   };
 }
 
@@ -51,63 +100,152 @@ export function singlePaneWorkspaceState(
   href: string,
   options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
+  const history =
+    options?.history ??
+    (href === WORKSPACE_DEFAULT_FALLBACK_HREF
+      ? EXPLICIT_FALLBACK_HISTORY
+      : undefined);
   const paneId = options?.paneId ?? "pane-e2e-primary";
-  return {
-    activePaneId: paneId,
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane(paneId, href, {
         primaryWidthPx: options?.primaryWidthPx ?? 684,
-        history: options?.history,
+        history,
       }),
     ],
-  };
+    { activePrimaryPaneId: paneId },
+  );
 }
 
 // Pin the device id before any navigation so capture + restore key off the id
 // the test controls. Runs as an init script, i.e. before any page load.
 export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
   await page.addInitScript(
-    ([key, id]) => {
+    ([key, prefix]) => {
       try {
-        localStorage.setItem(key, id);
+        if (window.name.startsWith(prefix)) {
+          localStorage.setItem(key, window.name.slice(prefix.length));
+        }
       } catch {
-        /* private mode / quota — ignored */
+        /* private mode / quota - ignored */
       }
     },
-    [INSTALLATION_ID_STORAGE_KEY, deviceId],
+    [INSTALLATION_ID_STORAGE_KEY, DEVICE_ID_WINDOW_NAME_PREFIX],
+  );
+  try {
+    await page.evaluate(
+      ([key, id, prefix]) => {
+        window.name = `${prefix}${id}`;
+        try {
+          localStorage.setItem(key, id);
+        } catch {
+          /* private mode / quota - ignored */
+        }
+      },
+      [INSTALLATION_ID_STORAGE_KEY, deviceId, DEVICE_ID_WINDOW_NAME_PREFIX],
+    );
+  } catch {
+    // about:blank and early cross-origin documents may not expose localStorage.
+    // The init script above applies the id before the next app document runs.
+  }
+}
+
+async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
+  if (page.url() === "about:blank") {
+    return;
+  }
+  await page.goto("about:blank");
+}
+
+function isWorkspaceSessionRestoreResponse(
+  response: Response,
+  deviceId: string,
+): boolean {
+  const request = response.request();
+  if (request.method() !== "GET") {
+    return false;
+  }
+  const url = new URL(response.url());
+  return (
+    url.pathname === WORKSPACE_SESSION_PATH &&
+    url.searchParams.get("device_id") === deviceId
   );
 }
 
-// Seed the server session store for a device. This is the canonical multi-pane
-// setup now that layout never travels in the URL.
 export async function seedWorkspaceSession(
   request: APIRequestContext,
   deviceId: string,
   state: WorkspaceState,
 ): Promise<void> {
-  const response = await request.put(WORKSPACE_SESSION_PATH, {
-    headers: stateChangingApiHeaders(),
-    data: { device_id: deviceId, state },
-  });
-  expect(response.ok()).toBeTruthy();
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < WORKSPACE_SESSION_SEED_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await request.put(WORKSPACE_SESSION_PATH, {
+        headers: stateChangingApiHeaders(),
+        data: { device_id: deviceId, state },
+      });
+      if (response.ok()) {
+        return;
+      }
+      lastError = new Error(
+        `PUT ${WORKSPACE_SESSION_PATH} failed: status=${response.status()}; body=${(await response.text()).slice(0, 400)}`,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < WORKSPACE_SESSION_SEED_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`PUT ${WORKSPACE_SESSION_PATH} failed while seeding workspace session.`);
 }
 
-// Pin the device, seed its session, then open `path`. The canonical way to
-// stage a multi-pane workspace for a test now that layout lives only in the
-// server session store.
+// Leave any mounted workspace before seeding. The app flushes pending session
+// capture on pagehide; seeding from a neutral document prevents that old
+// in-memory pane set from racing with the explicit test fixture.
 export async function gotoWithWorkspaceSession(
   page: Page,
   deviceId: string,
   state: WorkspaceState,
   path: string,
 ): Promise<void> {
+  await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
   await seedWorkspaceSession(page.request, deviceId, state);
-  await page.goto(path);
+  const restoreResponse = page
+    .waitForResponse(
+      (response) => isWorkspaceSessionRestoreResponse(response, deviceId),
+      { timeout: 15_000 },
+    )
+    .catch(() => null);
+  await page.goto(path, { waitUntil: "domcontentloaded" });
+  await restoreResponse;
 }
 
 export function activeWorkspacePane(page: Page): Locator {
-  return page.locator('[data-pane-id][data-active="true"]').first();
+  return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR).first();
+}
+
+export function activePaneSelector(selector: string): string {
+  return `${ACTIVE_WORKSPACE_PANE_SELECTOR} ${selector}`;
+}
+
+export function workspaceE2eDeviceId(
+  testInfo: TestInfo,
+  prefix = "e2e-workspace",
+): string {
+  const slug = testInfo.titlePath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return `${prefix}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${testInfo.retry}-${slug}`;
 }
 
 export function workspacePaneButton(page: Page, name: RegExp | string): Locator {

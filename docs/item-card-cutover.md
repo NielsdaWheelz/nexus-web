@@ -5,15 +5,15 @@ Status: approved — ready to implement · Owner: reader/highlights · Type: har
 A single, centralized, presentational card for "an item in a list" — a highlight (with
 its selected text in context, an inline note, linked chats, and an actions menu) and,
 in the same visual vocabulary, a referenced resource (media/page) when items are listed
-in a chat's context. Replaces the bespoke row markup inside `AnchoredHighlightsSidecar`
-and `ConversationReferencesSidecar`, and folds the bespoke `HighlightActionsMenu` into
+in a chat's context. Replaces the bespoke row markup inside `ReaderHighlightsSurface`
+and `ConversationReferencesSurface`, and folds the bespoke `HighlightActionsMenu` into
 `ui/ActionMenu`.
 
 ---
 
 ## 1. Context & problem
 
-Highlights/notes are rendered today by one component — `AnchoredHighlightsSidecar.tsx`
+Highlights/notes are rendered today by one component — `ReaderHighlightsSurface.tsx`
 (`renderRow`, lines 553–705) — but the row markup is bespoke, heavy, and visually broken:
 
 - **The "giant bullet point"** is the outline drag-handle. Notes render through
@@ -23,23 +23,23 @@ Highlights/notes are rendered today by one component — `AnchoredHighlightsSide
   (`ProseMirrorOutlineEditor.module.css:34,42`). Pointless for a single-block highlight note.
 - **A full rich-text editor is mounted on every row, even with no note.** `renderRow`
   forces `notesToRender = linkedNotes.length ? linkedNotes : [null]`
-  (`AnchoredHighlightsSidecar.tsx:562`) and `HighlightNoteEditor.module.css:6` pins
+  (`ReaderHighlightsSurface.tsx:562`) and `HighlightNoteEditor.module.css:6` pins
   `.ProseMirror { min-height: 76px }` at `--text-md`. Every highlight carries a ~76px empty
   bulleted box.
 - **Row chrome competes for ~280–360px.** Snippet button + two icon chat-buttons + a bespoke
-  menu all share one flex row (`:589`) inside a width-capped sidecar.
+  menu all share one flex row (`:589`) inside a width-capped secondary.
 - **Two parallel menu systems.** `ui/ActionMenu` (portaled, full keyboard nav, `tone:"danger"`,
   separators) and `reader/HighlightActionsMenu` (tab-trap only) coexist; the chat actions live
   in neither.
 - **Linked conversations are always-on stacked full-width buttons** (`:683`), not collapsible.
 
-The same "list item" concept is duplicated elsewhere: `ConversationReferencesSidecar.tsx`
+The same "list item" concept is duplicated elsewhere: `ConversationReferencesSurface.tsx`
 (the chat context list) hand-rolls its own row (`:20`). `ui/ContextRow` is a third, unrelated
 row primitive (horizontal, single-line) used by search/AppList.
 
 **The margin-note alignment engine is correct and out of scope.** `alignRows`, the projection
 in `useAnchoredHighlightProjection`, `rowHeights` measurement, the `ResizeObserver`, overflow
-counting, and mobile above/below navigation (`AnchoredHighlightsSidecar.tsx:150–375, 818–851`)
+counting, and mobile above/below navigation (`ReaderHighlightsSurface.tsx:150–375, 818–851`)
 stay **byte-for-byte unchanged**. This cutover swaps only the *content* of each positioned row.
 
 ---
@@ -47,7 +47,7 @@ stay **byte-for-byte unchanged**. This cutover swaps only the *content* of each 
 ## 2. Goals
 
 1. One centralized, presentational `ItemCard` that renders a highlight or a referenced resource,
-   reused by the reader highlights sidecar and the chat context list.
+   reused by the reader highlights secondary and the chat context list.
 2. Selected text shown highlighted in context (`HighlightSnippet`), readable and wrapping cleanly.
 3. A single `⋯` actions menu per item — quote-to-chat, color, edit bounds, delete — built on
    `ui/ActionMenu`. No loose row buttons.
@@ -71,7 +71,7 @@ stay **byte-for-byte unchanged**. This cutover swaps only the *content* of each 
 
 ## 4. Target behaviour (UX)
 
-A highlight card, compact by default, inside the reader highlights sidecar:
+A highlight card, compact by default, inside the reader highlights secondary:
 
 ```
 ┌────────────────────────────────────────────┐
@@ -85,7 +85,7 @@ A highlight card, compact by default, inside the reader highlights sidecar:
 - **Compact (unfocused):** snippet clamped to ~2 lines; one-line note editor; disclosure collapsed.
 - **Expanded (focused):** full snippet context; note editor grows with content; disclosure openable.
   Expansion is driven by the host's existing `focusedId`; the host already remeasures row heights
-  when `focusedId` changes (`AnchoredHighlightsSidecar.tsx:251`), so no engine change is needed.
+  when `focusedId` changes (`ReaderHighlightsSurface.tsx:251`), so no engine change is needed.
 - **Click** on the card body (not on an interactive child) focuses + scrolls to the highlight.
 - **Hover** outlines the in-document highlight segments (reader-only behaviour, injected by host).
 - **`⋯` menu:** Quote to new chat · Quote to existing chat · Edit bounds (toggles to "Cancel edit
@@ -109,7 +109,7 @@ ui/HighlightSnippet (reused as-is)
                           │                          │           linked-items disclosure
         ┌─────────────────┴───────────┐     ┌────────┴─────────────────┐
    reader adapter                      │     chat-context adapter       │
-   AnchoredHighlightsSidecar           │     ConversationReferencesSidecar
+   ReaderHighlightsSurface           │     ConversationReferencesSurface
    (alignment engine UNCHANGED;        │     (resource variant; open/remove)
     builds ActionMenuOption[];         │
     injects <HighlightNoteEditor       │
@@ -180,7 +180,7 @@ export interface ItemCardProps {
 Behavioural rules baked into the card:
 - The body-click guard (ignore clicks landing on `a, button, input, textarea, select,
   [contenteditable="true"], .ProseMirror`) moves **into the card** (was inline in the host at
-  `AnchoredHighlightsSidecar.tsx:576`).
+  `ReaderHighlightsSurface.tsx:576`).
 - The snippet/title region is a `<button aria-pressed={selected}>` calling `onActivate`.
 - `⋯` rendered iff `actions?.length`. Linked-items disclosure rendered iff `linkedItems?.length`.
 - Compact vs expanded is pure CSS keyed off `expanded` (snippet line-clamp, note max-height).
@@ -268,7 +268,7 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
   `onStartEditBounds`/`onCancelEditBounds`). `HighlightColorPicker` is passed via `render`.
 - **Pane runtime:** unchanged. `HighlightNoteEditor` keeps using `usePaneRuntime` for opening
   linked objects; resource-variant "Open" uses the host's existing `onOpenResource`.
-- **References (chat context):** `ConversationReferencesSidecar` maps each `ConversationReference`
+- **References (chat context):** `ConversationReferencesSurface` maps each `ConversationReference`
   → `ItemCard` (`content.kind:"resource"`, title=label, meta=summary, actions=[Open, Remove],
   `missing` → dimmed + disabled Open). The kind icon comes from a **complete scheme→glyph map**
   matching the resolver's dispatch table and the reference URI grammar: `media`, `library`, `span`,
@@ -278,7 +278,7 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
   `python/nexus/services/conversation_references.py:42` `_URI_PATTERN`; chat runs auto-add
   `span`/`chunk`/`note_block`/etc., `python/nexus/services/chat_runs.py:396`.) The
   scheme→glyph map lives in one small helper (e.g. `lib/resources/resourceKind.ts`) so the icon
-  set has a single owner; do not inline a partial switch in the sidecar.
+  set has a single owner; do not inline a partial switch in the secondary.
 
 ---
 
@@ -300,8 +300,8 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
 - Extend `ui/ActionMenu` with `render` option (+ test).
 - Add `compact` to `ProseMirrorOutlineEditor` and compact CSS; drop the 76px min in
   `HighlightNoteEditor.module.css`.
-- Rebuild `AnchoredHighlightsSidecar` row rendering on `ItemCard`; trim dead CSS.
-- Rebuild `ConversationReferencesSidecar` rows on `ItemCard` (resource variant).
+- Rebuild `ReaderHighlightsSurface` row rendering on `ItemCard`; trim dead CSS.
+- Rebuild `ConversationReferencesSurface` rows on `ItemCard` (resource variant).
 - Delete `reader/HighlightActionsMenu.{tsx,module.css}`.
 - Update affected tests.
 
@@ -319,11 +319,11 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
 - `apps/web/src/components/items/ItemCard.tsx`
 - `apps/web/src/components/items/ItemCard.module.css`
 - `apps/web/src/components/items/ItemCard.test.tsx`
-- `apps/web/src/components/chat/ConversationReferencesSidecar.test.tsx`
+- `apps/web/src/components/chat/ConversationReferencesSurface.test.tsx`
 
 > **As built — minimalism deviations** (the implementing goal's "treat every abstraction as a cost / inline one-use" directive overrode the spec, since each proposed primitive had exactly one consumer):
 > - **No `ui/Disclosure` component.** The collapsible linked-items list is a native `<details>/<summary>` inlined in `ItemCard` — zero JS, keyboard-operable and accessible by default (AC6 satisfied via native disclosure semantics rather than `aria-expanded`/`aria-controls`).
-> - **No `lib/resources/resourceKind.ts` helper.** The scheme→icon map (all 10 schemes + `Link2` fallback) is an inline `const SCHEME_ICONS` in its only consumer, `ConversationReferencesSidecar.tsx`.
+> - **No `lib/resources/resourceKind.ts` helper.** The scheme→icon map (all 10 schemes + `Link2` fallback) is an inline `const SCHEME_ICONS` in its only consumer, `ConversationReferencesSurface.tsx`.
 > - `HighlightNoteEditor` hardcodes `compact` on its internal editor (highlight notes are always compact) instead of threading a prop through its own API.
 
 **Modified**
@@ -332,22 +332,22 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
   `ProseMirrorOutlineEditor.module.css` (compact rules)
 - `apps/web/src/components/notes/HighlightNoteEditor.tsx` (pass `compact`) ·
   `HighlightNoteEditor.module.css` (drop `min-height:76px`)
-- `apps/web/src/components/reader/AnchoredHighlightsSidecar.tsx` (render `ItemCard`; build
-  `ActionMenuOption[]`; engine code unchanged) · `AnchoredHighlightsSidecar.module.css` (remove
+- `apps/web/src/components/reader/ReaderHighlightsSurface.tsx` (render `ItemCard`; build
+  `ActionMenuOption[]`; engine code unchanged) · `ReaderHighlightsSurface.module.css` (remove
   `.linkedItemRow/.rowTop/.contextButton/.contextText/.rowActions/.chatButton/.noteEditor*/
   .conversationList/.conversationButton/.editHint`; keep `.root/.header/.linkedItemsContainer/
   .mobileVisibleContainer/.flowRow/.overflowIndicator/.mobileIndicator/.empty*`) ·
-  `AnchoredHighlightsSidecar.test.tsx`
-- `apps/web/src/components/chat/ConversationReferencesSidecar.tsx` (render `ItemCard`) ·
-  `ConversationReferencesSidecar.module.css` (reduce to container only)
+  `ReaderHighlightsSurface.test.tsx`
+- `apps/web/src/components/chat/ConversationReferencesSurface.tsx` (render `ItemCard`) ·
+  `ConversationReferencesSurface.module.css` (reduce to container only)
 
 **Deleted**
 - `apps/web/src/components/reader/HighlightActionsMenu.tsx`
 - `apps/web/src/components/reader/HighlightActionsMenu.module.css`
 
-Confirmed blast radius: `HighlightActionsMenu` is imported only by `AnchoredHighlightsSidecar`;
-`ConversationReferencesSidecar` is consumed by `ConversationPaneBody` and `ConversationNewPaneBody`
-(both via the sidecar, so no pane-body edits needed); `ContextRow` consumers are unaffected.
+Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighlightsSurface`;
+`ConversationReferencesSurface` is consumed by `ConversationPaneBody` and `ConversationNewPaneBody`
+(both via the secondary, so no pane-body edits needed); `ContextRow` consumers are unaffected.
 
 ---
 
@@ -375,7 +375,7 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `AnchoredHigh
 
 1. **Name & location → `components/items/ItemCard`.** Kind-neutral; it renders both a highlight and
    a media/resource item. (`components/items` is currently free; confirmed no `ItemCard` collisions.)
-2. **Migrate the chat context list now → yes.** `ConversationReferencesSidecar` is rebuilt on
+2. **Migrate the chat context list now → yes.** `ConversationReferencesSurface` is rebuilt on
    `ItemCard` (resource variant) in this cutover so there is genuinely "one component." The resource
    variant uses only data the reference already carries (label/summary/uri) — no snippet, no editor,
    no backend change.
@@ -385,7 +385,7 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `AnchoredHigh
 ## 13. Acceptance criteria
 
 1. No element in a highlight card renders a bullet/disc; `.note-block-handle` is not visible in the
-   sidecar (compact editor). No 24px note indent; empty note editor is a single line, not ~76px.
+   secondary (compact editor). No 24px note indent; empty note editor is a single line, not ~76px.
 2. Each highlight card shows the selected text via `HighlightSnippet` (colored `mark`, wrapping),
    a single `⋯` menu, the compact note editor, and — when present — a collapsed "N linked chats"
    disclosure. No loose chat/color/delete buttons remain on the row.
@@ -398,7 +398,7 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `AnchoredHigh
 7. The alignment engine is unchanged: highlights still float to their in-document position, collide/
    stack correctly, show `+N more below`, and the mobile above/below navigation works. Diff of
    `alignRows`/projection/measurement code is empty.
-8. The chat context list (`ConversationReferencesSidecar`) renders via `ItemCard` (resource variant),
+8. The chat context list (`ConversationReferencesSurface`) renders via `ItemCard` (resource variant),
    including the `missing` dimmed/disabled state, open, and remove, with a kind icon for every
    resolver scheme (`media library span chunk highlight page note_block fragment conversation
    message`) and a generic fallback for unknown schemes.
@@ -429,10 +429,10 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `AnchoredHigh
 3. Add `compact` to `ProseMirrorOutlineEditor` (+ CSS); drop `min-height:76px` in
    `HighlightNoteEditor`.
 4. Build `components/items/ItemCard` (+ CSS, + test) — presentational only.
-5. Rebuild `AnchoredHighlightsSidecar` `renderRow` on `ItemCard`; build `ActionMenuOption[]`; leave
+5. Rebuild `ReaderHighlightsSurface` `renderRow` on `ItemCard`; build `ActionMenuOption[]`; leave
    the engine untouched; trim dead CSS; update its test.
 6. Delete `reader/HighlightActionsMenu.*`.
-7. Rebuild `ConversationReferencesSidecar` rows on `ItemCard` (resource variant); reduce its CSS;
+7. Rebuild `ConversationReferencesSurface` rows on `ItemCard` (resource variant); reduce its CSS;
    add the `lib/resources/resourceKind.ts` scheme→glyph helper.
 8. `make check-front && make test-front-unit && make test-front-browser` (or `make verify` for the
    full gate); manual pass on desktop + mobile reader and a chat with references.

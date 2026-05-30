@@ -5,7 +5,10 @@ import {
   workspaceStatesEqual,
 } from "@/lib/workspace/sessionSync";
 import {
-  type WorkspacePaneState,
+  createWorkspaceStateFromPrimaryPanes,
+  getWorkspacePrimaryPanes,
+  type WorkspaceAttachedSecondaryPaneState,
+  type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
@@ -17,224 +20,209 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
 
 const emptyHistory = () => ({ back: [], forward: [] });
 
-const librariesPane: WorkspacePaneState = {
-  id: "pane-1",
-  href: "/libraries",
-  primaryWidthPx: 684,
-  sidecar: null,
-  visibility: "visible" as const,
-  history: emptyHistory(),
-};
+function primary(
+  id: string,
+  href: string,
+  input: Partial<
+    Pick<
+      WorkspacePrimaryPaneState,
+      "primaryWidthPx" | "visibility" | "history" | "attachedSecondaryPaneId"
+    >
+  > = {},
+): WorkspacePrimaryPaneState {
+  return {
+    id,
+    href,
+    primaryWidthPx: input.primaryWidthPx ?? 684,
+    visibility: input.visibility ?? "visible",
+    history: input.history ?? emptyHistory(),
+    attachedSecondaryPaneId: input.attachedSecondaryPaneId ?? null,
+  };
+}
 
-const mediaPane: WorkspacePaneState = {
-  id: "pane-2",
-  href: "/media/123",
-  primaryWidthPx: 720,
-  sidecar: null,
-  visibility: "visible" as const,
-  history: emptyHistory(),
-};
+function secondary(
+  input: Partial<WorkspaceAttachedSecondaryPaneState> = {},
+): WorkspaceAttachedSecondaryPaneState {
+  return {
+    id: input.id ?? "secondary-1",
+    parentPrimaryPaneId: input.parentPrimaryPaneId ?? "pane-1",
+    groupId: input.groupId ?? "library-tools",
+    activeSurfaceId: input.activeSurfaceId ?? "library-chat",
+    widthPx: input.widthPx ?? 420,
+    visibility: input.visibility ?? "collapsed",
+  };
+}
+
+function workspace(input: {
+  activePrimaryPaneId?: string;
+  primaryPanes: WorkspacePrimaryPaneState[];
+  secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
+}): WorkspaceState {
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: input.activePrimaryPaneId ?? input.primaryPanes[0]!.id,
+    primaryPanes: input.primaryPanes,
+    secondaryPanesById: input.secondaryPanesById,
+  });
+}
+
+const librariesPane = primary("pane-1", "/libraries");
+const mediaPane = primary("pane-2", "/media/123", { primaryWidthPx: 720 });
 
 describe("isNonTrivialSession", () => {
   it("treats a single /libraries pane as trivial", () => {
-    const state: WorkspaceState = {
-      activePaneId: "pane-1",
-      panes: [librariesPane],
-    };
-    expect(isNonTrivialSession(state)).toBe(false);
+    expect(isNonTrivialSession(workspace({ primaryPanes: [librariesPane] }))).toBe(
+      false,
+    );
   });
 
   it("treats a single non-/libraries pane as non-trivial", () => {
-    const state: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [mediaPane],
-    };
-    expect(isNonTrivialSession(state)).toBe(true);
+    expect(isNonTrivialSession(workspace({ primaryPanes: [mediaPane] }))).toBe(
+      true,
+    );
   });
 
   it("treats two or more panes as non-trivial", () => {
-    const state: WorkspaceState = {
-      activePaneId: "pane-1",
-      panes: [librariesPane, { ...mediaPane }],
-    };
-    expect(isNonTrivialSession(state)).toBe(true);
+    expect(
+      isNonTrivialSession(
+        workspace({ primaryPanes: [librariesPane, { ...mediaPane }] }),
+      ),
+    ).toBe(true);
   });
 
   it("treats a single /libraries pane with history as non-trivial", () => {
-    const state: WorkspaceState = {
-      activePaneId: "pane-1",
-      panes: [{ ...librariesPane, history: { back: ["/media/123"], forward: [] } }],
-    };
-    expect(isNonTrivialSession(state)).toBe(true);
+    expect(
+      isNonTrivialSession(
+        workspace({
+          primaryPanes: [
+            primary("pane-1", "/libraries", {
+              history: { back: ["/media/123"], forward: [] },
+            }),
+          ],
+        }),
+      ),
+    ).toBe(true);
   });
 
-  it("treats a single /libraries pane with sidecar state as non-trivial", () => {
-    const state: WorkspaceState = {
-      activePaneId: "pane-1",
-      panes: [
-        {
-          ...librariesPane,
-          sidecar: {
-            groupId: "library-tools",
-            activeSurfaceId: "library-chat",
-            widthPx: 420,
-            visibility: "collapsed",
-          },
-        },
-      ],
-    };
-    expect(isNonTrivialSession(state)).toBe(true);
+  it("treats a single /libraries pane with attached secondary state as non-trivial", () => {
+    expect(
+      isNonTrivialSession(
+        workspace({
+          primaryPanes: [
+            primary("pane-1", "/libraries", {
+              attachedSecondaryPaneId: "secondary-1",
+            }),
+          ],
+          secondaryPanesById: { "secondary-1": secondary() },
+        }),
+      ),
+    ).toBe(true);
   });
 });
 
 describe("workspaceStatesEqual", () => {
   it("returns true for identical states", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
+    const a = workspace({ activePrimaryPaneId: "pane-2", primaryPanes: [mediaPane] });
+    const b = workspace({ activePrimaryPaneId: "pane-2", primaryPanes: [mediaPane] });
     expect(workspaceStatesEqual(a, b)).toBe(true);
   });
 
-  it("returns false when activePaneId differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-other",
-      panes: [{ ...mediaPane }],
-    };
+  it("returns false when activePrimaryPaneId differs", () => {
+    const a = workspace({
+      activePrimaryPaneId: "pane-2",
+      primaryPanes: [librariesPane, mediaPane],
+    });
+    const b = workspace({
+      activePrimaryPaneId: "pane-1",
+      primaryPanes: [librariesPane, mediaPane],
+    });
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 
-  it("returns false when pane count differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }, { ...librariesPane }],
-    };
+  it("returns false when primary order differs", () => {
+    const a = workspace({ primaryPanes: [librariesPane, mediaPane] });
+    const b = workspace({ primaryPanes: [mediaPane, librariesPane] });
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 
-  it("returns false when a pane id differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, id: "pane-different" }],
-    };
+  it("returns false when a primary pane field differs", () => {
+    const a = workspace({ primaryPanes: [mediaPane] });
+    const b = workspace({
+      primaryPanes: [primary("pane-2", "/media/456", { primaryWidthPx: 720 })],
+    });
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 
-  it("returns false when a pane href differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, href: "/media/456" }],
-    };
-    expect(workspaceStatesEqual(a, b)).toBe(false);
-  });
-
-  it("returns false when a pane primaryWidthPx differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, primaryWidthPx: 900 }],
-    };
-    expect(workspaceStatesEqual(a, b)).toBe(false);
-  });
-
-  it("returns false when a pane sidecar differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [
-        {
-          ...mediaPane,
-          sidecar: {
-            groupId: "reader-tools",
-            activeSurfaceId: "reader-highlights",
-            widthPx: 360,
-            visibility: "visible",
-          },
-        },
+  it("returns false when primary history differs", () => {
+    const a = workspace({
+      primaryPanes: [
+        primary("pane-2", "/media/123", {
+          history: { back: ["/libraries"], forward: [] },
+        }),
       ],
-    };
-    const b: WorkspaceState = {
-      ...a,
-      panes: [
-        {
-          ...a.panes[0]!,
-          sidecar: {
-            groupId: "reader-tools",
-            activeSurfaceId: "reader-doc-chat",
-            widthPx: 360,
-            visibility: "visible",
-          },
-        },
+    });
+    const b = workspace({
+      primaryPanes: [
+        primary("pane-2", "/media/123", {
+          history: { back: [], forward: ["/libraries"] },
+        }),
       ],
-    };
+    });
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 
-  it("returns false when a pane visibility differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, visibility: "minimized" }],
-    };
-    expect(workspaceStatesEqual(a, b)).toBe(false);
-  });
-
-  it("returns false when pane history differs", () => {
-    const a: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, history: { back: ["/libraries"], forward: [] } }],
-    };
-    const b: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...mediaPane, history: { back: [], forward: ["/libraries"] } }],
-    };
+  it("returns false when top-level secondary state differs", () => {
+    const a = workspace({
+      primaryPanes: [
+        primary("pane-2", "/media/123", {
+          attachedSecondaryPaneId: "secondary-1",
+        }),
+      ],
+      secondaryPanesById: {
+        "secondary-1": secondary({
+          parentPrimaryPaneId: "pane-2",
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-highlights",
+          visibility: "visible",
+        }),
+      },
+    });
+    const b = workspace({
+      primaryPanes: [
+        primary("pane-2", "/media/123", {
+          attachedSecondaryPaneId: "secondary-1",
+        }),
+      ],
+      secondaryPanesById: {
+        "secondary-1": secondary({
+          parentPrimaryPaneId: "pane-2",
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-doc-chat",
+          visibility: "visible",
+        }),
+      },
+    });
     expect(workspaceStatesEqual(a, b)).toBe(false);
   });
 });
 
 describe("prepareRestoredState", () => {
   it("round-trips a well-formed raw WorkspaceState", () => {
-    const raw: WorkspaceState = {
-      activePaneId: "pane-2",
-      panes: [{ ...librariesPane }, { ...mediaPane }],
-    };
+    const raw = workspace({
+      activePrimaryPaneId: "pane-2",
+      primaryPanes: [{ ...librariesPane }, { ...mediaPane }],
+    });
     expect(prepareRestoredState(raw, workspacePrimaryMetrics)).toEqual(raw);
   });
 
   it("returns a default workspace for null", () => {
     const result = prepareRestoredState(null, workspacePrimaryMetrics);
-    expect(result.panes).toHaveLength(1);
-    expect(result.panes[0].href).toBe("/libraries");
+    const panes = getWorkspacePrimaryPanes(result);
+    expect(panes).toHaveLength(1);
+    expect(panes[0]?.href).toBe("/libraries");
   });
 
-  it("returns a default workspace for a garbage value", () => {
-    const result = prepareRestoredState({ nonsense: true }, workspacePrimaryMetrics);
-    expect(result.panes).toHaveLength(1);
-    expect(result.panes[0].href).toBe("/libraries");
+  it("returns a default workspace for garbage state", () => {
+    const garbage = prepareRestoredState({ nonsense: true }, workspacePrimaryMetrics);
+    expect(getWorkspacePrimaryPanes(garbage)[0]?.href).toBe("/libraries");
   });
 });

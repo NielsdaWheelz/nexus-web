@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationReference } from "@/lib/conversations/types";
-import ConversationReferencesSidecar from "./ConversationReferencesSidecar";
+import ConversationReferencesSurface from "./ConversationReferencesSurface";
 
 function reference(
   overrides: Partial<ConversationReference> = {},
@@ -21,10 +21,10 @@ function reference(
   };
 }
 
-describe("ConversationReferencesSidecar", () => {
+describe("ConversationReferencesSurface", () => {
   it("renders a reference label", () => {
     render(
-      <ConversationReferencesSidecar
+      <ConversationReferencesSurface
         references={[reference()]}
         removeReference={async () => {}}
       />,
@@ -35,7 +35,7 @@ describe("ConversationReferencesSidecar", () => {
   it("marks a missing reference unavailable and disables Open", async () => {
     const user = userEvent.setup();
     render(
-      <ConversationReferencesSidecar
+      <ConversationReferencesSurface
         references={[reference({ missing: true })]}
         removeReference={async () => {}}
         onOpenResource={() => {}}
@@ -52,7 +52,7 @@ describe("ConversationReferencesSidecar", () => {
     const user = userEvent.setup();
     const removeReference = vi.fn(async () => {});
     render(
-      <ConversationReferencesSidecar
+      <ConversationReferencesSurface
         references={[reference()]}
         removeReference={removeReference}
       />,
@@ -65,7 +65,7 @@ describe("ConversationReferencesSidecar", () => {
 
   it("shows the empty state with no references", () => {
     render(
-      <ConversationReferencesSidecar
+      <ConversationReferencesSurface
         references={[]}
         removeReference={async () => {}}
       />,

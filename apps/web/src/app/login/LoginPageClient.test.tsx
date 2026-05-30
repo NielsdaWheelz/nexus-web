@@ -43,7 +43,12 @@ describe("LoginPageClient", () => {
   it("opens in sign-in mode with email + password, no display name, and a Continue submit", () => {
     render(<LoginPageClient nextPath="/libraries" isShell={false} />);
 
-    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    const emailInput = screen.getByLabelText(/email/i);
+    const form = screen.getByRole("form", { name: /credential sign in/i });
+    expect(form).toHaveAttribute("method", "post");
+    expect(form).toHaveAttribute("action", "/auth/password");
+    expect(screen.getByDisplayValue("signin")).toHaveAttribute("name", "mode");
+    expect(emailInput).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/display name/i)).toBeNull();
     expect(

@@ -2,6 +2,7 @@
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
 import {
   PaneRuntimeProvider,
@@ -9,15 +10,15 @@ import {
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
 import {
-  PaneSidecarContext,
-  type PaneSidecarPublication,
-} from "@/components/workspace/PaneSidecar";
+  PaneSecondaryContext,
+  type PaneSecondaryPublication,
+} from "@/components/workspace/PaneSecondary";
 import {
   PaneFixedChromeContext,
   type PaneFixedChromePublication,
 } from "@/components/workspace/PaneFixedChrome";
 import PaneShell from "@/components/workspace/PaneShell";
-import MobileSidecarHost from "@/components/workspace/MobileSidecarHost";
+import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneHost";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
@@ -27,8 +28,16 @@ import type {
   SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
-import { resolvePaneRouteWidthContract } from "@/lib/panes/paneRouteModel";
-import type { WorkspacePaneState } from "@/lib/workspace/schema";
+import {
+  paneRouteAllowsSecondarySurface,
+  resolvePaneRouteWidthContract,
+} from "@/lib/panes/paneRouteModel";
+import {
+  getWorkspacePrimaryPanes,
+  type WorkspaceAttachedSecondaryPaneState,
+  type WorkspacePrimaryPaneState,
+} from "@/lib/workspace/schema";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import {
   DEFAULT_PANE_RUNTIME_LAYOUT,
   isEmptyPaneRuntimeLayout,
@@ -39,16 +48,16 @@ import {
   type WorkspacePrimaryMetrics,
 } from "@/lib/workspace/paneSizing";
 import {
-  getSidecarWidthPolicy,
-  resolveEffectiveSidecarSizing,
-  sidecarSurfaceBelongsToGroup,
-  type WorkspaceSidecarSizing,
-  type WorkspaceSidecarSurfaceId,
-} from "@/lib/panes/paneSidecarModel";
+  getSecondaryWidthPolicy,
+  resolveEffectiveSecondarySizing,
+  secondarySurfaceBelongsToGroup,
+  type WorkspaceSecondarySizing,
+  type WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
   resolveWorkspacePaneTitle,
-  useWorkspaceStore,
+  useWorkspaceHostStore,
   type WorkspacePaneTitleDescriptor,
 } from "@/lib/workspace/store";
 import { usePaneCanvas } from "./usePaneCanvas";
@@ -72,9 +81,9 @@ interface WorkspaceHostPane {
   navigation: SurfaceHeaderNavigation;
   bodyMode: PaneBodyMode;
   sizing: EffectivePaneSizing;
-  sidecar: WorkspacePaneState["sidecar"];
-  sidecarSizing: WorkspaceSidecarSizing | null;
-  sidecarPublication: PaneSidecarPublication | null;
+  secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
+  secondarySizing: WorkspaceSecondarySizing | null;
+  secondaryPublication: PaneSecondaryPublication | null;
   fixedChromePublication: PaneFixedChromePublication | null;
   isActive: boolean;
   visibility: "visible" | "minimized";
@@ -86,14 +95,19 @@ interface RuntimePaneLayoutRecord {
   layout: PaneRuntimeLayout;
 }
 
-interface PaneSidecarPublicationRecord {
+interface PaneSecondaryPublicationRecord {
   resourceKey: string;
-  publication: PaneSidecarPublication;
+  publication: PaneSecondaryPublication;
 }
 
 interface PaneFixedChromePublicationRecord {
   resourceKey: string;
   publication: PaneFixedChromePublication;
+}
+
+interface PendingSecondarySurfaceRequest {
+  surfaceId: WorkspaceSecondarySurfaceId;
+  targetPaneId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +206,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   href,
   route,
   resourceKey,
-  sidecar,
+  secondaryPane,
   navigatePane,
   openPane,
   canGoBack,
@@ -201,18 +215,18 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   goForwardPane,
   publishPaneTitle,
   publishPaneLayout,
-  publishPaneSidecar,
+  publishPaneSecondary,
   publishPaneFixedChrome,
-  openSidecar,
-  closeSidecar,
-  setActiveSidecarSurface,
+  requestSecondarySurface,
+  closeSecondaryPane,
+  setSecondarySurface,
   children,
 }: {
   paneId: string;
   href: string;
   route: ResolvedPaneRoute;
   resourceKey: string;
-  sidecar: WorkspacePaneState["sidecar"];
+  secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   navigatePane: (
     paneId: string,
     href: string,
@@ -223,7 +237,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     openerPaneId?: string | null;
     activate?: boolean;
     titleHint?: string;
-    sidecarSurfaceId?: WorkspaceSidecarSurfaceId;
+    secondarySurfaceId?: WorkspaceSecondarySurfaceId;
   }) => void;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -235,21 +249,24 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     title: string | null;
   }) => void;
   publishPaneLayout: (input: PaneRuntimeLayoutPublication) => void;
-  publishPaneSidecar: (input: {
+  publishPaneSecondary: (input: {
     paneId: string;
     resourceKey: string;
-    publication: PaneSidecarPublication | null;
+    publication: PaneSecondaryPublication | null;
   }) => void;
   publishPaneFixedChrome: (input: {
     paneId: string;
     resourceKey: string;
     publication: PaneFixedChromePublication | null;
   }) => void;
-  openSidecar: (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => void;
-  closeSidecar: (paneId: string) => void;
-  setActiveSidecarSurface: (
-    paneId: string,
-    surfaceId: WorkspaceSidecarSurfaceId,
+  requestSecondarySurface: (
+    primaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
+  closeSecondaryPane: (secondaryPaneId: string) => void;
+  setSecondarySurface: (
+    secondaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
   children: React.ReactNode;
 }) {
@@ -262,22 +279,22 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     (
       h: string,
       titleHint?: string,
-      sidecarSurfaceId?: WorkspaceSidecarSurfaceId,
+      secondarySurfaceId?: WorkspaceSecondarySurfaceId,
     ) =>
       openPane({
         href: h,
         openerPaneId: paneId,
         activate: true,
         titleHint,
-        sidecarSurfaceId,
+        secondarySurfaceId,
       }),
     [openPane, paneId]
   );
-  const handlePaneSidecarPublication = useCallback(
-    (publication: PaneSidecarPublication | null) => {
-      publishPaneSidecar({ paneId, resourceKey, publication });
+  const handlePaneSecondaryPublication = useCallback(
+    (publication: PaneSecondaryPublication | null) => {
+      publishPaneSecondary({ paneId, resourceKey, publication });
     },
-    [paneId, publishPaneSidecar, resourceKey],
+    [paneId, publishPaneSecondary, resourceKey],
   );
   const handlePaneFixedChromePublication = useCallback(
     (publication: PaneFixedChromePublication | null) => {
@@ -293,7 +310,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       routeId={route.id}
       resourceRef={route.resourceRef}
       resourceKey={resourceKey}
-      sidecar={sidecar}
+      secondaryPane={secondaryPane}
       pathParams={route.params}
       canGoBack={canGoBack}
       canGoForward={canGoForward}
@@ -304,15 +321,15 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onGoForwardPane={goForwardPane}
       onSetPaneTitle={publishPaneTitle}
       onSetPaneLayout={publishPaneLayout}
-      onOpenSidecar={openSidecar}
-      onCloseSidecar={closeSidecar}
-      onSetActiveSidecarSurface={setActiveSidecarSurface}
+      onRequestSecondarySurface={requestSecondarySurface}
+      onCloseSecondaryPane={closeSecondaryPane}
+      onSetSecondarySurface={setSecondarySurface}
     >
-      <PaneSidecarContext.Provider value={handlePaneSidecarPublication}>
+      <PaneSecondaryContext.Provider value={handlePaneSecondaryPublication}>
         <PaneFixedChromeContext.Provider value={handlePaneFixedChromePublication}>
           <PaneRouteBoundary>{children}</PaneRouteBoundary>
         </PaneFixedChromeContext.Provider>
-      </PaneSidecarContext.Provider>
+      </PaneSecondaryContext.Provider>
     </PaneRuntimeProvider>
   );
 });
@@ -367,30 +384,54 @@ function upsertOrDeletePaneLayoutRecord(
   return next;
 }
 
-function normalizePaneSidecarPublication(
-  publication: PaneSidecarPublication,
-): PaneSidecarPublication {
+function normalizePaneSecondaryPublication(
+  publication: PaneSecondaryPublication,
+): PaneSecondaryPublication {
   if (publication.surfaces.length === 0) {
-    throw new Error("Pane sidecar publication requires at least one surface.");
+    throw new Error("Pane secondary publication requires at least one surface.");
   }
-  const surfaceIds = new Set<WorkspaceSidecarSurfaceId>();
+  const surfaceIds = new Set<WorkspaceSecondarySurfaceId>();
   for (const surface of publication.surfaces) {
-    if (!sidecarSurfaceBelongsToGroup(surface.id, publication.groupId)) {
+    if (!secondarySurfaceBelongsToGroup(surface.id, publication.groupId)) {
       throw new Error(
-        `Sidecar surface ${surface.id} does not belong to group ${publication.groupId}.`,
+        `Secondary surface ${surface.id} does not belong to group ${publication.groupId}.`,
       );
     }
     if (surfaceIds.has(surface.id)) {
-      throw new Error(`Duplicate sidecar surface publication: ${surface.id}.`);
+      throw new Error(`Duplicate secondary surface publication: ${surface.id}.`);
     }
     surfaceIds.add(surface.id);
   }
   if (!surfaceIds.has(publication.defaultSurfaceId)) {
     throw new Error(
-      `Default sidecar surface ${publication.defaultSurfaceId} is not published.`,
+      `Default secondary surface ${publication.defaultSurfaceId} is not published.`,
     );
   }
-  return publication;
+  return {
+    ...publication,
+    surfaces: publication.surfaces.map((surface) => ({ ...surface })),
+  };
+}
+
+function arePaneSecondaryPublicationsEqual(
+  left: PaneSecondaryPublication,
+  right: PaneSecondaryPublication,
+): boolean {
+  if (
+    left.groupId !== right.groupId ||
+    left.defaultSurfaceId !== right.defaultSurfaceId ||
+    left.surfaces.length !== right.surfaces.length
+  ) {
+    return false;
+  }
+  return left.surfaces.every((surface, index) => {
+    const other = right.surfaces[index];
+    return (
+      other?.id === surface.id &&
+      other.body === surface.body &&
+      other.mobileBody === surface.mobileBody
+    );
+  });
 }
 
 function normalizePaneFixedChromePublication(
@@ -402,14 +443,14 @@ function normalizePaneFixedChromePublication(
   return { ...publication, widthPx: Math.ceil(publication.widthPx) };
 }
 
-function upsertOrDeletePaneSidecarPublicationRecord(
-  current: Map<string, PaneSidecarPublicationRecord>,
+function upsertOrDeletePaneSecondaryPublicationRecord(
+  current: Map<string, PaneSecondaryPublicationRecord>,
   input: {
     paneId: string;
     resourceKey: string;
-    publication: PaneSidecarPublication | null;
+    publication: PaneSecondaryPublication | null;
   },
-): Map<string, PaneSidecarPublicationRecord> {
+): Map<string, PaneSecondaryPublicationRecord> {
   const existing = current.get(input.paneId);
   if (!input.publication) {
     if (!existing || existing.resourceKey !== input.resourceKey) return current;
@@ -417,8 +458,11 @@ function upsertOrDeletePaneSidecarPublicationRecord(
     next.delete(input.paneId);
     return next;
   }
-  const publication = normalizePaneSidecarPublication(input.publication);
-  if (existing?.resourceKey === input.resourceKey && existing.publication === publication) {
+  const publication = normalizePaneSecondaryPublication(input.publication);
+  if (
+    existing?.resourceKey === input.resourceKey &&
+    arePaneSecondaryPublicationsEqual(existing.publication, publication)
+  ) {
     return current;
   }
   const next = new Map(current);
@@ -466,11 +510,11 @@ function getRuntimePaneLayout(
     : DEFAULT_PANE_RUNTIME_LAYOUT;
 }
 
-function getPaneSidecarPublication(
-  records: Map<string, PaneSidecarPublicationRecord>,
+function getPaneSecondaryPublication(
+  records: Map<string, PaneSecondaryPublicationRecord>,
   paneId: string,
   resourceKey: string,
-): PaneSidecarPublication | null {
+): PaneSecondaryPublication | null {
   const record = records.get(paneId);
   return record?.resourceKey === resourceKey ? record.publication : null;
 }
@@ -499,11 +543,11 @@ function pruneRuntimePaneLayoutRecords(
   return next ?? current;
 }
 
-function prunePaneSidecarPublicationRecords(
-  current: Map<string, PaneSidecarPublicationRecord>,
+function prunePaneSecondaryPublicationRecords(
+  current: Map<string, PaneSecondaryPublicationRecord>,
   currentResourceKeyByPaneId: Map<string, string>,
-): Map<string, PaneSidecarPublicationRecord> {
-  let next: Map<string, PaneSidecarPublicationRecord> | null = null;
+): Map<string, PaneSecondaryPublicationRecord> {
+  let next: Map<string, PaneSecondaryPublicationRecord> | null = null;
   for (const [paneId, record] of current) {
     if (currentResourceKeyByPaneId.get(paneId) === record.resourceKey) {
       continue;
@@ -529,21 +573,22 @@ function prunePaneFixedChromePublicationRecords(
   return next ?? current;
 }
 
-function sidecarPublicationIncludesSurface(
-  publication: PaneSidecarPublication | null,
-  surfaceId: WorkspaceSidecarSurfaceId,
+function secondaryPublicationIncludesSurface(
+  publication: PaneSecondaryPublication | null,
+  surfaceId: WorkspaceSecondarySurfaceId,
 ): boolean {
   return Boolean(publication?.surfaces.some((surface) => surface.id === surfaceId));
 }
 
 function buildHostPane(input: {
-  pane: WorkspacePaneState;
+  pane: WorkspacePrimaryPaneState;
+  secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   descriptor: WorkspacePaneTitleDescriptor;
   goBackPane: (paneId: string) => void;
   goForwardPane: (paneId: string) => void;
   isActive: boolean;
   runtimeLayout: PaneRuntimeLayout;
-  sidecarPublication: PaneSidecarPublication | null;
+  secondaryPublication: PaneSecondaryPublication | null;
   fixedChromePublication: PaneFixedChromePublication | null;
   isMobile: boolean;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
@@ -551,6 +596,16 @@ function buildHostPane(input: {
   const { chrome, resourceKey, route, title, titleState } = input.descriptor;
 
   const routeWidth = route.definition ?? resolvePaneRouteWidthContract(input.pane.href);
+  const visibleSecondaryPane =
+    input.secondaryPane?.visibility === "visible" &&
+    (!input.secondaryPublication ||
+      input.secondaryPane.groupId !== input.secondaryPublication.groupId ||
+      !secondaryPublicationIncludesSurface(
+        input.secondaryPublication,
+        input.secondaryPane.activeSurfaceId,
+      ))
+      ? null
+      : input.secondaryPane;
 
   return {
     paneId: input.pane.id,
@@ -569,7 +624,7 @@ function buildHostPane(input: {
       onForward: () => input.goForwardPane(input.pane.id),
     },
     bodyMode: route.definition?.bodyMode ?? "standard",
-    sidecar: input.pane.sidecar,
+    secondaryPane: visibleSecondaryPane,
     sizing: resolveEffectivePaneSizing({
       storedWidthPx: input.pane.primaryWidthPx,
       workspacePrimaryMetrics: input.workspacePrimaryMetrics,
@@ -578,14 +633,14 @@ function buildHostPane(input: {
       fixedChromeWidthPx: input.fixedChromePublication?.widthPx ?? 0,
       isMobile: input.isMobile,
     }),
-    sidecarSizing:
-      !input.isMobile && input.pane.sidecar
-        ? resolveEffectiveSidecarSizing({
-            storedWidthPx: input.pane.sidecar.widthPx,
-            policy: getSidecarWidthPolicy(input.pane.sidecar.groupId),
+    secondarySizing:
+      !input.isMobile && visibleSecondaryPane
+        ? resolveEffectiveSecondarySizing({
+            storedWidthPx: visibleSecondaryPane.widthPx,
+            policy: getSecondaryWidthPolicy(visibleSecondaryPane.groupId),
           })
         : null,
-    sidecarPublication: input.sidecarPublication,
+    secondaryPublication: input.secondaryPublication,
     fixedChromePublication: input.isMobile ? null : input.fixedChromePublication,
     isActive: input.isActive,
     visibility: input.pane.visibility,
@@ -609,21 +664,22 @@ export default function WorkspaceHost() {
     goForwardPane,
     closePane,
     resizePrimaryPane,
-    openSidecar,
-    closeSidecar,
-    setActiveSidecarSurface,
-    resizeSidecarPane,
+    requestSecondarySurface,
+    closeSecondaryPane,
+    dropSecondaryPane,
+    setSecondarySurface,
+    resizeSecondaryPane,
     minimizePane,
     restorePane,
     publishPaneTitle,
     workspacePrimaryMetrics,
-  } = useWorkspaceStore();
+  } = useWorkspaceHostStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
   const [runtimeLayoutByPaneId, setRuntimeLayoutByPaneId] = useState<
     Map<string, RuntimePaneLayoutRecord>
   >(() => new Map());
-  const [sidecarPublicationByPaneId, setSidecarPublicationByPaneId] = useState<
-    Map<string, PaneSidecarPublicationRecord>
+  const [secondaryPublicationByPaneId, setSecondaryPublicationByPaneId] = useState<
+    Map<string, PaneSecondaryPublicationRecord>
   >(() => new Map());
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
@@ -632,13 +688,17 @@ export default function WorkspaceHost() {
   const isMobile = useIsMobileViewport();
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
+  const pendingSecondarySurfaceByResourceKeyRef = useRef<
+    Map<string, PendingSecondarySurfaceRequest>
+  >(new Map());
+  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const paneDescriptors = useMemo(
     () =>
-      state.panes.map((pane) => ({
+      primaryPanes.map((pane) => ({
         pane,
         descriptor: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId),
       })),
-    [runtimeTitleByPaneId, state.panes]
+    [primaryPanes, runtimeTitleByPaneId]
   );
   const currentResourceKeyByPaneId = useMemo(
     () =>
@@ -660,17 +720,17 @@ export default function WorkspaceHost() {
     );
   }, [currentResourceKeyByPaneId]);
 
-  const publishPaneSidecar = useCallback(
+  const publishPaneSecondary = useCallback(
     (input: {
       paneId: string;
       resourceKey: string;
-      publication: PaneSidecarPublication | null;
+      publication: PaneSecondaryPublication | null;
     }) => {
       if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
         return;
       }
-      setSidecarPublicationByPaneId((current) =>
-        upsertOrDeletePaneSidecarPublicationRecord(current, input),
+      setSecondaryPublicationByPaneId((current) =>
+        upsertOrDeletePaneSecondaryPublicationRecord(current, input),
       );
     },
     [currentResourceKeyByPaneId],
@@ -692,12 +752,48 @@ export default function WorkspaceHost() {
     [currentResourceKeyByPaneId],
   );
 
+  const openPaneWithPendingSecondary = useCallback(
+    (input: {
+      href: string;
+      openerPaneId?: string | null;
+      activate?: boolean;
+      titleHint?: string;
+      secondarySurfaceId?: WorkspaceSecondarySurfaceId;
+    }) => {
+      const href = normalizeWorkspaceHref(input.href);
+      if (
+        href &&
+        input.secondarySurfaceId &&
+        paneRouteAllowsSecondarySurface(href, input.secondarySurfaceId)
+      ) {
+        const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
+        pendingSecondarySurfaceByResourceKeyRef.current.set(
+          resourceKey,
+          {
+            surfaceId: input.secondarySurfaceId,
+            targetPaneId:
+              [...currentResourceKeyByPaneId].find(
+                ([, currentResourceKey]) => currentResourceKey === resourceKey,
+              )?.[0] ?? null,
+          },
+        );
+      }
+      openPane({
+        href: input.href,
+        openerPaneId: input.openerPaneId,
+        activate: input.activate,
+        titleHint: input.titleHint,
+      });
+    },
+    [currentResourceKeyByPaneId, openPane],
+  );
+
   useEffect(() => {
     setRuntimeLayoutByPaneId((current) =>
       pruneRuntimePaneLayoutRecords(current, currentResourceKeyByPaneId),
     );
-    setSidecarPublicationByPaneId((current) =>
-      prunePaneSidecarPublicationRecords(current, currentResourceKeyByPaneId),
+    setSecondaryPublicationByPaneId((current) =>
+      prunePaneSecondaryPublicationRecords(current, currentResourceKeyByPaneId),
     );
     setFixedChromePublicationByPaneId((current) =>
       prunePaneFixedChromePublicationRecords(current, currentResourceKeyByPaneId),
@@ -734,17 +830,20 @@ export default function WorkspaceHost() {
       paneDescriptors.map(({ pane, descriptor }) =>
         buildHostPane({
           pane,
+          secondaryPane: pane.attachedSecondaryPaneId
+            ? state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null
+            : null,
           descriptor,
           goBackPane,
           goForwardPane,
-          isActive: pane.id === state.activePaneId,
+          isActive: pane.id === state.activePrimaryPaneId,
           runtimeLayout: getRuntimePaneLayout(
             runtimeLayoutByPaneId,
             pane.id,
             descriptor.resourceKey,
           ),
-          sidecarPublication: getPaneSidecarPublication(
-            sidecarPublicationByPaneId,
+          secondaryPublication: getPaneSecondaryPublication(
+            secondaryPublicationByPaneId,
             pane.id,
             descriptor.resourceKey,
           ),
@@ -759,11 +858,12 @@ export default function WorkspaceHost() {
       ),
     [
       paneDescriptors,
-      state.activePaneId,
+      state.activePrimaryPaneId,
+      state.secondaryPanesById,
       goBackPane,
       goForwardPane,
       runtimeLayoutByPaneId,
-      sidecarPublicationByPaneId,
+      secondaryPublicationByPaneId,
       fixedChromePublicationByPaneId,
       isMobile,
       workspacePrimaryMetrics,
@@ -772,6 +872,46 @@ export default function WorkspaceHost() {
 
   const { canvasRef, onWheel, edges, inViewPaneIds, handleChromeMouseDown, scrollPaneIntoView } =
     usePaneCanvas({ enabled: !isMobile, paneIds: panes.map((pane) => pane.paneId) });
+
+  useEffect(() => {
+    const pending = pendingSecondarySurfaceByResourceKeyRef.current;
+    if (pending.size === 0) {
+      return;
+    }
+    for (const [resourceKey, request] of pending) {
+      const pane = request.targetPaneId
+        ? panes.find(
+            (item) =>
+              item.paneId === request.targetPaneId && item.resourceKey === resourceKey,
+          )
+        : panes.find((item) => item.resourceKey === resourceKey);
+      if (!pane) {
+        if (request.targetPaneId) {
+          pending.delete(resourceKey);
+        }
+        continue;
+      }
+      if (!paneRouteAllowsSecondarySurface(pane.href, request.surfaceId)) {
+        pending.delete(resourceKey);
+        continue;
+      }
+      if (!request.targetPaneId) {
+        pending.set(resourceKey, { ...request, targetPaneId: pane.paneId });
+      }
+      if (!pane.secondaryPublication) {
+        continue;
+      }
+      pending.delete(resourceKey);
+      if (
+        secondaryPublicationIncludesSurface(
+          pane.secondaryPublication,
+          request.surfaceId,
+        )
+      ) {
+        requestSecondarySurface(pane.paneId, request.surfaceId);
+      }
+    }
+  }, [panes, requestSecondarySurface]);
 
   useEffect(() => {
     if (isMobile) {
@@ -790,66 +930,89 @@ export default function WorkspaceHost() {
       return;
     }
     for (const pane of panes) {
-      const correctionPx = pane.sidecarSizing?.storedWidthCorrectionPx ?? null;
-      if (correctionPx !== null) {
-        resizeSidecarPane(pane.paneId, correctionPx);
+      const correctionPx = pane.secondarySizing?.storedWidthCorrectionPx ?? null;
+      if (correctionPx !== null && pane.secondaryPane) {
+        resizeSecondaryPane(pane.secondaryPane.id, correctionPx);
       }
     }
-  }, [isMobile, panes, resizeSidecarPane]);
+  }, [isMobile, panes, resizeSecondaryPane]);
 
   useEffect(() => {
-    for (const pane of panes) {
-      const sidecar = pane.sidecar;
-      const publication = pane.sidecarPublication;
-      if (sidecar?.visibility !== "visible" || !publication) {
+    for (const primaryPane of primaryPanes) {
+      const secondaryPane = primaryPane.attachedSecondaryPaneId
+        ? state.secondaryPanesById[primaryPane.attachedSecondaryPaneId] ?? null
+        : null;
+      if (!secondaryPane) {
         continue;
       }
-      if (
-        sidecar.groupId !== publication.groupId ||
-        !sidecarPublicationIncludesSurface(publication, sidecar.activeSurfaceId)
-      ) {
-        closeSidecar(pane.paneId);
+      const resourceKey = currentResourceKeyByPaneId.get(primaryPane.id);
+      const publication = resourceKey
+        ? getPaneSecondaryPublication(
+            secondaryPublicationByPaneId,
+            primaryPane.id,
+            resourceKey,
+          )
+        : null;
+      if (!publication) {
+        continue;
+      }
+      if (secondaryPane.groupId !== publication.groupId) {
+        dropSecondaryPane(secondaryPane.id);
+        continue;
+      }
+      if (!secondaryPublicationIncludesSurface(publication, secondaryPane.activeSurfaceId)) {
+        setSecondarySurface(secondaryPane.id, publication.defaultSurfaceId);
       }
     }
-  }, [closeSidecar, panes]);
+  }, [
+    currentResourceKeyByPaneId,
+    dropSecondaryPane,
+    primaryPanes,
+    secondaryPublicationByPaneId,
+    setSecondarySurface,
+    state.secondaryPanesById,
+  ]);
 
-  const canUsePublishedSidecarSurface = useCallback(
-    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId): boolean => {
+  const canUsePublishedSecondarySurface = useCallback(
+    (paneId: string, surfaceId: WorkspaceSecondarySurfaceId): boolean => {
       const resourceKey = currentResourceKeyByPaneId.get(paneId);
       if (!resourceKey) {
         return false;
       }
-      const publication = getPaneSidecarPublication(
-        sidecarPublicationByPaneId,
+      const publication = getPaneSecondaryPublication(
+        secondaryPublicationByPaneId,
         paneId,
         resourceKey,
       );
-      return sidecarPublicationIncludesSurface(publication, surfaceId);
+      return secondaryPublicationIncludesSurface(publication, surfaceId);
     },
-    [currentResourceKeyByPaneId, sidecarPublicationByPaneId],
+    [currentResourceKeyByPaneId, secondaryPublicationByPaneId],
   );
 
-  const handleOpenSidecar = useCallback(
-    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => {
-      if (!canUsePublishedSidecarSurface(paneId, surfaceId)) {
+  const handleRequestSecondarySurface = useCallback(
+    (paneId: string, surfaceId: WorkspaceSecondarySurfaceId) => {
+      if (!canUsePublishedSecondarySurface(paneId, surfaceId)) {
         return;
       }
-      openSidecar(paneId, surfaceId);
+      requestSecondarySurface(paneId, surfaceId);
     },
-    [canUsePublishedSidecarSurface, openSidecar],
+    [canUsePublishedSecondarySurface, requestSecondarySurface],
   );
 
-  const handleSetActiveSidecarSurface = useCallback(
-    (paneId: string, surfaceId: WorkspaceSidecarSurfaceId) => {
-      if (!canUsePublishedSidecarSurface(paneId, surfaceId)) {
+  const handleSetSecondarySurface = useCallback(
+    (secondaryPaneId: string, surfaceId: WorkspaceSecondarySurfaceId) => {
+      const pane = panes.find(
+        (item) => item.secondaryPane?.id === secondaryPaneId,
+      );
+      if (!pane || !canUsePublishedSecondarySurface(pane.paneId, surfaceId)) {
         return;
       }
-      setActiveSidecarSurface(paneId, surfaceId);
+      setSecondarySurface(secondaryPaneId, surfaceId);
     },
-    [canUsePublishedSidecarSurface, setActiveSidecarSurface],
+    [canUsePublishedSecondarySurface, panes, setSecondarySurface],
   );
 
-  const visiblePaneCount = state.panes.filter((pane) => pane.visibility === "visible").length;
+  const visiblePaneCount = primaryPanes.filter((pane) => pane.visibility === "visible").length;
   const stripItems = useMemo(
     () =>
       panes.map((pane) => ({
@@ -867,7 +1030,8 @@ export default function WorkspaceHost() {
 
   const activePane =
     panes.find(
-      (pane) => pane.paneId === state.activePaneId && pane.visibility === "visible"
+      (pane) =>
+        pane.paneId === state.activePrimaryPaneId && pane.visibility === "visible"
     ) ??
     panes.find((pane) => pane.visibility === "visible") ??
     null;
@@ -876,7 +1040,8 @@ export default function WorkspaceHost() {
   // --- Pane chrome focus management ---
   useEffect(() => {
     const targetPaneId =
-      pendingPaneChromeFocusPaneIdRef.current ?? (isMobile ? state.activePaneId : null);
+      pendingPaneChromeFocusPaneIdRef.current ??
+      (isMobile ? state.activePrimaryPaneId : null);
     if (!targetPaneId) {
       return;
     }
@@ -892,11 +1057,11 @@ export default function WorkspaceHost() {
     }
     chrome.focus({ preventScroll: true });
     pendingPaneChromeFocusPaneIdRef.current = null;
-  }, [state.activePaneId, isMobile]);
+  }, [state.activePrimaryPaneId, isMobile]);
 
   useEffect(() => {
-    scrollPaneIntoView(state.activePaneId);
-  }, [state.activePaneId, scrollPaneIntoView]);
+    scrollPaneIntoView(state.activePrimaryPaneId);
+  }, [state.activePrimaryPaneId, scrollPaneIntoView]);
 
   const handleActivatePane = (
     paneId: string,
@@ -937,17 +1102,17 @@ export default function WorkspaceHost() {
         return;
       }
       event.preventDefault();
-      const visible = state.panes.filter((pane) => pane.visibility === "visible");
+      const visible = primaryPanes.filter((pane) => pane.visibility === "visible");
       if (visible.length < 2) {
         return;
       }
-      const index = visible.findIndex((pane) => pane.id === state.activePaneId);
+      const index = visible.findIndex((pane) => pane.id === state.activePrimaryPaneId);
       const targetIndex = (index + (isNext ? 1 : -1) + visible.length) % visible.length;
       activatePane(visible[targetIndex].id);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [state.panes, state.activePaneId, activatePane]);
+  }, [primaryPanes, state.activePrimaryPaneId, activatePane]);
 
   // --- Close handler ---
   const handleClosePane = useCallback(
@@ -994,20 +1159,20 @@ export default function WorkspaceHost() {
                 href={pane.href}
                 route={pane.route}
                 resourceKey={pane.resourceKey}
-                sidecar={pane.sidecar}
+                secondaryPane={pane.secondaryPane}
                 navigatePane={navigatePane}
-                openPane={openPane}
+                openPane={openPaneWithPendingSecondary}
                 canGoBack={pane.navigation.canGoBack}
                 canGoForward={pane.navigation.canGoForward}
                 goBackPane={goBackPane}
                 goForwardPane={goForwardPane}
                 publishPaneTitle={publishPaneTitle}
                 publishPaneLayout={publishPaneLayout}
-                publishPaneSidecar={publishPaneSidecar}
+                publishPaneSecondary={publishPaneSecondary}
                 publishPaneFixedChrome={publishPaneFixedChrome}
-                openSidecar={handleOpenSidecar}
-                closeSidecar={closeSidecar}
-                setActiveSidecarSurface={handleSetActiveSidecarSurface}
+                requestSecondarySurface={handleRequestSecondarySurface}
+                closeSecondaryPane={closeSecondaryPane}
+                setSecondarySurface={handleSetSecondarySurface}
               >
                 <PaneShell
                   paneId={pane.paneId}
@@ -1020,35 +1185,35 @@ export default function WorkspaceHost() {
                   options={pane.options}
                   navigation={pane.navigation}
                   sizing={pane.sizing}
-                  sidecar={pane.sidecar}
-                  sidecarSizing={pane.sidecarSizing}
-                  sidecarPublication={pane.sidecarPublication}
+                  secondaryPane={pane.secondaryPane}
+                  secondarySizing={pane.secondarySizing}
+                  secondaryPublication={pane.secondaryPublication}
                   fixedChromePublication={pane.fixedChromePublication}
                   bodyMode={pane.bodyMode}
                   onResizePrimaryPane={resizePrimaryPane}
-                  onResizeSidecarPane={resizeSidecarPane}
-                  onCloseSidecar={closeSidecar}
-                  onSetActiveSidecarSurface={handleSetActiveSidecarSurface}
+                  onResizeSecondaryPane={resizeSecondaryPane}
+                  onCloseSecondaryPane={closeSecondaryPane}
+                  onSetSecondarySurface={handleSetSecondarySurface}
                   onChromeMouseDown={handleChromeMouseDown}
                   isActive={pane.isActive}
                   isMobile={isMobile}
-                  mobileCommandPalettePaneCount={state.panes.length}
+                  mobileCommandPalettePaneCount={primaryPanes.length}
                 >
                   {pane.content}
                 </PaneShell>
+                {isMobile && pane.secondaryPane ? (
+                  <MobileSecondaryPaneHost
+                    secondaryPaneId={pane.secondaryPane.id}
+                    secondary={pane.secondaryPane}
+                    publication={pane.secondaryPublication}
+                    onClose={closeSecondaryPane}
+                    onActiveSurfaceChange={handleSetSecondarySurface}
+                  />
+                ) : null}
               </PaneRuntimeFrame>
             </div>
           ))}
         </div>
-        {isMobile && activePane ? (
-          <MobileSidecarHost
-            paneId={activePane.paneId}
-            sidecar={activePane.sidecar}
-            publication={activePane.sidecarPublication}
-            onClose={closeSidecar}
-            onActiveSurfaceChange={handleSetActiveSidecarSurface}
-          />
-        ) : null}
         {edges.atStart && <div className={styles.edgeFade} data-side="start" />}
         {edges.atEnd && <div className={styles.edgeFade} data-side="end" />}
       </div>

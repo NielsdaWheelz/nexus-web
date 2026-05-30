@@ -3,9 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   openHighlightsPane,
-  readerSidecarForActivePane,
+  readerSecondaryForActivePane,
 } from "./reader";
-import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspacePaneButton,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -53,16 +58,19 @@ function distanceOutsideViewport(top: number, viewportHeight: number): number {
   return 0;
 }
 
-function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to document chat" });
-}
-
-function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to library chat" });
-}
-
 function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
+}
+
+async function quoteRowToNewChat(page: Page, row: Locator): Promise<void> {
+  const actionsButton = rowActionsButton(row);
+  await actionsButton.scrollIntoViewIfNeeded();
+  await expect(actionsButton).toBeEnabled();
+  await actionsButton.click();
+  const quoteItem = page.getByRole("menuitem", { name: "Quote to new chat" }).first();
+  await expect(quoteItem).toBeVisible();
+  await expect(quoteItem).toBeEnabled();
+  await quoteItem.click();
 }
 
 async function rowContainsVisibleTextOrFieldValue(
@@ -102,18 +110,18 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
-  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const sidecar = readerSidecarForActivePane(page);
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  const secondary = readerSecondaryForActivePane(page);
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    sidecar.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(sidecar.getByLabel("Conversation context")).toContainText(exact);
+  await expect(
+    secondary.getByLabel("Attached to next message"),
+  ).toContainText(exact);
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<Locator> {
@@ -132,11 +140,16 @@ test.describe("non-pdf linked-items", () => {
   }, testInfo) => {
     const seeded = readSeededNonPdfMedia();
     const mediaUrl = `/media/${seeded.media_id}`;
-    const contentPane = page.locator('div[class*="fragments"]');
     const quoteNote = "Seeded note for non-PDF linked-items e2e.";
     const focusNote = "Seeded focus note for non-PDF linked-items e2e.";
 
-    await gotoSinglePaneWorkspace(page, testInfo.testId, mediaUrl);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-non-pdf-linked-items"),
+      mediaUrl,
+    );
+    const activePane = activeWorkspacePane(page);
+    const contentPane = activePane.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
     const highlightsPane = await openHighlightsPane(page);
 
@@ -156,11 +169,8 @@ test.describe("non-pdf linked-items", () => {
 
     await focusRow.click();
     await expectHighlightRowVisible(focusRow, focusNote);
-    const focusRowChatButton = rowAddHighlightToDocumentChatButton(focusRow);
     const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-    await focusRowChatButton.scrollIntoViewIfNeeded();
-    await expect(focusRowChatButton).toBeEnabled();
-    await focusRowChatButton.click();
+    await quoteRowToNewChat(page, focusRow);
     await expectDocChatPendingContext(page, seeded.focus_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -171,10 +181,7 @@ test.describe("non-pdf linked-items", () => {
       .locator(`[data-active-highlight-ids~="${seeded.focus_highlight_id}"]`)
       .first();
     await expect(focusedSegment).toBeAttached({ timeout: 10_000 });
-    const readerPaneContent = page
-      .locator('[data-pane-content="true"]')
-      .filter({ has: contentPane })
-      .first();
+    const readerPaneContent = activePane.getByTestId("document-viewport");
     await expect(readerPaneContent).toBeVisible({ timeout: 10_000 });
     const viewportHeight = await page.evaluate(() => window.innerHeight);
     const readFocusedSegmentTop = async () =>
@@ -195,8 +202,9 @@ test.describe("non-pdf linked-items", () => {
     }
     const distanceBefore = distanceOutsideViewport(topBefore, viewportHeight);
 
-    await page.getByRole("tab", { name: "Highlights" }).click();
-    await expect(page.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    const secondary = readerSecondaryForActivePane(page);
+    await secondary.getByRole("tab", { name: "Highlights" }).click();
+    await expect(secondary.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -224,10 +232,7 @@ test.describe("non-pdf linked-items", () => {
     await quoteSegment.click();
     await expectHighlightRowVisible(quoteRow, quoteNote);
 
-    const quoteRowChatButton = rowAddHighlightToDocumentChatButton(quoteRow);
-    await quoteRowChatButton.scrollIntoViewIfNeeded();
-    await expect(quoteRowChatButton).toBeEnabled();
-    await quoteRowChatButton.click();
+    await quoteRowToNewChat(page, quoteRow);
     await expectDocChatPendingContext(page, seeded.quote_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })

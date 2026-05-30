@@ -1,6 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readerSecondaryForActivePane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  ACTIVE_WORKSPACE_PANE_SELECTOR,
+  activeWorkspacePane,
+  workspacePaneButton,
+} from "../workspace";
+import {
+  gotoRealMediaSinglePane,
+  readRealMediaSeed,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 async function existingHighlightExacts(
   page: Page,
@@ -20,12 +30,6 @@ async function existingHighlightExacts(
   return payload.data.highlights
     .map((highlight) => highlight.exact ?? "")
     .filter(Boolean);
-}
-
-function workspacePaneButton(page: Page, name: RegExp | string) {
-  return page
-    .getByRole("toolbar", { name: "Workspace panes" })
-    .getByRole("button", { name });
 }
 
 test("@real-media desktop selected quote opens doc chat pending context", async ({
@@ -48,15 +52,16 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
     throw new Error(`Missing readable fragment for ${mediaId}`);
   }
 
-  await page.goto(`/media/${mediaId}`);
-  const contentPane = page.locator("article");
+  await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
+  const contentPane = activeWorkspacePane(page).locator("article");
   await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
   const beforeExacts = await existingHighlightExacts(page, fragmentId);
   const selectedText = await selectFreshVisibleTextSnippet(
     page,
-    "article",
+    `${ACTIVE_WORKSPACE_PANE_SELECTOR} article`,
     beforeExacts,
+    { method: "range" },
   );
   const chatPaneCountBefore = await workspacePaneButton(
     page,
@@ -65,18 +70,24 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
 
   const actions = page.getByRole("dialog", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Add to document chat" }),
+    actions.getByRole("button", { name: "Quote to new chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Add to document chat" }).click();
+  await actions.getByRole("button", { name: "Quote to new chat" }).click();
 
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
+  const secondary = readerSecondaryForActivePane(page);
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(
-    sidecar.getByRole("tab", { name: "Document chat" }),
+    secondary.getByRole("tab", { name: "Document chat" }),
   ).toHaveAttribute("aria-selected", "true");
-  const contextSidecar = sidecar.getByLabel("Conversation context");
-  await expect(contextSidecar).toBeVisible({ timeout: 10_000 });
-  await expect(contextSidecar).toContainText(selectedText);
+  await expect(
+    secondary.getByRole("region", { name: "Chat detail" }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(secondary.getByLabel("Attached to next message")).toContainText(
+    "Selected quote",
+  );
+  await expect(
+    secondary.getByRole("textbox", { name: /ask anything/i }),
+  ).toBeVisible({ timeout: 10_000 });
   // justify-polling: the UI opens reader doc-chat state asynchronously after
   // command dispatch; Playwright has no event hook for that pane count. The
   // cadence is 250ms for up to 10s to catch accidental chat-pane creation.
@@ -88,7 +99,7 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
     .toBe(chatPaneCountBefore);
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
-  expect(afterExacts).not.toContain(selectedText);
+  expect(afterExacts).toContain(selectedText);
 
   writeRealMediaTrace(testInfo, "real-web-quote-to-chat-desktop-trace.json", {
     fixture_id: "web-nasa-water-on-moon",
@@ -121,31 +132,32 @@ test("@real-media mobile selected quote opens document chat chooser", async ({
     throw new Error(`Missing readable fragment for ${mediaId}`);
   }
 
-  await page.goto(`/media/${mediaId}`);
-  const contentPane = page.locator("article");
+  await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
+  const contentPane = activeWorkspacePane(page).locator("article");
   await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
   const beforeExacts = await existingHighlightExacts(page, fragmentId);
   const selectedText = await selectFreshVisibleTextSnippet(
     page,
-    "article",
+    `${ACTIVE_WORKSPACE_PANE_SELECTOR} article`,
     beforeExacts,
+    { method: "range" },
   );
 
   const actions = page.getByRole("dialog", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Add to document chat" }),
+    actions.getByRole("button", { name: "Quote to existing chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Add to document chat" }).click();
+  await actions.getByRole("button", { name: "Quote to existing chat" }).click();
 
   const chooser = page.getByRole("dialog", { name: "Document chat" });
   await expect(chooser).toBeVisible({ timeout: 10_000 });
-  await expect(chooser.getByLabel("Conversation context")).toContainText(
-    selectedText,
-  );
+  await expect(
+    chooser.getByText("Choose a chat to add your quote"),
+  ).toBeVisible({ timeout: 10_000 });
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
-  expect(afterExacts).not.toContain(selectedText);
+  expect(afterExacts).toContain(selectedText);
 
   writeRealMediaTrace(testInfo, "real-web-quote-to-chat-mobile-trace.json", {
     fixture_id: "web-nasa-water-on-moon",

@@ -97,6 +97,8 @@ def resolve_api_key(
         platform_key = settings.gemini_api_key
     elif provider == "deepseek":
         platform_key = settings.deepseek_api_key
+    if settings.real_media_provider_fixtures and is_provider_enabled(provider):
+        platform_key = "real-media-fixture"
 
     # Get user BYOK if exists and usable
     user_key = None

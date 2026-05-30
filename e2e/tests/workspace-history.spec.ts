@@ -2,6 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
+  makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -79,17 +81,22 @@ test.describe("workspace pane history", () => {
   test("Back and Forward affect only the owning pane", async ({ page }, testInfo) => {
     // Two visible panes. The Notes pane never changes; the Search pane owns a
     // back-stack (one entry: /settings) so its in-app Back button is enabled.
-    const workspaceState: WorkspaceState = {
-      activePaneId: "pane-search",
-      panes: [
+    const workspaceState: WorkspaceState = makeWorkspaceState(
+      [
         makeWorkspacePane("pane-notes", "/notes"),
         makeWorkspacePane("pane-search", "/search", {
           history: { back: ["/settings"], forward: [] },
         }),
       ],
-    };
+      { activePrimaryPaneId: "pane-search" },
+    );
 
-    await gotoWithWorkspaceSession(page, testInfo.testId, workspaceState, "/search");
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-history"),
+      workspaceState,
+      "/search",
+    );
 
     await expect(paneWrap(page, "pane-notes")).toBeVisible();
     await expect(paneWrap(page, "pane-search")).toBeVisible();
@@ -126,17 +133,22 @@ test.describe("workspace pane history", () => {
     // A single wide media pane whose only back entry is the standard /libraries
     // route. Media routes allow an intrinsic (wide) primary width; /libraries
     // does not, so navigating Back must reset the pane to the default width.
-    const workspaceState: WorkspaceState = {
-      activePaneId: "pane-wide-media",
-      panes: [
+    const workspaceState: WorkspaceState = makeWorkspaceState(
+      [
         makeWorkspacePane("pane-wide-media", mediaHref, {
           primaryWidthPx: WIDE_MEDIA_PANE_WIDTH_PX,
           history: { back: ["/libraries"], forward: [] },
         }),
       ],
-    };
+      { activePrimaryPaneId: "pane-wide-media" },
+    );
 
-    await gotoWithWorkspaceSession(page, testInfo.testId, workspaceState, mediaHref);
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-history"),
+      workspaceState,
+      mediaHref,
+    );
     await expect(paneWrap(page, "pane-wide-media")).toBeVisible();
 
     await paneBackButton(page, "pane-wide-media").click();

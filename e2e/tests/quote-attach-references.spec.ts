@@ -2,8 +2,13 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireRunnableChatComposer } from "./chatReadiness";
-import { openMediaInSinglePaneWorkspace, openReaderSidecar } from "./reader";
+import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
+import {
+  activePaneSelector,
+  activeWorkspacePane,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface NonPdfSeed {
   media_id: string;
@@ -19,6 +24,12 @@ interface ChatReferencesResponse {
   }>;
 }
 
+const NEW_REFERENCE_CHAT_BUTTON = /^(?:\+ New chat|Start new chat(?: about this document)?)$/i;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function readNonPdfSeed(): NonPdfSeed {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
   return JSON.parse(readFileSync(seedPath, "utf-8")) as NonPdfSeed;
@@ -30,7 +41,7 @@ async function readReferences(
 ): Promise<ChatReferencesResponse["data"]> {
   const resourceUri = `media:${mediaId}`;
   const response = await page.request.get(
-    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=200`,
+    `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}&limit=100`,
   );
   const body = await response.text();
   expect(
@@ -46,10 +57,13 @@ test.describe("quote-attach references (post-cutover)", () => {
   test("quote-to-new-chat from a reader surfaces in the doc's Other chats list on revisit", async ({
     page,
   }, testInfo) => {
-    const seed = readNonPdfSeed();
-    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
+    test.slow();
 
-    const contentPane = page.locator('div[class*="fragments"]');
+    const seed = readNonPdfSeed();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-quote-attach");
+    await openMediaInSinglePaneWorkspace(page, deviceId, seed.media_id);
+
+    const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     // Select fresh text in the article body (not over the seeded highlights).
@@ -67,32 +81,45 @@ test.describe("quote-attach references (post-cutover)", () => {
     );
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
-      'div[class*="fragments"]',
+      activePaneSelector('div[class*="fragments"]'),
       blockedExacts,
       { method: "range" },
     );
 
     const popover = page.getByRole("dialog", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
-    await popover.getByRole("button", { name: "Add to document chat" }).click();
+    await popover.getByRole("button", { name: "Quote to existing chat" }).click();
 
-    // The reader sidecar switches to Doc chat with the quote pending
+    // The reader secondary switches to Doc chat with the quote pending
     // until the user selects the chat that should receive it.
-    const sidecar = await openReaderSidecar(page);
-    const docChatTab = sidecar.getByRole("tab", {
+    const secondary = await openReaderSecondary(page);
+    const docChatTab = secondary.getByRole("tab", {
       name: "Document chat",
     });
     await expect(docChatTab).toHaveAttribute("aria-selected", "true", {
       timeout: 10_000,
     });
-    const contextSidecar = sidecar.getByLabel("Conversation context");
-    await expect(contextSidecar).toBeVisible({ timeout: 10_000 });
-    await expect(contextSidecar).toContainText(selectedText);
-    await sidecar.getByRole("button", { name: "Start new chat" }).click();
+    await expect(
+      secondary.getByText("Choose a chat to add your quote"),
+    ).toBeVisible({ timeout: 10_000 });
+    const afterHighlightResponse = await page.request.get(
+      `/api/fragments/${seed.fragment_id}/highlights`,
+    );
+    expect(afterHighlightResponse.ok()).toBeTruthy();
+    const afterHighlightPayload = (await afterHighlightResponse.json()) as {
+      data: { highlights: Array<{ exact: string }> };
+    };
+    expect(
+      afterHighlightPayload.data.highlights.map((highlight) => highlight.exact),
+    ).toContain(selectedText);
+    await secondary.getByRole("button", { name: NEW_REFERENCE_CHAT_BUTTON }).click();
+    await expect(secondary.getByLabel("Attached to next message")).toContainText(
+      selectedText,
+    );
 
-    const composerInput = sidecar.getByRole("textbox", { name: /ask anything/i });
-    const sendButton = sidecar.getByRole("button", { name: /send message/i });
-    const modelSettings = sidecar.getByRole("button", {
+    const composerInput = secondary.getByRole("textbox", { name: /ask anything/i });
+    const sendButton = secondary.getByRole("button", { name: /send message/i });
+    const modelSettings = secondary.getByRole("button", {
       name: /model settings/i,
     });
 
@@ -107,7 +134,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     const messageText = `quote-attach-${Date.now() % 1_000_000}`;
     await composerInput.fill(messageText);
     await sendButton.click();
-    const chatLog = sidecar.getByRole("log", { name: "Chat messages" });
+    const chatLog = secondary.getByRole("log", { name: "Chat messages" });
     await expect(chatLog.getByText(messageText).first()).toBeVisible({
       timeout: 15_000,
     });
@@ -119,15 +146,19 @@ test.describe("quote-attach references (post-cutover)", () => {
       .poll(
         async () => {
           const conversations = await readReferences(page, seed.media_id);
-          return conversations.length;
+          return conversations.some(
+            (conversation) =>
+              conversation.title === messageText && conversation.message_count > 0,
+          );
         },
-        { timeout: 20_000 },
+        { timeout: 30_000 },
       )
-      .toBeGreaterThan(0);
+      .toBe(true);
 
     const conversations = await readReferences(page, seed.media_id);
-    expect(conversations.length).toBeGreaterThan(0);
-    const newChat = conversations.find((conv) => conv.message_count > 0);
+    const newChat = conversations.find(
+      (conv) => conv.title === messageText && conv.message_count > 0,
+    );
     expect(
       newChat,
       `Expected a referencing chat after sending "${messageText}", got: ${JSON.stringify(conversations)}`,
@@ -135,15 +166,17 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     // Revisit the doc's reader pane and confirm the new chat appears in the
     // reference-backed Doc chat list.
-    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
-    const reloadedSidecar = await openReaderSidecar(page);
-    await reloadedSidecar
-      .getByRole("tab", { name: "Document chat" })
-      .click();
+    await openMediaInSinglePaneWorkspace(page, deviceId, seed.media_id);
+    const reloadedSecondary = await openReaderSecondary(page);
+    const reloadedDocChatTab = reloadedSecondary.getByRole("tab", {
+      name: "Document chat",
+    });
+    await reloadedDocChatTab.click();
+    await expect(reloadedDocChatTab).toHaveAttribute("aria-selected", "true");
     await expect(
-      reloadedSidecar.getByRole("button", {
-        name: new RegExp(newChat?.title ?? "Chat", "i"),
+      reloadedSecondary.getByRole("button", {
+        name: new RegExp(escapeRegExp(newChat?.title ?? "Chat"), "i"),
       }),
-    ).toBeVisible({ timeout: 10_000 });
+    ).toBeVisible({ timeout: 20_000 });
   });
 });

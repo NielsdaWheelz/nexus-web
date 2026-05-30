@@ -31,12 +31,12 @@ import {
   useAnchoredHighlightProjection,
   type AnchoredHighlightRow,
 } from "./useAnchoredHighlightProjection";
-import styles from "./AnchoredHighlightsSidecar.module.css";
+import styles from "./ReaderHighlightsSurface.module.css";
 
 const COLLAPSED_ROW_HEIGHT = 44;
 const ROW_GAP = 4;
 
-interface AnchoredHighlightsSidecarProps {
+interface ReaderHighlightsSurfaceProps {
   title?: string;
   description?: string;
   pdfActivePage?: number | null;
@@ -69,7 +69,7 @@ interface AnchoredHighlightsSidecarProps {
   onOpenConversation: (conversationId: string, title: string) => void;
 }
 
-export default function AnchoredHighlightsSidecar({
+export default function ReaderHighlightsSurface({
   title = "Visible highlights",
   description = "Showing highlights visible in the reader viewport.",
   pdfActivePage = null,
@@ -90,7 +90,7 @@ export default function AnchoredHighlightsSidecar({
   onNoteSave,
   onNoteDelete,
   onOpenConversation,
-}: AnchoredHighlightsSidecarProps) {
+}: ReaderHighlightsSurfaceProps) {
   const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -100,7 +100,7 @@ export default function AnchoredHighlightsSidecar({
   >([]);
   const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [overflowCount, setOverflowCount] = useState(0);
-  const [sidecarLayoutVersion, setSidecarLayoutVersion] = useState(0);
+  const [secondaryLayoutVersion, setSecondaryLayoutVersion] = useState(0);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
   const [changingColor, setChangingColor] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -295,7 +295,7 @@ export default function AnchoredHighlightsSidecar({
     }
 
     const observer = new ResizeObserver(() => {
-      setSidecarLayoutVersion((version) => version + 1);
+      setSecondaryLayoutVersion((version) => version + 1);
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
@@ -306,7 +306,7 @@ export default function AnchoredHighlightsSidecar({
       return;
     }
     alignRows();
-  }, [alignRows, isMobile, projections, sidecarLayoutVersion]);
+  }, [alignRows, isMobile, projections, secondaryLayoutVersion]);
 
   const mobileHighlightsState = useMemo(() => {
     if (!isMobile) {

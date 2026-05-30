@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
+from nexus.services.api_key_resolver import resolve_api_key
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key
 from tests.factories import seed_test_models
@@ -107,6 +108,59 @@ class TestModelFiltering:
 
         assert response.status_code == 200
         assert response.json()["data"] == []
+
+    def test_real_media_fixture_mode_enables_entitled_platform_models_without_keys(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch, tmp_path
+    ):
+        """Real-media fixture LLMs expose enabled platform models without live keys."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "true")
+        monkeypatch.setenv("REAL_MEDIA_FIXTURE_DIR", str(tmp_path))
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert {m["provider"] for m in data} == {
+            "openai",
+            "anthropic",
+            "gemini",
+            "deepseek",
+        }
+        assert {m["available_via"] for m in data} == {"platform"}
+
+    def test_real_media_fixture_mode_resolves_platform_key_without_live_key(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch, tmp_path
+    ):
+        """Fixture-mode chat runs use an explicit fixture platform key boundary."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "true")
+        monkeypatch.setenv("REAL_MEDIA_FIXTURE_DIR", str(tmp_path))
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        clear_settings_cache()
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+
+        with direct_db.session() as session:
+            resolved = resolve_api_key(session, user_id, "openai", "auto")
+
+        assert resolved.provider == "openai"
+        assert resolved.mode == "platform"
+        assert resolved.api_key == "real-media-fixture"
 
     def test_platform_key_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch

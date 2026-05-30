@@ -9,15 +9,15 @@ import {
 } from "@/lib/workspace/workspaceHref";
 import { clampPaneWidth, getDefaultPaneWidthPx } from "@/lib/workspace/paneWidth";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
-import { paneRouteAllowsSidecarGroup } from "@/lib/panes/paneRouteModel";
+import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 import {
-  getSidecarGroupForSurface,
-  getSidecarWidthPolicy,
-  isWorkspaceSidecarGroupId,
-  isWorkspaceSidecarSurfaceId,
-  resolveEffectiveSidecarSizing,
-  type WorkspaceSidecarState,
-} from "@/lib/panes/paneSidecarModel";
+  getSecondaryGroupForSurface,
+  getSecondaryWidthPolicy,
+  isWorkspaceSecondaryGroupId,
+  isWorkspaceSecondarySurfaceId,
+  resolveEffectiveSecondarySizing,
+  type WorkspaceSecondaryState,
+} from "@/lib/panes/paneSecondaryModel";
 
 export const MAX_PANES = 12;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
@@ -25,28 +25,84 @@ export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
 const MAX_PANE_TITLE_LENGTH = 120;
 
 type WorkspacePaneVisibility = "visible" | "minimized";
+type WorkspaceSecondaryPaneVisibility = "visible" | "collapsed";
 
 export interface WorkspacePaneHistory {
   back: string[];
   forward: string[];
 }
 
-export interface WorkspacePaneState {
+export interface WorkspacePrimaryPaneState {
   id: string;
   href: string;
   primaryWidthPx: number;
-  sidecar: WorkspaceSidecarState | null;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
+  attachedSecondaryPaneId: string | null;
+}
+
+export interface WorkspaceAttachedSecondaryPaneState extends WorkspaceSecondaryState {
+  id: string;
+  parentPrimaryPaneId: string;
 }
 
 export interface WorkspaceState {
-  activePaneId: string;
-  panes: WorkspacePaneState[];
+  activePrimaryPaneId: string;
+  primaryPaneOrder: string[];
+  primaryPanesById: Record<string, WorkspacePrimaryPaneState>;
+  secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState>;
 }
 
 export function createPaneId(): string {
   return createRandomId("pane");
+}
+
+export function createSecondaryPaneId(): string {
+  return createRandomId("secondary-pane");
+}
+
+export function getWorkspacePrimaryPane(
+  state: WorkspaceState,
+  paneId: string,
+): WorkspacePrimaryPaneState | null {
+  return state.primaryPanesById[paneId] ?? null;
+}
+
+export function getWorkspacePrimaryPanes(
+  state: WorkspaceState,
+): WorkspacePrimaryPaneState[] {
+  return state.primaryPaneOrder
+    .map((paneId) => state.primaryPanesById[paneId])
+    .filter((pane): pane is WorkspacePrimaryPaneState => Boolean(pane));
+}
+
+export function createWorkspaceStateFromPrimaryPanes(input: {
+  activePrimaryPaneId: string;
+  primaryPanes: WorkspacePrimaryPaneState[];
+  secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
+}): WorkspaceState {
+  const sourceSecondaryPanesById = input.secondaryPanesById ?? {};
+  const secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState> = {};
+  const primaryPanes = input.primaryPanes.map((pane) => {
+    if (!pane.attachedSecondaryPaneId) {
+      return pane;
+    }
+    const secondaryPane = sourceSecondaryPanesById[pane.attachedSecondaryPaneId];
+    if (!secondaryPane || secondaryPane.parentPrimaryPaneId !== pane.id) {
+      return { ...pane, attachedSecondaryPaneId: null };
+    }
+    secondaryPanesById[secondaryPane.id] = secondaryPane;
+    return pane;
+  });
+
+  return {
+    activePrimaryPaneId: input.activePrimaryPaneId,
+    primaryPaneOrder: primaryPanes.map((pane) => pane.id),
+    primaryPanesById: Object.fromEntries(
+      primaryPanes.map((pane) => [pane.id, pane]),
+    ),
+    secondaryPanesById,
+  };
 }
 
 export function createEmptyPaneHistory(): WorkspacePaneHistory {
@@ -62,7 +118,7 @@ function trimStack(stack: string[]): string[] {
 }
 
 export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState {
-  const panes = state.panes.map((pane) => ({
+  const panes = getWorkspacePrimaryPanes(state).map((pane) => ({
     ...pane,
     history: {
       back: trimStack(pane.history.back),
@@ -77,7 +133,8 @@ export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState 
   while (total > MAX_TOTAL_PANE_HISTORY_ENTRIES) {
     const pane =
       panes.find(
-        (item) => item.id !== state.activePaneId && hasPaneHistory(item.history)
+        (item) =>
+          item.id !== state.activePrimaryPaneId && hasPaneHistory(item.history)
       ) ?? panes.find((item) => hasPaneHistory(item.history));
     if (!pane) {
       break;
@@ -90,7 +147,10 @@ export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState 
     total -= 1;
   }
 
-  return { ...state, panes };
+  return {
+    ...state,
+    primaryPanesById: Object.fromEntries(panes.map((pane) => [pane.id, pane])),
+  };
 }
 
 export function normalizePaneTitle(raw: string | null | undefined): string | null {
@@ -112,40 +172,49 @@ export function createDefaultWorkspaceState(
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const id = createPaneId();
   return {
-    activePaneId: id,
-    panes: [
-      {
+    activePrimaryPaneId: id,
+    primaryPaneOrder: [id],
+    primaryPanesById: {
+      [id]: {
         id,
         href,
         primaryWidthPx:
           primaryWidthPx != null
             ? clampPaneWidth(primaryWidthPx, workspacePrimaryMetrics)
             : getDefaultPaneWidthPx(workspacePrimaryMetrics),
-        sidecar: null,
         visibility: "visible",
         history: createEmptyPaneHistory(),
+        attachedSecondaryPaneId: null,
       },
-    ],
+    },
+    secondaryPanesById: {},
   };
 }
 
-function sanitizePaneSidecar(value: unknown, href: string): WorkspaceSidecarState | null {
-  if (value == null) {
-    return null;
-  }
+function sanitizeAttachedSecondaryPane(
+  value: unknown,
+  secondaryPaneId: string,
+  parentPrimaryPane: WorkspacePrimaryPaneState,
+): WorkspaceAttachedSecondaryPaneState | null {
   if (!isRecord(value)) {
     return null;
   }
+  if (value.id !== secondaryPaneId) {
+    return null;
+  }
+  if (value.parentPrimaryPaneId !== parentPrimaryPane.id) {
+    return null;
+  }
   if (
-    !isWorkspaceSidecarGroupId(value.groupId) ||
-    !isWorkspaceSidecarSurfaceId(value.activeSurfaceId)
+    !isWorkspaceSecondaryGroupId(value.groupId) ||
+    !isWorkspaceSecondarySurfaceId(value.activeSurfaceId)
   ) {
     return null;
   }
-  if (getSidecarGroupForSurface(value.activeSurfaceId) !== value.groupId) {
+  if (getSecondaryGroupForSurface(value.activeSurfaceId) !== value.groupId) {
     return null;
   }
-  if (!paneRouteAllowsSidecarGroup(href, value.groupId)) {
+  if (!paneRouteAllowsSecondaryGroup(parentPrimaryPane.href, value.groupId)) {
     return null;
   }
   if (value.visibility !== "visible" && value.visibility !== "collapsed") {
@@ -155,13 +224,15 @@ function sanitizePaneSidecar(value: unknown, href: string): WorkspaceSidecarStat
     return null;
   }
   return {
+    id: secondaryPaneId,
+    parentPrimaryPaneId: parentPrimaryPane.id,
     groupId: value.groupId,
     activeSurfaceId: value.activeSurfaceId,
-    widthPx: resolveEffectiveSidecarSizing({
+    widthPx: resolveEffectiveSecondarySizing({
       storedWidthPx: value.widthPx,
-      policy: getSidecarWidthPolicy(value.groupId),
+      policy: getSecondaryWidthPolicy(value.groupId),
     }).widthPx,
-    visibility: value.visibility,
+    visibility: value.visibility as WorkspaceSecondaryPaneVisibility,
   };
 }
 
@@ -196,14 +267,17 @@ function sanitizePaneHistory(
   return { back: trimStack(history.back), forward: trimStack(history.forward) };
 }
 
-function sanitizePane(
+function sanitizePrimaryPane(
   value: unknown,
+  paneId: string,
   fallbackHref: string,
-  seenIds: Set<string>,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
   options?: { baseOrigin?: string }
-): WorkspacePaneState | null {
+): WorkspacePrimaryPaneState | null {
   if (!isRecord(value)) {
+    return null;
+  }
+  if (value.id !== paneId) {
     return null;
   }
   const visibility = value.visibility;
@@ -217,12 +291,6 @@ function sanitizePane(
     return null;
   }
 
-  let id = typeof value.id === "string" && value.id.trim().length > 0 ? value.id : "";
-  if (!id || seenIds.has(id)) {
-    id = createPaneId();
-  }
-  seenIds.add(id);
-
   if (typeof value.primaryWidthPx !== "number") {
     return null;
   }
@@ -230,14 +298,19 @@ function sanitizePane(
     value.primaryWidthPx,
     workspacePrimaryMetrics,
   );
+  const attachedSecondaryPaneId =
+    typeof value.attachedSecondaryPaneId === "string" &&
+    value.attachedSecondaryPaneId.trim().length > 0
+      ? value.attachedSecondaryPaneId
+      : null;
 
   return {
-    id,
+    id: paneId,
     href,
     primaryWidthPx,
-    sidecar: sanitizePaneSidecar(value.sidecar, href),
     visibility,
     history,
+    attachedSecondaryPaneId,
   };
 }
 
@@ -257,43 +330,88 @@ export function sanitizeWorkspaceState(
     return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
-  const rawPanes = Array.isArray(value.panes) ? value.panes : [];
-  const seenIds = new Set<string>();
-  const panes: WorkspacePaneState[] = [];
+  if (
+    !Array.isArray(value.primaryPaneOrder) ||
+    !isRecord(value.primaryPanesById) ||
+    !isRecord(value.secondaryPanesById)
+  ) {
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
+  }
+  if (
+    value.primaryPaneOrder.length === 0 ||
+    value.primaryPaneOrder.length > MAX_PANES
+  ) {
+    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
+  }
 
-  for (const rawPane of rawPanes) {
-    if (panes.length >= MAX_PANES) {
-      break;
+  const seenPrimaryIds = new Set<string>();
+  const primaryPanes: WorkspacePrimaryPaneState[] = [];
+  const rawSecondaryPanesById = value.secondaryPanesById as Record<string, unknown>;
+
+  for (const rawPaneId of value.primaryPaneOrder) {
+    if (typeof rawPaneId !== "string" || rawPaneId.trim().length === 0) {
+      return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
     }
-    const pane = sanitizePane(
-      rawPane,
+    if (seenPrimaryIds.has(rawPaneId)) {
+      return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
+    }
+    seenPrimaryIds.add(rawPaneId);
+
+    const pane = sanitizePrimaryPane(
+      value.primaryPanesById[rawPaneId],
+      rawPaneId,
       fallbackHref,
-      seenIds,
       options.workspacePrimaryMetrics,
       options,
     );
     if (!pane) {
       return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
     }
-    panes.push(pane);
+    primaryPanes.push(pane);
   }
 
-  if (panes.length === 0) {
-    return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
-  }
-  if (!panes.some((p) => p.visibility === "visible")) {
+  if (!primaryPanes.some((p) => p.visibility === "visible")) {
     return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
   const requestedActiveId =
-    typeof value.activePaneId === "string" ? value.activePaneId : "";
-  const activePaneId = panes.find(
+    typeof value.activePrimaryPaneId === "string" ? value.activePrimaryPaneId : "";
+  const activePrimaryPaneId = primaryPanes.find(
     (p) => p.id === requestedActiveId && p.visibility === "visible"
   )?.id;
 
-  if (!activePaneId) {
+  if (!activePrimaryPaneId) {
     return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
-  return trimWorkspacePaneHistory({ activePaneId, panes });
+  const primaryPanesById = Object.fromEntries(
+    primaryPanes.map((pane) => [pane.id, pane]),
+  );
+  const secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState> = {};
+  const cleanedPrimaryPanes = primaryPanes.map((pane) => {
+    const secondaryPaneId = pane.attachedSecondaryPaneId;
+    if (!secondaryPaneId) {
+      return pane;
+    }
+    const secondaryPane = sanitizeAttachedSecondaryPane(
+      rawSecondaryPanesById[secondaryPaneId],
+      secondaryPaneId,
+      pane,
+    );
+    if (!secondaryPane) {
+      return { ...pane, attachedSecondaryPaneId: null };
+    }
+    secondaryPanesById[secondaryPane.id] = secondaryPane;
+    return pane;
+  });
+
+  return trimWorkspacePaneHistory({
+    activePrimaryPaneId,
+    primaryPaneOrder: cleanedPrimaryPanes.map((pane) => pane.id),
+    primaryPanesById: {
+      ...primaryPanesById,
+      ...Object.fromEntries(cleanedPrimaryPanes.map((pane) => [pane.id, pane])),
+    },
+    secondaryPanesById,
+  });
 }

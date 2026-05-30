@@ -1,10 +1,10 @@
 """Deterministic LLM boundary for real-media fixture runs."""
 
-from __future__ import annotations
-
+import json
+import re
 from collections.abc import AsyncIterator
 
-from llm_calling.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
+from llm_calling.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage, ToolCall
 
 
 class RealMediaFixtureLLMRouter:
@@ -49,20 +49,100 @@ class RealMediaFixtureLLMRouter:
         *,
         timeout_s: int,
     ) -> AsyncIterator[LLMChunk]:
-        yield LLMChunk(delta_text=REAL_MEDIA_FIXTURE_RESPONSE, done=False)
+        if _should_request_app_search(req):
+            yield LLMChunk(
+                tool_call=ToolCall(
+                    id="real-media-fixture-app-search",
+                    name=APP_SEARCH_TOOL_NAME,
+                    arguments={"query": _latest_user_query(req)},
+                ),
+                done=False,
+            )
+            yield LLMChunk(
+                delta_text="",
+                done=True,
+                usage=_usage_for(req, ""),
+                provider_request_id="real-media-fixture",
+                status="completed",
+            )
+            return
+
+        response = (
+            REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
+            if _has_citable_tool_result(req)
+            else REAL_MEDIA_FIXTURE_RESPONSE
+        )
+        yield LLMChunk(delta_text=response, done=False)
         yield LLMChunk(
             delta_text="",
             done=True,
-            usage=_usage_for(req, REAL_MEDIA_FIXTURE_RESPONSE),
+            usage=_usage_for(req, response),
             provider_request_id="real-media-fixture",
             status="completed",
         )
 
 
+APP_SEARCH_TOOL_NAME = "app_search"
+_ABOUT_QUERY_RE = re.compile(r"\babout\s+(.+?)\?\s*(?:use\b|$)", re.IGNORECASE)
 REAL_MEDIA_FIXTURE_RESPONSE = (
     "The source says SOFIA helped confirm water on the Moon by detecting a "
     "water signature in Clavius Crater."
 )
+REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION = REAL_MEDIA_FIXTURE_RESPONSE + " [1]"
+
+
+def _should_request_app_search(req: LLMRequest) -> bool:
+    return (
+        not _has_tool_result(req)
+        and any(tool.name == APP_SEARCH_TOOL_NAME for tool in req.tools)
+        and bool(_latest_user_query(req).strip())
+    )
+
+
+def _has_tool_result(req: LLMRequest) -> bool:
+    return any(turn.role == "tool" and turn.tool_results for turn in req.messages)
+
+
+def _has_citable_tool_result(req: LLMRequest) -> bool:
+    for turn in req.messages:
+        if turn.role != "tool":
+            continue
+        for result in turn.tool_results:
+            if result.is_error:
+                continue
+            if _tool_output_has_numbered_result(result.output):
+                return True
+    return False
+
+
+def _tool_output_has_numbered_result(output: str) -> bool:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return False
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        n = item.get("n")
+        if isinstance(n, int) and n > 0:
+            return True
+    return False
+
+
+def _latest_user_query(req: LLMRequest) -> str:
+    for turn in reversed(req.messages):
+        if turn.role == "user" and turn.content.strip():
+            content = turn.content.strip()
+            match = _ABOUT_QUERY_RE.search(content)
+            if match:
+                return match.group(1).strip()
+            return content
+    return "attached evidence"
 
 
 def _usage_for(req: LLMRequest, response: str) -> LLMUsage:

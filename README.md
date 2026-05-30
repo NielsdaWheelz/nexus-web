@@ -96,9 +96,10 @@ make seed-real-media-e2e
 
 Real-media gates are strict. `make test-real-media` runs deterministic backend
 and Playwright acceptance coverage, requires Supabase Auth plus local
-Postgres/MinIO and real OpenAI embeddings, and seeds the browser corpus through
-the product paths. `make test-live-providers` additionally requires real Podcast
-Index and Deepgram credentials. The default Playwright project covers
+Postgres/MinIO, uses checked provider fixtures including deterministic fixture
+embeddings, and seeds the browser corpus through the product paths.
+`make test-live-providers` owns live OpenAI embedding validation plus real
+Podcast Index and Deepgram credentials. The default Playwright project covers
 deterministic seeded feature flows; the real-media project covers deterministic
 real-media acceptance flows.
 
@@ -134,7 +135,7 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/workspace-pane-layout-cutover.md` -> current pane sizing and reader width contract
+- `docs/workspace-pane-system-consolidation-cutover.md` -> current workspace primary and attached secondary pane contract
 
 ## Documentation Rules
 

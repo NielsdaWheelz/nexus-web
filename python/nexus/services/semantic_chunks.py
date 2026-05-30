@@ -33,6 +33,8 @@ def transcript_embedding_dimensions() -> int:
 def current_transcript_embedding_model() -> str:
     settings = get_settings()
     dimensions = transcript_embedding_dimensions()
+    if settings.real_media_provider_fixtures:
+        return f"fixture_hash_v1_{dimensions}"
     if settings.nexus_env == Environment.TEST:
         return f"test_hash_v2_{dimensions}"
     normalized_model = re.sub(
@@ -41,6 +43,18 @@ def current_transcript_embedding_model() -> str:
         str(settings.transcript_embedding_model_openai or "text-embedding-3-small").lower(),
     ).strip("_")
     return f"openai_{normalized_model}_{dimensions}_v1"
+
+
+def transcript_embedding_provider_for_model(model_name: str) -> str:
+    if model_name.startswith("fixture_hash_v1_"):
+        return "fixture"
+    if model_name.startswith("test_hash_v2_"):
+        return "test"
+    return "openai"
+
+
+def current_transcript_embedding_provider() -> str:
+    return transcript_embedding_provider_for_model(current_transcript_embedding_model())
 
 
 def to_pgvector_literal(vector: list[float]) -> str:
@@ -62,7 +76,8 @@ def _normalize_and_validate_vector(vector: Any, *, dimensions: int) -> list[floa
     return normalized
 
 
-def _build_test_embedding(text: str, *, dimensions: int) -> list[float]:
+def build_deterministic_hash_embedding(text: str, *, dimensions: int) -> list[float]:
+    """Build the deterministic fixture/test embedding shared by local semantic stores."""
     tokens = _TOKEN_RE.findall(str(text or "").lower())
     if not tokens:
         return [0.0] * dimensions
@@ -281,7 +296,7 @@ def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]
 
 
 def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
-    """Build embeddings for multiple texts using production embedding backend."""
+    """Build embeddings for multiple texts using the configured embedding backend."""
     dimensions = transcript_embedding_dimensions()
     model_name = current_transcript_embedding_model()
 
@@ -289,10 +304,10 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
     if not normalized_texts:
         return model_name, []
 
-    settings = get_settings()
-    if settings.nexus_env == Environment.TEST:
+    if transcript_embedding_provider_for_model(model_name) in {"fixture", "test"}:
         return model_name, [
-            _build_test_embedding(text, dimensions=dimensions) for text in normalized_texts
+            build_deterministic_hash_embedding(text, dimensions=dimensions)
+            for text in normalized_texts
         ]
     return model_name, _embed_with_openai(normalized_texts, dimensions=dimensions)
 

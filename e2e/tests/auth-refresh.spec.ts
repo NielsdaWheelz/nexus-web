@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { bootstrapMagicLinkSession } from "./auth-bootstrap";
 import {
   expireAccessTokenKeepingRefreshToken,
@@ -23,6 +23,19 @@ const APP_BASE_URL = `http://localhost:${process.env.WEB_PORT ?? "3000"}`;
 // redirect onward — comfortably inside this ceiling. A hang would blow past it.
 const PROMPT_RESOLUTION_MS = 15_000;
 
+async function gotoAllowingTerminalRedirectAbort(
+  page: Page,
+  url: string,
+): Promise<void> {
+  try {
+    await page.goto(url);
+  } catch (error) {
+    if (!String(error).includes("net::ERR_ABORTED")) {
+      throw error;
+    }
+  }
+}
+
 test.describe("auth silent refresh", () => {
   test("expired access token with a valid session loads a protected page signed in", async ({
     browser,
@@ -36,7 +49,7 @@ test.describe("auth silent refresh", () => {
 
       await expireAccessTokenKeepingRefreshToken(context, APP_BASE_URL);
 
-      await page.goto("/libraries");
+      await gotoAllowingTerminalRedirectAbort(page, "/libraries");
 
       // Lands on the originally requested page — no login screen, no flash.
       await expect(page).toHaveURL(/\/libraries/);
@@ -70,8 +83,8 @@ test.describe("auth silent refresh", () => {
         response.ok(),
         `GET /api/me after inline refresh: ${response.status()} ${await response.text()}`,
       ).toBeTruthy();
-      const body = (await response.json()) as { data: { id: string } };
-      expect(body.data.id, "Expected the authenticated viewer in /api/me").toBeTruthy();
+      const body = (await response.json()) as { data: { user_id: string } };
+      expect(body.data.user_id, "Expected the authenticated viewer in /api/me").toBeTruthy();
 
       // A response carrying rotated auth cookies must never be cached.
       expect(response.headers()["cache-control"]).toBe("no-store");
@@ -92,7 +105,7 @@ test.describe("auth silent refresh", () => {
 
       await expireAccessTokenWithRevokedRefreshToken(context, APP_BASE_URL);
 
-      await page.goto("/libraries");
+      await gotoAllowingTerminalRedirectAbort(page, "/libraries");
 
       // The failed refresh is terminal: it lands on /login, preserving `next`.
       await expect(page).toHaveURL(/\/login/);

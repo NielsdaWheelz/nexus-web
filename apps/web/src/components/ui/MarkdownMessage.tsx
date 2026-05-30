@@ -8,10 +8,13 @@
 "use client";
 
 import {
+  createContext,
   memo,
-  useState,
   useCallback,
+  useContext,
+  useMemo,
   useRef,
+  useState,
   type ReactNode,
   type HTMLAttributes,
   type ComponentProps,
@@ -142,8 +145,17 @@ function MarkdownLink({
   return <a href={href} {...rest}>{children}</a>;
 }
 
-const baseComponents = { code: CodeBlock, pre: PreBlock, table: TableBlock, a: MarkdownLink };
 type MarkdownComponents = ComponentProps<typeof ReactMarkdown>["components"];
+const baseComponents: MarkdownComponents = {
+  code: CodeBlock,
+  pre: PreBlock,
+  table: TableBlock,
+  a: MarkdownLink,
+};
+const CitationContext = createContext<{
+  citationByIndex?: Map<number, ReaderCitationData>;
+  onActivate?: (target: ReaderSourceTarget) => void;
+}>({});
 
 function citationIndexFromHref(href: string | undefined): number | null {
   if (!href?.startsWith(CITATION_HREF_PREFIX)) return null;
@@ -162,50 +174,43 @@ function escapeModelCitationPlaceholders(content: string): string {
   return content.replace(/<<cite:(\d+)>>/g, "\\<\\<cite:$1\\>\\>");
 }
 
-function createMarkdownComponents({
-  citationByIndex,
-  onActivate,
-}: {
-  citationByIndex?: Map<number, ReaderCitationData>;
-  onActivate?: (target: ReaderSourceTarget) => void;
-}): MarkdownComponents {
-  if (!citationByIndex) return baseComponents;
-  const citations = citationByIndex;
-
-  function LinkBlock({
-    href,
-    children,
-    node: _node,
-    ...rest
-  }: HTMLAttributes<HTMLAnchorElement> & {
-    href?: string;
-    children?: ReactNode;
-    node?: unknown;
-  }) {
-    const citationIndex = citationIndexFromHref(href);
-    const citation =
-      citationIndex !== null ? citations.get(citationIndex) : undefined;
-    if (citation) {
-      return (
-        <ReaderCitation
-          index={citation.index}
-          color={citation.color}
-          preview={citation.preview}
-          target={citation.target}
-          href={citation.href}
-          onActivate={onActivate ?? (() => undefined)}
-        />
-      );
-    }
-    if (citationIndex !== null) {
-      return null;
-    }
-
-    return <MarkdownLink href={href} {...rest}>{children}</MarkdownLink>;
+function CitationAwareLink({
+  href,
+  children,
+  node: _node,
+  ...rest
+}: HTMLAttributes<HTMLAnchorElement> & {
+  href?: string;
+  children?: ReactNode;
+  node?: unknown;
+}) {
+  const { citationByIndex, onActivate } = useContext(CitationContext);
+  const citationIndex = citationIndexFromHref(href);
+  const citation =
+    citationIndex !== null ? citationByIndex?.get(citationIndex) : undefined;
+  if (citation) {
+    return (
+      <ReaderCitation
+        index={citation.index}
+        color={citation.color}
+        preview={citation.preview}
+        target={citation.target}
+        href={citation.href}
+        onActivate={onActivate ?? (() => undefined)}
+      />
+    );
+  }
+  if (citationIndex !== null) {
+    return null;
   }
 
-  return { ...baseComponents, a: LinkBlock };
+  return <MarkdownLink href={href} {...rest}>{children}</MarkdownLink>;
 }
+
+const citationComponents: MarkdownComponents = {
+  ...baseComponents,
+  a: CitationAwareLink,
+};
 
 // ---------------------------------------------------------------------------
 // Full render (completed messages)
@@ -221,27 +226,41 @@ function MarkdownMessageInner({
   onCitationActivate?: (target: ReaderSourceTarget) => void;
 }) {
   const citationByIndex =
-    citations && citations.length > 0
-      ? new Map(citations.map((c) => [c.index, c]))
-      : undefined;
+    useMemo(
+      () =>
+        citations && citations.length > 0
+          ? new Map(citations.map((c) => [c.index, c]))
+          : undefined,
+      [citations],
+    );
+  const citationContext = useMemo(
+    () => ({ citationByIndex, onActivate: onCitationActivate }),
+    [citationByIndex, onCitationActivate],
+  );
+  const renderedContent = useMemo(
+    () =>
+      escapeModelCitationPlaceholders(
+        citationByIndex ? substituteCitationMarkers(content) : content,
+      ),
+    [citationByIndex, content],
+  );
   const rendered = citationByIndex ? (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePlugins}
-      components={createMarkdownComponents({
-        citationByIndex,
-        onActivate: onCitationActivate,
-      })}
-    >
-      {escapeModelCitationPlaceholders(substituteCitationMarkers(content))}
-    </ReactMarkdown>
+    <CitationContext.Provider value={citationContext}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={citationComponents}
+      >
+        {renderedContent}
+      </ReactMarkdown>
+    </CitationContext.Provider>
   ) : (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
       components={baseComponents}
     >
-      {escapeModelCitationPlaceholders(content)}
+      {renderedContent}
     </ReactMarkdown>
   );
   return <div className={styles.markdown}>{rendered}</div>;

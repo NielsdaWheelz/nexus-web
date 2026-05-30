@@ -1,5 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { gotoWithWorkspaceSession, makeWorkspacePane } from "./workspace";
+import {
+  gotoWithWorkspaceSession,
+  makeWorkspacePane,
+  makeWorkspaceState,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
@@ -13,18 +18,18 @@ test.describe("workspace pane minimize", () => {
   }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
-      {
-        activePaneId: "pane-libraries",
-        panes: [
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-minimize"),
+      makeWorkspaceState(
+        [
           makeWorkspacePane("pane-libraries", "/libraries", { primaryWidthPx: 480 }),
           makeWorkspacePane("pane-search", "/search", {
             primaryWidthPx: 480,
             visibility: "minimized",
           }),
         ],
-      },
-      "/libraries"
+        { activePrimaryPaneId: "pane-libraries" },
+      ),
+      "/libraries",
     );
 
     // The saved layout restores with Search already minimized: its toolbar

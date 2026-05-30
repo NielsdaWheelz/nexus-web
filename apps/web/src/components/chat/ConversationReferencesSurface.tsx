@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import ItemCard from "@/components/items/ItemCard";
 import type { ConversationReference } from "@/lib/conversations/types";
-import styles from "./ConversationReferencesSidecar.module.css";
+import styles from "./ConversationReferencesSurface.module.css";
 
 const SCHEME_ICONS: Record<string, LucideIcon> = {
   media: FileText,
@@ -30,7 +30,7 @@ const SCHEME_ICONS: Record<string, LucideIcon> = {
   message: MessageSquare,
 };
 
-export default function ConversationReferencesSidecar({
+export default function ConversationReferencesSurface({
   references,
   removeReference,
   onOpenResource,
@@ -43,7 +43,7 @@ export default function ConversationReferencesSidecar({
     return <p className={styles.empty}>No references yet.</p>;
   }
   return (
-    <div className={styles.sidecar}>
+    <div className={styles.secondary}>
       {references.map((reference) => {
         const Icon = SCHEME_ICONS[reference.resource_uri.split(":")[0]] ?? Link2;
         return (

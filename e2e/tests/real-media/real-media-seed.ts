@@ -4,11 +4,17 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import {
   expect,
-  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { stateChangingApiHeaders } from "../api";
+import { openHighlightsPane as openReaderHighlightsPane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
+import {
+  ACTIVE_WORKSPACE_PANE_SELECTOR,
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+} from "../workspace";
 
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
@@ -42,6 +48,10 @@ export const FRESH_REAL_MEDIA_FIXTURES = {
 } as const;
 
 export type RealMediaContentKind = keyof typeof CONTENT_KIND_LABELS;
+
+const REAL_MEDIA_WORKSPACE_DEVICE_ID = "real-media-e2e";
+let realMediaWorkspaceSequence = 0;
+const VISIBLE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-minimized="false"]';
 
 export interface RealMediaSearchResult {
   type: string;
@@ -148,7 +158,7 @@ export async function uploadFreshRealMediaFileThroughUi({
   const artifactSha256 = createHash("sha256").update(uploadBytes).digest("hex");
   expect(artifactSha256).not.toBe(seededSha256);
 
-  await page.goto("/libraries");
+  await gotoRealMediaSinglePane(page, "/libraries");
   await page.getByRole("button", { name: "Add content" }).click();
   const addContentDialog = page.getByRole("dialog", { name: "Add content" });
   await expect(addContentDialog).toBeVisible();
@@ -176,12 +186,7 @@ export async function uploadFreshRealMediaFileThroughUi({
   expect(ingest.data.duplicate).toBe(false);
   expect(ingest.data.ingest_enqueued).toBe(true);
   expect(ingest.data.media_id).not.toBe(seededMediaId);
-  await expect(page).toHaveURL(
-    new RegExp(`/media/${ingest.data.media_id}(\\?|$)`),
-    {
-      timeout: 30_000,
-    },
-  );
+  await expectCurrentMediaUrl(page, ingest.data.media_id, 30_000);
 
   const worker = await drainRealMediaWorkerForMediaReady(
     page,
@@ -542,25 +547,121 @@ export async function searchRealMediaEvidenceThroughUi(
     },
     { timeout: 60_000 },
   );
-  await page.goto(searchUrl);
+  await gotoRealMediaSinglePane(page, searchUrl);
+  const searchPane = activeWorkspacePane(page);
   await expect(
-    page.getByRole("group", { name: "Result types" }).getByLabel("Evidence"),
+    searchPane
+      .getByRole("group", { name: "Result types" })
+      .getByRole("checkbox", { name: "Evidence", exact: true }),
   ).toBeChecked();
   await expect(
-    page
+    searchPane
       .getByRole("group", { name: "Content kinds" })
       .getByLabel(CONTENT_KIND_LABELS[contentKind]),
   ).toBeChecked();
 
-  await expect(page.getByLabel("Search content")).toHaveValue(query);
+  await expect(searchPane.getByLabel("Search content")).toHaveValue(query);
   const response = await responsePromise;
   expect(
     response.ok(),
     `visible search for ${contentKind} should succeed`,
   ).toBeTruthy();
-  await expect(page.getByText("Searching...")).toBeHidden({ timeout: 15_000 });
+  await expect(searchPane.getByText("Searching...")).toBeHidden({
+    timeout: 15_000,
+  });
   const body = (await response.json()) as { results: RealMediaSearchResult[] };
   return { ...body, api_url: response.url() };
+}
+
+export async function gotoRealMediaSinglePane(page: Page, href: string) {
+  realMediaWorkspaceSequence += 1;
+  await gotoSinglePaneWorkspace(
+    page,
+    `${REAL_MEDIA_WORKSPACE_DEVICE_ID}-${process.pid}-${realMediaWorkspaceSequence}`,
+    href,
+  );
+}
+
+export function realMediaEvidenceResultLink(
+  page: Page,
+  mediaId: string,
+  evidenceSpanId?: string,
+) {
+  const evidenceNeedle = evidenceSpanId
+    ? `#evidence-${evidenceSpanId}`
+    : "#evidence-";
+  return activeWorkspacePane(page)
+    .locator(`a[href*="/media/${mediaId}${evidenceNeedle}"]`)
+    .first();
+}
+
+export async function expectCurrentMediaEvidenceUrl(
+  page: Page,
+  mediaId: string,
+  evidenceSpanId?: string,
+) {
+  await expectCurrentMediaUrl(page, mediaId);
+  if (evidenceSpanId) {
+    expect(new URL(page.url()).hash).toBe(`#evidence-${evidenceSpanId}`);
+  }
+}
+
+export async function expectCurrentMediaUrl(
+  page: Page,
+  mediaId: string,
+  timeout = 15_000,
+) {
+  await expect(page).toHaveURL(
+    new RegExp(`/media/${escapeRegExp(mediaId)}(?:[?#]|$)`),
+    { timeout },
+  );
+  await expect(activeWorkspacePane(page)).toBeVisible({ timeout });
+}
+
+export async function expectActivePaneHasNoLoadError(page: Page) {
+  await expect(activeWorkspacePane(page)).not.toContainText(
+    /not found|failed to load/i,
+  );
+}
+
+export async function openActivePaneOptions(
+  page: Page,
+  expectedItem?: string | RegExp,
+) {
+  const trigger = activeWorkspacePane(page)
+    .getByRole("button", { name: "Options" })
+    .first();
+  await expect(trigger).toBeVisible({ timeout: 15_000 });
+
+  if (!expectedItem) {
+    await trigger.click();
+    await expect(page.getByRole("menu").last()).toBeVisible({
+      timeout: 5_000,
+    });
+    return;
+  }
+
+  const deadline = Date.now() + 15_000;
+  let lastMenuItems: string[] = [];
+  while (Date.now() < deadline) {
+    await trigger.click();
+    await expect(page.getByRole("menu").last()).toBeVisible({ timeout: 2_000 });
+    const item = page.getByRole("menuitem", { name: expectedItem }).first();
+    if (await item.isVisible().catch(() => false)) {
+      return;
+    }
+    lastMenuItems = (await page.getByRole("menuitem").allTextContents().catch(
+      () => [],
+    )).map((label) => label.trim()).filter(Boolean);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(250);
+  }
+
+  throw new Error(
+    `Active pane options did not publish ${String(expectedItem)}; saw ${
+      lastMenuItems.length > 0 ? lastMenuItems.join(", ") : "<no menu items>"
+    }`,
+  );
 }
 
 function assertRealMediaStorageIsLocal() {
@@ -600,11 +701,17 @@ export async function expectVisibleTextEvidenceHighlight(
 ) {
   if (!evidenceSpanId) {
     await expect(
-      page.locator('[data-highlight-anchor^="evidence-"]').first(),
+      page
+        .locator(
+          `${VISIBLE_WORKSPACE_PANE_SELECTOR} [data-highlight-anchor^="evidence-"]`,
+        )
+        .first(),
     ).toBeAttached({ timeout: 15_000 });
-    await expect(page.locator(".hl-evidence").first()).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(
+      page
+        .locator(`${VISIBLE_WORKSPACE_PANE_SELECTOR} .hl-evidence`)
+        .first(),
+    ).toBeVisible({ timeout: 15_000 });
     return;
   }
 
@@ -615,7 +722,14 @@ export async function expectVisibleTextEvidenceHighlight(
   await expect(
     page
       .locator(
-        `[data-highlight-anchor="${escaped}"], [data-active-highlight-ids~="${escaped}"]`,
+        `${VISIBLE_WORKSPACE_PANE_SELECTOR} [data-highlight-anchor="${escaped}"]`,
+      )
+      .first(),
+  ).toBeAttached({ timeout: 15_000 });
+  await expect(
+    page
+      .locator(
+        `${VISIBLE_WORKSPACE_PANE_SELECTOR} [data-active-highlight-ids~="${escaped}"]`,
       )
       .first(),
   ).toBeVisible({ timeout: 15_000 });
@@ -632,14 +746,18 @@ export async function expectVisiblePdfEvidenceHighlight(
     await expect(
       page
         .locator(
-          `[data-testid^="pdf-highlight-${cssAttributeValue(highlightId)}-"]`,
+          `${VISIBLE_WORKSPACE_PANE_SELECTOR} [data-testid^="pdf-highlight-${cssAttributeValue(highlightId)}-"]`,
         )
         .first(),
     ).toBeVisible({ timeout: 15_000 });
     return;
   }
   await expect(
-    page.locator('[data-testid^="pdf-highlight-evidence-"]').first(),
+    page
+      .locator(
+        `${VISIBLE_WORKSPACE_PANE_SELECTOR} [data-testid^="pdf-highlight-evidence-"]`,
+      )
+      .first(),
   ).toBeVisible({ timeout: 15_000 });
 }
 
@@ -652,6 +770,7 @@ export async function cleanupRealMediaHighlight(
     const response = await page.request.delete(
       `/api/highlights/${highlightId}`,
       {
+        headers: stateChangingApiHeaders(),
         timeout: 5_000,
       },
     );
@@ -676,9 +795,32 @@ export async function openTranscriptEvidenceSegment(
   query: string,
   visibleHref: string,
 ) {
-  const startMsValue = new URL(visibleHref, page.url()).searchParams.get(
-    "t_start_ms",
-  );
+  const url = new URL(visibleHref, page.url());
+  let startMsValue = url.searchParams.get("t_start_ms");
+  if (startMsValue === null && url.hash.startsWith("#evidence-")) {
+    const mediaMatch = /^\/media\/([^/]+)$/.exec(url.pathname);
+    const evidenceSpanId = url.hash.slice("#evidence-".length);
+    if (mediaMatch && evidenceSpanId) {
+      const resolverResponse = await page.request.get(
+        `/api/media/${decodeURIComponent(mediaMatch[1])}/evidence/${evidenceSpanId}`,
+      );
+      const resolverPayload = (await resolverResponse.json()) as {
+        data?: {
+          resolver?: { params?: { t_start_ms?: string | number | null } };
+        };
+      };
+      expect(
+        resolverResponse.ok(),
+        `Transcript evidence resolver should load for ${visibleHref}`,
+      ).toBeTruthy();
+      const resolvedStartMs =
+        resolverPayload.data?.resolver?.params?.t_start_ms ?? null;
+      startMsValue =
+        typeof resolvedStartMs === "number"
+          ? String(resolvedStartMs)
+          : resolvedStartMs;
+    }
+  }
   const startMs = startMsValue === null ? Number.NaN : Number(startMsValue);
   if (!Number.isInteger(startMs) || startMs < 0) {
     throw new Error(
@@ -691,14 +833,15 @@ export async function openTranscriptEvidenceSegment(
     .padStart(2, "0")}:${Math.floor((totalSeconds % 3600) / 60)
     .toString()
     .padStart(2, "0")}:${(totalSeconds % 60).toString().padStart(2, "0")}`;
-  const segment = page
+  const activePane = activeWorkspacePane(page);
+  const segment = activePane
     .getByRole("button", { name: new RegExp(`^${escapeRegExp(timestamp)}\\b`) })
     .first();
   await expect(segment).toBeVisible({ timeout: 15_000 });
   await expect(segment).toHaveAttribute("aria-current", "true", {
     timeout: 10_000,
   });
-  const renderer = page.getByTestId("html-renderer");
+  const renderer = activePane.getByTestId("html-renderer").first();
   await expect(renderer).toBeVisible({ timeout: 10_000 });
   await expect(renderer).toContainText(new RegExp(escapeRegExp(query), "i"), {
     timeout: 10_000,
@@ -716,19 +859,27 @@ function cssAttributeValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function activePaneSelector(selector: string): string {
+  return selector.startsWith(ACTIVE_WORKSPACE_PANE_SELECTOR)
+    ? selector
+    : `${ACTIVE_WORKSPACE_PANE_SELECTOR} ${selector}`;
+}
+
 export async function createPdfHighlightThroughVisibleSelection(
   page: Page,
   mediaId: string,
 ): Promise<RealMediaSavedHighlightTrace> {
+  const activePane = activeWorkspacePane(page);
   await expect(
-    page
+    activePane
       .locator('[aria-label="PDF document"] .textLayer')
       .filter({ hasText: /\S/ })
       .first(),
   ).toBeVisible({ timeout: 15_000 });
 
-  const pageNumber = await page.evaluate(() => {
-    const selectionRoot = document.querySelector('[aria-label="PDF document"]');
+  const pdfRootSelector = activePaneSelector('[aria-label="PDF document"]');
+  const pageNumber = await page.evaluate((selector) => {
+    const selectionRoot = document.querySelector(selector);
     const visiblePages = Array.from(
       selectionRoot?.querySelectorAll<HTMLElement>(".page[data-page-number]") ??
         [],
@@ -744,8 +895,10 @@ export async function createPdfHighlightThroughVisibleSelection(
       .filter((entry) => entry.visibleHeight > 0)
       .sort((a, b) => b.visibleHeight - a.visibleHeight);
     return Number(visiblePages[0]?.element.dataset.pageNumber ?? "1");
-  });
-  const textLayerSelector = `.page[data-page-number="${pageNumber}"] .textLayer`;
+  }, pdfRootSelector);
+  const textLayerSelector = activePaneSelector(
+    `.page[data-page-number="${pageNumber}"] .textLayer`,
+  );
   await expect(
     page.locator(textLayerSelector).filter({ hasText: /\S/ }),
   ).toBeVisible({
@@ -768,7 +921,7 @@ export async function createPdfHighlightThroughVisibleSelection(
     { method: "range" },
   );
 
-  const highlightActions = page.getByRole("dialog", {
+  const highlightActions = activePane.getByRole("dialog", {
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
@@ -804,7 +957,7 @@ export async function createPdfHighlightThroughVisibleSelection(
     .replace(/"/g, '\\"');
   try {
     await expect(
-      page
+      activePane
         .locator(`[data-testid^="pdf-highlight-${highlightIdSelectorValue}-"]`)
         .first(),
     ).toBeVisible({ timeout: 15_000 });
@@ -830,8 +983,9 @@ export async function createFragmentHighlightThroughVisibleSelection(
   mediaId: string,
   containerSelector: string,
 ): Promise<RealMediaSavedHighlightTrace> {
+  const paneScopedContainerSelector = activePaneSelector(containerSelector);
   const container = page
-    .locator(containerSelector)
+    .locator(paneScopedContainerSelector)
     .filter({ hasText: /\S/ })
     .first();
   await expect(container).toBeVisible({
@@ -862,10 +1016,11 @@ export async function createFragmentHighlightThroughVisibleSelection(
 
   const selectedText = await selectFreshVisibleTextSnippet(
     page,
-    containerSelector,
+    paneScopedContainerSelector,
     existingExacts,
+    { method: "range" },
   );
-  const highlightActions = page.getByRole("dialog", {
+  const highlightActions = activeWorkspacePane(page).getByRole("dialog", {
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
@@ -899,12 +1054,12 @@ export async function createFragmentHighlightThroughVisibleSelection(
   try {
     await expect(
       page
-        .locator(containerSelector)
+        .locator(paneScopedContainerSelector)
         .locator(`[data-active-highlight-ids~="${highlightIdSelectorValue}"]`)
         .filter({ hasText: selectedText })
         .first(),
     ).toBeVisible({ timeout: 10_000 });
-    const highlightsPane = await openHighlightsPane(page);
+    const highlightsPane = await openReaderHighlightsPane(page);
     const row = highlightsPane
       .locator(`[data-highlight-id="${highlightIdSelectorValue}"]`)
       .first();
@@ -912,7 +1067,8 @@ export async function createFragmentHighlightThroughVisibleSelection(
       await expect(row).toBeVisible({ timeout: 10_000 });
     } catch (error) {
       const debug = await page.evaluate(
-        ({ containerSelector, highlightId, selectedText }) => {
+        ({ activeSelector, containerSelector, highlightId, selectedText }) => {
+          const activePane = document.querySelector<HTMLElement>(activeSelector);
           const container = document.querySelector(containerSelector);
           const escapedId = CSS.escape(highlightId);
           const targets = Array.from(
@@ -920,11 +1076,11 @@ export async function createFragmentHighlightThroughVisibleSelection(
               `[data-active-highlight-ids~="${escapedId}"]`,
             ) ?? [],
           );
-          const viewport = document.querySelector<HTMLElement>(
+          const viewport = activePane?.querySelector<HTMLElement>(
             '[data-testid="document-viewport"]',
           );
-          const sidecar = document.querySelector<HTMLElement>(
-            '[data-testid="workspace-sidecar-pane"]',
+          const secondary = activePane?.querySelector<HTMLElement>(
+            '[data-testid="workspace-secondary-pane"]',
           );
           return {
             targetCount: targets.length,
@@ -947,18 +1103,19 @@ export async function createFragmentHighlightThroughVisibleSelection(
                   clientHeight: viewport.clientHeight,
                 }
               : null,
-            sidecarText: sidecar?.textContent?.slice(0, 500) ?? null,
+            secondaryText: secondary?.textContent?.slice(0, 500) ?? null,
             selectedText,
           };
         },
         {
-          containerSelector,
+          activeSelector: ACTIVE_WORKSPACE_PANE_SELECTOR,
+          containerSelector: paneScopedContainerSelector,
           highlightId: createdHighlight.data.id,
           selectedText,
         },
       );
       throw new Error(
-        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights sidecar. Projection debug: ${JSON.stringify(debug)}`,
+        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights secondary. Projection debug: ${JSON.stringify(debug)}`,
         { cause: error },
       );
     }
@@ -972,24 +1129,9 @@ export async function createFragmentHighlightThroughVisibleSelection(
     fragment_id: createdHighlight.data.anchor.fragment_id,
     exact: createdHighlight.data.exact,
     selected_text: selectedText,
-    container_selector: containerSelector,
+    container_selector: paneScopedContainerSelector,
     action_selector:
       'dialog[aria-label="selection actions"] button[aria-label^="Green"]',
     request_url: createdHighlightResponse.url(),
   };
-}
-
-async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
-    await sidecar.getByRole("tab", { name: "Highlights" }).click();
-  } else {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  return page.getByTestId("anchored-highlights-container").first();
 }

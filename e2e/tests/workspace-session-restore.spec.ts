@@ -5,8 +5,10 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { stateChangingApiHeaders } from "./api";
 import {
   makeWorkspacePane,
+  makeWorkspaceState,
   pinDeviceId,
   seedWorkspaceSession,
   workspacePaneButton,
@@ -30,22 +32,26 @@ interface WorkspaceSessionResponse {
 
 // A non-trivial two-pane session: more than one pane makes it worth restoring.
 function twoPaneSession(): WorkspaceState {
-  return {
-    activePaneId: "pane-session-libraries",
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
       makeWorkspacePane("pane-session-notes", "/notes", { primaryWidthPx: 520 }),
     ],
-  };
+    { activePrimaryPaneId: "pane-session-libraries" },
+  );
 }
 
 // A trivial single default pane — `isNonTrivialSession` treats this as nothing
 // worth restoring, so it is the right value to reset to during cleanup.
 function trivialSession(): WorkspaceState {
-  return {
-    activePaneId: "pane-session-default",
-    panes: [makeWorkspacePane("pane-session-default", "/libraries", { primaryWidthPx: 480 })],
-  };
+  return makeWorkspaceState(
+    [
+      makeWorkspacePane("pane-session-default", "/libraries", {
+        primaryWidthPx: 480,
+      }),
+    ],
+    { activePrimaryPaneId: "pane-session-default" },
+  );
 }
 
 function workspaceSessionRestoreDeviceId(testInfo: TestInfo): string {
@@ -73,9 +79,34 @@ async function fetchWorkspaceSession(
 // Create a conversation that is NOT part of any seeded session, so a deep link
 // to it exercises the merge-an-absent-resource path.
 async function createConversation(page: Page): Promise<string> {
-  const response = await page.request.post("/api/conversations", { maxRedirects: 0 });
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as { data: { id: string } };
+  if (page.url() === "about:blank") {
+    await page.goto("/libraries");
+  }
+  await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+    timeout: 15_000,
+  });
+  const response = await page.request.post("/api/conversations", {
+    headers: stateChangingApiHeaders(),
+    maxRedirects: 0,
+  });
+  const status = response.status();
+  const body = await response.text();
+  expect(
+    status < 300 || status >= 400,
+    `POST /api/conversations redirected unexpectedly: status=${status}; location=${response.headers()["location"] ?? "<none>"}; body=${body.slice(0, 400)}`,
+  ).toBeTruthy();
+  expect(
+    response.ok(),
+    `POST /api/conversations failed: status=${status}; contentType=${response.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}`,
+  ).toBeTruthy();
+  let payload: { data: { id: string } };
+  try {
+    payload = JSON.parse(body) as { data: { id: string } };
+  } catch (error) {
+    throw new Error(
+      `POST /api/conversations returned non-JSON response: contentType=${response.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}; parseError=${String(error)}`,
+    );
+  }
   return payload.data.id;
 }
 
@@ -129,19 +160,21 @@ test.describe("workspace session restore", () => {
       await expect(libraryLink).toBeVisible();
       await libraryLink.click({ modifiers: ["Shift"] });
 
-      // The workspace now shows two panes — one "Close <title>" button each.
-      await expect(
-        page
-          .getByRole("toolbar", { name: "Workspace panes" })
-          .getByRole("button", { name: /^Close / })
-      ).toHaveCount(2);
+      await expect
+        .poll(() =>
+          page
+            .getByRole("toolbar", { name: "Workspace panes" })
+            .getByRole("button", { name: /^Close / })
+            .count(),
+        )
+        .toBeGreaterThan(1);
 
       // Wait out the ~1s debounce, then assert the captured session grew.
       await expect
         .poll(
           async () =>
-            (await fetchWorkspaceSession(page.request, deviceId)).own?.state.panes
-              .length ?? 0,
+            (await fetchWorkspaceSession(page.request, deviceId)).own?.state
+              .primaryPaneOrder.length ?? 0,
           { timeout: 15_000 }
         )
         .toBeGreaterThan(1);

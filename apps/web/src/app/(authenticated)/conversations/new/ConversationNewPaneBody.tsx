@@ -18,7 +18,6 @@ import {
 } from "react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import { apiFetch } from "@/lib/api/client";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -34,12 +33,12 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import type {
   ChatRunResponse,
   ConversationReference,
   ConversationMessage,
 } from "@/lib/conversations/types";
+import { useConversationContextSecondary } from "../useConversationContextSecondary";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -126,33 +125,13 @@ export default function ConversationNewPaneBody() {
       {
         id: "open-references",
         label: "References",
-        onSelect: () => paneRuntime?.openSidecar("conversation-references"),
+        onSelect: () => paneRuntime?.requestSecondarySurface("conversation-references"),
       },
     ],
     [paneRuntime],
   );
   usePaneChromeOverride({ options: paneOptions });
-  const sidecarDescriptor = useMemo(
-    () => ({
-      groupId: "conversation-context" as const,
-      defaultSurfaceId: "conversation-references" as const,
-      surfaces: [
-        {
-          id: "conversation-references" as const,
-          body: (
-            <div className={styles.chatSidecarBody}>
-              <ConversationReferencesSidecar
-                references={references}
-                removeReference={removeReference}
-              />
-            </div>
-          ),
-        },
-      ],
-    }),
-    [references, removeReference],
-  );
-  usePaneSidecar(sidecarDescriptor);
+  useConversationContextSecondary({ references, removeReference });
 
   const handleSendStarted = useCallback(() => {
     setResolveError(null);

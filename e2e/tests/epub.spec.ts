@@ -1,7 +1,21 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { stateChangingApiHeaders } from "./api";
+import { openHighlightsPane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
+import {
+  activePaneSelector,
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededEpubMedia {
   media_id: string;
@@ -88,6 +102,7 @@ async function upsertHighlightNote(
           relation_type: "note_about",
         },
       },
+      headers: stateChangingApiHeaders(),
     });
     expect(response.ok()).toBeTruthy();
     return;
@@ -100,6 +115,7 @@ async function upsertHighlightNote(
       base_revision: primaryRevision,
       body_pm_json: paragraphPmJsonFromText(body),
     },
+    headers: stateChangingApiHeaders(),
   });
   expect(updateResponse.ok()).toBeTruthy();
 
@@ -107,6 +123,7 @@ async function upsertHighlightNote(
     const revision = await noteBlockRevision(page, noteBlockId);
     const deleteResponse = await page.request.delete(`/api/notes/blocks/${noteBlockId}`, {
       data: { base_revision: revision },
+      headers: stateChangingApiHeaders(),
     });
     expect(deleteResponse.ok()).toBeTruthy();
   }
@@ -286,6 +303,7 @@ async function putReaderState(
 ): Promise<ReaderResumeState | null> {
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
+    headers: stateChangingApiHeaders(),
   });
   const body = await response.text();
   expect(
@@ -323,6 +341,7 @@ async function ensureFragmentHighlight(
         end_offset: endOffset,
         color,
       },
+      headers: stateChangingApiHeaders(),
     }
   );
 
@@ -359,8 +378,8 @@ async function readLinkedItemOrder(
   page: Page,
   highlightIds: string[]
 ): Promise<{ order: string[]; missing: string[] }> {
-  return await page.evaluate((ids) => {
-    const linkedContainer = document.querySelector<HTMLElement>(
+  return await activeWorkspacePane(page).evaluate((pane, ids) => {
+    const linkedContainer = pane.querySelector<HTMLElement>(
       '[data-testid="anchored-highlights-container"]'
     );
 
@@ -379,30 +398,6 @@ async function readLinkedItemOrder(
       missing: ids.filter((id) => !rowIds.includes(id)),
     };
   }, highlightIds);
-}
-
-async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
-    await sidecar.getByRole("tab", { name: "Highlights" }).click();
-  } else {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  return page.getByTestId("anchored-highlights-container").first();
-}
-
-
-function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to document chat" });
-}
-
-function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Add highlight to library chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -439,6 +434,7 @@ async function rowContainsVisibleTextOrFieldValue(
 }
 
 async function expectHighlightRowVisible(
+  page: Page,
   row: Locator,
   noteText: string
 ): Promise<void> {
@@ -446,14 +442,26 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
-  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
-  await expect(rowActionsButton(row)).toHaveCount(1);
+  await rowActionsButton(row).click();
+  const actionsMenu = page.getByRole("menu");
+  await expect(
+    actionsMenu.getByRole("menuitem", { name: "Quote to new chat" })
+  ).toBeVisible();
+  await expect(
+    actionsMenu.getByRole("menuitem", { name: "Quote to existing chat" })
+  ).toBeVisible();
+  await expect(
+    actionsMenu.getByRole("menuitem", { name: "Edit bounds" })
+  ).toBeVisible();
+  await expect(
+    actionsMenu.getByRole("menuitem", { name: "Delete highlight" })
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
 }
 
 async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<number | null> {
-  return page.evaluate((id) => {
-    const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+  return activeWorkspacePane(page).evaluate((pane, id) => {
+    const contentRoot = pane.querySelector<HTMLElement>('div[class*="fragments"]');
     if (!contentRoot) {
       return null;
     }
@@ -486,8 +494,8 @@ async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<
 }
 
 async function readEpubContentScrollTop(page: Page): Promise<number | null> {
-  return page.evaluate(() => {
-    const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+  return activeWorkspacePane(page).evaluate((pane) => {
+    const contentRoot = pane.querySelector<HTMLElement>('div[class*="fragments"]');
     if (!contentRoot) {
       return null;
     }
@@ -542,7 +550,7 @@ async function wheelUntilLocatorInViewport(
   locator: Locator,
   maxAttempts = 12
 ): Promise<void> {
-  const contentRoot = page.locator('div[class*="fragments"]').first();
+  const contentRoot = activeWorkspacePane(page).locator('div[class*="fragments"]').first();
   await expect(contentRoot).toBeVisible({ timeout: 15_000 });
   await contentRoot.hover();
 
@@ -550,8 +558,8 @@ async function wheelUntilLocatorInViewport(
     if (await isLocatorInReaderViewport(locator)) {
       return;
     }
-    await page.evaluate(() => {
-      const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+    await activeWorkspacePane(page).evaluate((pane) => {
+      const contentRoot = pane.querySelector<HTMLElement>('div[class*="fragments"]');
       if (!contentRoot) {
         window.scrollBy(0, 700);
         return;
@@ -586,6 +594,25 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
+function epubDeviceId(testInfo: TestInfo): string {
+  return workspaceE2eDeviceId(testInfo, "e2e-epub");
+}
+
+async function gotoEpubReader(
+  page: Page,
+  testInfo: TestInfo,
+  mediaId: string,
+  sectionId?: string,
+): Promise<Locator> {
+  const href = mediaId.startsWith("/")
+    ? mediaId
+    : sectionId
+      ? `/media/${mediaId}?loc=${encodeURIComponent(sectionId)}`
+      : `/media/${mediaId}`;
+  await gotoSinglePaneWorkspace(page, epubDeviceId(testInfo), href);
+  return activeWorkspacePane(page);
+}
+
 const RESERVED_EPUB_HIGHLIGHT_EXACTS = [
   "introduction chapter of the E2E test EPUB",
   "Deterministic pre-anchor filler paragraph 2 for E2E.",
@@ -598,7 +625,7 @@ async function selectSectionByLabel(
   page: Page,
   label: string,
 ): Promise<void> {
-  const sectionSelect = page.getByLabel("Select section");
+  const sectionSelect = activeWorkspacePane(page).getByLabel("Select section");
   await expect(sectionSelect).toBeVisible({ timeout: 15_000 });
   await expect(sectionSelect.locator("option").filter({ hasText: label })).toHaveCount(1, {
     timeout: 10_000,
@@ -610,7 +637,8 @@ async function clickToolbarAction(
   page: Page,
   name: string | RegExp,
 ): Promise<void> {
-  const inlineButton = page.getByRole("button", { name }).first();
+  const activePane = activeWorkspacePane(page);
+  const inlineButton = activePane.getByRole("button", { name }).first();
   if (
     (await inlineButton.count()) > 0 &&
     (await inlineButton.isVisible().catch(() => false))
@@ -620,7 +648,7 @@ async function clickToolbarAction(
     return;
   }
 
-  const overflowToggle = page.getByRole("button", { name: "More actions" }).first();
+  const overflowToggle = activePane.getByRole("button", { name: "More actions" }).first();
   if (
     (await overflowToggle.count()) > 0 &&
     (await overflowToggle.isVisible().catch(() => false))
@@ -644,9 +672,9 @@ test.describe("epub", () => {
     await putReaderState(page, seed.media_id, null);
   });
 
-  test("upload EPUB", async ({ page }) => {
-    await page.goto("/libraries");
-    await page.getByRole("button", { name: "Add content" }).click();
+  test("upload EPUB", async ({ page }, testInfo) => {
+    await gotoEpubReader(page, testInfo, "/libraries");
+    await page.locator("nav").getByRole("button", { name: "Add content" }).click();
     const addContentDialog = page.getByRole("dialog", { name: "Add content" });
     await expect(addContentDialog).toBeVisible();
     // Verify the file upload mechanism is available
@@ -655,26 +683,28 @@ test.describe("epub", () => {
     await expect(fileInput.or(uploadButton).first()).toBeAttached();
   });
 
-  test("open reader", async ({ page }) => {
+  test("open reader", async ({ page }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     // First section heading should be visible (use heading role to avoid
     // strict mode violation with the <option> in the section selector)
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
   });
 
-  test("renders EPUB image assets through the BFF when present", async ({ page }) => {
+  test("renders EPUB image assets through the BFF when present", async ({
+    page,
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const renderer = page.getByTestId("html-renderer").first();
+    const renderer = activePane.getByTestId("html-renderer").first();
     await expect(renderer).toBeVisible();
     const imageCount = await renderer.locator("img").count();
     expect(imageCount).toBeGreaterThan(0);
@@ -711,15 +741,17 @@ test.describe("epub", () => {
       .toBe(true);
   });
 
-  test("publisher CSS does not affect EPUB reader chrome", async ({ page }) => {
+  test("publisher CSS does not affect EPUB reader chrome", async ({
+    page,
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const renderer = page.getByTestId("html-renderer").first();
+    const renderer = activePane.getByTestId("html-renderer").first();
     await expect(renderer).toBeVisible();
     await expect
       .poll(async () =>
@@ -733,7 +765,7 @@ test.describe("epub", () => {
         stylesheetCount: 0,
       });
 
-    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+    const chrome = activePane.locator('[data-testid="pane-shell-chrome"]').first();
     await expect(chrome).toBeVisible();
     const chromeState = await chrome.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -751,25 +783,25 @@ test.describe("epub", () => {
     expect(chromeState.height).toBeGreaterThan(0);
   });
 
-  test("navigate sections", async ({ page }) => {
+  test("navigate sections", async ({ page }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
 
     // Wait for the first section to load
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
     await clickToolbarAction(page, /Next section/);
 
-    const sectionSelect = page.getByLabel("Select section");
+    const sectionSelect = activePane.getByLabel("Select section");
     await expect(sectionSelect).toBeVisible();
     await sectionSelect.selectOption({ label: seed.chapter_titles[1] });
 
     // The second section heading should now be visible
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[1] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });
 
     // The selector should include at least the seeded section labels.
@@ -783,17 +815,19 @@ test.describe("epub", () => {
       .toBe(true);
   });
 
-  test("explicit loc query wins over saved EPUB resume locator", async ({ page }) => {
+  test("explicit loc query wins over saved EPUB resume locator", async ({
+    page,
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     const secondSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[1]);
 
     await putReaderState(page, seed.media_id, buildEpubReaderState(secondSection));
 
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    let activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
-    ).toBeVisible({ timeout: 15_000 });
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => new URL(page.url()).searchParams.get("loc"))
       .toBe(firstSection.section_id);
@@ -816,14 +850,15 @@ test.describe("epub", () => {
     });
 
     await page.reload();
+    activePane = activeWorkspacePane(page);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
   });
 
   test("manual scroll before delayed EPUB restore settles does not snap back late", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     const sectionDetail = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
@@ -842,12 +877,12 @@ test.describe("epub", () => {
       },
     }));
 
-    await page.goto(`/media/${seed.media_id}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const manualScrollTarget = page.getByText(manualScrollQuote, { exact: true }).first();
+    const manualScrollTarget = activePane.getByText(manualScrollQuote, { exact: true }).first();
     await wheelUntilLocatorInViewport(page, manualScrollTarget);
     await expectLocatorInReaderViewport(manualScrollTarget);
 
@@ -867,36 +902,40 @@ test.describe("epub", () => {
 
   test("toc leaf with anchor lands at exact in-fragment target", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
 
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const anchorLeaf = page.getByRole("button", { name: seed.toc_anchor_label });
+    const anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
     if (
       (await anchorLeaf.count()) === 0 ||
       !(await anchorLeaf.first().isVisible().catch(() => false))
     ) {
-      const optionsButton = page.getByRole("button", { name: "Options" });
-      await expect(optionsButton).toBeVisible();
-      await optionsButton.click();
-      const showToc = page.getByRole("menuitem", { name: "Show table of contents" });
-      await expect(showToc).toBeVisible();
-      await showToc.click();
+      const contentsButton = activePane.getByRole("button", { name: "Contents" });
+      await expect(contentsButton).toBeVisible();
+      await contentsButton.click();
     }
 
     await expect(anchorLeaf).toBeVisible();
     await anchorLeaf.click();
 
-    await expect(page.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible({
+    await expect(activePane.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(anchorLeaf).toHaveAttribute("class", /tocActive/);
+    if (await anchorLeaf.isVisible().catch(() => false)) {
+      await expect(anchorLeaf).toHaveAttribute("class", /tocActive/);
+    } else {
+      await expect(activePane.getByRole("combobox", { name: "Select section" })).toHaveAttribute(
+        "title",
+        seed.toc_anchor_label,
+      );
+    }
     await expect
       .poll(async () => {
         return page.evaluate((anchorId) => {
@@ -909,8 +948,8 @@ test.describe("epub", () => {
         }, seed.toc_anchor_target_id);
       })
       .toBe(true);
-    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
-    const target = page.locator(`#${seed.toc_anchor_target_id}`).first();
+    const chrome = activePane.locator('[data-testid="pane-shell-chrome"]').first();
+    const target = activePane.locator(`#${seed.toc_anchor_target_id}`).first();
     const targetBox = await target.boundingBox();
     expect(targetBox).not.toBeNull();
     if (await chrome.isVisible().catch(() => false)) {
@@ -922,7 +961,7 @@ test.describe("epub", () => {
     }
   });
 
-  test("create highlight in epub", async ({ page }) => {
+  test("create highlight in epub", async ({ page }, testInfo) => {
     test.slow();
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
@@ -938,18 +977,18 @@ test.describe("epub", () => {
       ...existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact),
       ...RESERVED_EPUB_HIGHLIGHT_EXACTS,
     ];
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
 
     // Wait for section content to load
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const highlightedSegments = page.locator('[class*="fragments"] [data-active-highlight-ids]');
+    const highlightedSegments = activePane.locator('[class*="fragments"] [data-active-highlight-ids]');
     const beforeHighlightedCount = await highlightedSegments.count();
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
-      'div[class*="fragments"]',
+      activePaneSelector('div[class*="fragments"]'),
       existingExacts
     );
 
@@ -983,23 +1022,27 @@ test.describe("epub", () => {
       .toBeGreaterThan(beforeHighlightedCount);
     await expect(
       page
-        .locator('[class*="fragments"] [data-active-highlight-ids]')
+        .locator(activePaneSelector('[class*="fragments"] [data-active-highlight-ids]'))
         .filter({ hasText: selectedText })
         .first()
     ).toBeVisible();
 
     const deleteResponse = await page.request.delete(
-      `/api/highlights/${createdHighlightPayload.data.id}`
+      `/api/highlights/${createdHighlightPayload.data.id}`,
+      { headers: stateChangingApiHeaders() },
     );
     expect(deleteResponse.ok()).toBeTruthy();
   });
 
-  test("linked-items keep highlight order stable after reload", async ({ page }) => {
+  test("linked-items keep highlight order stable after reload", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    let activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
     const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
 
@@ -1029,10 +1072,10 @@ test.describe("epub", () => {
     const targetIds = [highlightA.id, highlightB.id];
 
     for (let iteration = 0; iteration < 2; iteration++) {
-      await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+      activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
       await expect(
-        page.getByRole("heading", { name: seed.chapter_titles[0] })
-      ).toBeVisible({ timeout: 15_000 });
+        activePane.getByRole("heading", { name: seed.chapter_titles[0] })
+      ).toBeVisible({ timeout: 30_000 });
       await openHighlightsPane(page);
 
       await expect
@@ -1052,7 +1095,7 @@ test.describe("epub", () => {
 
   test("section-scoped highlights expand inline while context and source focus stay in sync", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededEpubMedia();
 
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
@@ -1117,14 +1160,14 @@ test.describe("epub", () => {
       "EPUB chapter two inspector note."
     );
 
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
     const highlightsPane = await openHighlightsPane(page);
 
     await expect(
-      page.getByRole("button", { name: /all highlights|entire book/i })
+      activePane.getByRole("button", { name: /all highlights|entire book/i })
     ).toHaveCount(0);
 
     const chapter1PrimaryRow = highlightsPane
@@ -1134,13 +1177,13 @@ test.describe("epub", () => {
       .locator(`[data-highlight-id="${chapter1SecondaryHighlight.id}"]`)
       .first();
     const chapter2Row = highlightsPane.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
-    const chapter1PrimaryAnchor = page
+    const chapter1PrimaryAnchor = activePane
       .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
       .first();
-    const chapter1SecondaryAnchor = page
+    const chapter1SecondaryAnchor = activePane
       .locator(`[data-active-highlight-ids~="${chapter1SecondaryHighlight.id}"]`)
       .first();
-    const chapter2Anchor = page
+    const chapter2Anchor = activePane
       .locator(`[data-active-highlight-ids~="${chapter2Highlight.id}"]`)
       .first();
 
@@ -1158,11 +1201,12 @@ test.describe("epub", () => {
       .toBeLessThan(170);
     await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
+      page,
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
     );
-    await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
+    await expect(activePane.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
+    await expect(activePane.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
     await chapter1SecondaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
@@ -1177,6 +1221,7 @@ test.describe("epub", () => {
       .toBeLessThan(170);
     await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
+      page,
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
     );
@@ -1192,13 +1237,14 @@ test.describe("epub", () => {
     });
     await chapter1PrimaryAnchor.click();
     await expectHighlightRowVisible(
+      page,
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
     );
 
     await selectSectionByLabel(page, seed.chapter_titles[1]);
     await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[1] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });
     await expect(chapter1PrimaryRow).toHaveCount(0);
     await expect(chapter1SecondaryRow).toHaveCount(0);
@@ -1208,6 +1254,6 @@ test.describe("epub", () => {
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
     await chapter2RowInView.click();
-    await expectHighlightRowVisible(chapter2RowInView, "EPUB chapter two inspector note.");
+    await expectHighlightRowVisible(page, chapter2RowInView, "EPUB chapter two inspector note.");
   });
 });

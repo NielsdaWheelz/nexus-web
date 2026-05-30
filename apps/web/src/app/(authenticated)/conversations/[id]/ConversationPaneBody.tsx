@@ -21,7 +21,6 @@ import { createRandomId } from "@/lib/createRandomId";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
-import ConversationReferencesSidecar from "@/components/chat/ConversationReferencesSidecar";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -51,7 +50,6 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import {
   FeedbackNotice,
   toFeedback,
@@ -63,14 +61,16 @@ import {
   restoreBranchScroll,
   type BranchScroll,
 } from "./branchScroll";
+import { useConversationContextSecondary } from "../useConversationContextSecondary";
 import styles from "../page.module.css";
 
 type Conversation = ConversationSummary;
 
 type ChatRunData = ChatRunResponse["data"];
+type TerminalChatRunStatus = "complete" | "error" | "cancelled";
 
 // ============================================================================
-// ConversationPaneBody — chat view with inline references sidecar
+// ConversationPaneBody — chat view with inline references secondary
 // ============================================================================
 
 const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
@@ -85,26 +85,43 @@ const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
   message: "message",
 };
 
+function isTerminalChatRunStatus(
+  status: ChatRunData["run"]["status"],
+): status is TerminalChatRunStatus {
+  return status === "complete" || status === "error" || status === "cancelled";
+}
+
 export default function ConversationPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("conversation route requires an id");
 
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const runIdFromUrl = paneRuntime?.searchParams.get("run") ?? null;
+  const paneSearch = paneRuntime?.searchParams.toString() ?? "";
+  const runIdFromUrl = useMemo(
+    () => new URLSearchParams(paneSearch).get("run"),
+    [paneSearch],
+  );
+  const paneSearchRef = useRef(paneSearch);
+  const routerRef = useRef(router);
+
+  useLayoutEffect(() => {
+    paneSearchRef.current = paneSearch;
+    routerRef.current = router;
+  }, [paneSearch, router]);
 
   const clearRunParam = useCallback(
     (runId: string) => {
-      const searchParams = paneRuntime?.searchParams;
-      if (!searchParams || searchParams.get("run") !== runId) return;
+      const searchParams = new URLSearchParams(paneSearchRef.current);
+      if (searchParams.get("run") !== runId) return;
       const cleaned = new URLSearchParams(searchParams);
       cleaned.delete("run");
       const qs = cleaned.toString();
-      router.replace(
+      routerRef.current.replace(
         qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`,
       );
     },
-    [id, paneRuntime, router],
+    [id],
   );
 
   return (
@@ -339,6 +356,7 @@ function ChatView({
 
   const tailVisibleActiveRuns = useCallback(
     async (visibleMessageIds: Set<string>, skipRunId: string | null = null) => {
+      if (visibleMessageIds.size === 0) return;
       try {
         if (!activeRunsRequestRef.current) {
           activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
@@ -379,29 +397,33 @@ function ChatView({
         const tree = await loadConversationTree();
         if (cancelled) return;
         setError(null);
+        setLoading(false);
         if (runIdFromUrl) {
-          try {
-            const runResponse = await apiFetch<ChatRunResponse>(
-              `/api/chat-runs/${runIdFromUrl}`,
-            );
-            if (cancelled) return;
-            if (runResponse.data.conversation.id === id) {
-              void tailChatRun(runResponse.data);
+          void (async () => {
+            try {
+              const runResponse = await apiFetch<ChatRunResponse>(
+                `/api/chat-runs/${runIdFromUrl}`,
+              );
+              if (cancelled) return;
+              if (runResponse.data.conversation.id === id) {
+                if (isTerminalChatRunStatus(runResponse.data.run.status)) {
+                  onRunFinished(runIdFromUrl);
+                } else {
+                  void tailChatRun(runResponse.data);
+                }
+              }
+            } catch (err) {
+              console.error("Failed to load requested chat run:", err);
             }
-          } catch (err) {
-            console.error("Failed to load requested chat run:", err);
-          }
+          })();
         }
-        await tailVisibleActiveRuns(
+        void tailVisibleActiveRuns(
           messageIdsForPath(tree.selected_path, tree.active_leaf_message_id),
           runIdFromUrl,
         );
       } catch (err) {
         if (!cancelled) {
           setError(toFeedback(err, { fallback: "Failed to load conversation" }));
-        }
-      } finally {
-        if (!cancelled) {
           setLoading(false);
         }
       }
@@ -414,6 +436,7 @@ function ChatView({
     id,
     loadConversationTree,
     messageIdsForPath,
+    onRunFinished,
     runIdFromUrl,
     tailChatRun,
     tailVisibleActiveRuns,
@@ -710,12 +733,12 @@ function ChatView({
       {
         id: "open-references",
         label: "References",
-        onSelect: () => paneRuntime?.openSidecar("conversation-references"),
+        onSelect: () => paneRuntime?.requestSecondarySurface("conversation-references"),
       },
       {
         id: "open-forks",
         label: "Forks",
-        onSelect: () => paneRuntime?.openSidecar("conversation-forks"),
+        onSelect: () => paneRuntime?.requestSecondarySurface("conversation-forks"),
       },
       ...conversationResourceOptions({
         deleting,
@@ -727,64 +750,43 @@ function ChatView({
     [deleting, handleDeleteConversation, paneRuntime],
   );
   usePaneChromeOverride({ options: paneOptions });
-  const sidecarDescriptor = useMemo(
-    () => ({
-      groupId: "conversation-context" as const,
-      defaultSurfaceId: "conversation-references" as const,
-      surfaces: [
-        {
-          id: "conversation-references" as const,
-          body: (
-            <div className={styles.chatSidecarBody}>
-              <ConversationReferencesSidecar
-                references={references}
-                removeReference={removeReference}
-                onOpenResource={handleOpenResource}
-              />
-            </div>
-          ),
-        },
-        {
-          id: "conversation-forks" as const,
-          body: (
-            <div className={styles.chatSidecarBody}>
-              <ConversationForksPanel
-                conversationId={id}
-                forkOptionsByParentId={forkOptionsByParentId}
-                branchGraph={branchGraph}
-                switchableLeafIds={switchableLeafIds}
-                activeLeafMessageId={activeLeafMessageId}
-                selectedPathMessageIds={selectedPathIdsRef.current}
-                onSelectFork={(fork) => {
-                  void switchToFork(fork);
-                }}
-                onSelectGraphLeaf={(leafId) => {
-                  void switchToLeaf(leafId, null);
-                }}
-                onForksChanged={() => {
-                  void reloadConversationTree();
-                }}
-              />
-            </div>
-          ),
-        },
-      ],
-    }),
+  const forksBody = useMemo(
+    () => (
+      <ConversationForksPanel
+        conversationId={id}
+        forkOptionsByParentId={forkOptionsByParentId}
+        branchGraph={branchGraph}
+        switchableLeafIds={switchableLeafIds}
+        activeLeafMessageId={activeLeafMessageId}
+        selectedPathMessageIds={selectedPathIdsRef.current}
+        onSelectFork={(fork) => {
+          void switchToFork(fork);
+        }}
+        onSelectGraphLeaf={(leafId) => {
+          void switchToLeaf(leafId, null);
+        }}
+        onForksChanged={() => {
+          void reloadConversationTree();
+        }}
+      />
+    ),
     [
       activeLeafMessageId,
       branchGraph,
       forkOptionsByParentId,
-      handleOpenResource,
       id,
-      references,
       reloadConversationTree,
-      removeReference,
       switchToFork,
       switchToLeaf,
       switchableLeafIds,
     ],
   );
-  usePaneSidecar(sidecarDescriptor);
+  useConversationContextSecondary({
+    references,
+    removeReference,
+    onOpenResource: handleOpenResource,
+    forksBody,
+  });
 
   // --------------------------------------------------------------------------
   // Render

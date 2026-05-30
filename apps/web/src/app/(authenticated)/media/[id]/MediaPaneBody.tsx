@@ -17,7 +17,7 @@ import {
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import AnchoredHighlightsSidecar from "@/components/reader/AnchoredHighlightsSidecar";
+import ReaderHighlightsSurface from "@/components/reader/ReaderHighlightsSurface";
 import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
 import {
@@ -77,6 +77,7 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   usePaneParam,
+  usePaneSearchParams,
   useSetPaneTitle,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -85,10 +86,10 @@ import {
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 import {
-  usePaneSidecar,
-  type PaneSidecarPublication,
-  type PaneSidecarSurfacePublication,
-} from "@/components/workspace/PaneSidecar";
+  usePaneSecondary,
+  type PaneSecondaryPublication,
+  type PaneSecondarySurfacePublication,
+} from "@/components/workspace/PaneSecondary";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
@@ -160,6 +161,7 @@ import ContributorCreditList from "@/components/contributors/ContributorCreditLi
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
+  buildEpubLocationHref,
   type NavigationTocNodeLike,
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
@@ -297,8 +299,6 @@ interface EpubSectionContent {
 }
 
 interface PdfHighlightsPaneState {
-  activePage: number;
-  highlights: PdfHighlightOut[];
   version: number;
 }
 
@@ -330,8 +330,6 @@ const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
 
 const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
-  activePage: 1,
-  highlights: [],
   version: 0,
 };
 
@@ -407,6 +405,7 @@ export default function MediaPaneBody({
     throw new Error("media route requires an id");
   }
 
+  const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
   const paneMobileChrome = usePaneMobileChromeController();
   const {
@@ -417,12 +416,20 @@ export default function MediaPaneBody({
     clearTarget,
   } = useReaderTarget(id);
   const requestedFragmentId =
-    target?.kind === "fragment" ? target.value : null;
+    target?.kind === "fragment"
+      ? target.value
+      : (paneSearchParams.get("fragment")?.trim() || null);
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
   const requestedEvidenceId =
     target?.kind === "evidence" ? target.value : null;
-  const requestedReaderLoc = target?.kind === "loc" ? target.value : null;
+  const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
+  const requestedReaderLoc =
+    target?.kind === "loc"
+      ? target.value
+      : requestedLocParam.length > 0
+        ? requestedLocParam
+        : null;
   const requestedPdfPageNumber =
     target?.kind === "page" ? Number(target.value) : null;
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
@@ -646,7 +653,7 @@ export default function MediaPaneBody({
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
-  const sidecarFocusScrollAppliedRef = useRef<string | null>(null);
+  const secondaryFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
   const webSectionScrollKeyRef = useRef<string | null>(null);
@@ -658,12 +665,15 @@ export default function MediaPaneBody({
   // A highlight URI parked for "quote to existing chat": the next chat the user
   // picks (or creates) in the doc-chat list gets this attached as a reference.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
-  // When set, the doc-chat sidecar surface shows this conversation inline (instead of
+  // When set, the doc-chat secondary surface shows this conversation inline (instead of
   // the chat list), with a link out to the full conversation pane.
-  const [sidecarChat, setSidecarChat] = useState<{
+  const [secondaryChat, setSecondaryChat] = useState<{
     conversationId: string | null;
     quoteUri: string | null;
+    quoteLabel: string | null;
   } | null>(null);
+  const docChatSurfaceActivatedRef = useRef(false);
+  const appliedRequestedReaderLocRef = useRef<string | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -1412,9 +1422,18 @@ export default function MediaPaneBody({
   useEffect(() => {
     if (!isEpub || !epubSections || epubSections.length === 0) return;
     const locParam = activeRequestedReaderLoc;
-    if (!locParam || locParam === activeSectionId) return;
+    if (!locParam) {
+      appliedRequestedReaderLocRef.current = null;
+      return;
+    }
+    if (locParam === activeSectionId) {
+      appliedRequestedReaderLocRef.current = locParam;
+      return;
+    }
+    if (appliedRequestedReaderLocRef.current === locParam) return;
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
+    appliedRequestedReaderLocRef.current = locParam;
     beginRestoreSession("opening_target");
     setActiveSectionId(section.section_id);
     setEpubRestoreRequest(
@@ -1437,6 +1456,7 @@ export default function MediaPaneBody({
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
     setActiveWebSectionId(null);
+    appliedRequestedReaderLocRef.current = null;
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
@@ -1455,7 +1475,7 @@ export default function MediaPaneBody({
     const section = webSections.find(
       (item) => item.section_id === activeRequestedReaderLoc,
     );
-    if (!section) {
+    if (!section?.fragment_id) {
       setActiveWebSectionId(null);
       feedback.show({
         severity: "warning",
@@ -1464,11 +1484,17 @@ export default function MediaPaneBody({
       return;
     }
 
+    setTarget({
+      kind: "fragment",
+      value: section.fragment_id,
+      origin: "manual",
+    });
     setActiveWebSectionId(section.section_id);
   }, [
     activeRequestedReaderLoc,
     feedback,
     media?.kind,
+    setTarget,
     webSections,
   ]);
 
@@ -2989,12 +3015,6 @@ export default function MediaPaneBody({
   const applyToAllHighlightSlots = useCallback(
     (transform: HighlightNoteBlockTransform) => {
       if (isPdf) {
-        setPdfHighlightsPaneState((current) => {
-          const next = transform(current.highlights);
-          return next === current.highlights
-            ? current
-            : { ...current, highlights: next };
-        });
         setPdfDocumentHighlights((current) => transform(current));
         return;
       }
@@ -3043,36 +3063,58 @@ export default function MediaPaneBody({
   );
 
   // ==========================================================================
-  // Chat sidecar
+  // Chat secondary
   // ==========================================================================
 
-  const revealDocChatSidecar = useCallback(() => {
-    paneRuntime?.openSidecar("reader-doc-chat");
+  const revealDocChatSecondary = useCallback(() => {
+    paneRuntime?.requestSecondarySurface("reader-doc-chat");
   }, [paneRuntime]);
 
   // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
   const openDocChat = useCallback(() => {
     setPendingQuoteUri(null);
-    setSidecarChat(null);
-    revealDocChatSidecar();
-  }, [revealDocChatSidecar]);
+    setSecondaryChat(null);
+    revealDocChatSecondary();
+  }, [revealDocChatSecondary]);
 
-  // Open an existing conversation inline in the sidecar, carrying any pending quote.
-  const openChatInSidecar = useCallback(
-    (conversationId: string) => {
-      setSidecarChat({ conversationId, quoteUri: pendingQuoteUri });
-      setPendingQuoteUri(null);
-      revealDocChatSidecar();
+  const quoteLabelForHighlightId = useCallback(
+    (highlightId: string): string => {
+      return (
+        mediaHighlights.find((item) => item.id === highlightId)?.exact ??
+        "Selected quote"
+      );
     },
-    [pendingQuoteUri, revealDocChatSidecar],
+    [mediaHighlights],
   );
 
-  // Start a new (unsent) conversation inline in the sidecar, carrying any pending quote.
-  const startChatInSidecar = useCallback(() => {
-    setSidecarChat({ conversationId: null, quoteUri: pendingQuoteUri });
+  // Open an existing conversation inline in the secondary, carrying any pending quote.
+  const openChatInSecondary = useCallback(
+    (conversationId: string) => {
+      setSecondaryChat({
+        conversationId,
+        quoteUri: pendingQuoteUri,
+        quoteLabel: pendingQuoteUri?.startsWith("highlight:")
+          ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+          : null,
+      });
+      setPendingQuoteUri(null);
+      revealDocChatSecondary();
+    },
+    [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary],
+  );
+
+  // Start a new (unsent) conversation inline in the secondary, carrying any pending quote.
+  const startChatInSecondary = useCallback(() => {
+    setSecondaryChat({
+      conversationId: null,
+      quoteUri: pendingQuoteUri,
+      quoteLabel: pendingQuoteUri?.startsWith("highlight:")
+        ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+        : null,
+    });
     setPendingQuoteUri(null);
-    revealDocChatSidecar();
-  }, [pendingQuoteUri, revealDocChatSidecar]);
+    revealDocChatSecondary();
+  }, [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3092,6 +3134,8 @@ export default function MediaPaneBody({
         (item) => item.section_id === sectionId,
       );
       if (!section) return;
+      appliedRequestedReaderLocRef.current = sectionId;
+      paneRuntime?.router.push(buildEpubLocationHref(id, sectionId));
       beginRestoreSession("opening_target");
       setEpubRestoreRequest(
         buildManualSectionRestoreRequest(sectionId, anchorId),
@@ -3102,7 +3146,7 @@ export default function MediaPaneBody({
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections],
+    [activeSectionId, beginRestoreSession, epubSections, id, paneRuntime],
   );
 
   const navigateToWebSection = useCallback(
@@ -3110,19 +3154,35 @@ export default function MediaPaneBody({
       const section = webSections?.find(
         (item) => item.section_id === sectionId,
       );
-      if (!section) {
+      if (!section?.fragment_id) {
+        feedback.show({
+          severity: "warning",
+          title: "Section unavailable.",
+        });
         return;
       }
       cancelRestoreSession();
       clearFocus();
       clearRetainedSelection(false);
       setHighlights([]);
+      setTarget({
+        kind: "fragment",
+        value: section.fragment_id,
+        origin: "manual",
+      });
       setActiveWebSectionId(section.section_id);
+      const params = new URLSearchParams({ loc: section.section_id });
+      params.set("fragment", section.fragment_id);
+      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
     },
     [
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
+      feedback,
+      id,
+      paneRuntime,
+      setTarget,
       webSections,
     ],
   );
@@ -3190,8 +3250,7 @@ export default function MediaPaneBody({
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
       setPdfHighlightsPaneState((current) => ({
-        activePage: nextPage,
-        highlights: nextHighlights,
+        ...current,
         version: current.version + 1,
       }));
       setPdfDocumentHighlights((current) => {
@@ -3227,16 +3286,12 @@ export default function MediaPaneBody({
       ? styles.readerThemeDark
       : styles.readerThemeLight
   }`;
-  const activeReaderSidecarSurface =
-    paneRuntime?.sidecar?.groupId === "reader-tools" &&
-    paneRuntime.sidecar.visibility === "visible"
-      ? paneRuntime.sidecar.activeSurfaceId
+  const activeReaderSecondarySurface =
+    paneRuntime?.secondaryPane?.groupId === "reader-tools" &&
+    paneRuntime.secondaryPane.visibility === "visible"
+      ? paneRuntime.secondaryPane.activeSurfaceId
       : null;
-  const readerSidecarWidthPx =
-    !isMobileViewport && activeReaderSidecarSurface && paneRuntime?.sidecar
-      ? paneRuntime.sidecar.widthPx
-      : 0;
-  // The overview ruler is always on for desktop readable media; the sidecar opens
+  // The overview ruler is always on for desktop readable media; the secondary opens
   // to its right. Both occupy width the pane must reserve.
   const showDesktopOverviewRuler = !isMobileViewport && showHighlightsPane;
   const desktopOverviewRulerWidthPx = showDesktopOverviewRuler
@@ -3248,24 +3303,23 @@ export default function MediaPaneBody({
       !showHighlightsPane ||
       isPdf ||
       isMobileViewport ||
-      activeReaderSidecarSurface !== "reader-highlights" ||
+      activeReaderSecondarySurface !== "reader-highlights" ||
       !focusState.focusedId ||
       !activeContent ||
       !contentRef.current
     ) {
-      sidecarFocusScrollAppliedRef.current = null;
+      secondaryFocusScrollAppliedRef.current = null;
       return;
     }
 
     const scrollKey = [
       activeContent.fragmentId,
       focusState.focusedId,
-      readerSidecarWidthPx,
     ].join(":");
-    if (sidecarFocusScrollAppliedRef.current === scrollKey) {
+    if (secondaryFocusScrollAppliedRef.current === scrollKey) {
       return;
     }
-    sidecarFocusScrollAppliedRef.current = scrollKey;
+    secondaryFocusScrollAppliedRef.current = scrollKey;
 
     const frameId = window.requestAnimationFrame(() => {
       if (!contentRef.current || !focusState.focusedId) {
@@ -3289,11 +3343,10 @@ export default function MediaPaneBody({
     return () => window.cancelAnimationFrame(frameId);
   }, [
     activeContent,
-    activeReaderSidecarSurface,
+    activeReaderSecondarySurface,
     focusState.focusedId,
     isMobileViewport,
     isPdf,
-    readerSidecarWidthPx,
     renderedHtml,
     showHighlightsPane,
   ]);
@@ -3493,7 +3546,7 @@ export default function MediaPaneBody({
     (e: React.MouseEvent) => {
       const highlightId = handleReaderContentClick(e);
       if (highlightId && isMobileViewport && showHighlightsPane) {
-        paneRuntime?.openSidecar("reader-highlights");
+        paneRuntime?.requestSecondarySurface("reader-highlights");
       }
     },
     [handleReaderContentClick, isMobileViewport, paneRuntime, showHighlightsPane],
@@ -3503,7 +3556,7 @@ export default function MediaPaneBody({
     (highlightId: string, _anchorRect: DOMRect) => {
       focusHighlight(highlightId);
       if (isMobileViewport && showHighlightsPane) {
-        paneRuntime?.openSidecar("reader-highlights");
+        paneRuntime?.requestSecondarySurface("reader-highlights");
       }
     },
     [focusHighlight, isMobileViewport, paneRuntime, showHighlightsPane],
@@ -3528,17 +3581,18 @@ export default function MediaPaneBody({
     [paneRuntime],
   );
 
-  // Quote a highlight into a brand-new (unsent) conversation in the sidecar. The
+  // Quote a highlight into a brand-new (unsent) conversation in the secondary. The
   // conversation and reference are created when the user sends, not now.
   const quoteHighlightToNewChat = useCallback(
     (highlightId: string) => {
-      setSidecarChat({
+      setSecondaryChat({
         conversationId: null,
         quoteUri: `highlight:${highlightId}`,
+        quoteLabel: quoteLabelForHighlightId(highlightId),
       });
-      revealDocChatSidecar();
+      revealDocChatSecondary();
     },
-    [revealDocChatSidecar],
+    [quoteLabelForHighlightId, revealDocChatSecondary],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
@@ -3546,20 +3600,36 @@ export default function MediaPaneBody({
   const quoteHighlightToExtantChat = useCallback(
     (highlightId: string) => {
       setPendingQuoteUri(`highlight:${highlightId}`);
-      revealDocChatSidecar();
+      revealDocChatSecondary();
     },
-    [revealDocChatSidecar],
+    [revealDocChatSecondary],
   );
 
-  // Drop the parked quote and the inline chat once the doc-chat list is no
-  // longer the visible surface (tab switch, sidecar close).
+  // Drop parked doc-chat state only after the doc-chat secondary has actually
+  // been visible once. Surface activation is host-owned and asynchronous; clearing
+  // immediately after a request would discard a pending quote before the
+  // requested secondary can render it.
   useEffect(() => {
-    const docChatVisible = activeReaderSidecarSurface === "reader-doc-chat";
-    if (!docChatVisible) {
-      setPendingQuoteUri(null);
-      setSidecarChat(null);
+    const docChatVisible = activeReaderSecondarySurface === "reader-doc-chat";
+    if (docChatVisible) {
+      docChatSurfaceActivatedRef.current = true;
+      return;
     }
-  }, [activeReaderSidecarSurface, sidecarChat]);
+
+    const hasDocChatDraft = pendingQuoteUri !== null || secondaryChat !== null;
+    if (!hasDocChatDraft) {
+      docChatSurfaceActivatedRef.current = false;
+      return;
+    }
+
+    if (!docChatSurfaceActivatedRef.current) {
+      return;
+    }
+
+    docChatSurfaceActivatedRef.current = false;
+    setPendingQuoteUri(null);
+    setSecondaryChat(null);
+  }, [activeReaderSecondarySurface, pendingQuoteUri, secondaryChat]);
 
   useEffect(() => {
     const handleChatShortcut = (event: KeyboardEvent) => {
@@ -3590,168 +3660,198 @@ export default function MediaPaneBody({
   }, [openDocChat]);
 
   const isReflowableReader = canRead && !isPdf;
-  const mediaHeaderMeta = (
-    <div className={styles.metadata}>
-      <span className={styles.kind}>{media?.kind}</span>
-      <ContributorCreditList
-        credits={media?.contributors}
-        className={styles.authorMeta}
-        maxVisible={2}
-        showRole
-      />
-      {media?.canonical_source_url ? (
-        <a
-          href={media.canonical_source_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.sourceLink}
-        >
-          View Source ↗
-        </a>
-      ) : null}
-      {metadataRetryPollsRemaining > 0 ? (
-        <Pill tone="info">Checking metadata...</Pill>
-      ) : metadataRetryPollExhausted ? (
-        <Pill tone="warning">Still checking metadata. Refresh later.</Pill>
-      ) : null}
-      {processingConnectionState === "error" ? (
-        <Pill tone="warning">Reconnecting...</Pill>
-      ) : null}
-      {media &&
-      isReadableStatus(media.processing_status) &&
-      media.failure_stage === "metadata" ? (
-        media.capabilities?.can_retry_metadata ? (
-          <button
-            type="button"
-            onClick={() => {
-              void handleRetryMetadata();
-            }}
-            disabled={retryMetadataBusy}
-            style={{
-              background: "none",
-              border: "none",
-              padding: 0,
-              cursor: retryMetadataBusy ? "default" : "pointer",
-            }}
+  const mediaHeaderMeta = useMemo(
+    () => (
+      <div className={styles.metadata}>
+        <span className={styles.kind}>{media?.kind}</span>
+        <ContributorCreditList
+          credits={media?.contributors}
+          className={styles.authorMeta}
+          maxVisible={2}
+          showRole
+        />
+        {media?.canonical_source_url ? (
+          <a
+            href={media.canonical_source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.sourceLink}
           >
+            View Source ↗
+          </a>
+        ) : null}
+        {metadataRetryPollsRemaining > 0 ? (
+          <Pill tone="info">Checking metadata...</Pill>
+        ) : metadataRetryPollExhausted ? (
+          <Pill tone="warning">Still checking metadata. Refresh later.</Pill>
+        ) : null}
+        {processingConnectionState === "error" ? (
+          <Pill tone="warning">Reconnecting...</Pill>
+        ) : null}
+        {media &&
+        isReadableStatus(media.processing_status) &&
+        media.failure_stage === "metadata" ? (
+          media.capabilities?.can_retry_metadata ? (
+            <button
+              type="button"
+              onClick={() => {
+                void handleRetryMetadata();
+              }}
+              disabled={retryMetadataBusy}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                cursor: retryMetadataBusy ? "default" : "pointer",
+              }}
+            >
+              <Pill tone="warning">
+                {retryMetadataBusy
+                  ? "Re-enriching metadata..."
+                  : `Metadata enrichment failed${
+                      media.last_error_code ? `: ${media.last_error_code}` : ""
+                    } - Re-enrich?`}
+              </Pill>
+            </button>
+          ) : (
             <Pill tone="warning">
-              {retryMetadataBusy
-                ? "Re-enriching metadata..."
-                : `Metadata enrichment failed${
-                    media.last_error_code ? `: ${media.last_error_code}` : ""
-                  } - Re-enrich?`}
+              {media.last_error_code
+                ? `Metadata enrichment failed: ${media.last_error_code}`
+                : "Metadata enrichment failed"}
             </Pill>
-          </button>
-        ) : (
-          <Pill tone="warning">
-            {media.last_error_code
-              ? `Metadata enrichment failed: ${media.last_error_code}`
-              : "Metadata enrichment failed"}
-          </Pill>
-        )
-      ) : null}
-    </div>
+          )
+        ) : null}
+      </div>
+    ),
+    [
+      handleRetryMetadata,
+      media,
+      metadataRetryPollsRemaining,
+      metadataRetryPollExhausted,
+      processingConnectionState,
+      retryMetadataBusy,
+    ],
   );
 
-  const mediaHeaderOptions = mediaResourceOptions({
+  const mediaHeaderOptions = useMemo(() => {
+    const options = mediaResourceOptions({
+      media,
+      canManageLibraries: Boolean(media),
+      retryBusy: retryProcessingBusy,
+      refreshBusy: refreshSourceBusy,
+      deleteBusy: documentDeleteBusy,
+      retryMetadataBusy,
+      onRetry: media?.capabilities?.can_retry
+        ? () => {
+            void handleRetryProcessing();
+          }
+        : undefined,
+      onRefreshSource: media?.capabilities?.can_refresh_source
+        ? () => {
+            void handleRefreshSource();
+          }
+        : undefined,
+      onRetryMetadata: media?.capabilities?.can_retry_metadata
+        ? () => {
+            void handleRetryMetadata();
+          }
+        : undefined,
+      onOpenChat: media
+        ? () => {
+            openDocChat();
+          }
+        : undefined,
+      onManageLibraries: ({ triggerEl }) => {
+        setLibraryPanelAnchorEl(triggerEl);
+        setLibraryPanelOpen(true);
+        void loadLibraryPickerLibraries();
+      },
+      onDelete: media?.capabilities?.can_delete
+        ? () => {
+            void handleDeleteDocument();
+          }
+        : undefined,
+    });
+    const readerOptions: ActionMenuOption[] = [
+      {
+        id: "reader-settings",
+        label: "Reader settings",
+        restoreFocusOnClose: false,
+        onSelect: () => {
+          paneRuntime?.openInNewPane("/settings/reader", "Reader settings");
+        },
+      },
+    ];
+
+    if (isMobileViewport && showHighlightsPane) {
+      readerOptions.push({
+        id: "show-highlights",
+        label: "Show highlights",
+        onSelect: () =>
+          paneRuntime?.requestSecondarySurface("reader-highlights"),
+      });
+    }
+
+    if (isReflowableReader) {
+      readerOptions.push({
+        id: "reader-theme-light",
+        label:
+          readerProfile.theme === "light"
+            ? "Light theme (current)"
+            : "Light theme",
+        disabled: readerProfile.theme === "light",
+        onSelect: () => updateTheme("light"),
+      });
+      readerOptions.push({
+        id: "reader-theme-dark",
+        label:
+          readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
+        disabled: readerProfile.theme === "dark",
+        onSelect: () => updateTheme("dark"),
+      });
+    }
+
+    const dangerIndex = options.findIndex((option) => option.tone === "danger");
+    if (dangerIndex === -1) {
+      options.push(...readerOptions);
+    } else {
+      options.splice(dangerIndex, 0, ...readerOptions);
+    }
+    return options;
+  }, [
+    documentDeleteBusy,
+    handleDeleteDocument,
+    handleRefreshSource,
+    handleRetryMetadata,
+    handleRetryProcessing,
+    isMobileViewport,
+    isReflowableReader,
+    loadLibraryPickerLibraries,
     media,
-    canManageLibraries: Boolean(media),
-    retryBusy: retryProcessingBusy,
-    refreshBusy: refreshSourceBusy,
-    deleteBusy: documentDeleteBusy,
+    openDocChat,
+    paneRuntime,
+    readerProfile.theme,
+    refreshSourceBusy,
     retryMetadataBusy,
-    onRetry: media?.capabilities?.can_retry
-      ? () => {
-          void handleRetryProcessing();
-        }
-      : undefined,
-    onRefreshSource: media?.capabilities?.can_refresh_source
-      ? () => {
-          void handleRefreshSource();
-        }
-      : undefined,
-    onRetryMetadata: media?.capabilities?.can_retry_metadata
-      ? () => {
-          void handleRetryMetadata();
-        }
-      : undefined,
-    onOpenChat: media
-      ? () => {
-          openDocChat();
-        }
-      : undefined,
-    onManageLibraries: ({ triggerEl }) => {
-      setLibraryPanelAnchorEl(triggerEl);
-      setLibraryPanelOpen(true);
-      void loadLibraryPickerLibraries();
-    },
-    onDelete: media?.capabilities?.can_delete
-      ? () => {
-          void handleDeleteDocument();
-        }
-      : undefined,
-  });
-  const mediaReaderOptions: ActionMenuOption[] = [];
+    retryProcessingBusy,
+    showHighlightsPane,
+    updateTheme,
+  ]);
 
-  mediaReaderOptions.push({
-    id: "reader-settings",
-    label: "Reader settings",
-    restoreFocusOnClose: false,
-    onSelect: () => {
-      paneRuntime?.openInNewPane("/settings/reader", "Reader settings");
-    },
-  });
-
-  if (isMobileViewport && showHighlightsPane) {
-    mediaReaderOptions.push({
-      id: "show-highlights",
-      label: "Show highlights",
-      onSelect: () => paneRuntime?.openSidecar("reader-highlights"),
-    });
-  }
-
-  if (isReflowableReader) {
-    mediaReaderOptions.push({
-      id: "reader-theme-light",
-      label:
-        readerProfile.theme === "light"
-          ? "Light theme (current)"
-          : "Light theme",
-      disabled: readerProfile.theme === "light",
-      onSelect: () => updateTheme("light"),
-    });
-    mediaReaderOptions.push({
-      id: "reader-theme-dark",
-      label:
-        readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
-      disabled: readerProfile.theme === "dark",
-      onSelect: () => updateTheme("dark"),
-    });
-  }
-
-  const mediaDangerOptionIndex = mediaHeaderOptions.findIndex(
-    (option) => option.tone === "danger",
-  );
-  if (mediaDangerOptionIndex === -1) {
-    mediaHeaderOptions.push(...mediaReaderOptions);
-  } else {
-    mediaHeaderOptions.splice(mediaDangerOptionIndex, 0, ...mediaReaderOptions);
-  }
-
-  const closeSidecarOnMobile = useCallback(() => {
-    if (isMobileViewport) paneRuntime?.closeSidecar();
+  const closeSecondaryOnMobile = useCallback(() => {
+    if (isMobileViewport) paneRuntime?.closeSecondaryPane();
   }, [isMobileViewport, paneRuntime]);
 
   const contentsSurfaceBody = useMemo(
     () => (
-      <div className={styles.readerSidecarBody}>
+      <div className={styles.readerSecondaryBody}>
         {isEpub ? (
           <ReaderContentsNav
             nodes={epubToc ?? []}
             activeSectionId={activeSectionId}
             onNavigate={({ sectionId, anchorId }) => {
               navigateToSection(sectionId, anchorId);
-              closeSidecarOnMobile();
+              closeSecondaryOnMobile();
             }}
           />
         ) : (
@@ -3760,188 +3860,216 @@ export default function MediaPaneBody({
             activeSectionId={activeWebSectionId}
             onNavigate={({ sectionId }) => {
               navigateToWebSection(sectionId);
-              closeSidecarOnMobile();
+              closeSecondaryOnMobile();
             }}
           />
         )}
       </div>
     ),
     [
-      isEpub,
-      epubToc,
-      webToc,
       activeSectionId,
       activeWebSectionId,
+      closeSecondaryOnMobile,
+      epubToc,
+      isEpub,
       navigateToSection,
       navigateToWebSection,
-      closeSidecarOnMobile,
+      webToc,
     ],
   );
 
   const contentsSurfaceActive =
-    activeReaderSidecarSurface === "reader-contents";
+    activeReaderSecondarySurface === "reader-contents";
 
   const toggleContents = useCallback(() => {
-    if (contentsSurfaceActive) paneRuntime?.closeSidecar();
-    else paneRuntime?.openSidecar("reader-contents");
+    if (contentsSurfaceActive) {
+      paneRuntime?.closeSecondaryPane();
+      return;
+    }
+    paneRuntime?.requestSecondarySurface("reader-contents");
   }, [contentsSurfaceActive, paneRuntime]);
 
-  const contentsToolbarButton = contentsAvailable ? (
-    <Button
-      variant="ghost"
-      size="sm"
-      leadingIcon={<ListTree size={16} aria-hidden="true" />}
-      onClick={toggleContents}
-      aria-pressed={contentsSurfaceActive}
-    >
-      Contents
-    </Button>
-  ) : null;
+  const contentsToolbarButton = useMemo(
+    () =>
+      contentsAvailable ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ListTree size={16} aria-hidden="true" />}
+          onClick={toggleContents}
+          aria-pressed={contentsSurfaceActive}
+        >
+          Contents
+        </Button>
+      ) : null,
+    [contentsAvailable, contentsSurfaceActive, toggleContents],
+  );
 
-  const mediaToolbar =
-    isPdf && canRead && pdfControlsState ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="PDF controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => pdfControlsRef.current?.goToPreviousPage()}
-            disabled={!pdfControlsState.canGoPrev}
-            aria-label="Previous page"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          <span
-            className={styles.mediaToolbarStatus}
-            aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
-          >
-            {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => pdfControlsRef.current?.goToNextPage()}
-            disabled={!pdfControlsState.canGoNext}
-            aria-label="Next page"
-          >
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          <ActionMenu
-            label="More actions"
-            options={[
-              {
-                id: "zoom-out",
-                label: "Zoom out",
-                disabled: !pdfControlsState.canZoomOut,
-                onSelect: () => pdfControlsRef.current?.zoomOut(),
-              },
-              {
-                id: "zoom-in",
-                label: "Zoom in",
-                disabled: !pdfControlsState.canZoomIn,
-                onSelect: () => pdfControlsRef.current?.zoomIn(),
-              },
-            ]}
-          />
-        </div>
-      </div>
-    ) : isEpub && canRead ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="EPUB controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          {contentsToolbarButton}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => {
-              if (prevSection) {
-                navigateToSection(prevSection.section_id);
-              }
-            }}
-            disabled={!prevSection}
-            aria-label="Previous section"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          {activeSectionPosition >= 0 && epubSections ? (
-            <span
-              className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
-              aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
-            >
-              {activeSectionPosition + 1} / {epubSections.length}
-            </span>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => {
-              if (nextSection) {
-                navigateToSection(nextSection.section_id);
-              }
-            }}
-            disabled={!nextSection}
-            aria-label="Next section"
-          >
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          {epubSections ? (
-            <Select
-              className={styles.mediaToolbarSectionSelect}
+  const mediaToolbar = useMemo(
+    () =>
+      isPdf && canRead && pdfControlsState ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="PDF controls"
+        >
+          <div className={styles.mediaToolbarRow}>
+            <Button
+              variant="ghost"
               size="sm"
-              value={activeSectionId ?? ""}
-              onChange={(event) => {
-                if (event.target.value) {
-                  navigateToSection(event.target.value);
+              iconOnly
+              onClick={() => pdfControlsRef.current?.goToPreviousPage()}
+              disabled={!pdfControlsState.canGoPrev}
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+            </Button>
+            <span
+              className={styles.mediaToolbarStatus}
+              aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
+            >
+              {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => pdfControlsRef.current?.goToNextPage()}
+              disabled={!pdfControlsState.canGoNext}
+              aria-label="Next page"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </Button>
+            <ActionMenu
+              label="More actions"
+              options={[
+                {
+                  id: "zoom-out",
+                  label: "Zoom out",
+                  disabled: !pdfControlsState.canZoomOut,
+                  onSelect: () => pdfControlsRef.current?.zoomOut(),
+                },
+                {
+                  id: "zoom-in",
+                  label: "Zoom in",
+                  disabled: !pdfControlsState.canZoomIn,
+                  onSelect: () => pdfControlsRef.current?.zoomIn(),
+                },
+              ]}
+            />
+          </div>
+        </div>
+      ) : isEpub && canRead ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="EPUB controls"
+        >
+          <div className={styles.mediaToolbarRow}>
+            {contentsToolbarButton}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => {
+                if (prevSection) {
+                  navigateToSection(prevSection.section_id);
                 }
               }}
-              aria-label="Select section"
-              title={
-                epubSections.find(
-                  (section) => section.section_id === activeSectionId,
-                )?.label
-              }
+              disabled={!prevSection}
+              aria-label="Previous section"
             >
-              {epubSections.map((section) => (
-                <option key={section.section_id} value={section.section_id}>
-                  {section.label}
-                </option>
-              ))}
-            </Select>
-          ) : null}
+              <ChevronLeft size={16} aria-hidden="true" />
+            </Button>
+            {activeSectionPosition >= 0 && epubSections ? (
+              <span
+                className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
+                aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
+              >
+                {activeSectionPosition + 1} / {epubSections.length}
+              </span>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => {
+                if (nextSection) {
+                  navigateToSection(nextSection.section_id);
+                }
+              }}
+              disabled={!nextSection}
+              aria-label="Next section"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </Button>
+            {epubSections ? (
+              <Select
+                className={styles.mediaToolbarSectionSelect}
+                size="sm"
+                value={activeSectionId ?? ""}
+                onChange={(event) => {
+                  if (event.target.value) {
+                    navigateToSection(event.target.value);
+                  }
+                }}
+                aria-label="Select section"
+                title={
+                  epubSections.find(
+                    (section) => section.section_id === activeSectionId,
+                  )?.label
+                }
+              >
+                {epubSections.map((section) => (
+                  <option key={section.section_id} value={section.section_id}>
+                    {section.label}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+          </div>
         </div>
-      </div>
-    ) : media?.kind === "web_article" && canRead && hasWebToc ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="Article controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          {contentsToolbarButton}
+      ) : media?.kind === "web_article" && canRead && hasWebToc ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="Article controls"
+        >
+          <div className={styles.mediaToolbarRow}>
+            {contentsToolbarButton}
+          </div>
         </div>
-      </div>
-    ) : null;
+      ) : null,
+    [
+      activeSectionId,
+      activeSectionPosition,
+      canRead,
+      contentsToolbarButton,
+      epubSections,
+      hasWebToc,
+      isEpub,
+      isPdf,
+      media?.kind,
+      navigateToSection,
+      nextSection,
+      pdfControlsState,
+      prevSection,
+    ],
+  );
+  const paneChromeOverrides = useMemo(
+    () => ({
+      toolbar: mediaToolbar,
+      options: mediaHeaderOptions,
+      meta: mediaHeaderMeta,
+    }),
+    [mediaHeaderMeta, mediaHeaderOptions, mediaToolbar],
+  );
 
   // ==========================================================================
   // Chrome override — push toolbar/options/meta/actions into PaneShell
   // ==========================================================================
 
-  usePaneChromeOverride({
-    toolbar: mediaToolbar,
-    options: mediaHeaderOptions,
-    meta: mediaHeaderMeta,
-  });
+  usePaneChromeOverride(paneChromeOverrides);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -3965,7 +4093,7 @@ export default function MediaPaneBody({
     [media?.kind, play, seekToMs],
   );
 
-  // Activate a source cited in an in-sidecar chat: seek/highlight this document,
+  // Activate a source cited in an in-secondary chat: seek/highlight this document,
   // or open a different source in a new pane.
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget) => {
@@ -3998,12 +4126,12 @@ export default function MediaPaneBody({
     }
     const releaseLocks: Array<() => void> = [];
     if (
-      paneRuntime?.sidecar?.groupId === "reader-tools" &&
-      paneRuntime.sidecar.visibility === "visible" &&
-      paneRuntime.sidecar.activeSurfaceId === "reader-highlights"
+      paneRuntime?.secondaryPane?.groupId === "reader-tools" &&
+      paneRuntime.secondaryPane.visibility === "visible" &&
+      paneRuntime.secondaryPane.activeSurfaceId === "reader-highlights"
     ) {
       releaseLocks.push(
-        paneMobileChrome.acquireVisibleLock("mobile-sidecar"),
+        paneMobileChrome.acquireVisibleLock("mobile-secondary"),
       );
     }
     if (libraryPanelOpen) {
@@ -4022,7 +4150,7 @@ export default function MediaPaneBody({
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
-    paneRuntime?.sidecar,
+    paneRuntime?.secondaryPane,
     selection,
   ]);
 
@@ -4056,7 +4184,7 @@ export default function MediaPaneBody({
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
   // Media-wide highlights mapped to overview-ruler rows. Separate from
-  // `anchoredHighlights` (per-fragment, projected for the sidecar): this maps the
+  // `anchoredHighlights` (per-fragment, projected for the secondary): this maps the
   // typed-union `mediaHighlights` straight from stored anchors.
   const mediaAnchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
     return mediaHighlights.map((highlight) => {
@@ -4240,6 +4368,8 @@ export default function MediaPaneBody({
         return;
       }
 
+      const params = new URLSearchParams({ fragment: fragmentId });
+      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
       pendingRulerPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
@@ -4254,12 +4384,13 @@ export default function MediaPaneBody({
       isTranscriptMedia,
       mediaHighlights,
       navigateToSection,
+      paneRuntime,
       setTarget,
     ],
   );
 
   const onOpenHighlights = useCallback(() => {
-    paneRuntime?.openSidecar("reader-highlights");
+    paneRuntime?.requestSecondarySurface("reader-highlights");
   }, [paneRuntime]);
 
   const anchoredHighlightsMeasureKey = useMemo(
@@ -4269,8 +4400,6 @@ export default function MediaPaneBody({
         activeContent?.fragmentId ?? "",
         activeEpubSection?.section_id ?? "",
         activeTranscriptFragment?.id ?? "",
-        readerSidecarWidthPx,
-        activeReaderSidecarSurface ?? "",
         renderedHtml,
         readerProfile.font_family,
         readerProfile.font_size_px,
@@ -4298,7 +4427,6 @@ export default function MediaPaneBody({
       activeContent?.fragmentId,
       activeEpubSection?.section_id,
       activeTranscriptFragment?.id,
-      activeReaderSidecarSurface,
       anchoredHighlights,
       media?.kind,
       pdfControlsState?.pageNumber,
@@ -4313,14 +4441,13 @@ export default function MediaPaneBody({
       readerProfile.line_height,
       readerProfile.theme,
       renderedHtml,
-      readerSidecarWidthPx,
     ],
   );
 
-  const highlightsSidecarBody = useMemo(
+  const highlightsSecondaryBody = useMemo(
     () =>
       showHighlightsPane ? (
-        <AnchoredHighlightsSidecar
+        <ReaderHighlightsSurface
           title="Visible highlights"
           description={
             isPdf
@@ -4329,7 +4456,7 @@ export default function MediaPaneBody({
                 ? "Showing highlights visible in the active section viewport."
                 : "Showing highlights visible in the reader viewport."
           }
-          pdfActivePage={isPdf ? pdfHighlightsPaneState.activePage : null}
+          pdfActivePage={isPdf ? (pdfControlsState?.pageNumber ?? null) : null}
           highlights={anchoredHighlights}
           contentRef={isPdf ? pdfContentRef : contentRef}
           focusedId={focusState.focusedId}
@@ -4367,7 +4494,7 @@ export default function MediaPaneBody({
       isPdf,
       media?.capabilities?.can_quote,
       pdfContentRef,
-      pdfHighlightsPaneState.activePage,
+      pdfControlsState?.pageNumber,
       quoteHighlightToExtantChat,
       quoteHighlightToNewChat,
       showHighlightsPane,
@@ -4375,15 +4502,15 @@ export default function MediaPaneBody({
     ],
   );
 
-  const readerSidecarSurfaces = useMemo<PaneSidecarSurfacePublication[]>(() => {
-    const surfaces: PaneSidecarSurfacePublication[] = [];
+  const readerSecondarySurfaces = useMemo<PaneSecondarySurfacePublication[]>(() => {
+    const surfaces: PaneSecondarySurfacePublication[] = [];
     if (showHighlightsPane) {
       surfaces.push({
         id: "reader-highlights",
         body: (
-          <div className={styles.readerSidecarBody}>
-            {highlightsSidecarBody ?? (
-              <div className={styles.readerSidecarEmpty}>
+          <div className={styles.readerSecondaryBody}>
+            {highlightsSecondaryBody ?? (
+              <div className={styles.readerSecondaryEmpty}>
                 Highlights are unavailable for this document.
               </div>
             )}
@@ -4394,66 +4521,64 @@ export default function MediaPaneBody({
     if (contentsAvailable) {
       surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
     }
-    if (showHighlightsPane) {
-      surfaces.push({
-        id: "reader-doc-chat",
-        body: (
-          <div className={styles.readerSidecarBody}>
-            {sidecarChat ? (
-              <ReaderChatDetail
-                key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
-                conversationId={sidecarChat.conversationId}
-                mediaId={id}
-                pendingQuoteUri={sidecarChat.quoteUri}
-                onBack={() => setSidecarChat(null)}
-                onOpenFullChat={(cid) => {
-                  setSidecarChat(null);
-                  handleOpenFullChat(cid);
-                }}
-                onReaderSourceActivate={handleReaderSourceActivate}
-              />
-            ) : (
-              <DocChatTab
-                mediaId={id}
-                onOpenChat={openChatInSidecar}
-                onStartNewChat={startChatInSidecar}
-                pendingQuoteUri={pendingQuoteUri}
-                onPendingQuoteResolved={() => setPendingQuoteUri(null)}
-              />
-            )}
-          </div>
-        ),
-      });
-    }
+    surfaces.push({
+      id: "reader-doc-chat",
+      body: (
+        <div className={styles.readerSecondaryBody}>
+          {secondaryChat ? (
+            <ReaderChatDetail
+              key={`${secondaryChat.conversationId ?? "new"}:${secondaryChat.quoteUri ?? ""}`}
+              conversationId={secondaryChat.conversationId}
+              mediaId={id}
+              pendingQuoteUri={secondaryChat.quoteUri}
+              pendingQuoteLabel={secondaryChat.quoteLabel}
+              onBack={() => setSecondaryChat(null)}
+              onOpenFullChat={(cid) => {
+                setSecondaryChat(null);
+                handleOpenFullChat(cid);
+              }}
+              onReaderSourceActivate={handleReaderSourceActivate}
+            />
+          ) : (
+            <DocChatTab
+              mediaId={id}
+              onOpenChat={openChatInSecondary}
+              onStartNewChat={startChatInSecondary}
+              pendingQuoteUri={pendingQuoteUri}
+              onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+            />
+          )}
+        </div>
+      ),
+    });
     return surfaces;
   }, [
-    showHighlightsPane,
     contentsAvailable,
-    highlightsSidecarBody,
     contentsSurfaceBody,
-    sidecarChat,
-    id,
     handleOpenFullChat,
     handleReaderSourceActivate,
-    openChatInSidecar,
-    startChatInSidecar,
+    highlightsSecondaryBody,
+    id,
+    openChatInSecondary,
     pendingQuoteUri,
+    secondaryChat,
+    showHighlightsPane,
+    startChatInSecondary,
   ]);
 
-  const readerSidecarDescriptor = useMemo<PaneSidecarPublication | null>(
-    () =>
-      readerSidecarSurfaces.length === 0
-        ? null
-        : {
-            groupId: "reader-tools",
-            defaultSurfaceId: showHighlightsPane
-              ? "reader-highlights"
-              : readerSidecarSurfaces[0].id,
-            surfaces: readerSidecarSurfaces,
-          },
-    [readerSidecarSurfaces, showHighlightsPane],
+  const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication>(
+    () => ({
+      groupId: "reader-tools",
+      defaultSurfaceId: showHighlightsPane
+        ? "reader-highlights"
+        : contentsAvailable
+          ? "reader-contents"
+          : "reader-doc-chat",
+      surfaces: readerSecondarySurfaces,
+    }),
+    [contentsAvailable, readerSecondarySurfaces, showHighlightsPane],
   );
-  usePaneSidecar(readerSidecarDescriptor);
+  usePaneSecondary(readerSecondaryDescriptor);
   const fixedChromePublication = useMemo(
     () =>
       showDesktopOverviewRuler

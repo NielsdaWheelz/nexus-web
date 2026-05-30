@@ -10,6 +10,7 @@ Behavior under test:
 - Max context is 2,500 chars, with cap enforced by shrinking edges
 """
 
+import importlib.util
 from uuid import uuid4
 
 import pytest
@@ -17,16 +18,21 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FragmentBlock
-from nexus.services.context_window import (
-    MAX_CONTEXT_CHARS,
-    get_context_window,
-)
 from nexus.services.fragment_blocks import (
     insert_fragment_blocks,
     parse_fragment_blocks,
 )
 
 pytestmark = pytest.mark.integration
+_CONTEXT_WINDOW_AVAILABLE = importlib.util.find_spec("nexus.services.context_window") is not None
+_CONTEXT_WINDOW_SKIP = pytest.mark.skipif(
+    not _CONTEXT_WINDOW_AVAILABLE,
+    reason="context window service was removed",
+)
+
+
+def _context_window_service():
+    return pytest.importorskip("nexus.services.context_window")
 
 
 def _fragment_blocks(db: Session, fragment_id) -> list[FragmentBlock]:
@@ -198,6 +204,8 @@ class TestInsertFragmentBlocks:
 class TestContextWindow:
     """Tests for get_context_window function."""
 
+    pytestmark = _CONTEXT_WINDOW_SKIP
+
     def _create_fragment_with_blocks(self, db_session: Session, canonical_text: str) -> uuid4:
         """Helper to create a fragment with blocks for testing."""
         user_id = uuid4()
@@ -263,7 +271,7 @@ class TestContextWindow:
         start = 18  # Start of "Second"
         end = 18 + 6  # End of "Second"
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = _context_window_service().get_context_window(db_session, fragment_id, start, end)
 
         assert result.source == "blocks"
         # Should include surrounding blocks
@@ -279,7 +287,7 @@ class TestContextWindow:
         start = 1000
         end = 1009  # "SELECTION"
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = _context_window_service().get_context_window(db_session, fragment_id, start, end)
 
         assert result.source == "fallback"
         assert "SELECTION" in result.text
@@ -292,7 +300,7 @@ class TestContextWindow:
         start = 500
         end = 509
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = _context_window_service().get_context_window(db_session, fragment_id, start, end)
 
         # The selection must be contained in the window
         assert result.window_start <= start
@@ -308,11 +316,12 @@ class TestContextWindow:
         start = 5000
         end = 5009
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        context_window = _context_window_service()
+        result = context_window.get_context_window(db_session, fragment_id, start, end)
 
         # Window should be capped
         window_len = result.window_end - result.window_start
-        assert window_len <= MAX_CONTEXT_CHARS
+        assert window_len <= context_window.MAX_CONTEXT_CHARS
 
         # But selection must still be contained
         assert "SELECTION" in result.text
@@ -322,21 +331,22 @@ class TestContextWindow:
         nonexistent_id = uuid4()
 
         with pytest.raises(ValueError) as exc_info:
-            get_context_window(db_session, nonexistent_id, 0, 10)
+            _context_window_service().get_context_window(db_session, nonexistent_id, 0, 10)
 
         assert "not found" in str(exc_info.value)
 
     def test_selection_larger_than_cap(self, db_session: Session):
         """When selection itself is larger than cap, return selection bounds."""
         # Selection larger than max context
-        selection = "X" * (MAX_CONTEXT_CHARS + 500)
+        context_window = _context_window_service()
+        selection = "X" * (context_window.MAX_CONTEXT_CHARS + 500)
         text = "PREFIX" + selection + "SUFFIX"
         fragment_id = self._create_fragment_without_blocks(db_session, text)
 
         start = 6  # After "PREFIX"
         end = 6 + len(selection)
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = context_window.get_context_window(db_session, fragment_id, start, end)
 
         # Window should at least contain the selection
         assert result.window_start <= start
@@ -345,6 +355,8 @@ class TestContextWindow:
 
 class TestContextWindowBlockSelection:
     """Tests for block selection in context window computation."""
+
+    pytestmark = _CONTEXT_WINDOW_SKIP
 
     def _create_fragment_with_blocks(self, db_session: Session, canonical_text: str) -> uuid4:
         """Helper to create a fragment with blocks for testing."""
@@ -386,7 +398,7 @@ class TestContextWindowBlockSelection:
         start = 16
         end = 22  # "BlockC"
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = _context_window_service().get_context_window(db_session, fragment_id, start, end)
 
         # Should include BlockB (prev), BlockC (containing), BlockD (next)
         assert "BlockB" in result.text
@@ -409,7 +421,7 @@ class TestContextWindowBlockSelection:
         start = 18
         end = 24  # "BlockC"
 
-        result = get_context_window(db_session, fragment_id, start, end)
+        result = _context_window_service().get_context_window(db_session, fragment_id, start, end)
 
         # Should include BlockA or BlockB (skipping empty), and BlockC
         assert "BlockC" in result.text

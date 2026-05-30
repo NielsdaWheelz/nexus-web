@@ -2,6 +2,8 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
+  makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -25,20 +27,20 @@ async function paneBoxX(pane: Locator): Promise<number> {
 
 // Three same-width panes side by side overflow the 1280px desktop viewport,
 // so the canvas is genuinely scrollable.
-const OVERFLOWING_WORKSPACE_STATE: WorkspaceState = {
-  activePaneId: "pane-libraries",
-  panes: [
+const OVERFLOWING_WORKSPACE_STATE: WorkspaceState = makeWorkspaceState(
+  [
     makeWorkspacePane("pane-libraries", "/libraries"),
     makeWorkspacePane("pane-search", "/search"),
     makeWorkspacePane("pane-settings", "/settings"),
   ],
-};
+  { activePrimaryPaneId: "pane-libraries" },
+);
 
 test.describe("workspace canvas", () => {
   test.beforeEach(async ({ page }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-canvas"),
       OVERFLOWING_WORKSPACE_STATE,
       "/libraries",
     );
@@ -103,6 +105,9 @@ test.describe("workspace canvas", () => {
       "data-active",
       "true",
     );
+    await paneWrap(page, "pane-libraries")
+      .getByTestId("pane-shell-chrome")
+      .focus();
 
     // pane-next moves the active pane forward and centres it.
     await page.keyboard.press(stepChord);

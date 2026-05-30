@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
 
 async function ensureAppContext(page: Page) {
@@ -11,6 +12,7 @@ async function createConversationViaApi(page: Page): Promise<string> {
   await ensureAppContext(page);
   const response = await page.request.post("/api/conversations", {
     maxRedirects: 0,
+    headers: stateChangingApiHeaders(),
   });
   const body = await response.text();
   expect(
@@ -30,6 +32,7 @@ async function deleteConversationViaApi(
     try {
       const response = await page.request.delete(
         `/api/conversations/${conversationId}`,
+        { headers: stateChangingApiHeaders() },
       );
       if (!response.ok() && response.status() !== 404) {
         const body = await response.text();

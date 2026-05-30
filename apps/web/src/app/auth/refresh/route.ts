@@ -1,4 +1,7 @@
-import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
+import {
+  AUTH_ENDED_FEEDBACK_COOKIE,
+  SESSION_ENDED_MESSAGE,
+} from "@/lib/auth/messages";
 import { normalizeAuthRedirect } from "@/lib/auth/redirects";
 import { refreshSession } from "@/lib/auth/refresh";
 import {
@@ -36,6 +39,15 @@ function noStore(response: NextResponse): NextResponse {
   return response;
 }
 
+function markSessionEnded(response: NextResponse): void {
+  response.cookies.set(AUTH_ENDED_FEEDBACK_COOKIE, "1", {
+    httpOnly: true,
+    maxAge: 60,
+    path: "/",
+    sameSite: "lax",
+  });
+}
+
 // Browser-redirect flow: refresh once, then land on the originally requested
 // page on success or on /login on failure. Every path is terminal — it never
 // redirects back into a state that re-evaluates as `refreshable`.
@@ -61,6 +73,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     status: TEMPORARY_REDIRECT,
   });
   await clearAuthCookies(response);
+  markSessionEnded(response);
   return noStore(response);
 }
 

@@ -145,7 +145,7 @@ class TestLibraryTargetPickerOptions:
                 "website_url": "https://example.com/picker-read",
                 "image_url": "https://example.com/picker-read.png",
                 "description": "Podcast picker read test",
-                "library_id": str(owned_in_library_id),
+                "library_ids": [str(owned_in_library_id)],
             },
             headers=auth_headers(viewer_id),
         )
@@ -159,6 +159,16 @@ class TestLibraryTargetPickerOptions:
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+
+        add_response = auth_client.post(
+            f"/libraries/{owned_in_library_id}/podcasts",
+            json={"podcast_id": str(podcast_id)},
+            headers=auth_headers(viewer_id),
+        )
+        assert add_response.status_code == 201, (
+            "podcast setup library attach failed unexpectedly: "
+            f"{add_response.status_code} {add_response.text}"
+        )
 
         with direct_db.session() as session:
             job_ids = session.execute(

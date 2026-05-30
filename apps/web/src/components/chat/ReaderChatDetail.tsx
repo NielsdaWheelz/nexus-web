@@ -29,13 +29,15 @@ interface ReaderChatDetailProps {
   mediaId: string;
   /** A highlight URI to attach to the conversation when the user sends. */
   pendingQuoteUri?: string | null;
+  /** Human-readable quote chip text for the pending highlight reference. */
+  pendingQuoteLabel?: string | null;
   onBack: () => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }
 
 /**
- * A conversation rendered inline inside the reader's document-chat sidecar: full chat
+ * A conversation rendered inline inside the reader's document-chat secondary: full chat
  * history + composer, plus a link out to the full conversation pane. Composes
  * the same primitives as the full pane (ChatSurface + ChatComposer +
  * useChatRunTail) without the pane's branching/chrome.
@@ -47,6 +49,7 @@ export default function ReaderChatDetail({
   conversationId,
   mediaId,
   pendingQuoteUri = null,
+  pendingQuoteLabel = null,
   onBack,
   onOpenFullChat,
   onReaderSourceActivate,
@@ -67,7 +70,9 @@ export default function ReaderChatDetail({
   const [pendingReferences, setPendingReferences] = useState<
     Array<{ uri: string; label: string }>
   >(() =>
-    pendingQuoteUri ? [{ uri: pendingQuoteUri, label: "Selected quote" }] : [],
+    pendingQuoteUri
+      ? [{ uri: pendingQuoteUri, label: pendingQuoteLabel ?? "Selected quote" }]
+      : [],
   );
   const retryingAssistantMessageIds = useStringIdSet();
 

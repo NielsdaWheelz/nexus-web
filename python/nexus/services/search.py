@@ -74,6 +74,7 @@ from nexus.services.semantic_chunks import (
     build_text_embedding,
     to_pgvector_literal,
     transcript_embedding_dimensions,
+    transcript_embedding_provider_for_model,
 )
 
 logger = get_logger(__name__)
@@ -1988,8 +1989,8 @@ def _search_content_chunks(
     if semantic_query_embedding is not None:
         embedding_model, query_embedding = semantic_query_embedding
         params["query_embedding"] = to_pgvector_literal(query_embedding)
-        params["query_embedding_provider"] = (
-            "test" if embedding_model.startswith("test_") else "openai"
+        params["query_embedding_provider"] = transcript_embedding_provider_for_model(
+            embedding_model
         )
         params["query_embedding_model"] = embedding_model
         params["query_embedding_version"] = embedding_model

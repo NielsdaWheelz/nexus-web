@@ -1,13 +1,17 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
+import { activeWorkspacePane } from "../workspace";
 import {
   cleanupRealMediaHighlight,
   createPdfHighlightThroughVisibleSelection,
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaEvidenceUrl,
   expectRealMediaEvidenceNeedle,
   expectVisiblePdfEvidenceHighlight,
   FRESH_REAL_MEDIA_FIXTURES,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
   searchRealMediaEvidenceThroughUi,
   uploadFreshRealMediaFileThroughUi,
   writeRealMediaTrace,
@@ -79,20 +83,19 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     needle,
     "real PDF evidence should contain the pinned fixture needle",
   );
+  const evidenceSpanId = result.evidence_span_ids[0];
 
-  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  const resultLink = realMediaEvidenceResultLink(page, mediaId, evidenceSpanId);
   await expect(
     resultLink,
     "real PDF should render a visible search result",
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   await resultLink.click();
-  await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
-  await expect(page.locator("body")).not.toContainText(
-    /not found|failed to load/i,
-  );
+  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expectActivePaneHasNoLoadError(page);
   expect(resolver.data.resolver.status).toBe("resolved");
-  await expectVisiblePdfEvidenceHighlight(page);
+  await expectVisiblePdfEvidenceHighlight(page, evidenceSpanId);
   let createdHighlightId: string | null = null;
 
   let productError: unknown = null;
@@ -104,7 +107,7 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     createdHighlightId = savedHighlight.id;
     await page.reload();
     await expect(
-      page
+      activeWorkspacePane(page)
         .locator(`[data-testid^="pdf-highlight-${savedHighlight.id}-"]`)
         .first(),
     ).toBeVisible({ timeout: 15_000 });

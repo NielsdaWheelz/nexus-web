@@ -3785,9 +3785,7 @@ class ConversationReference(Base):
         ),
     )
 
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation", back_populates="references"
-    )
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="references")
 
 
 class ConversationShare(Base):
@@ -4852,6 +4850,7 @@ class ChatPromptAssembly(Base):
     )
     assistant_message: Mapped["Message"] = relationship("Message")
     model: Mapped["Model"] = relationship("Model")
+
 
 class ChatRunEvent(Base):
     """Append-only replay event for a chat run."""

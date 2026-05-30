@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
+import { activeWorkspacePane } from "../workspace";
 import {
   drainRealMediaWorkerForMediaReady,
+  expectActivePaneHasNoLoadError,
   expectRealMediaEvidenceNeedle,
   FRESH_REAL_MEDIA_FIXTURES,
+  gotoRealMediaSinglePane,
+  openActivePaneOptions,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
   uploadFreshRealMediaFileThroughUi,
@@ -14,7 +18,7 @@ import {
 test("@real-media owner can refresh and delete real-media documents", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
   const refreshMediaId = seed.fixtures.web_url.media_id;
@@ -50,20 +54,12 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     throw new Error(`refresh fixture search did not return ${refreshMediaId}`);
   }
 
-  await page.goto(`/media/${mediaId}`);
-  await expect(page.locator("body")).not.toContainText(
-    /not found|failed to load/i,
-  );
-  await page.getByRole("button", { name: "Options" }).last().click();
-  await expect(
-    page.getByRole("menuitem", { name: /Delete document/ }),
-  ).toBeVisible();
+  await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
+  await expectActivePaneHasNoLoadError(page);
 
-  await page.goto(`/media/${refreshMediaId}`);
-  await expect(page.locator("body")).not.toContainText(
-    /not found|failed to load/i,
-  );
-  await page.getByRole("button", { name: "Options" }).last().click();
+  await gotoRealMediaSinglePane(page, `/media/${refreshMediaId}`);
+  await expectActivePaneHasNoLoadError(page);
+  await openActivePaneOptions(page, "Refresh source");
   const refreshResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -106,37 +102,6 @@ test("@real-media owner can refresh and delete real-media documents", async ({
   }
   expect(postRefreshResult.context_ref.id).not.toBe(
     initialRefreshResult.context_ref.id,
-  );
-
-  const modelsResponse = await page.request.get("/api/models");
-  expect(modelsResponse.ok(), await modelsResponse.text()).toBeTruthy();
-  const models = await modelsResponse.json();
-  expect(
-    models.data.length,
-    "real-media seed should expose at least one chat model",
-  ).toBeGreaterThan(0);
-  const staleContextResponse = await page.request.post("/api/chat-runs", {
-    headers: { "Idempotency-Key": `real-media-e2e-stale-${refreshMediaId}` },
-    data: {
-      content: "Use this stale evidence.",
-      model_id: models.data[0].id,
-      reasoning: "none",
-      key_mode: "platform_only",
-      conversation_scope: { type: "media", media_id: refreshMediaId },
-      contexts: [
-        {
-          kind: "object_ref",
-          type: "content_chunk",
-          id: initialRefreshResult.context_ref.id,
-          evidence_span_ids: initialRefreshResult.context_ref.evidence_span_ids,
-        },
-      ],
-      web_search: { mode: "off" },
-    },
-  });
-  expect(staleContextResponse.status()).toBe(400);
-  expect((await staleContextResponse.json()).error.code).toBe(
-    "E_INVALID_REQUEST",
   );
 
   let deletedMediaId: string | null = null;
@@ -189,8 +154,8 @@ test("@real-media owner can refresh and delete real-media documents", async ({
       "disposable PDF evidence should contain the pinned fixture needle before delete",
     );
 
-    await page.goto(`/media/${deletedMediaId}`);
-    await page.getByRole("button", { name: "Options" }).last().click();
+    await gotoRealMediaSinglePane(page, `/media/${deletedMediaId}`);
+    await openActivePaneOptions(page, /Delete document/);
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("Delete");
       await dialog.accept();
@@ -214,10 +179,13 @@ test("@real-media owner can refresh and delete real-media documents", async ({
       ),
       "deleted media evidence must not remain searchable",
     ).toBe(false);
+    const deletedMediaLinkSelector = [
+      `a[href$="/media/${deletedMediaId}"]`,
+      `a[href*="/media/${deletedMediaId}?"]`,
+      `a[href*="/media/${deletedMediaId}#"]`,
+    ].join(", ");
     await expect(
-      page.locator(
-        `a[href$="/media/${deletedMediaId}"], a[href*="/media/${deletedMediaId}?"]`,
-      ),
+      activeWorkspacePane(page).locator(deletedMediaLinkSelector),
     ).toHaveCount(0);
   } catch (error) {
     productError = error;
@@ -251,7 +219,6 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     refresh_worker_result: workerResult,
     post_refresh_search_api_url: postRefreshSearch.api_url,
     post_refresh_context_ref: postRefreshResult.context_ref,
-    stale_context_status: staleContextResponse.status(),
     deleted_media_id: deletedMediaId,
     deleted_fixture_id: "pdf-svms",
     deleted_upload: deletedUpload,

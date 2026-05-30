@@ -7,6 +7,10 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from nexus.services.semantic_chunks import (
+    current_transcript_embedding_model,
+    current_transcript_embedding_provider,
+)
 from tests.utils.db import DirectSessionManager
 
 
@@ -140,10 +144,12 @@ def assert_complete_evidence_trace(
             .mappings()
             .one()
         )
+        expected_embedding_model = current_transcript_embedding_model()
+        expected_embedding_provider = current_transcript_embedding_provider()
         assert row["status"] == "ready", row
         assert row["state"] == "ready", row
-        assert row["embedding_provider"] != "test", row
-        assert str(row["embedding_model"]).startswith("openai_"), row
+        assert row["embedding_provider"] == expected_embedding_provider, row
+        assert row["embedding_model"] == expected_embedding_model, row
         assert row["embedding_config_hash"], row
         assert row["snapshot_count"] > 0, row
         assert row["block_count"] > 0, row
@@ -562,10 +568,18 @@ def assert_search_and_resolver(
     assert result["context_ref"]["type"] == "content_chunk", result
     assert result["context_ref"]["evidence_span_ids"], result
     assert result["evidence_span_ids"] == result["context_ref"]["evidence_span_ids"], result
-    assert result["resolver"]["kind"] == resolver_kind, result
-    assert result["deep_link"].startswith(f"/media/{media_id}?"), result
+    expected_locator_type = {
+        "epub": "epub_fragment_offsets",
+        "pdf": "pdf_page_geometry",
+        "transcript": "transcript_time_range",
+        "web": "web_text_offsets",
+    }.get(resolver_kind)
+    assert expected_locator_type is not None, resolver_kind
+    assert result["locator"]["type"] == expected_locator_type, result
+    assert result["deep_link"].startswith(f"/media/{media_id}#evidence-"), result
 
     evidence_span_id = result["evidence_span_ids"][0]
+    assert result["deep_link"].endswith(str(evidence_span_id)), result
     resolver_response = auth_client.get(
         f"/media/{media_id}/evidence/{evidence_span_id}",
         headers=headers,
@@ -582,7 +596,7 @@ def assert_search_and_resolver(
         raise AssertionError(f"Unsupported resolver kind {resolver_kind!r}: {resolved}")
     assert query.casefold() in resolved["span_text"].casefold(), resolved
 
-    for legacy_type in ("fragment", "transcript_chunk"):
+    for legacy_type in ("transcript_chunk",):
         legacy_response = auth_client.get(
             "/search",
             params={"q": query, "types": legacy_type},

@@ -48,7 +48,6 @@ def podcast_reindex_semantic_job(
             db,
             media_id=media_uuid,
             request_reason=request_reason,
-            request_id=request_id,
         )
         db.commit()
         logger.info(

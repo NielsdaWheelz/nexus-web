@@ -16,6 +16,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    ChatRun,
+    ConversationActivePath,
     ConversationBranch,
     Message,
 )
@@ -27,6 +29,7 @@ from nexus.services.conversations import (
 from tests.factories import (
     create_test_conversation,
     create_test_message,
+    create_test_model,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -371,6 +374,106 @@ class TestDeleteConversation:
                 {"id": conversation_id},
             )
             assert result.scalar() == 0
+
+    def test_delete_conversation_cleans_branch_state_and_running_runs(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Conversation delete explicitly removes non-cascading branch state."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                role="user",
+                content="Root",
+            )
+            root_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Assistant",
+                model_id=model_id,
+                parent_message_id=root_user_id,
+            )
+            branch_user_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                role="user",
+                content="Branch",
+                parent_message_id=root_assistant_id,
+            )
+            pending_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                seq=4,
+                role="assistant",
+                content="",
+                status="pending",
+                model_id=model_id,
+                parent_message_id=branch_user_id,
+            )
+            session.add(
+                ConversationBranch(
+                    id=uuid4(),
+                    conversation_id=conversation_id,
+                    branch_user_message_id=branch_user_id,
+                )
+            )
+            session.add(
+                ConversationActivePath(
+                    conversation_id=conversation_id,
+                    viewer_user_id=user_id,
+                    active_leaf_message_id=pending_assistant_id,
+                )
+            )
+            session.add(
+                ChatRun(
+                    id=uuid4(),
+                    owner_user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=branch_user_id,
+                    assistant_message_id=pending_assistant_id,
+                    idempotency_key=f"test-delete-{conversation_id}",
+                    payload_hash="test-delete-branch-state",
+                    status="running",
+                    model_id=model_id,
+                    reasoning="none",
+                    key_mode="auto",
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversation_branches", "conversation_id", conversation_id)
+        direct_db.register_cleanup("chat_runs", "conversation_id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.delete(
+            f"/conversations/{conversation_id}", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 204
+
+        with direct_db.session() as session:
+            for table, column in (
+                ("conversation_active_paths", "conversation_id"),
+                ("conversation_branches", "conversation_id"),
+                ("chat_runs", "conversation_id"),
+                ("messages", "conversation_id"),
+                ("conversations", "id"),
+            ):
+                result = session.execute(
+                    text(f"SELECT COUNT(*) FROM {table} WHERE {column} = :id"),
+                    {"id": conversation_id},
+                )
+                assert result.scalar() == 0, table
 
     def test_conversation_response_has_no_scope_field(
         self, auth_client, direct_db: DirectSessionManager

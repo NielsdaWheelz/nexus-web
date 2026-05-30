@@ -642,8 +642,8 @@ class TestMigrationUpgradeDowngrade:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0108")
+            assert result.returncode == 0, f"upgrade to 0108 failed: {result.stderr}"
 
             with Session(engine) as session:
                 snapshot = session.execute(
@@ -4320,317 +4320,21 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "uix_messages_conversation_seq" in str(exc_info.value)
 
-    def test_message_context_item_object_type_constraint(self, migrated_engine):
-        """CHECK constraint: object-ref context item object types are known object refs."""
+    def test_message_context_items_removed_at_head(self, migrated_engine):
+        """Conversation references replaced per-message context-item storage at HEAD."""
         with Session(migrated_engine) as session:
-            user_id = uuid4()
-            conversation_id = uuid4()
-            message_id = uuid4()
-            media_id = uuid4()
-
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-                    VALUES (:id, :user_id, 'private', 2)
-                """),
-                {"id": conversation_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
-                """),
-                {"id": message_id, "conv_id": conversation_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'web_article', 'Test', 'ready_for_reading', :user_id)
-                """),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.commit()
-
-            # Context items store typed object refs directly and reject unknown types.
-            snapshot = {
-                "kind": "object_ref",
-                "type": "unknown",
-                "id": str(media_id),
-                "title": "Unknown context",
-            }
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO message_context_items (
-                            id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
-                        )
-                        VALUES (
-                            :id,
-                            :msg_id,
-                            :user_id,
-                            'unknown',
-                            :media_id,
-                            0,
-                            CAST(:context_snapshot AS jsonb)
-                        )
-                    """),
-                    {
-                        "id": uuid4(),
-                        "msg_id": message_id,
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "context_snapshot": json.dumps(snapshot),
-                    },
+            rows = session.execute(
+                text(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_name = 'message_context_items'
+                    """
                 )
-                session.commit()
+            ).fetchall()
 
-            session.rollback()
-            assert "ck_message_context_items_object_type" in str(exc_info.value)
-
-    def test_message_context_item_reader_selection_constraints(self, migrated_engine):
-        """Reader selections persist without fake object ids and require media locator state."""
-        with Session(migrated_engine) as session:
-            user_id = uuid4()
-            conversation_id = uuid4()
-            message_id = uuid4()
-            media_id = uuid4()
-            client_context_id = uuid4()
-            fragment_id = uuid4()
-            locator = {
-                "type": "web_text_offsets",
-                "media_id": str(media_id),
-                "fragment_id": str(fragment_id),
-                "start_offset": 0,
-                "end_offset": 4,
-            }
-            snapshot = {
-                "kind": "reader_selection",
-                "client_context_id": str(client_context_id),
-                "media_id": str(media_id),
-                "source_media_id": str(media_id),
-                "media_kind": "web_article",
-                "media_title": "Reader Source",
-                "exact": "text",
-                "locator": locator,
-                "source_version": "fragments_v1",
-            }
-
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-                    VALUES (:id, :user_id, 'private', 2)
-                """),
-                {"id": conversation_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
-                """),
-                {"id": message_id, "conv_id": conversation_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO message_context_items (
-                        id,
-                        message_id,
-                        user_id,
-                        context_kind,
-                        source_media_id,
-                        locator_json,
-                        ordinal,
-                        context_snapshot
-                    )
-                    VALUES (
-                        :id,
-                        :message_id,
-                        :user_id,
-                        'reader_selection',
-                        :media_id,
-                        CAST(:locator AS jsonb),
-                        0,
-                        CAST(:context_snapshot AS jsonb)
-                    )
-                """),
-                {
-                    "id": uuid4(),
-                    "message_id": message_id,
-                    "user_id": user_id,
-                    "media_id": media_id,
-                    "locator": json.dumps(locator),
-                    "context_snapshot": json.dumps(snapshot),
-                },
-            )
-            session.commit()
-
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO message_context_items (
-                            id,
-                            message_id,
-                            user_id,
-                            context_kind,
-                            object_type,
-                            object_id,
-                            source_media_id,
-                            ordinal,
-                            context_snapshot
-                        )
-                        VALUES (
-                            :id,
-                            :message_id,
-                            :user_id,
-                            'reader_selection',
-                            'highlight',
-                            :object_id,
-                            :media_id,
-                            1,
-                            '{"kind":"reader_selection"}'::jsonb
-                        )
-                    """),
-                    {
-                        "id": uuid4(),
-                        "message_id": message_id,
-                        "user_id": user_id,
-                        "object_id": uuid4(),
-                        "media_id": media_id,
-                    },
-                )
-                session.commit()
-
-            session.rollback()
-            assert "ck_message_context_items_kind_shape" in str(exc_info.value)
-
-            missing_source_version = dict(snapshot)
-            missing_source_version.pop("source_version")
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO message_context_items (
-                            id,
-                            message_id,
-                            user_id,
-                            context_kind,
-                            source_media_id,
-                            locator_json,
-                            ordinal,
-                            context_snapshot
-                        )
-                        VALUES (
-                            :id,
-                            :message_id,
-                            :user_id,
-                            'reader_selection',
-                            :media_id,
-                            CAST(:locator AS jsonb),
-                            2,
-                            CAST(:context_snapshot AS jsonb)
-                        )
-                    """),
-                    {
-                        "id": uuid4(),
-                        "message_id": message_id,
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "locator": json.dumps(locator),
-                        "context_snapshot": json.dumps(missing_source_version),
-                    },
-                )
-                session.commit()
-
-            session.rollback()
-            assert "ck_message_context_items_reader_selection_snapshot" in str(exc_info.value)
-
-    def test_message_context_item_object_ref_snapshot_constraint(self, migrated_engine):
-        """Object-ref snapshots must carry canonical row identity and a title."""
-        with Session(migrated_engine) as session:
-            user_id = uuid4()
-            conversation_id = uuid4()
-            message_id = uuid4()
-            media_id = uuid4()
-
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-                    VALUES (:id, :user_id, 'private', 2)
-                """),
-                {"id": conversation_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
-                """),
-                {"id": message_id, "conv_id": conversation_id},
-            )
-            valid_snapshot = {
-                "kind": "object_ref",
-                "type": "media",
-                "id": str(media_id),
-                "title": "Attached Media",
-            }
-            session.execute(
-                text("""
-                    INSERT INTO message_context_items (
-                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
-                    )
-                    VALUES (
-                        :id,
-                        :msg_id,
-                        :user_id,
-                        'media',
-                        :media_id,
-                        0,
-                        CAST(:context_snapshot AS jsonb)
-                    )
-                """),
-                {
-                    "id": uuid4(),
-                    "msg_id": message_id,
-                    "user_id": user_id,
-                    "media_id": media_id,
-                    "context_snapshot": json.dumps(valid_snapshot),
-                },
-            )
-            session.commit()
-
-            invalid_snapshot = {
-                "kind": "object_ref",
-                "type": "media",
-                "id": str(media_id),
-            }
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO message_context_items (
-                            id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
-                        )
-                        VALUES (
-                            :id,
-                            :msg_id,
-                            :user_id,
-                            'media',
-                            :media_id,
-                            1,
-                            CAST(:context_snapshot AS jsonb)
-                        )
-                    """),
-                    {
-                        "id": uuid4(),
-                        "msg_id": message_id,
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "context_snapshot": json.dumps(invalid_snapshot),
-                    },
-                )
-                session.commit()
-
-            session.rollback()
-            assert "ck_message_context_items_object_ref_snapshot" in str(exc_info.value)
+        assert rows == []
 
     def test_user_api_key_nonce_length_constraint(self, migrated_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""
@@ -4872,31 +4576,32 @@ class TestS3SchemaConstraints:
         assert expected_constraints == set(delete_rules), delete_rules
         assert set(delete_rules.values()) == {"NO ACTION"}, delete_rules
 
-    def test_citation_audits_are_append_only_per_message(self, migrated_engine):
-        """Append-only ledgers must not retain old one-row unique constraints."""
+    def test_verifier_and_citation_audit_tables_are_removed_at_head(self, migrated_engine):
+        """The verifier/citation-audit stack was removed by the hard cutover."""
+        removed_tables = {
+            "assistant_message_claim_evidence",
+            "assistant_message_citation_audits",
+            "assistant_message_claims",
+            "assistant_message_evidence_summaries",
+            "assistant_message_verifier_runs",
+        }
         with Session(migrated_engine) as session:
-            unique_rows = session.execute(
-                text(
-                    """
-                    SELECT constraint_name
-                    FROM information_schema.table_constraints
-                    WHERE constraint_name = 'uix_assistant_citation_audits_message'
-                    """
-                )
-            ).fetchall()
-            index_rows = session.execute(
-                text(
-                    """
-                    SELECT indexname
-                    FROM pg_indexes
-                    WHERE tablename = 'assistant_message_citation_audits'
-                      AND indexname = 'idx_assistant_citation_audits_message_created'
-                    """
-                )
-            ).fetchall()
+            tables = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                          AND table_name = ANY(:table_names)
+                        """
+                    ),
+                    {"table_names": list(removed_tables)},
+                ).fetchall()
+            }
 
-        assert unique_rows == []
-        assert len(index_rows) == 1
+        assert tables == set()
 
     def test_fragment_block_offsets_constraint(self, migrated_engine):
         """CHECK constraint: end_offset >= start_offset."""
@@ -7478,7 +7183,7 @@ class TestConversationReferencesCutoverMigration0121:
     columns.
     """
 
-    def test_0121_drops_fragmented_chat_context_tables(self, migrated_engine):
+    def test_0121_and_0124_drop_fragmented_chat_context_tables(self, migrated_engine):
         with Session(migrated_engine) as session:
             tables = {
                 row[0]
@@ -7503,8 +7208,8 @@ class TestConversationReferencesCutoverMigration0121:
         }
         leftover = dropped & tables
         assert leftover == set(), (
-            f"Migration 0121 should have dropped these tables, but they remain at HEAD: "
-            f"{leftover}"
+            "Migrations 0121 and 0124 should have dropped these tables by HEAD, "
+            f"but they remain: {leftover}"
         )
 
     def test_0121_creates_conversation_references_with_unique_and_index(self, migrated_engine):
@@ -7548,8 +7253,7 @@ class TestConversationReferencesCutoverMigration0121:
 
         for required in ("id", "conversation_id", "resource_uri", "created_at"):
             assert required in columns, (
-                f"conversation_references must have column '{required}'; "
-                f"got {set(columns)}"
+                f"conversation_references must have column '{required}'; got {set(columns)}"
             )
         for col in ("id", "conversation_id", "resource_uri", "created_at"):
             assert columns[col][1] == "NO", (

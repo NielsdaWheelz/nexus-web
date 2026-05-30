@@ -98,7 +98,9 @@ async def _tail_chat_run_events(
     cursor = after
     last_keepalive = time.monotonic()
 
-    async for _ in wait_for_notifications("chat_run_events", str(run_id), KEEPALIVE_INTERVAL_SECONDS):
+    async for _ in wait_for_notifications(
+        "chat_run_events", str(run_id), KEEPALIVE_INTERVAL_SECONDS
+    ):
         if await request.is_disconnected():
             return
 
@@ -165,9 +167,7 @@ def _assert_reading_owner(viewer_id: UUID, reading_id: UUID) -> None:
         oracle_service.assert_reading_owner(db, viewer_id=viewer_id, reading_id=reading_id)
 
 
-def _read_reading_events(
-    reading_id: UUID, after: int
-) -> tuple[list[OracleReadingEventOut], bool]:
+def _read_reading_events(reading_id: UUID, after: int) -> tuple[list[OracleReadingEventOut], bool]:
     with get_session_factory()() as db:
         events = oracle_service.get_reading_events(db, reading_id=reading_id, after=after)
         terminal = oracle_service.is_reading_terminal(db, reading_id=reading_id)

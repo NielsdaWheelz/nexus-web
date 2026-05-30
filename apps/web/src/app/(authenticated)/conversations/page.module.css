@@ -24,7 +24,7 @@
   display: flex;
 }
 
-.chatSidecarBody {
+.chatSecondaryBody {
   overflow: hidden;
   background: var(--surface-2);
 }

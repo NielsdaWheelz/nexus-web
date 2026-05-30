@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -50,6 +49,7 @@ from nexus.schemas.oracle import (
 from nexus.services.chat_prompt import _hash_json as _hash_prompt_json
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.semantic_chunks import (
+    build_deterministic_hash_embedding,
     build_text_embedding,
     current_transcript_embedding_model,
     to_pgvector_literal,
@@ -1086,8 +1086,14 @@ def _build_query_embedding_for_model(
     embedding_model: str,
 ) -> tuple[str, list[float]]:
     embedding_dims = transcript_embedding_dimensions()
-    if embedding_model == f"test_hash_v2_{embedding_dims}":
-        return embedding_model, _test_hash_embedding(question, embedding_dims)
+    if embedding_model in {
+        f"test_hash_v2_{embedding_dims}",
+        f"fixture_hash_v1_{embedding_dims}",
+    }:
+        return embedding_model, build_deterministic_hash_embedding(
+            question,
+            dimensions=embedding_dims,
+        )
 
     try:
         returned_embedding_model, query_embedding = build_text_embedding(question)
@@ -1113,22 +1119,6 @@ def _build_query_embedding_for_model(
             "Oracle query embedding has the wrong dimensionality",
         )
     return returned_embedding_model, query_embedding
-
-
-def _test_hash_embedding(text_value: str, dimensions: int) -> list[float]:
-    tokens = ORACLE_TOKEN_RE.findall(str(text_value or "").lower())
-    vector = [0.0] * dimensions
-    for token in tokens:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        bucket = int.from_bytes(digest[:4], "big") % dimensions
-        sign = -1.0 if digest[4] % 2 else 1.0
-        weight = ((int.from_bytes(digest[5:7], "big") % 1000) + 1) / 1000.0
-        vector[bucket] += sign * weight
-
-    norm = math.sqrt(sum(component * component for component in vector))
-    if norm <= 0.0:
-        return vector
-    return [component / norm for component in vector]
 
 
 def _retrieve_corpus_passages(

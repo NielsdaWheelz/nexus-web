@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type FormEvent,
+} from "react";
 import { apiFetch } from "@/lib/api/client";
 import {
   FeedbackNotice,
@@ -12,18 +19,19 @@ import SectionCard from "@/components/ui/SectionCard";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
-  EMAIL_CHANGE_SUCCESS_MESSAGE,
+  EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
 } from "@/lib/auth/messages";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
 
 export default function SettingsAccountPaneBody({
-  initialEmail,
+  initialEmail = "",
 }: {
-  initialEmail: string;
+  initialEmail?: string;
 }) {
   const [currentEmail, setCurrentEmail] = useState(initialEmail);
   const [emailInput, setEmailInput] = useState(initialEmail);
+  const emailDirtyRef = useRef(false);
   const [emailFeedback, setEmailFeedback] = useState<FeedbackContent | null>(
     null
   );
@@ -31,6 +39,7 @@ export default function SettingsAccountPaneBody({
 
   const [currentDisplayName, setCurrentDisplayName] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
+  const displayNameDirtyRef = useRef(false);
   const [displayNameFeedback, setDisplayNameFeedback] =
     useState<FeedbackContent | null>(null);
   const [displayNamePending, startDisplayNameTransition] = useTransition();
@@ -41,9 +50,21 @@ export default function SettingsAccountPaneBody({
         const response = await apiFetch<{ data: { display_name: string | null } }>(
           "/api/me"
         );
+        const email =
+          "email" in response.data && typeof response.data.email === "string"
+            ? response.data.email
+            : "";
+        if (email) {
+          setCurrentEmail(email);
+          if (!emailDirtyRef.current) {
+            setEmailInput(email);
+          }
+        }
         const name = response.data.display_name ?? "";
         setCurrentDisplayName(name);
-        setDisplayNameInput(name);
+        if (!displayNameDirtyRef.current) {
+          setDisplayNameInput(name);
+        }
       } catch {
         setDisplayNameFeedback({
           severity: "error",
@@ -66,9 +87,10 @@ export default function SettingsAccountPaneBody({
         const normalized = emailInput.trim().toLowerCase();
         setCurrentEmail(normalized);
         setEmailInput(normalized);
+        emailDirtyRef.current = false;
         setEmailFeedback({
           severity: "success",
-          title: EMAIL_CHANGE_SUCCESS_MESSAGE,
+          title: EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
         });
       });
     },
@@ -90,6 +112,7 @@ export default function SettingsAccountPaneBody({
           const name = response.data.display_name ?? "";
           setCurrentDisplayName(name);
           setDisplayNameInput(name);
+          displayNameDirtyRef.current = false;
           setDisplayNameFeedback({
             severity: "success",
             title: DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
@@ -118,7 +141,10 @@ export default function SettingsAccountPaneBody({
               autoComplete="email"
               required
               value={emailInput}
-              onChange={(event) => setEmailInput(event.target.value)}
+              onChange={(event) => {
+                emailDirtyRef.current = true;
+                setEmailInput(event.target.value);
+              }}
               disabled={emailPending}
             />
           </label>
@@ -148,7 +174,10 @@ export default function SettingsAccountPaneBody({
               minLength={1}
               maxLength={80}
               value={displayNameInput}
-              onChange={(event) => setDisplayNameInput(event.target.value)}
+              onChange={(event) => {
+                displayNameDirtyRef.current = true;
+                setDisplayNameInput(event.target.value);
+              }}
               disabled={displayNamePending}
             />
           </label>

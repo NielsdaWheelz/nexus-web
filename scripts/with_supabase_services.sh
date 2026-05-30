@@ -43,6 +43,7 @@ cleanup_supabase_project() {
         "supabase_storage_${project_id}" \
         "supabase_realtime_${project_id}" \
         "supabase_inbucket_${project_id}" \
+        "supabase_mailpit_${project_id}" \
         "supabase_imgproxy_${project_id}" \
         "supabase_pg_meta_${project_id}" \
         "supabase_studio_${project_id}" \
@@ -83,7 +84,7 @@ fi
 # Test suites use Supabase Auth only. App data uses test Postgres and S3-compatible object storage.
 for attempt in 1 2; do
     if ! supabase start \
-        -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit,postgrest \
+        -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest \
         >"$start_log" 2>&1; then
         echo "Supabase Auth startup failed on attempt ${attempt}." >&2
         cat "$start_log" >&2

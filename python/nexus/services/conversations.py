@@ -491,8 +491,15 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
     """
-    # Verify ownership (write = owner-only)
-    get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
+    # Verify ownership (write = owner-only) and hold the parent row lock while
+    # deleting child rows. Branch path writes insert FK-backed rows concurrently
+    # during active chat panes; the lock prevents a new child from appearing
+    # between explicit child cleanup and the parent delete.
+    conversation = db.scalar(
+        select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+    )
+    if conversation is None or conversation.owner_user_id != viewer_id:
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
     delete_conversation_rows_without_commit(db, conversation_id)
     db.commit()
@@ -987,4 +994,3 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
         """,
         {"message_ids": list(message_ids)},
     )
-

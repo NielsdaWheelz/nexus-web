@@ -39,7 +39,7 @@ Definitions used throughout this document:
 - `make check-workflows` validates GitHub Actions files.
 - `make audit` is the dependency/security gate.
 - `make test-unit`, `make test`, `make test-e2e`, `make test-real-media`, `make test-live-providers`, `make verify`, and `make verify-full` are the main local quality gates.
-- `make test-real-media` is the deterministic real-media backend and Playwright acceptance gate.
+- `make test-real-media` is the deterministic real-media backend and Playwright acceptance gate. It uses fixture-backed external providers, including deterministic fixture embeddings; live provider credentials belong to `make test-live-providers`.
 - `make test-back-unit` runs backend unit tests with `pytest-xdist`.
 - `make test-e2e` stays a single local command; CI shards Playwright across jobs.
 
@@ -479,8 +479,8 @@ Command semantics:
 - `make test-unit`: fast unit tests only (no DB, no browser-mode component tests, no E2E)
 - `make test`: non-E2E automated tests, including backend integration and frontend browser-mode component tests
 - `make test-e2e`: explicit default real-stack Playwright run (used before merge and in CI)
-- `make test-real-media`: deterministic real-media backend and Playwright acceptance gate
-- `make test-live-providers`: live external-provider backend gate
+- `make test-real-media`: deterministic real-media backend and Playwright acceptance gate with fixture-backed external providers
+- `make test-live-providers`: live external-provider backend gate, including real OpenAI embeddings
 - `make verify`: check + build + non-E2E tests for routine development
 - `make verify-full`: verify + real-media + live-provider + E2E
 - `make test-android`: instrumentation tests; requires a connected Android device or emulator
@@ -501,8 +501,9 @@ Port ownership:
 - Playwright specs that need a specific pane layout should use the shared
   workspace session-seeding helpers in `e2e/tests/workspace.ts`. Bare direct URLs
   are product behavior; pane-sensitive tests should not rely on restored
-  workspace state being empty. Workspace layout must not be encoded in URL query
-  params.
+  workspace state being empty. The helpers leave any mounted workspace before
+  seeding so unload-time session capture cannot overwrite the fixture. Workspace
+  layout must not be encoded in URL query params.
 
 Target CI shape:
 

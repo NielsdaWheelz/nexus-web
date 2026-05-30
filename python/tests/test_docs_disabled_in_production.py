@@ -25,6 +25,7 @@ _BASE_ENV = {
     "PODCAST_INDEX_API_KEY": "test-key",
     "PODCAST_INDEX_API_SECRET": "test-secret",
     "YOUTUBE_DATA_API_KEY": "test-youtube-key",
+    "X_API_BEARER_TOKEN": "test-x-token",
     # Keep app and stream origins identical so the cross-origin stream guard
     # in create_app does not fire for staging/prod.
     "APP_PUBLIC_URL": "http://localhost:8000",

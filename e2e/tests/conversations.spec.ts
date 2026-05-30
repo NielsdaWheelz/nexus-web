@@ -3,8 +3,14 @@ import {
   seedBranchingConversation,
   seedScrollConversation,
 } from "./conversation-tree-seed";
+import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import { selectExactVisibleText } from "./selection";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -16,6 +22,7 @@ async function createConversationViaApi(page: Page) {
   await ensureAppContext(page);
   const createResponse = await page.request.post("/api/conversations", {
     maxRedirects: 0,
+    headers: stateChangingApiHeaders(),
   });
   const status = createResponse.status();
   const body = await createResponse.text();
@@ -45,6 +52,7 @@ async function deleteConversationViaApi(page: Page, conversationId: string) {
     try {
       const response = await page.request.delete(
         `/api/conversations/${conversationId}`,
+        { headers: stateChangingApiHeaders() },
       );
       if (!response.ok() && response.status() !== 404) {
         const body = await response.text();
@@ -88,13 +96,13 @@ async function selectTextInMessage(
 }
 
 async function openForksPanel(page: Page) {
-  await page
+  await activeWorkspacePane(page)
     .getByTestId("pane-shell-chrome")
     .getByRole("button", { name: "Options" })
     .click();
   await page.getByRole("menuitem", { name: "Forks" }).click();
 
-  const panel = page.getByTestId("workspace-sidecar-pane");
+  const panel = page.getByTestId("workspace-secondary-pane");
   await expect(panel).toBeVisible();
   await expect(
     panel.getByRole("tree", { name: "Conversation forks" }),
@@ -147,15 +155,20 @@ test.describe("conversations", () => {
     }
   });
 
-  test("send message", async ({ page }) => {
+  test("send message", async ({ page }, testInfo) => {
     const conversationId = await createConversationViaApi(page);
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-send"),
+        `/conversations/${conversationId}`,
+      );
 
-      const modelSettingsButton = page.getByRole("button", {
+      const activePane = activeWorkspacePane(page);
+      const modelSettingsButton = activePane.getByRole("button", {
         name: /model settings:/i,
       });
-      const input = page.getByRole("textbox", {
+      const input = activePane.getByRole("textbox", {
         name: /ask anything|type a message/i,
       });
 
@@ -196,20 +209,27 @@ test.describe("conversations", () => {
 
   test("new chat docks the composer below the empty transcript", async ({
     page,
-  }) => {
-    await page.goto("/conversations/new");
+  }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-conversations-new"),
+      "/conversations/new",
+    );
 
-    const paneBody = page.getByTestId("pane-shell-body");
-    const scrollport = page.getByRole("region", { name: "Chat conversation" });
-    const composerDock = page.getByTestId("chat-composer-dock");
+    const activePane = activeWorkspacePane(page);
+    const paneBody = activePane.getByTestId("pane-shell-body");
+    const scrollport = activePane.getByRole("region", {
+      name: "Chat conversation",
+    });
+    const composerDock = activePane.getByTestId("chat-composer-dock");
 
     await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
     await expect(scrollport).toBeVisible();
     await expect(
-      page.getByRole("log", { name: "Chat messages" }),
+      activePane.getByRole("log", { name: "Chat messages" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("textbox", { name: "Ask anything" }),
+      activePane.getByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
     await expect(composerDock).toBeVisible();
     await expect
@@ -231,19 +251,26 @@ test.describe("conversations", () => {
 
   test("main chat pane owns message and composer scrolling", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = await seedScrollConversation(page, 50);
     const conversationId = seed.conversation_id;
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-scroll"),
+        `/conversations/${conversationId}`,
+      );
 
-      const paneBody = page.getByTestId("pane-shell-body");
-      const scrollport = page.getByRole("region", {
+      const activePane = activeWorkspacePane(page);
+      const paneBody = activePane.getByTestId("pane-shell-body");
+      const scrollport = activePane.getByRole("region", {
         name: "Chat conversation",
       });
-      const log = page.getByRole("log", { name: "Chat messages" });
-      const composerDock = page.getByTestId("chat-composer-dock");
-      const finalMessage = messageRow(page, seed.active_leaf_message_id);
+      const log = activePane.getByRole("log", { name: "Chat messages" });
+      const composerDock = activePane.getByTestId("chat-composer-dock");
+      const finalMessage = activePane.locator(
+        `[data-message-id="${seed.active_leaf_message_id}"]`,
+      );
 
       await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
       await expect(scrollport).toBeVisible();
@@ -304,7 +331,7 @@ test.describe("conversations", () => {
       const beforeComposerWheel = await scrollport.evaluate(
         (node) => node.scrollTop,
       );
-      await page.getByRole("textbox", { name: "Ask anything" }).hover();
+      await activePane.getByRole("textbox", { name: "Ask anything" }).hover();
       await page.mouse.wheel(0, -700);
       await expect
         .poll(async () => scrollport.evaluate((node) => node.scrollTop))
@@ -321,46 +348,59 @@ test.describe("conversations", () => {
 
   test("desktop branching covers fork preview, switching, graph, rename, and delete states", async ({
     page,
-  }) => {
+  }, testInfo) => {
     test.setTimeout(60_000);
     const seed = await seedBranchingConversation(page);
     const conversationId = seed.conversation_id;
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations"),
+        `/conversations/${conversationId}`,
+      );
+      const conversationPane = activeWorkspacePane(page);
 
       await expect(
-        page.getByRole("log", { name: "Chat messages" }),
+        conversationPane.getByRole("log", { name: "Chat messages" }),
       ).toContainText("Linear branch answer keeps the original path active.");
-      await expect(messageRow(page, seed.root_assistant_id)).toContainText(
-        seed.root_assistant_content,
-      );
+      await expect(
+        conversationPane.locator(`[data-message-id="${seed.root_assistant_id}"]`),
+      ).toContainText(seed.root_assistant_content);
 
-      const rootAssistant = messageRow(page, seed.root_assistant_id);
+      const rootAssistant = conversationPane.locator(
+        `[data-message-id="${seed.root_assistant_id}"]`,
+      );
       await rootAssistant
         .getByRole("button", { name: "Fork from this answer" })
         .click();
-      const branchPreview = page.locator('section[aria-label="Fork reply"]');
+      const branchPreview = conversationPane.locator(
+        'section[aria-label="Fork reply"]',
+      );
       await expect(branchPreview).toContainText("Parent message 2");
       await expect(branchPreview).toContainText("selected source phrase");
-      await page.getByRole("button", { name: "Cancel branch reply" }).click();
+      await conversationPane
+        .getByRole("button", { name: "Cancel branch reply" })
+        .click();
       await expect(branchPreview).toHaveCount(0);
 
       await selectTextInMessage(page, seed.root_assistant_id, seed.quote_exact);
       await page.getByRole("button", { name: "Fork from selection" }).click();
       await expect(branchPreview).toContainText(seed.quote_exact);
 
-      const input = page.getByRole("textbox", { name: "Ask anything" });
+      const input = conversationPane.getByRole("textbox", { name: "Ask anything" });
       await input.fill("E2E selected quote follow-up");
-      const sendButton = page.getByRole("button", { name: "Send fork reply" });
+      const sendButton = conversationPane.getByRole("button", {
+        name: "Send fork reply",
+      });
       await expect(sendButton).toBeEnabled({ timeout: 15_000 });
       await sendButton.click();
       await expect(
-        page.getByRole("button", {
+        conversationPane.getByRole("button", {
           name: /Current fork[\s\S]*E2E selected quote follow-up/i,
         }),
       ).toBeVisible({ timeout: 10_000 });
       await expect(
-        page.getByRole("log", { name: "Chat messages" }),
+        conversationPane.getByRole("log", { name: "Chat messages" }),
       ).toContainText("E2E selected quote follow-up");
 
       const quoteForkButton = rootAssistant
@@ -375,7 +415,7 @@ test.describe("conversations", () => {
             .includes(`/api/conversations/${conversationId}/active-path`) &&
           response.request().method() === "POST",
       );
-      const chatScrollport = page.getByRole("region", {
+      const chatScrollport = conversationPane.getByRole("region", {
         name: "Chat conversation",
       });
       const beforeForkSwitchScrollTop = await chatScrollport.evaluate(
@@ -398,7 +438,7 @@ test.describe("conversations", () => {
         `POST /active-path failed: status=${quoteSwitchResponse.status()}; body=${quoteSwitchBody.slice(0, 500)}`,
       ).toBeTruthy();
       await expect(
-        page.getByText(
+        conversationPane.getByText(
           "Quote branch answer highlights the selected source phrase.",
         ),
       ).toBeVisible();
@@ -406,17 +446,19 @@ test.describe("conversations", () => {
         .poll(() => chatScrollport.evaluate((node) => node.scrollTop))
         .toBeGreaterThan(0);
       await expect(
-        page.getByRole("button", { name: /Current fork[\s\S]*Quote branch/i }),
+        conversationPane.getByRole("button", {
+          name: /Current fork[\s\S]*Quote branch/i,
+        }),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", {
+        conversationPane.getByRole("button", {
           name: /Switch to fork[\s\S]*E2E selected quote follow-up/i,
         }),
       ).toBeVisible();
 
       await page.reload();
       await expect(
-        page.getByText(
+        conversationPane.getByText(
           "Quote branch answer highlights the selected source phrase.",
         ),
       ).toBeVisible();
@@ -433,14 +475,25 @@ test.describe("conversations", () => {
       await panel
         .getByRole("textbox", { name: "Rename fork Quote branch" })
         .fill("Renamed quote fork");
+      const renameResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes(`/api/conversations/${conversationId}/forks/`) &&
+          response.request().method() === "PATCH",
+      );
       await panel
         .getByRole("button", { name: "Save fork Quote branch" })
         .click();
+      const renameResponse = await renameResponsePromise;
+      const renameBody = await renameResponse.text();
+      expect(
+        renameResponse.ok(),
+        `PATCH fork rename failed: status=${renameResponse.status()}; body=${renameBody.slice(0, 500)}`,
+      ).toBeTruthy();
       await expect(
         panel.getByRole("button", {
           name: "Switch to fork Renamed quote fork",
         }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 10_000 });
 
       await panel.getByRole("tab", { name: "Graph" }).click();
       await panel
@@ -449,7 +502,7 @@ test.describe("conversations", () => {
         })
         .click();
       await expect(
-        page.getByRole("log", { name: "Chat messages" }),
+        conversationPane.getByRole("log", { name: "Chat messages" }),
       ).toContainText(
         "Disposable branch answer can be switched to from the graph.",
       );
@@ -478,7 +531,7 @@ test.describe("conversations", () => {
     }
   });
 
-  test("mobile sidecar exposes forks and switches branches", async ({
+  test("mobile secondary exposes forks and switches branches", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -486,26 +539,26 @@ test.describe("conversations", () => {
     const conversationId = seed.conversation_id;
     try {
       await page.goto(`/conversations/${conversationId}`);
-      await expect(page.getByTestId("workspace-sidecar-pane")).toHaveCount(0);
-      await expect(page.getByTestId("mobile-sidecar-host")).toHaveCount(0);
+      await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
+      await expect(page.getByTestId("mobile-secondary-host")).toHaveCount(0);
 
-      await page
+      await activeWorkspacePane(page)
         .getByTestId("pane-shell-chrome")
         .getByRole("button", { name: "Options" })
         .click();
       await page.getByRole("menuitem", { name: "Forks" }).click();
 
-      const sidecar = page.getByRole("dialog", { name: "Forks" });
-      await expect(sidecar).toBeVisible();
+      const secondary = page.getByRole("dialog", { name: "Forks" });
+      await expect(secondary).toBeVisible();
       await expect(
-        sidecar.getByRole("tree", { name: "Conversation forks" }),
+        secondary.getByRole("tree", { name: "Conversation forks" }),
       ).toBeVisible();
-      await sidecar
+      await secondary
         .getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i })
         .click();
 
-      await sidecar.getByRole("button", { name: "Close Forks" }).click();
-      await expect(sidecar).toHaveCount(0);
+      await secondary.getByRole("button", { name: "Close Forks" }).click();
+      await expect(secondary).toHaveCount(0);
       await expect(
         page.getByText(
           "Quote branch answer highlights the selected source phrase.",

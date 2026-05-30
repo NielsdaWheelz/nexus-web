@@ -688,6 +688,16 @@ export default function PdfReader({
     }
     return Math.max(0, Math.min(1, localScrollTop / maxLocalScroll));
   }, [readPageMetrics]);
+  const publishCurrentResumeLocator = useCallback(
+    (nextPageNumber = pageNumberRef.current, nextZoom = zoomRef.current) => {
+      publishResumeLocator(
+        nextPageNumber,
+        nextZoom,
+        readCurrentPageProgression(),
+      );
+    },
+    [publishResumeLocator, readCurrentPageProgression],
+  );
 
   const applyStartPageProgression = useCallback(() => {
     const targetProgression = pendingStartPageProgressionRef.current;
@@ -1704,6 +1714,9 @@ export default function PdfReader({
       clearSelection();
       setPageHighlights([]);
       onPageHighlightsChangeRef.current?.(nextPage, []);
+      pageNumberRef.current = nextPage;
+      setPageNumber(nextPage);
+      publishCurrentResumeLocator(nextPage, zoomRef.current);
 
       const currentRun = runRef.current;
       try {
@@ -1728,7 +1741,7 @@ export default function PdfReader({
         }
       }
     },
-    [clearSelection, numPages, recoverAndRender],
+    [clearSelection, numPages, publishCurrentResumeLocator, recoverAndRender],
   );
 
   const scrollToProjectedHighlight = useCallback(
@@ -2181,11 +2194,21 @@ export default function PdfReader({
     void goToPage(pageNumberRef.current + 1);
   }, [goToPage]);
   const zoomOut = useCallback(() => {
-    setZoom((value) => clamp(value - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
-  }, []);
+    setZoom((value) => {
+      const nextZoom = clamp(value - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM);
+      zoomRef.current = nextZoom;
+      publishCurrentResumeLocator(pageNumberRef.current, nextZoom);
+      return nextZoom;
+    });
+  }, [publishCurrentResumeLocator]);
   const zoomIn = useCallback(() => {
-    setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
-  }, []);
+    setZoom((value) => {
+      const nextZoom = clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM);
+      zoomRef.current = nextZoom;
+      publishCurrentResumeLocator(pageNumberRef.current, nextZoom);
+      return nextZoom;
+    });
+  }, [publishCurrentResumeLocator]);
 
   useEffect(() => {
     if (!onControlsReady) {

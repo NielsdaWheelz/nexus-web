@@ -1,7 +1,13 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { openHighlightsPane, openMediaInSinglePaneWorkspace } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
+import {
+  activePaneSelector,
+  activeWorkspacePane,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface SeededYoutubeMedia {
   media_id: string;
@@ -45,44 +51,37 @@ function readSeededYoutubeMedia(): SeededYoutubeMedia {
   return parsed;
 }
 
-async function openHighlightsPane(page: Page): Promise<Locator> {
-  const sidecar = page.getByTestId("workspace-sidecar-pane");
-  if ((await sidecar.count()) > 0 && (await sidecar.isVisible().catch(() => false))) {
-    await sidecar.getByRole("tab", { name: "Highlights" }).click();
-  } else {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(sidecar).toBeVisible({ timeout: 10_000 });
-  await expect(sidecar.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  return page.getByTestId("anchored-highlights-container").first();
+function transcriptSegmentButton(activePane: Locator, text: string): Locator {
+  return activePane.getByRole("button", {
+    name: new RegExp(`^\\d{2}:\\d{2}:\\d{2}\\s+.*${escapeRegExp(text)}$`, "i"),
+  });
 }
-
 
 test.describe("youtube transcript media", () => {
   test("transcript-ready youtube flow renders embed, seeks by transcript click, and keeps external source action", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededYoutubeMedia();
     const expectedStartSeconds = Math.floor(seed.seek_segment_start_ms / 1000);
 
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-youtube"),
+      seed.media_id,
+    );
 
-    const playerFrame = page.locator('iframe[title="YouTube video player"]');
-    await expect(playerFrame).toBeVisible();
-    await expect(page.locator("video")).toHaveCount(0);
+    const activePane = activeWorkspacePane(page);
+    const playerFrame = activePane.locator("iframe").first();
+    await expect(playerFrame).toBeVisible({ timeout: 10_000 });
+    await expect(activePane.locator("video")).toHaveCount(0);
 
-    await expect(page.getByRole("link", { name: /open in source/i })).toHaveAttribute(
+    await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",
       seed.watch_url
     );
 
-    const seekSegmentButton = page.getByRole("button", {
-      name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-    });
-    await expect(seekSegmentButton).toBeVisible();
+    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
+    await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
     await expect
@@ -99,19 +98,22 @@ test.describe("youtube transcript media", () => {
 
   test("creates a highlight from transcript content and shows it in the linked items pane", async ({
     page,
-  }) => {
+  }, testInfo) => {
     test.slow();
 
     const seed = readSeededYoutubeMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-youtube"),
+      seed.media_id,
+    );
 
-    const seekSegmentButton = page.getByRole("button", {
-      name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-    });
-    await expect(seekSegmentButton).toBeVisible();
+    const activePane = activeWorkspacePane(page);
+    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
+    await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
-    const transcriptContent = page.locator(
+    const transcriptContent = activePane.locator(
       '[data-testid="document-viewport"] [data-testid="html-renderer"]'
     );
     await expect(transcriptContent).toContainText(seed.seek_segment_text, { timeout: 10_000 });
@@ -147,7 +149,9 @@ test.describe("youtube transcript media", () => {
     const beforeHighlightedCount = await highlightedSegments.count();
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
-      '[data-testid="document-viewport"] [data-testid="html-renderer"]',
+      activePaneSelector(
+        '[data-testid="document-viewport"] [data-testid="html-renderer"]'
+      ),
       existingExacts
     );
 
@@ -181,20 +185,25 @@ test.describe("youtube transcript media", () => {
 
   test("playback-only youtube media shows explicit transcript-unavailable gating", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const seed = readSeededYoutubeMedia();
-    await page.goto(`/media/${seed.playback_only_media_id}`);
+    await openMediaInSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-youtube"),
+      seed.playback_only_media_id,
+    );
 
-    await expect(page.locator('iframe[title="YouTube video player"]')).toBeVisible();
+    const activePane = activeWorkspacePane(page);
+    await expect(activePane.locator("iframe").first()).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(
-      page.getByText("Transcript unavailable for this episode.")
+      activePane.getByText("Transcript unavailable for this episode.")
     ).toBeVisible();
     await expect(
-      page.getByRole("button", {
-        name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-      })
+      transcriptSegmentButton(activePane, seed.seek_segment_text)
     ).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /open in source/i })).toHaveAttribute(
+    await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",
       /youtube\.com\/watch\?v=/
     );

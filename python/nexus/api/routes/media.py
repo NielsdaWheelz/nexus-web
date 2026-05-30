@@ -8,11 +8,13 @@ Routes are transport-only:
 No domain logic or raw DB access in routes.
 """
 
+import json
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -54,6 +56,29 @@ from nexus.services import upload as upload_service
 from nexus.services.podcasts import transcripts as podcast_transcript_service
 
 router = APIRouter()
+_READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
+
+
+async def _reader_resume_state_body(request: Request) -> ReaderResumeState | None:
+    raw_body = await request.body()
+    if not raw_body:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required.")
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Reader state body must be valid JSON.",
+        ) from exc
+    if payload is None:
+        return None
+    try:
+        return _READER_RESUME_STATE_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid reader state payload.",
+        ) from exc
 
 
 # =============================================================================
@@ -343,7 +368,7 @@ def put_reader_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    body: Annotated[ReaderResumeState | None, Body()],
+    body: Annotated[ReaderResumeState | None, Depends(_reader_resume_state_body)],
 ) -> dict:
     """Replace per-media reader state."""
     result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
@@ -421,10 +446,10 @@ def upload_init(
 @router.post("/media/{media_id}/ingest")
 def confirm_ingest(
     media_id: UUID,
-    body: MediaIngestRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     request: Request,
+    body: Annotated[MediaIngestRequest | None, Body()] = None,
 ) -> dict:
     """Confirm upload and process file.
 
@@ -439,11 +464,12 @@ def confirm_ingest(
         - ingest_enqueued: True if extraction task was dispatched
     """
     request_id = getattr(request.state, "request_id", None)
+    ingest_request = body if body is not None else MediaIngestRequest()
     result = epub_lifecycle.confirm_ingest_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        library_ids=body.library_ids,
+        library_ids=ingest_request.library_ids,
         request_id=request_id,
     )
     return success_response(result)
@@ -544,17 +570,18 @@ def request_podcast_transcript_batch(
 @router.post("/media/{media_id}/transcript/request")
 def request_podcast_transcript(
     media_id: UUID,
-    body: Annotated[TranscriptRequestRequest, Body(default_factory=TranscriptRequestRequest)],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    body: Annotated[TranscriptRequestRequest | None, Body()] = None,
 ) -> Response:
     """Admit (or forecast) an explicit transcript request for a podcast episode."""
+    transcript_request = body if body is not None else TranscriptRequestRequest()
     result = podcast_transcript_service.request_podcast_transcript_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        reason=body.reason,
-        dry_run=body.dry_run,
+        reason=transcript_request.reason,
+        dry_run=transcript_request.dry_run,
     )
     payload = TranscriptRequestResponse.model_validate(result).model_dump(mode="json")
     status_code = 202 if result["request_enqueued"] else 200

@@ -2,9 +2,12 @@ import { expect, test } from "@playwright/test";
 import {
   cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaEvidenceUrl,
   expectVisibleTextEvidenceHighlight,
   openTranscriptEvidenceSegment,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
 } from "./real-media-seed";
@@ -45,26 +48,24 @@ test("@real-media video transcript opens seekable evidence", async ({
   );
   expect(resolverResponse.ok()).toBeTruthy();
   const resolver = await resolverResponse.json();
+  const evidenceSpanId = result.evidence_span_ids[0];
 
-  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  const resultLink = realMediaEvidenceResultLink(page, mediaId, evidenceSpanId);
   await expect(
     resultLink,
     "video transcript should render a visible search result",
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
-  expect(visibleHref ?? "").toContain("t_start_ms=");
   if (!visibleHref) {
     throw new Error(
       `video transcript result for ${mediaId} did not expose a href`,
     );
   }
   await resultLink.click();
-  await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
-  await expect(page.locator("body")).not.toContainText(
-    /not found|failed to load/i,
-  );
+  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expectActivePaneHasNoLoadError(page);
   await openTranscriptEvidenceSegment(page, query, visibleHref);
-  await expectVisibleTextEvidenceHighlight(page);
+  await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
 
   let savedHighlightId: string | null = null;
   let productError: unknown = null;

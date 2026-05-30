@@ -64,9 +64,7 @@ def ensure_send_key(db, owner_user_id: UUID) -> None:
         db.add(key)
 
     try:
-        encrypted_key, nonce, version, fingerprint = encrypt_api_key(
-            "sk-e2e-conversation-tree"
-        )
+        encrypted_key, nonce, version, fingerprint = encrypt_api_key("sk-e2e-conversation-tree")
     except CryptoError as error:
         raise RuntimeError(
             "NEXUS_KEY_ENCRYPTION_KEY is required for branching E2E send coverage"
@@ -179,10 +177,7 @@ def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
                 conversation.id,
                 seq,
                 role,
-                (
-                    f"Scroll fixture message {seq}: "
-                    + ("bounded chat scroll ownership " * 8)
-                ),
+                (f"Scroll fixture message {seq}: " + ("bounded chat scroll ownership " * 8)),
                 parent_message_id=parent_id,
                 branch_anchor_kind=branch_anchor_kind,
                 branch_anchor=branch_anchor,
@@ -330,7 +325,6 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
                 model_id=model_id,
                 reasoning="none",
                 key_mode="auto",
-                web_search={"mode": "off"},
             )
         )
 

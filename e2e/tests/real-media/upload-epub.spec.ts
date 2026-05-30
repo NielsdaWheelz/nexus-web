@@ -4,10 +4,13 @@ import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
 import {
   cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaEvidenceUrl,
   expectRealMediaEvidenceNeedle,
   expectVisibleTextEvidenceHighlight,
   FRESH_REAL_MEDIA_FIXTURES,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
   searchRealMediaEvidenceThroughUi,
   uploadFreshRealMediaFileThroughUi,
   writeRealMediaTrace,
@@ -110,19 +113,22 @@ test("@real-media real EPUB opens from upload-backed media and projects evidence
       needle,
       "real EPUB evidence should contain the pinned fixture needle",
     );
+    const evidenceSpanId = result.evidence_span_ids[0];
 
-    const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+    const resultLink = realMediaEvidenceResultLink(
+      page,
+      mediaId,
+      evidenceSpanId,
+    );
     await expect(
       resultLink,
       "real EPUB should render a visible search result",
     ).toBeVisible();
     const visibleHref = await resultLink.getAttribute("href");
     await resultLink.click();
-    await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
-    await expect(page.locator("body")).not.toContainText(
-      /not found|failed to load/i,
-    );
-    await expectVisibleTextEvidenceHighlight(page);
+    await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+    await expectActivePaneHasNoLoadError(page);
+    await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
 
     const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
       page,

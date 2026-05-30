@@ -1,7 +1,9 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  type WorkspacePaneState,
+  createWorkspaceStateFromPrimaryPanes,
+  getWorkspacePrimaryPanes,
+  type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
@@ -26,17 +28,36 @@ function pane(
   id: string,
   href: string,
   input: Partial<
-    Pick<WorkspacePaneState, "primaryWidthPx" | "sidecar" | "visibility" | "history">
+    Pick<
+      WorkspacePrimaryPaneState,
+      "primaryWidthPx" | "visibility" | "history" | "attachedSecondaryPaneId"
+    >
   > = {},
-): WorkspacePaneState {
+): WorkspacePrimaryPaneState {
   return {
     id,
     href,
     primaryWidthPx: input.primaryWidthPx ?? 560,
-    sidecar: input.sidecar ?? null,
     visibility: input.visibility ?? "visible",
     history: input.history ?? { back: [], forward: [] },
+    attachedSecondaryPaneId: input.attachedSecondaryPaneId ?? null,
   };
+}
+
+function workspaceState(input: {
+  activePrimaryPaneId?: string;
+  primaryPanes: WorkspacePrimaryPaneState[];
+  secondaryPanesById?: WorkspaceState["secondaryPanesById"];
+}): WorkspaceState {
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: input.activePrimaryPaneId ?? input.primaryPanes[0]!.id,
+    primaryPanes: input.primaryPanes,
+    secondaryPanesById: input.secondaryPanesById,
+  });
+}
+
+function primaryPanes(state: WorkspaceState): WorkspacePrimaryPaneState[] {
+  return getWorkspacePrimaryPanes(state);
 }
 
 function jsonResponse(body: unknown): Response {
@@ -87,14 +108,14 @@ async function mountWorkspaceStore(path = "/libraries") {
   };
 
   await waitFor(() => {
-    expect(workspace().state.panes.length).toBeGreaterThan(0);
+    expect(primaryPanes(workspace().state).length).toBeGreaterThan(0);
   });
 
   return workspace;
 }
 
 function activeHref(store: WorkspaceStore): string {
-  return store.state.panes.find((pane) => pane.id === store.state.activePaneId)?.href ?? "";
+  return primaryPanes(store.state).find((pane) => pane.id === store.state.activePrimaryPaneId)?.href ?? "";
 }
 
 function flushWorkspaceSession() {
@@ -116,19 +137,19 @@ function titleRecord(
 }
 
 describe("mergeRestoredWorkspaceWithDeepLink", () => {
-  const restored: WorkspaceState = {
-    activePaneId: "pane-saved-libraries",
-    panes: [
+  const restored = workspaceState({
+    activePrimaryPaneId: "pane-saved-libraries",
+    primaryPanes: [
       pane("pane-saved-libraries", "/libraries"),
       pane("pane-saved-notes", "/notes", { primaryWidthPx: 480 }),
     ],
-  };
+  });
 
   it("keeps a neutral /libraries open as pure saved-session restore", () => {
-    const deepLink: WorkspaceState = {
-      activePaneId: "pane-url-libraries",
-      panes: [pane("pane-url-libraries", "/libraries")],
-    };
+    const deepLink = workspaceState({
+      activePrimaryPaneId: "pane-url-libraries",
+      primaryPanes: [pane("pane-url-libraries", "/libraries")],
+    });
 
     expect(
       mergeRestoredWorkspaceWithDeepLink(
@@ -140,10 +161,12 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
   });
 
   it("adds an explicit deep link as the active pane instead of letting restore override it", () => {
-    const deepLink: WorkspaceState = {
-      activePaneId: "pane-url-media",
-      panes: [pane("pane-url-media", "/media/media-123", { primaryWidthPx: 1280 })],
-    };
+    const deepLink = workspaceState({
+      activePrimaryPaneId: "pane-url-media",
+      primaryPanes: [
+        pane("pane-url-media", "/media/media-123", { primaryWidthPx: 1280 }),
+      ],
+    });
 
     const merged = mergeRestoredWorkspaceWithDeepLink(
       restored,
@@ -151,60 +174,34 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
       workspacePrimaryMetrics,
     );
 
-    expect(merged.panes.map((item) => item.href)).toEqual([
+    expect(primaryPanes(merged).map((item) => item.href)).toEqual([
       "/libraries",
       "/notes",
       "/media/media-123",
     ]);
-    expect(merged.activePaneId).toBe("pane-url-media");
-  });
-
-  it("treats a default URL pane with sidecar state as explicit intent", () => {
-    const deepLink: WorkspaceState = {
-      activePaneId: "pane-url-libraries",
-      panes: [
-        pane("pane-url-libraries", "/libraries", {
-          sidecar: {
-            groupId: "library-tools",
-            activeSurfaceId: "library-chat",
-            widthPx: 420,
-            visibility: "visible",
-          },
-        }),
-      ],
-    };
-
-    const merged = mergeRestoredWorkspaceWithDeepLink(
-      restored,
-      deepLink,
-      workspacePrimaryMetrics,
-    );
-
-    expect(merged).not.toBe(restored);
-    expect(merged.activePaneId).toBe("pane-saved-libraries");
-    expect(merged.panes[0]?.sidecar).toEqual(deepLink.panes[0]?.sidecar);
+    expect(merged.activePrimaryPaneId).toBe("pane-url-media");
   });
 
   it("reuses and activates the saved pane for same-resource deep links", () => {
-    const savedWithMedia: WorkspaceState = {
-      activePaneId: "pane-saved-libraries",
-      panes: [
-        ...restored.panes,
+    const savedWithMedia = workspaceState({
+      activePrimaryPaneId: "pane-saved-libraries",
+      primaryPanes: [
+        ...primaryPanes(restored),
         pane("pane-saved-media", "/media/media-123", {
           primaryWidthPx: 960,
           visibility: "minimized",
           history: { back: ["/libraries"], forward: ["/media/media-999"] },
         }),
       ],
-    };
-    const deepLink: WorkspaceState = {
-      activePaneId: "pane-url-media",
-      panes: [
+    });
+    const deepLink = workspaceState({
+      activePrimaryPaneId: "pane-url-media",
+      primaryPanes: [
         pane("pane-url-media", "/media/media-123?loc=chapter-2", {
           primaryWidthPx: 1280,
         }),
       ],
-    };
+    });
 
     const merged = mergeRestoredWorkspaceWithDeepLink(
       savedWithMedia,
@@ -212,13 +209,13 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
       workspacePrimaryMetrics,
     );
 
-    expect(merged.panes).toHaveLength(3);
-    expect(merged.activePaneId).toBe("pane-saved-media");
-    expect(merged.panes.find((item) => item.id === "pane-saved-media")).toMatchObject({
+    expect(primaryPanes(merged)).toHaveLength(3);
+    expect(merged.activePrimaryPaneId).toBe("pane-saved-media");
+    expect(primaryPanes(merged).find((item) => item.id === "pane-saved-media")).toMatchObject({
       href: "/media/media-123?loc=chapter-2",
       visibility: "visible",
       primaryWidthPx: 960,
-      sidecar: null,
+      attachedSecondaryPaneId: null,
       history: { back: ["/libraries"], forward: ["/media/media-999"] },
     });
   });
@@ -232,20 +229,20 @@ describe("WorkspaceStoreProvider", () => {
 
   it("opens a pane after the opener and activates it", async () => {
     const workspace = await mountWorkspaceStore();
-    const openerPaneId = workspace().state.activePaneId;
+    const openerPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().openPane({ href: "/conversations", openerPaneId });
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes.map((pane) => pane.href)).toEqual([
+      expect(primaryPanes(workspace().state).map((pane) => pane.href)).toEqual([
         "/libraries",
         "/conversations",
       ]);
     });
     expect(activeHref(workspace())).toBe("/conversations");
-    expect(workspace().state.panes[1]?.visibility).toBe("visible");
+    expect(primaryPanes(workspace().state)[1]?.visibility).toBe("visible");
     flushWorkspaceSession();
   });
 
@@ -258,30 +255,22 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/media/media-1");
-      expect(workspace().state.panes[1]?.primaryWidthPx).toBe(
+      expect(primaryPanes(workspace().state)[1]?.primaryWidthPx).toBe(
         workspacePrimaryMetrics.primaryDefaultWidthPx,
       );
     });
     flushWorkspaceSession();
   });
 
-  it("opens a requested sidecar with a new pane", async () => {
+  it("opens a new primary pane without seeding secondary state", async () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({
-        href: "/libraries/library-1",
-        sidecarSurfaceId: "library-intelligence",
-      });
+      workspace().openPane({ href: "/libraries/library-1" });
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[1]?.sidecar).toEqual({
-        groupId: "library-tools",
-        activeSurfaceId: "library-intelligence",
-        widthPx: 420,
-        visibility: "visible",
-      });
+      expect(primaryPanes(workspace().state)[1]?.attachedSecondaryPaneId).toBeNull();
     });
     flushWorkspaceSession();
   });
@@ -295,15 +284,15 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-old");
     });
-    const conversationPaneId = workspace().state.activePaneId;
+    const conversationPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().openPane({ href: "/conversations/conversation-1?run=run-new" });
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(2);
-      expect(workspace().state.activePaneId).toBe(conversationPaneId);
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      expect(workspace().state.activePrimaryPaneId).toBe(conversationPaneId);
       expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-new");
     });
     flushWorkspaceSession();
@@ -311,14 +300,14 @@ describe("WorkspaceStoreProvider", () => {
 
   it("records pane-local history for push navigation and traverses it", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/media-2");
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-2");
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-2");
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: ["/media/media-1"],
         forward: [],
       });
@@ -328,8 +317,8 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goBackPane(paneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-1");
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1");
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: [],
         forward: ["/media/media-2"],
       });
@@ -339,8 +328,8 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goForwardPane(paneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-2");
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-2");
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: ["/media/media-1"],
         forward: [],
       });
@@ -350,21 +339,21 @@ describe("WorkspaceStoreProvider", () => {
 
   it("replace navigation updates href without changing pane history", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/media-2");
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.history.back).toEqual(["/media/media-1"]);
+      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual(["/media/media-1"]);
     });
 
     act(() => {
       workspace().navigatePane(paneId, "/media/media-3", { replace: true });
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-3");
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-3");
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: ["/media/media-1"],
         forward: [],
       });
@@ -380,9 +369,9 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(1);
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-1?loc=chapter-2");
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)).toHaveLength(1);
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: ["/media/media-1"],
         forward: [],
       });
@@ -392,14 +381,14 @@ describe("WorkspaceStoreProvider", () => {
 
   it("does not record history for same-href navigation", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/media-1");
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.history).toEqual({
+      expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: [],
         forward: [],
       });
@@ -409,13 +398,13 @@ describe("WorkspaceStoreProvider", () => {
 
   it("preserves resized width when duplicate opens reuse a resource pane", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 900);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.primaryWidthPx).toBe(900);
+      expect(primaryPanes(workspace().state)[0]?.primaryWidthPx).toBe(900);
     });
 
     act(() => {
@@ -423,8 +412,8 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(1);
-      expect(workspace().state.panes[0]).toMatchObject({
+      expect(primaryPanes(workspace().state)).toHaveLength(1);
+      expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/media/media-1?loc=chapter-2",
         primaryWidthPx: 900,
       });
@@ -432,66 +421,71 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("opens, switches, resizes, and closes a sidecar without changing primary width", async () => {
+  it("opens, switches, resizes, and closes a secondary without changing primary width", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 900);
-      workspace().openSidecar(paneId, "reader-highlights");
+      workspace().requestSecondarySurface(paneId, "reader-highlights");
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
-        primaryWidthPx: 900,
-        sidecar: {
-          groupId: "reader-tools",
-          activeSurfaceId: "reader-highlights",
-          widthPx: 360,
-          visibility: "visible",
-        },
+      const primaryPane = primaryPanes(workspace().state)[0]!;
+      const secondaryPane =
+        workspace().state.secondaryPanesById[primaryPane.attachedSecondaryPaneId!];
+      expect(primaryPane.primaryWidthPx).toBe(900);
+      expect(secondaryPane).toMatchObject({
+        parentPrimaryPaneId: paneId,
+        groupId: "reader-tools",
+        activeSurfaceId: "reader-highlights",
+        widthPx: 360,
+        visibility: "visible",
       });
     });
+    const secondaryPaneId = primaryPanes(workspace().state)[0]!.attachedSecondaryPaneId!;
 
     act(() => {
-      workspace().resizeSidecarPane(paneId, 9999);
-      workspace().setActiveSidecarSurface(paneId, "reader-doc-chat");
-      workspace().closeSidecar(paneId);
+      workspace().resizeSecondaryPane(secondaryPaneId, 9999);
+      workspace().setSecondarySurface(secondaryPaneId, "reader-doc-chat");
+      workspace().closeSecondaryPane(secondaryPaneId);
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
-        primaryWidthPx: 900,
-        sidecar: {
-          groupId: "reader-tools",
-          activeSurfaceId: "reader-doc-chat",
-          widthPx: 720,
-          visibility: "collapsed",
-        },
+      const primaryPane = primaryPanes(workspace().state)[0]!;
+      const secondaryPane =
+        workspace().state.secondaryPanesById[primaryPane.attachedSecondaryPaneId!];
+      expect(primaryPane.primaryWidthPx).toBe(900);
+      expect(secondaryPane).toMatchObject({
+        groupId: "reader-tools",
+        activeSurfaceId: "reader-doc-chat",
+        widthPx: 720,
+        visibility: "collapsed",
       });
     });
     flushWorkspaceSession();
   });
 
-  it("drops incompatible sidecars across resource navigation", async () => {
+  it("drops incompatible secondarys across resource navigation", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openSidecar(paneId, "reader-highlights");
+      workspace().requestSecondarySurface(paneId, "reader-highlights");
       workspace().navigatePane(paneId, "/libraries/library-1");
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/libraries/library-1");
-      expect(workspace().state.panes[0]?.sidecar).toBeNull();
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries/library-1");
+      expect(primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId).toBeNull();
+      expect(workspace().state.secondaryPanesById).toEqual({});
     });
     flushWorkspaceSession();
   });
 
   it("resets resized width across different resources", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 900);
@@ -499,7 +493,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
+      expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/conversations",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       });
@@ -509,38 +503,38 @@ describe("WorkspaceStoreProvider", () => {
 
   it("resets pane width when navigating to a different resource", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 99999);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.primaryWidthPx).toBe(99999);
+      expect(primaryPanes(workspace().state)[0]?.primaryWidthPx).toBe(99999);
     });
 
     act(() => {
       workspace().navigatePane(paneId, "/libraries");
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/libraries");
-      expect(workspace().state.panes[0]?.primaryWidthPx).toBe(
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries");
+      expect(primaryPanes(workspace().state)[0]?.primaryWidthPx).toBe(
         workspacePrimaryMetrics.primaryDefaultWidthPx,
       );
-      expect(workspace().state.activePaneId).toBe(paneId);
+      expect(workspace().state.activePrimaryPaneId).toBe(paneId);
     });
     flushWorkspaceSession();
   });
 
   it("uses workspace defaults while traversing history across resources", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 2200);
       workspace().navigatePane(paneId, "/libraries");
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
+      expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/libraries",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: ["/media/media-1"], forward: [] },
@@ -551,7 +545,7 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goBackPane(paneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
+      expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/media/media-1",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: [], forward: ["/libraries"] },
@@ -562,7 +556,7 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goForwardPane(paneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]).toMatchObject({
+      expect(primaryPanes(workspace().state)[0]).toMatchObject({
         href: "/libraries",
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
         history: { back: ["/media/media-1"], forward: [] },
@@ -573,60 +567,60 @@ describe("WorkspaceStoreProvider", () => {
 
   it("keeps the last visible pane open and restores minimized panes", async () => {
     const workspace = await mountWorkspaceStore();
-    const firstPaneId = workspace().state.activePaneId;
+    const firstPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().minimizePane(firstPaneId);
     });
-    expect(workspace().state.panes[0]?.visibility).toBe("visible");
+    expect(primaryPanes(workspace().state)[0]?.visibility).toBe("visible");
 
     act(() => {
       workspace().openPane({ href: "/conversations", activate: false });
     });
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(2);
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
-    const secondPaneId = workspace().state.panes[1]!.id;
+    const secondPaneId = primaryPanes(workspace().state)[1]!.id;
 
     act(() => {
       workspace().minimizePane(secondPaneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes.find((pane) => pane.id === secondPaneId)?.visibility).toBe(
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId)?.visibility).toBe(
         "minimized",
       );
-      expect(workspace().state.activePaneId).toBe(firstPaneId);
+      expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
     });
 
     act(() => {
       workspace().restorePane(secondPaneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes.find((pane) => pane.id === secondPaneId)?.visibility).toBe(
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId)?.visibility).toBe(
         "visible",
       );
-      expect(workspace().state.activePaneId).toBe(secondPaneId);
+      expect(workspace().state.activePrimaryPaneId).toBe(secondPaneId);
     });
     flushWorkspaceSession();
   });
 
   it("ignores minimized-pane activation and inactive navigation keeps it minimized", async () => {
     const workspace = await mountWorkspaceStore();
-    const firstPaneId = workspace().state.activePaneId;
+    const firstPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().openPane({ href: "/conversations/new", activate: false });
     });
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(2);
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
-    const secondPaneId = workspace().state.panes[1]!.id;
+    const secondPaneId = primaryPanes(workspace().state)[1]!.id;
 
     act(() => {
       workspace().minimizePane(secondPaneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes.find((pane) => pane.id === secondPaneId)?.visibility).toBe(
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId)?.visibility).toBe(
         "minimized",
       );
     });
@@ -634,7 +628,7 @@ describe("WorkspaceStoreProvider", () => {
     act(() => {
       workspace().activatePane(secondPaneId);
     });
-    expect(workspace().state.activePaneId).toBe(firstPaneId);
+    expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
 
     act(() => {
       workspace().navigatePane(secondPaneId, "/conversations/conversation-1", {
@@ -642,10 +636,10 @@ describe("WorkspaceStoreProvider", () => {
       });
     });
     await waitFor(() => {
-      const secondPane = workspace().state.panes.find((pane) => pane.id === secondPaneId);
+      const secondPane = primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId);
       expect(secondPane?.href).toBe("/conversations/conversation-1");
       expect(secondPane?.visibility).toBe("minimized");
-      expect(workspace().state.activePaneId).toBe(firstPaneId);
+      expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
     });
     flushWorkspaceSession();
   });
@@ -659,7 +653,7 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/conversations");
     });
-    const secondPaneId = workspace().state.activePaneId;
+    const secondPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().openPane({
@@ -669,16 +663,16 @@ describe("WorkspaceStoreProvider", () => {
       });
     });
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(3);
+      expect(primaryPanes(workspace().state)).toHaveLength(3);
     });
-    const thirdPaneId = workspace().state.panes[2]!.id;
+    const thirdPaneId = primaryPanes(workspace().state)[2]!.id;
 
     act(() => {
       workspace().minimizePane(secondPaneId);
     });
     await waitFor(() => {
-      expect(workspace().state.activePaneId).toBe(thirdPaneId);
-      expect(workspace().state.panes.find((pane) => pane.id === secondPaneId)?.visibility).toBe(
+      expect(workspace().state.activePrimaryPaneId).toBe(thirdPaneId);
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId)?.visibility).toBe(
         "minimized",
       );
     });
@@ -687,22 +681,22 @@ describe("WorkspaceStoreProvider", () => {
 
   it("resizes and closes minimized panes without restoring them", async () => {
     const workspace = await mountWorkspaceStore();
-    const firstPaneId = workspace().state.activePaneId;
+    const firstPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().openPane({ href: "/conversations", activate: false });
     });
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(2);
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
-    const secondPaneId = workspace().state.panes[1]!.id;
+    const secondPaneId = primaryPanes(workspace().state)[1]!.id;
 
     act(() => {
       workspace().minimizePane(secondPaneId);
       workspace().resizePrimaryPane(secondPaneId, 99999);
     });
     await waitFor(() => {
-      const secondPane = workspace().state.panes.find((pane) => pane.id === secondPaneId);
+      const secondPane = primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId);
       expect(secondPane?.visibility).toBe("minimized");
       expect(secondPane?.primaryWidthPx).toBe(99999);
     });
@@ -711,30 +705,30 @@ describe("WorkspaceStoreProvider", () => {
       workspace().closePane(secondPaneId);
     });
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(1);
-      expect(workspace().state.activePaneId).toBe(firstPaneId);
+      expect(primaryPanes(workspace().state)).toHaveLength(1);
+      expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
     });
     flushWorkspaceSession();
   });
 
   it("falls back to the default pane when closing the last pane", async () => {
     const workspace = await mountWorkspaceStore("/settings");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().closePane(paneId);
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(1);
-      expect(workspace().state.panes[0]?.href).toBe("/libraries");
+      expect(primaryPanes(workspace().state)).toHaveLength(1);
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries");
     });
     flushWorkspaceSession();
   });
 
   it("publishes runtime titles and keeps them across same-resource location changes", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
     const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
 
     act(() => {
@@ -748,7 +742,7 @@ describe("WorkspaceStoreProvider", () => {
       workspace().navigatePane(paneId, "/media/media-1?loc=chapter-2");
     });
     await waitFor(() => {
-      expect(workspace().state.panes[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/media-1?loc=chapter-2");
       expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
     });
     flushWorkspaceSession();
@@ -756,7 +750,7 @@ describe("WorkspaceStoreProvider", () => {
 
   it("clears runtime titles when the pane navigates to a different resource", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
     const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
 
     act(() => {
@@ -777,7 +771,7 @@ describe("WorkspaceStoreProvider", () => {
 
   it("ignores stale runtime title publishes from a previous resource", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
     const oldResourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
 
     act(() => {
@@ -790,8 +784,8 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      const activePane = workspace().state.panes.find(
-        (pane) => pane.id === workspace().state.activePaneId,
+      const activePane = primaryPanes(workspace().state).find(
+        (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/media-2");
       expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
@@ -812,8 +806,8 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      const paneId = workspace().state.activePaneId;
-      expect(resolveWorkspacePaneTitle(workspace().state.panes[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
+      const paneId = workspace().state.activePrimaryPaneId;
+      expect(resolveWorkspacePaneTitle(primaryPanes(workspace().state)[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
         title: "Library Row Title",
         titleState: "resolved",
         titleSource: "hint",
@@ -821,14 +815,14 @@ describe("WorkspaceStoreProvider", () => {
       expect(workspace().runtimeTitleByPaneId.get(paneId)?.source).toBe("hint");
     });
 
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
     const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
     act(() => {
       workspace().publishPaneTitle({ paneId, resourceKey, title: "Runtime Title" });
     });
 
     await waitFor(() => {
-      expect(resolveWorkspacePaneTitle(workspace().state.panes[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
+      expect(resolveWorkspacePaneTitle(primaryPanes(workspace().state)[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
         title: "Runtime Title",
         titleState: "resolved",
         titleSource: "runtime",
@@ -839,7 +833,7 @@ describe("WorkspaceStoreProvider", () => {
 
   it("uses title hints for same-pane navigation", async () => {
     const workspace = await mountWorkspaceStore("/libraries/library-1");
-    const paneId = workspace().state.activePaneId;
+    const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/media-1", {
@@ -848,8 +842,8 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      const activePane = workspace().state.panes.find(
-        (pane) => pane.id === workspace().state.activePaneId,
+      const activePane = primaryPanes(workspace().state).find(
+        (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/media-1");
       expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
@@ -873,9 +867,9 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(workspace().state.panes).toHaveLength(2);
-      const activePane = workspace().state.panes.find(
-        (pane) => pane.id === workspace().state.activePaneId,
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      const activePane = primaryPanes(workspace().state).find(
+        (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/media-1?loc=chapter-2");
       expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
@@ -898,14 +892,14 @@ describe("WorkspaceStoreProvider", () => {
         return jsonResponse({
           data: {
             own: {
-              state: {
-                activePaneId: "pane-libraries",
-                panes: [
+              state: workspaceState({
+                activePrimaryPaneId: "pane-libraries",
+                primaryPanes: [
                   pane("pane-libraries", "/libraries"),
                   pane("pane-conversation", "/conversations/conversation-1"),
                   pane("pane-notes", "/notes"),
                 ],
-              },
+              }),
             },
             most_recent_elsewhere: null,
           },
@@ -928,7 +922,7 @@ describe("WorkspaceStoreProvider", () => {
     };
 
     await waitFor(() => {
-      expect(workspace().state.panes.map((item) => item.href)).toEqual([
+      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
         "/libraries",
         "/conversations/conversation-1",
         "/notes",

@@ -569,19 +569,19 @@ describe("PaneShell", () => {
     window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
   });
 
-  it("composes visible sidecar width without changing primary resize values", async () => {
-    const onResizeSidecarPane = vi.fn();
-    const sidecarPublication = {
+  it("composes visible secondary width without changing primary resize values", async () => {
+    const onResizeSecondaryPane = vi.fn();
+    const secondaryPublication = {
       groupId: "reader-tools" as const,
       defaultSurfaceId: "reader-highlights" as const,
       surfaces: [
         {
           id: "reader-highlights" as const,
-          body: <div>Highlights sidecar</div>,
+          body: <div>Highlights secondary</div>,
         },
         {
           id: "reader-doc-chat" as const,
-          body: <div>Document chat sidecar</div>,
+          body: <div>Document chat secondary</div>,
         },
       ],
     };
@@ -590,7 +590,7 @@ describe("PaneShell", () => {
       title: "Reader",
       bodyMode: "document" as const,
       onResizePrimaryPane: () => {},
-      onResizeSidecarPane,
+      onResizeSecondaryPane,
       navigation: disabledNavigation,
     };
     const { rerender } = render(
@@ -618,24 +618,26 @@ describe("PaneShell", () => {
           minWidthPx: 684,
           maxWidthPx: 2400,
         })}
-        sidecar={{
+        secondaryPane={{
+          id: "secondary-a",
+          parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
           activeSurfaceId: "reader-doc-chat",
           widthPx: 360,
           visibility: "visible",
         }}
-        sidecarSizing={{
+        secondarySizing={{
           widthPx: 360,
           minWidthPx: 280,
           maxWidthPx: 720,
           storedWidthCorrectionPx: null,
         }}
-        sidecarPublication={sidecarPublication}
+        secondaryPublication={secondaryPublication}
       >
         <div>Body content</div>
       </PaneShell>
     );
-    await screen.findByTestId("workspace-sidecar-pane");
+    await screen.findByTestId("workspace-secondary-pane");
     expect(shell).toHaveStyle({ width: "1060px" });
     expect(shell).toHaveStyle({ minWidth: "1044px" });
     expect(shell).toHaveStyle({ maxWidth: "2760px" });
@@ -648,13 +650,15 @@ describe("PaneShell", () => {
       <PaneShell
         {...props}
         sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
-        sidecar={{
+        secondaryPane={{
+          id: "secondary-a",
+          parentPrimaryPaneId: "pane-a",
           groupId: "reader-tools",
           activeSurfaceId: "reader-doc-chat",
           widthPx: 360,
           visibility: "collapsed",
         }}
-        sidecarPublication={sidecarPublication}
+        secondaryPublication={secondaryPublication}
       >
         <div>Body content</div>
       </PaneShell>
@@ -734,7 +738,7 @@ function TwoLocksProbe() {
         onClick={() => {
           secondReleaseRef.current?.();
           secondReleaseRef.current =
-            paneMobileChrome?.acquireVisibleLock("mobile-sidecar") ?? null;
+            paneMobileChrome?.acquireVisibleLock("mobile-secondary") ?? null;
         }}
       >
         Lock second

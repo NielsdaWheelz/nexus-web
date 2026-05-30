@@ -14,17 +14,19 @@ const hostMocks = vi.hoisted(() => ({
   fixedChromeWidthPx: null as number | null,
   store: {
     state: {
-      panes: [
-        {
+      primaryPaneOrder: ["pane-1"],
+      primaryPanesById: {
+        "pane-1": {
           id: "pane-1",
           href: "/media/media-1",
           primaryWidthPx: 640,
-          sidecar: null,
+          attachedSecondaryPaneId: null,
           visibility: "visible" as const,
           history: { back: [], forward: [] } as { back: string[]; forward: string[] },
         },
-      ],
-      activePaneId: "pane-1",
+      },
+      secondaryPanesById: {},
+      activePrimaryPaneId: "pane-1",
     },
     workspacePrimaryMetrics: {
       primaryMinWidthPx: 684,
@@ -38,10 +40,11 @@ const hostMocks = vi.hoisted(() => ({
     goForwardPane: vi.fn(),
     closePane: vi.fn(),
     resizePrimaryPane: vi.fn(),
-    openSidecar: vi.fn(),
-    closeSidecar: vi.fn(),
-    setActiveSidecarSurface: vi.fn(),
-    resizeSidecarPane: vi.fn(),
+    requestSecondarySurface: vi.fn(),
+    closeSecondaryPane: vi.fn(),
+    dropSecondaryPane: vi.fn(),
+    setSecondarySurface: vi.fn(),
+    resizeSecondaryPane: vi.fn(),
     minimizePane: vi.fn(),
     restorePane: vi.fn(),
     publishPaneTitle: vi.fn(),
@@ -106,7 +109,7 @@ vi.mock("@/lib/panes/paneRouteRegistry", () => ({
 }));
 
 vi.mock("@/lib/workspace/store", () => ({
-  useWorkspaceStore: () => hostMocks.store,
+  useWorkspaceHostStore: () => hostMocks.store,
   resolveWorkspacePaneTitle: (pane: { href: string }) => {
     const route = mediaRoute(pane.href);
     return {
@@ -124,13 +127,13 @@ vi.mock("@/components/workspace/PaneShell", () => ({
   default: ({
     children,
     sizing,
-    sidecarSizing,
+    secondarySizing,
     fixedChromePublication,
     navigation,
   }: {
     children: ReactNode;
     sizing: { primaryMinWidthPx: number };
-    sidecarSizing: { widthPx: number } | null;
+    secondarySizing: { widthPx: number } | null;
     fixedChromePublication: { widthPx: number } | null;
     navigation: {
       canGoBack: boolean;
@@ -143,7 +146,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
       data-testid="pane-shell"
       data-min-width-px={sizing.primaryMinWidthPx}
       data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
-      data-sidecar-width-px={sidecarSizing?.widthPx ?? 0}
+      data-secondary-width-px={secondarySizing?.widthPx ?? 0}
     >
       <nav aria-label="Mock pane chrome">
         <button
@@ -205,17 +208,19 @@ function setPaneHref(
   history: { back: string[]; forward: string[] } = { back: [], forward: [] }
 ) {
   hostMocks.store.state = {
-    panes: [
-      {
+    primaryPaneOrder: ["pane-1"],
+    primaryPanesById: {
+      "pane-1": {
         id: "pane-1",
         href,
         primaryWidthPx: 640,
-        sidecar: null,
+        attachedSecondaryPaneId: null,
         visibility: "visible",
         history,
       },
-    ],
-    activePaneId: "pane-1",
+    },
+    secondaryPanesById: {},
+    activePrimaryPaneId: "pane-1",
   };
 }
 
@@ -232,10 +237,11 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.goBackPane.mockReset();
     hostMocks.store.goForwardPane.mockReset();
     hostMocks.store.resizePrimaryPane.mockReset();
-    hostMocks.store.openSidecar.mockReset();
-    hostMocks.store.closeSidecar.mockReset();
-    hostMocks.store.setActiveSidecarSurface.mockReset();
-    hostMocks.store.resizeSidecarPane.mockReset();
+    hostMocks.store.requestSecondarySurface.mockReset();
+    hostMocks.store.closeSecondaryPane.mockReset();
+    hostMocks.store.dropSecondaryPane.mockReset();
+    hostMocks.store.setSecondarySurface.mockReset();
+    hostMocks.store.resizeSecondaryPane.mockReset();
     setPaneHref("/media/media-1");
   });
 

@@ -2,6 +2,8 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
+  makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -20,13 +22,13 @@ function paletteListbox(root: Page | Locator): Locator {
 // Seeds the workspace with a second open pane (/search → "Search") on top of
 // the visited route, so the palette's open-tabs section contains a Search row.
 function workspaceWithSearchPane(): WorkspaceState {
-  return {
-    activePaneId: "pane-libraries",
-    panes: [
+  return makeWorkspaceState(
+    [
       makeWorkspacePane("pane-libraries", "/libraries"),
       makeWorkspacePane("pane-search", "/search"),
     ],
-  };
+    { activePrimaryPaneId: "pane-libraries" },
+  );
 }
 
 test.describe("command palette", () => {
@@ -77,7 +79,7 @@ test.describe("command palette", () => {
     // immediately via ?palette=1 on top of the seeded workspace session.
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-command-palette"),
       workspaceWithSearchPane(),
       "/libraries?palette=1",
     );
@@ -138,7 +140,7 @@ test.describe("command palette mobile", () => {
   }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-command-palette"),
       workspaceWithSearchPane(),
       "/libraries?palette=1",
     );
