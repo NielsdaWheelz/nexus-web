@@ -1,85 +1,24 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { activeWorkspacePane } from "../workspace";
 import {
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaEvidenceUrl,
   expectVisiblePdfEvidenceHighlight,
   expectVisibleTextEvidenceHighlight,
   openTranscriptEvidenceSegment,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
+  searchRealMediaEvidenceThroughUi,
+  type RealMediaContentKind,
   writeRealMediaTrace,
 } from "./real-media-seed";
-
-const CONTENT_KIND_LABELS = {
-  epub: "EPUBs",
-  pdf: "PDFs",
-  podcast_episode: "Episodes",
-  video: "Videos",
-  web_article: "Articles",
-} as const;
-
-type ContentKind = keyof typeof CONTENT_KIND_LABELS;
-
-interface SearchResult {
-  type: string;
-  source: { media_id: string };
-  context_ref: { type: string; evidence_span_ids: string[] };
-  evidence_span_ids: string[];
-  deep_link: string;
-}
-
-interface SearchResponseBody {
-  results: SearchResult[];
-}
-
-async function searchEvidenceThroughUi(
-  page: Page,
-  query: string,
-  contentKind: ContentKind,
-): Promise<SearchResponseBody> {
-  const searchUrl = `/search?${new URLSearchParams({
-    q: query,
-    types: "content_chunk",
-    content_kinds: contentKind,
-  })}`;
-  const responsePromise = page.waitForResponse(
-    (response) => {
-      if (response.request().method() !== "GET") {
-        return false;
-      }
-      const url = new URL(response.url());
-      return (
-        url.pathname === "/api/search" &&
-        url.searchParams.get("q") === query &&
-        url.searchParams.get("types") === "content_chunk" &&
-        url.searchParams.get("content_kinds") === contentKind
-      );
-    },
-    { timeout: 60_000 },
-  );
-  await page.goto(searchUrl);
-  await expect(
-    page.getByRole("group", { name: "Result types" }).getByLabel("Evidence"),
-  ).toBeChecked();
-  await expect(
-    page
-      .getByRole("group", { name: "Content kinds" })
-      .getByLabel(CONTENT_KIND_LABELS[contentKind]),
-  ).toBeChecked();
-
-  await expect(page.getByLabel("Search content")).toHaveValue(query);
-  const response = await responsePromise;
-  expect(
-    response.ok(),
-    `visible search for ${contentKind} should succeed`,
-  ).toBeTruthy();
-  await expect(page.getByText("Searching...")).toBeHidden({ timeout: 15_000 });
-  return response.json() as Promise<SearchResponseBody>;
-}
 
 test("@real-media search returns resolver-backed evidence for every configured media kind", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
   const seed = readRealMediaSeed();
-  const media: Array<[string, string, string, ContentKind]> = [
+  const media: Array<[string, string, string, RealMediaContentKind]> = [
     ["pdf", seed.fixtures.pdf.media_id, seed.fixtures.pdf.query, "pdf"],
     ["epub", seed.fixtures.epub.media_id, seed.fixtures.epub.query, "epub"],
     [
@@ -99,7 +38,11 @@ test("@real-media search returns resolver-backed evidence for every configured m
   const traces = [];
 
   for (const [kind, mediaId, query, contentKind] of media) {
-    const body = await searchEvidenceThroughUi(page, query, contentKind);
+    const body = await searchRealMediaEvidenceThroughUi(
+      page,
+      query,
+      contentKind,
+    );
     const result = body.results.find(
       (item: { type: string; source: { media_id: string } }) =>
         item.type === "content_chunk" && item.source.media_id === mediaId,
@@ -116,14 +59,21 @@ test("@real-media search returns resolver-backed evidence for every configured m
     expect(result.evidence_span_ids).toEqual(
       result.context_ref.evidence_span_ids,
     );
-    expect(result.deep_link).toContain(`/media/${mediaId}?`);
+    const evidenceSpanId = result.evidence_span_ids[0];
+    expect(result.deep_link).toBe(
+      `/media/${mediaId}#evidence-${evidenceSpanId}`,
+    );
     const resolverResponse = await page.request.get(
-      `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
+      `/api/media/${mediaId}/evidence/${evidenceSpanId}`,
     );
     expect(resolverResponse.ok()).toBeTruthy();
     const resolver = await resolverResponse.json();
 
-    const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+    const resultLink = realMediaEvidenceResultLink(
+      page,
+      mediaId,
+      evidenceSpanId,
+    );
     await expect(
       resultLink,
       `${kind} should render a visible evidence result`,
@@ -135,18 +85,16 @@ test("@real-media search returns resolver-backed evidence for every configured m
       );
     }
     await resultLink.click();
-    await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
-    await expect(page.locator("body")).not.toContainText(
-      /not found|failed to load/i,
-    );
+    await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+    await expectActivePaneHasNoLoadError(page);
     if (contentKind === "pdf") {
       expect(resolver.data.resolver.status).toBe("resolved");
-      await expectVisiblePdfEvidenceHighlight(page);
+      await expectVisiblePdfEvidenceHighlight(page, evidenceSpanId);
     } else if (contentKind === "video" || contentKind === "podcast_episode") {
       await openTranscriptEvidenceSegment(page, query, visibleHref);
-      await expectVisibleTextEvidenceHighlight(page);
+      await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
     } else {
-      await expectVisibleTextEvidenceHighlight(page);
+      await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
     }
     traces.push({
       kind,
@@ -161,13 +109,15 @@ test("@real-media search returns resolver-backed evidence for every configured m
   }
 
   const noResultsQuery = "qzxqzxqzxqzx missingterm";
-  const noResults = await searchEvidenceThroughUi(
+  const noResults = await searchRealMediaEvidenceThroughUi(
     page,
     noResultsQuery,
     "web_article",
   );
   expect(noResults.results).toEqual([]);
-  await expect(page.getByText("No results found.")).toBeVisible();
+  await expect(
+    activeWorkspacePane(page).getByText("No results found."),
+  ).toBeVisible();
 
   writeRealMediaTrace(testInfo, "real-media-search-evidence-trace.json", {
     results: traces,

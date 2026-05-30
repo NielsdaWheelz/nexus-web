@@ -324,8 +324,6 @@ jobs:
       - test-back-db
       - test-front
       - build-front
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

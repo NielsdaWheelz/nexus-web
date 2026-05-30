@@ -1,12 +1,17 @@
 """Tests for semantic chunk embedding provider boundaries."""
 
+from pathlib import Path
+
 import httpx
 import pytest
 import respx
 
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.services.semantic_chunks import build_text_embeddings
+from nexus.services.semantic_chunks import (
+    build_text_embeddings,
+    current_transcript_embedding_provider,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -33,6 +38,53 @@ def _configure_openai_embeddings(
         monkeypatch.setenv("OPENAI_API_KEY", api_key)
     monkeypatch.setenv("ENABLE_OPENAI", "true" if enable_openai else "false")
     clear_settings_cache()
+
+
+def _configure_real_media_fixture_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_ENV", "local")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/test")
+    monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "1")
+    monkeypatch.setenv("REAL_MEDIA_FIXTURE_DIR", str(Path(__file__).parent))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_settings_cache()
+
+
+@respx.mock
+def test_real_media_fixture_embeddings_are_deterministic_without_openai(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_real_media_fixture_embeddings(monkeypatch)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).respond(401)
+
+    model_name, vectors = build_text_embeddings(["NASA evidence", "NASA evidence"])
+
+    assert current_transcript_embedding_provider() == "fixture"
+    assert model_name == "fixture_hash_v1_256"
+    assert len(vectors) == 2
+    assert vectors[0] == vectors[1]
+    assert len(vectors[0]) == 256
+    assert any(value != 0 for value in vectors[0])
+    assert route.called is False
+
+
+@respx.mock
+def test_oracle_fixture_query_embedding_matches_semantic_chunk_projection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_real_media_fixture_embeddings(monkeypatch)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).respond(401)
+
+    from nexus.services.oracle import _build_query_embedding_for_model
+
+    model_name, indexed_vectors = build_text_embeddings(["B-52 H2O AI"])
+    returned_model, query_vector = _build_query_embedding_for_model(
+        "B-52 H2O AI",
+        embedding_model=model_name,
+    )
+
+    assert returned_model == model_name
+    assert query_vector == indexed_vectors[0]
+    assert route.called is False
 
 
 @pytest.mark.parametrize(

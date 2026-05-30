@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from nexus.config import get_settings
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.semantic_chunks import current_transcript_embedding_provider
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import (
     build_storage_path,
@@ -30,8 +31,8 @@ NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
 
 def ensure_real_media_prerequisites() -> None:
     settings = get_settings()
-    if settings.nexus_env.value == "test":
-        pytest.fail("real-media tests must run with NEXUS_ENV=local, staging, or prod")
+    if settings.nexus_env.value != "local":
+        pytest.fail("real-media tests must run with NEXUS_ENV=local")
     if not settings.real_media_provider_fixtures:
         pytest.fail(
             "REAL_MEDIA_PROVIDER_FIXTURES must be enabled for deterministic real-media tests"
@@ -55,10 +56,8 @@ def ensure_real_media_prerequisites() -> None:
                 "Refusing local real-media tests against non-local R2/MinIO endpoint "
                 f"{endpoint_url!r}. Set {NON_LOCAL_STORAGE_OPT_IN}=1 to opt in explicitly."
             )
-    if not settings.enable_openai:
-        pytest.fail("ENABLE_OPENAI must be true for real-media embedding tests")
-    if not os.environ.get("OPENAI_API_KEY"):
-        pytest.fail("OPENAI_API_KEY must be set for real-media embedding tests")
+    if current_transcript_embedding_provider() != "fixture":
+        pytest.fail("real-media tests require deterministic fixture_hash_v1 embeddings")
 
 
 def _is_local_storage_endpoint(endpoint_url: str) -> bool:

@@ -156,7 +156,9 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
 
     platform_providers: set[str] = set()
     if get_effective_entitlements(db, user_id).can_use_platform_llm:
-        if settings.openai_api_key:
+        if settings.real_media_provider_fixtures:
+            platform_providers.update(enabled_providers)
+        elif settings.openai_api_key:
             platform_providers.add("openai")
         if settings.anthropic_api_key:
             platform_providers.add("anthropic")

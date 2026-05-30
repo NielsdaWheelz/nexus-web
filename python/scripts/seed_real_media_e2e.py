@@ -24,6 +24,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.app import create_app
 from nexus.config import get_settings
+from nexus.services.semantic_chunks import current_transcript_embedding_provider
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
@@ -423,7 +424,7 @@ def main() -> None:
 def _ensure_real_media_prerequisites() -> None:
     settings = get_settings()
     if settings.nexus_env.value == "test":
-        raise RuntimeError("NEXUS_ENV must be local, staging, or prod for real-media seeding.")
+        raise RuntimeError("NEXUS_ENV must be local for real-media seeding.")
     if not settings.real_media_provider_fixtures:
         raise RuntimeError("REAL_MEDIA_PROVIDER_FIXTURES must be enabled for real-media seeding.")
     if not settings.real_media_fixture_dir:
@@ -446,10 +447,8 @@ def _ensure_real_media_prerequisites() -> None:
                 "Refusing local real-media seeding against non-local R2/MinIO endpoint "
                 f"{endpoint_url!r}. Set {NON_LOCAL_STORAGE_OPT_IN}=1 to opt in explicitly."
             )
-    if not settings.enable_openai:
-        raise RuntimeError("ENABLE_OPENAI must be true for real-media embeddings.")
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY must be set for real-media embeddings.")
+    if current_transcript_embedding_provider() != "fixture":
+        raise RuntimeError("Real-media seeding requires deterministic fixture_hash_v1 embeddings.")
 
 
 def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID) -> bool:

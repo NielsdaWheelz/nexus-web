@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
+    current_transcript_embedding_provider,
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
@@ -85,7 +86,7 @@ def rebuild_media_content_index(
 
     embedding_model = current_transcript_embedding_model()
     embedding_dimensions = transcript_embedding_dimensions()
-    embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+    embedding_provider = current_transcript_embedding_provider()
     embedding_version = embedding_model
     embedding_config_hash = hashlib.sha256(
         f"{embedding_provider}:{embedding_model}:{embedding_dimensions}:{CHUNKER_VERSION}".encode()

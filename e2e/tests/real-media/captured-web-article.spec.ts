@@ -1,9 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { activeWorkspacePane } from "../workspace";
 import {
   cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
+  expectCurrentMediaEvidenceUrl,
   expectVisibleTextEvidenceHighlight,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
 } from "./real-media-seed";
@@ -48,17 +51,20 @@ test("@real-media captured web article opens reader text and evidence highlight"
   );
   expect(resolverResponse.ok()).toBeTruthy();
   const resolver = await resolverResponse.json();
+  const evidenceSpanId = result.evidence_span_ids[0];
 
-  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  const resultLink = realMediaEvidenceResultLink(page, mediaId, evidenceSpanId);
   await expect(
     resultLink,
     "captured article should render a visible search result",
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   await resultLink.click();
-  await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
-  await expect(page.locator("body")).toContainText(/SOFIA/i);
-  await expectVisibleTextEvidenceHighlight(page);
+  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expect(activeWorkspacePane(page)).toContainText(/SOFIA/i, {
+    timeout: 15_000,
+  });
+  await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
 
   let savedHighlightId: string | null = null;
   let productError: unknown = null;

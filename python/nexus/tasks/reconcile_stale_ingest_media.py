@@ -25,6 +25,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
+    current_transcript_embedding_provider,
     transcript_embedding_dimensions,
 )
 from nexus.storage.client import StorageError, get_storage_client
@@ -298,7 +299,7 @@ def reconcile_stale_ingest_media_job(
         semantic_skipped = 0
         embedding_model = current_transcript_embedding_model()
         embedding_version = embedding_model
-        embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+        embedding_provider = current_transcript_embedding_provider()
         embedding_config_hash = hashlib.sha256(
             f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
         ).hexdigest()

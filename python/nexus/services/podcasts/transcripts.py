@@ -37,6 +37,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
+    current_transcript_embedding_provider,
     transcript_embedding_dimensions,
 )
 from nexus.services.transcript_segments import (
@@ -67,7 +68,7 @@ def _semantic_index_requires_repair(
     """Whether active transcript evidence is absent or stale."""
     embedding_model = current_transcript_embedding_model()
     embedding_version = embedding_model
-    embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+    embedding_provider = current_transcript_embedding_provider()
     embedding_config_hash = hashlib.sha256(
         f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
     ).hexdigest()
@@ -1513,7 +1514,7 @@ def repair_podcast_transcript_semantic_index_now(
         return {"status": "skipped", "reason": "locked"}
 
     embedding_model = current_transcript_embedding_model()
-    embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+    embedding_provider = current_transcript_embedding_provider()
     embedding_config_hash = hashlib.sha256(
         f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
     ).hexdigest()

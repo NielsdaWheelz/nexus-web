@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { activeWorkspacePane } from "../workspace";
 import {
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaUrl,
+  gotoRealMediaSinglePane,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
@@ -29,11 +33,9 @@ test("@real-media configured media are ready and open in the reader", async ({
     expect(body.data.id).toBe(mediaId);
     expect(body.data.retrieval_status).toBe(retrievalStatus);
 
-    await page.goto(`/media/${mediaId}`);
-    await expect(page).toHaveURL(new RegExp(`/media/${mediaId}`));
-    await expect(page.locator("body")).not.toContainText(
-      /not found|failed to load/i,
-    );
+    await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
+    await expectCurrentMediaUrl(page, mediaId);
+    await expectActivePaneHasNoLoadError(page);
   }
 
   const scannedSearch = await searchRealMediaEvidenceThroughUi(
@@ -48,8 +50,13 @@ test("@real-media configured media are ready and open in the reader", async ({
     ),
     "OCR-required scanned PDF must not expose retrievable evidence",
   ).toBe(false);
+  const scannedMediaLinkSelector = [
+    `a[href$="/media/${seed.fixtures.scanned_pdf.media_id}"]`,
+    `a[href*="/media/${seed.fixtures.scanned_pdf.media_id}?"]`,
+    `a[href*="/media/${seed.fixtures.scanned_pdf.media_id}#"]`,
+  ].join(", ");
   await expect(
-    page.locator(`a[href*="/media/${seed.fixtures.scanned_pdf.media_id}?"]`),
+    activeWorkspacePane(page).locator(scannedMediaLinkSelector),
   ).toHaveCount(0);
 
   writeRealMediaTrace(testInfo, "real-media-readiness-trace.json", {

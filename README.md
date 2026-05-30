@@ -96,9 +96,10 @@ make seed-real-media-e2e
 
 Real-media gates are strict. `make test-real-media` runs deterministic backend
 and Playwright acceptance coverage, requires Supabase Auth plus local
-Postgres/MinIO and real OpenAI embeddings, and seeds the browser corpus through
-the product paths. `make test-live-providers` additionally requires real Podcast
-Index and Deepgram credentials. The default Playwright project covers
+Postgres/MinIO, uses checked provider fixtures including deterministic fixture
+embeddings, and seeds the browser corpus through the product paths.
+`make test-live-providers` owns live OpenAI embedding validation plus real
+Podcast Index and Deepgram credentials. The default Playwright project covers
 deterministic seeded feature flows; the real-media project covers deterministic
 real-media acceptance flows.
 

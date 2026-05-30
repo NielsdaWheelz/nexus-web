@@ -8,6 +8,8 @@ type WorkspacePaneVisibility = "visible" | "minimized";
 export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
+const DEVICE_ID_WINDOW_NAME_PREFIX = "nexus:e2e:workspace-device:";
+export const ACTIVE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-active="true"]';
 
 export interface WorkspacePaneHistory {
   back: string[];
@@ -101,19 +103,42 @@ export function singlePaneWorkspaceState(
 // the test controls. Runs as an init script, i.e. before any page load.
 export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
   await page.addInitScript(
-    ([key, id]) => {
+    ([key, prefix]) => {
       try {
-        localStorage.setItem(key, id);
+        if (window.name.startsWith(prefix)) {
+          localStorage.setItem(key, window.name.slice(prefix.length));
+        }
       } catch {
-        /* private mode / quota — ignored */
+        /* private mode / quota - ignored */
       }
     },
-    [INSTALLATION_ID_STORAGE_KEY, deviceId],
+    [INSTALLATION_ID_STORAGE_KEY, DEVICE_ID_WINDOW_NAME_PREFIX],
   );
+  try {
+    await page.evaluate(
+      ([key, id, prefix]) => {
+        window.name = `${prefix}${id}`;
+        try {
+          localStorage.setItem(key, id);
+        } catch {
+          /* private mode / quota - ignored */
+        }
+      },
+      [INSTALLATION_ID_STORAGE_KEY, deviceId, DEVICE_ID_WINDOW_NAME_PREFIX],
+    );
+  } catch {
+    // about:blank and early cross-origin documents may not expose localStorage.
+    // The init script above applies the id before the next app document runs.
+  }
 }
 
-// Seed the server session store for a device. This is the canonical multi-pane
-// setup now that layout never travels in the URL.
+async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
+  if (page.url() === "about:blank") {
+    return;
+  }
+  await page.goto("about:blank");
+}
+
 export async function seedWorkspaceSession(
   request: APIRequestContext,
   deviceId: string,
@@ -126,22 +151,23 @@ export async function seedWorkspaceSession(
   expect(response.ok()).toBeTruthy();
 }
 
-// Pin the device, seed its session, then open `path`. The canonical way to
-// stage a multi-pane workspace for a test now that layout lives only in the
-// server session store.
+// Leave any mounted workspace before seeding. The app flushes pending session
+// capture on pagehide; seeding from a neutral document prevents that old
+// in-memory pane set from racing with the explicit test fixture.
 export async function gotoWithWorkspaceSession(
   page: Page,
   deviceId: string,
   state: WorkspaceState,
   path: string,
 ): Promise<void> {
+  await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
   await seedWorkspaceSession(page.request, deviceId, state);
   await page.goto(path);
 }
 
 export function activeWorkspacePane(page: Page): Locator {
-  return page.locator('[data-pane-id][data-active="true"]').first();
+  return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR).first();
 }
 
 export function workspacePaneButton(page: Page, name: RegExp | string): Locator {

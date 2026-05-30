@@ -74,7 +74,7 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     const popover = page.getByRole("dialog", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
-    await popover.getByRole("button", { name: "Add to document chat" }).click();
+    await popover.getByRole("button", { name: "Quote to existing chat" }).click();
 
     // The reader secondary switches to Doc chat with the quote pending
     // until the user selects the chat that should receive it.
@@ -85,10 +85,23 @@ test.describe("quote-attach references (post-cutover)", () => {
     await expect(docChatTab).toHaveAttribute("aria-selected", "true", {
       timeout: 10_000,
     });
-    const contextSecondary = secondary.getByLabel("Conversation context");
-    await expect(contextSecondary).toBeVisible({ timeout: 10_000 });
-    await expect(contextSecondary).toContainText(selectedText);
+    await expect(
+      secondary.getByText("Choose a chat to add your quote"),
+    ).toBeVisible({ timeout: 10_000 });
+    const afterHighlightResponse = await page.request.get(
+      `/api/fragments/${seed.fragment_id}/highlights`,
+    );
+    expect(afterHighlightResponse.ok()).toBeTruthy();
+    const afterHighlightPayload = (await afterHighlightResponse.json()) as {
+      data: { highlights: Array<{ exact: string }> };
+    };
+    expect(
+      afterHighlightPayload.data.highlights.map((highlight) => highlight.exact),
+    ).toContain(selectedText);
     await secondary.getByRole("button", { name: "Start new chat" }).click();
+    await expect(secondary.getByLabel("Attached to next message")).toContainText(
+      "Selected quote",
+    );
 
     const composerInput = secondary.getByRole("textbox", { name: /ask anything/i });
     const sendButton = secondary.getByRole("button", { name: /send message/i });

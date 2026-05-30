@@ -1,15 +1,72 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { stateChangingApiHeaders } from "../api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
 import {
   drainRealMediaWorkerForChatRun,
+  expectActivePaneHasNoLoadError,
+  expectCurrentMediaEvidenceUrl,
   expectVisiblePdfEvidenceHighlight,
   expectVisibleTextEvidenceHighlight,
+  gotoRealMediaSinglePane,
   openTranscriptEvidenceSegment,
   readRealMediaSeed,
+  realMediaEvidenceResultLink,
   type RealMediaContentKind,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
 } from "./real-media-seed";
+
+function conversationWorkspacePane(page: Page) {
+  return page
+    .locator("[data-pane-id]")
+    .filter({ has: page.getByRole("log", { name: "Chat messages" }) })
+    .last();
+}
+
+async function openConversationReferencesPane(
+  page: Page,
+  conversationPane: Locator,
+) {
+  await conversationPane.getByRole("button", { name: "Options" }).click();
+  await page.getByRole("menuitem", { name: "References" }).click();
+  const secondary = conversationPane.getByTestId("workspace-secondary-pane");
+  await expect(secondary).toBeVisible({ timeout: 10_000 });
+  await expect(secondary.getByRole("tab", { name: "References" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return secondary;
+}
+
+async function expectConversationTreeReady(page: Page, conversationId: string) {
+  const response = await page.request.get(
+    `/api/conversations/${conversationId}/tree?limit=50`,
+  );
+  const body = await response.text();
+  expect(
+    response.ok(),
+    `conversation tree should load before opening chat pane: status=${response.status()}; body=${body.slice(0, 500)}`,
+  ).toBeTruthy();
+}
+
+async function expectConversationReferencesReady(
+  page: Page,
+  conversationId: string,
+  expectedUris: string[],
+) {
+  const response = await page.request.get(
+    `/api/conversations/${conversationId}/references`,
+  );
+  const body = await response.text();
+  expect(
+    response.ok(),
+    `conversation references should load: status=${response.status()}; body=${body.slice(0, 500)}`,
+  ).toBeTruthy();
+  const payload = JSON.parse(body) as { data: Array<{ resource_uri: string }> };
+  expect(payload.data.map((reference) => reference.resource_uri)).toEqual(
+    expectedUris,
+  );
+}
 
 test("@real-media search evidence chat citations open each media reader", async ({
   page,
@@ -85,7 +142,11 @@ test("@real-media search evidence chat citations open each media reader", async 
       expect(result.context_ref.evidence_span_ids.length).toBeGreaterThan(0);
       const evidenceSpanId = result.context_ref.evidence_span_ids[0];
 
-      const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+      const resultLink = realMediaEvidenceResultLink(
+        page,
+        mediaId,
+        evidenceSpanId,
+      );
       await expect(
         resultLink,
         `${kind} should render an attachable visible search result`,
@@ -98,8 +159,12 @@ test("@real-media search evidence chat citations open each media reader", async 
       const conversationResponse = await page.request.post(
         "/api/conversations",
         {
+          headers: stateChangingApiHeaders(),
           data: {
-            initial_references: [`media:${mediaId}`, `chunk:${result.context_ref.id}`],
+            initial_references: [
+              `media:${mediaId}`,
+              `chunk:${result.context_ref.id}`,
+            ],
           },
         },
       );
@@ -107,17 +172,30 @@ test("@real-media search evidence chat citations open each media reader", async 
       expect(conversationResponse.ok(), conversationResponseText).toBeTruthy();
       const conversationId = JSON.parse(conversationResponseText).data.id;
       conversationIds.push(conversationId);
-      await page.goto(`/conversations/${conversationId}`);
+      const expectedReferenceUris = [
+        `media:${mediaId}`,
+        `chunk:${result.context_ref.id}`,
+      ];
+      await expectConversationTreeReady(page, conversationId);
+      await expectConversationReferencesReady(
+        page,
+        conversationId,
+        expectedReferenceUris,
+      );
+      await gotoRealMediaSinglePane(page, `/conversations/${conversationId}`);
 
-      await expect(page.getByLabel("Ask anything")).toBeVisible({
+      let conversationPane = conversationWorkspacePane(page);
+      await expect(conversationPane).toBeVisible({ timeout: 30_000 });
+      await expect(conversationPane.getByLabel("Ask anything")).toBeVisible({
         timeout: 30_000,
       });
-      const composerContext = page.getByLabel("Conversation context").first();
-      await expect(composerContext).toBeVisible();
-      await expect(composerContext).toContainText("chunk:", { timeout: 30_000 });
+      const referencesPane = await openConversationReferencesPane(
+        page,
+        conversationPane,
+      );
+      await expect(referencesPane).not.toContainText("No references yet.");
 
-      await page.getByLabel("Web search mode").selectOption("off");
-      await page
+      await conversationPane
         .getByLabel("Ask anything")
         .fill(
           `What does this source say about ${query}? Use the attached evidence.`,
@@ -128,7 +206,9 @@ test("@real-media search evidence chat citations open each media reader", async 
           response.request().method() === "POST",
         { timeout: 30_000 },
       );
-      const sendButton = page.getByRole("button", { name: "Send message" });
+      const sendButton = conversationPane.getByRole("button", {
+        name: "Send message",
+      });
       await expect(sendButton).toBeEnabled({ timeout: 30_000 });
       await sendButton.click();
       const chatRunResponse = await chatRunResponsePromise;
@@ -140,41 +220,26 @@ test("@real-media search evidence chat citations open each media reader", async 
       expect(workerResult.status, JSON.stringify(workerResult)).toBe(
         "complete",
       );
-      await page.goto(
+      await gotoRealMediaSinglePane(
+        page,
         `/conversations/${chatRunCreated.data.conversation.id}?run=${runId}`,
       );
       await expect(page).toHaveURL(/\/conversations\/[0-9a-f-]+/i, {
         timeout: 30_000,
       });
-      const chatLog = page.getByRole("log", { name: "Chat messages" });
-      const evidenceButton = chatLog
-        .getByRole("button", { name: /^Evidence/ })
-        .last();
-      await expect(evidenceButton).toBeVisible({ timeout: 120_000 });
-      await evidenceButton.click();
-      await expect(page.getByText("Evidence summary")).toBeVisible({
-        timeout: 10_000,
+      conversationPane = conversationWorkspacePane(page);
+      await expect(conversationPane).toBeVisible({ timeout: 30_000 });
+      const chatLog = conversationPane.getByRole("log", {
+        name: "Chat messages",
       });
-      const detailButtons = page.getByRole("button", { name: "Details" });
-      const detailButtonCount = await detailButtons.count();
-      for (let i = 0; i < detailButtonCount; i += 1) {
-        await detailButtons.nth(i).click();
-      }
-      await expect(page.getByText("Available from prompt").first()).toBeVisible();
-      await expect(page.getByText("Used in the answer").first()).toBeVisible();
-      const citationButton = chatLog
-        .getByRole("button", { name: /^Open citation \d+$/ })
+      const citationLink = chatLog
+        .getByRole("link", { name: /^Open citation \d+$/ })
         .first();
-      await expect(citationButton).toBeVisible({ timeout: 30_000 });
-      await citationButton.click();
-      await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
+      await expect(citationLink).toBeVisible({ timeout: 120_000 });
+      await citationLink.click();
+      await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
       const citationUrl = page.url();
-      expect(new URL(citationUrl).searchParams.get("evidence")).toBe(
-        evidenceSpanId,
-      );
-      await expect(page.locator("body")).not.toContainText(
-        /not found|failed to load/i,
-      );
+      await expectActivePaneHasNoLoadError(page);
       if (contentKind === "pdf") {
         await expectVisiblePdfEvidenceHighlight(page, evidenceSpanId);
       } else if (
