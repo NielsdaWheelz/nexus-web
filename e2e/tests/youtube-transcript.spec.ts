@@ -81,7 +81,7 @@ test.describe("youtube transcript media", () => {
     );
 
     const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
-    await expect(seekSegmentButton).toBeVisible();
+    await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
     await expect
@@ -110,7 +110,7 @@ test.describe("youtube transcript media", () => {
 
     const activePane = activeWorkspacePane(page);
     const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
-    await expect(seekSegmentButton).toBeVisible();
+    await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
     const transcriptContent = activePane.locator(

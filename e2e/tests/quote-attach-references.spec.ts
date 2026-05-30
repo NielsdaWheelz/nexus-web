@@ -20,6 +20,8 @@ interface ChatReferencesResponse {
   }>;
 }
 
+const NEW_REFERENCE_CHAT_BUTTON = /^(?:\+ New chat|Start new chat(?: about this document)?)$/i;
+
 function readNonPdfSeed(): NonPdfSeed {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
   return JSON.parse(readFileSync(seedPath, "utf-8")) as NonPdfSeed;
@@ -99,7 +101,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     expect(
       afterHighlightPayload.data.highlights.map((highlight) => highlight.exact),
     ).toContain(selectedText);
-    await secondary.getByRole("button", { name: "Start new chat" }).click();
+    await secondary.getByRole("button", { name: NEW_REFERENCE_CHAT_BUTTON }).click();
     await expect(secondary.getByLabel("Attached to next message")).toContainText(
       selectedText,
     );
