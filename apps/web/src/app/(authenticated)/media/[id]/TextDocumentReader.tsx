@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent, ReactNode, RefObject, UIEvent } from "react";
+import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import styles from "./page.module.css";
 
@@ -29,7 +29,6 @@ export default function TextDocumentReader({
   focusMode,
   hyphenation,
   contentState,
-  contentsNav,
   onDocumentScroll,
   onContentClick,
   onInternalLinkClick,
@@ -42,7 +41,6 @@ export default function TextDocumentReader({
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
-  contentsNav: ReactNode;
   onDocumentScroll: (event: UIEvent<HTMLDivElement>) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
@@ -81,31 +79,27 @@ export default function TextDocumentReader({
           data-hyphenation={hyphenation}
         >
           <div className={styles.readerContentInner}>
-            <div className={styles.textDocumentContainer}>
-              {contentsNav}
-
-              {contentState.status === "error" ? (
-                <div className={styles.error}>{contentState.message}</div>
-              ) : contentState.status === "loading" ? (
-                <div className={styles.loading}>{contentState.message}</div>
-              ) : contentState.status === "empty" ? (
-                <div className={styles.empty}>
-                  <p>{contentState.message}</p>
-                </div>
-              ) : (
-                <div
-                  ref={contentRef}
-                  className={styles.fragments}
-                  onClick={handleRenderedContentClick}
-                >
-                  <HtmlRenderer
-                    htmlSanitized={contentState.renderedHtml}
-                    className={styles.fragment}
-                    mediaId={mediaId}
-                  />
-                </div>
-              )}
-            </div>
+            {contentState.status === "error" ? (
+              <div className={styles.error}>{contentState.message}</div>
+            ) : contentState.status === "loading" ? (
+              <div className={styles.loading}>{contentState.message}</div>
+            ) : contentState.status === "empty" ? (
+              <div className={styles.empty}>
+                <p>{contentState.message}</p>
+              </div>
+            ) : (
+              <div
+                ref={contentRef}
+                className={styles.fragments}
+                onClick={handleRenderedContentClick}
+              >
+                <HtmlRenderer
+                  htmlSanitized={contentState.renderedHtml}
+                  className={styles.fragment}
+                  mediaId={mediaId}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
