@@ -101,7 +101,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     ).toContain(selectedText);
     await secondary.getByRole("button", { name: "Start new chat" }).click();
     await expect(secondary.getByLabel("Attached to next message")).toContainText(
-      "Selected quote",
+      selectedText,
     );
 
     const composerInput = secondary.getByRole("textbox", { name: /ask anything/i });

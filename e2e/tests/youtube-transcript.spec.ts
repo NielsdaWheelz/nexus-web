@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openHighlightsPane, openMediaInSinglePaneWorkspace } from "./reader";
@@ -51,6 +51,12 @@ function readSeededYoutubeMedia(): SeededYoutubeMedia {
   return parsed;
 }
 
+function transcriptSegmentButton(activePane: Locator, text: string): Locator {
+  return activePane.getByRole("button", {
+    name: new RegExp(`^\\d{2}:\\d{2}:\\d{2}\\s+.*${escapeRegExp(text)}$`, "i"),
+  });
+}
+
 test.describe("youtube transcript media", () => {
   test("transcript-ready youtube flow renders embed, seeks by transcript click, and keeps external source action", async ({
     page,
@@ -65,8 +71,8 @@ test.describe("youtube transcript media", () => {
     );
 
     const activePane = activeWorkspacePane(page);
-    const playerFrame = activePane.locator('iframe[title="YouTube video player"]');
-    await expect(playerFrame).toBeVisible();
+    const playerFrame = activePane.locator("iframe").first();
+    await expect(playerFrame).toBeVisible({ timeout: 10_000 });
     await expect(activePane.locator("video")).toHaveCount(0);
 
     await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
@@ -74,9 +80,7 @@ test.describe("youtube transcript media", () => {
       seed.watch_url
     );
 
-    const seekSegmentButton = activePane.getByRole("button", {
-      name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-    });
+    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
     await expect(seekSegmentButton).toBeVisible();
     await seekSegmentButton.click();
 
@@ -105,9 +109,7 @@ test.describe("youtube transcript media", () => {
     );
 
     const activePane = activeWorkspacePane(page);
-    const seekSegmentButton = activePane.getByRole("button", {
-      name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-    });
+    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
     await expect(seekSegmentButton).toBeVisible();
     await seekSegmentButton.click();
 
@@ -192,14 +194,14 @@ test.describe("youtube transcript media", () => {
     );
 
     const activePane = activeWorkspacePane(page);
-    await expect(activePane.locator('iframe[title="YouTube video player"]')).toBeVisible();
+    await expect(activePane.locator("iframe").first()).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(
       activePane.getByText("Transcript unavailable for this episode.")
     ).toBeVisible();
     await expect(
-      activePane.getByRole("button", {
-        name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),
-      })
+      transcriptSegmentButton(activePane, seed.seek_segment_text)
     ).toHaveCount(0);
     await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",

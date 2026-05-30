@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
@@ -65,13 +64,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function submitSearch(page: Page): Locator {
-  return activeWorkspacePane(page).getByRole("button", {
-    name: "Search",
-    exact: true,
-  });
-}
-
 async function searchFor(
   page: Page,
   testInfo: TestInfo,
@@ -86,7 +78,7 @@ async function searchFor(
   const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
-  await submitSearch(page).click();
+  await searchInput.press("Enter");
 }
 
 async function setOnlyContentChunkFilter(page: Page): Promise<void> {
@@ -133,7 +125,7 @@ async function clickCitationResult(
   const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
-  await submitSearch(page).click();
+  await searchInput.press("Enter");
 
   const citationLink = searchPane
     .locator(`a[href*="/media/${mediaId}#evidence-"]`)
@@ -202,7 +194,7 @@ test.describe("search", () => {
     }
 
     await searchInput.fill("e2e non-pdf");
-    await submitSearch(page).click();
+    await searchInput.press("Enter");
 
     await expect(searchPane.getByText("No results found.")).toBeVisible();
   });
