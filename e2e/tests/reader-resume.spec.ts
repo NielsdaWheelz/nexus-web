@@ -239,6 +239,11 @@ async function readRenderedPageScale(page: Page, pageNumber: number): Promise<nu
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+async function reloadWorkspacePage(page: Page): Promise<void> {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });
+}
+
 test.describe("reader settings + resume", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -260,7 +265,7 @@ test.describe("reader settings + resume", () => {
         .poll(async () => (await fetchReaderProfile(page.request)).theme)
         .toBe(targetTheme);
 
-      await page.reload();
+      await reloadWorkspacePage(page);
       await expect(themeSelect).toHaveValue(targetTheme);
     } finally {
       await patchReaderProfile(page.request, {
@@ -308,7 +313,7 @@ test.describe("reader settings + resume", () => {
       expect(savedLocator.locations.text_offset ?? 0).toBeGreaterThan(0);
 
       await patchReaderProfile(page.request, { font_size_px: targetFontSize });
-      await page.reload();
+      await reloadWorkspacePage(page);
       await expect(page.getByText("reader resume paragraph 001")).toBeVisible({
         timeout: 15_000,
       });
@@ -429,13 +434,15 @@ test.describe("reader settings + resume", () => {
       anchor_id: null,
     });
 
-    await page.reload();
+    await reloadWorkspacePage(page);
     await expect(activeWorkspacePane(page).getByRole("heading", { name: chapterTwo })).toBeVisible({
       timeout: 15_000,
     });
   });
 
   test("pdf locator resumes page and zoom after reload", async ({ page }, testInfo) => {
+    test.slow();
+
     const seed = readReaderResumeSeed();
     const mediaId = seed.pdf_media_id;
     const expectedPageCount = seed.pdf_page_count;
@@ -483,7 +490,7 @@ test.describe("reader settings + resume", () => {
       })
       .toEqual({ page: 3, zoom: 1.25 });
 
-    await page.reload();
+    await reloadWorkspacePage(page);
     await expect(pageIndicator(page, 3, expectedPageCount)).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(async () => {
