@@ -3,6 +3,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
 
@@ -78,7 +79,7 @@ test.describe("command palette", () => {
     // immediately via ?palette=1 on top of the seeded workspace session.
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-command-palette"),
       workspaceWithSearchPane(),
       "/libraries?palette=1",
     );
@@ -139,7 +140,7 @@ test.describe("command palette mobile", () => {
   }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-command-palette"),
       workspaceWithSearchPane(),
       "/libraries?palette=1",
     );

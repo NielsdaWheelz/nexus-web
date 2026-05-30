@@ -7,7 +7,11 @@ import {
   openHighlightsPane,
   readerSecondaryForActivePane,
 } from "./reader";
-import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
+import {
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+  workspacePaneButton,
+} from "./workspace";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -239,10 +243,11 @@ test.describe("pdf reader", () => {
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
     const expectedMediaId = seeded.media_id;
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
     let createdHighlightId: string | null = null;
     let productError: unknown = null;
     try {
-      await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+      await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
       await resetPdfReaderState(page, expectedMediaId);
       await page.getByRole("button", { name: "Add content" }).click();
       const addContentDialog = page.getByRole("dialog", { name: "Add content" });
@@ -258,7 +263,7 @@ test.describe("pdf reader", () => {
       await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after upload redirect to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
-      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${expectedMediaId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${expectedMediaId}`);
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -344,7 +349,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
+    await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     test.skip(
       expectedPageCount < 2,
@@ -408,7 +414,7 @@ test.describe("pdf reader", () => {
         throw new Error("Expected created PDF highlight ids for active-page scoping coverage");
       }
 
-      await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
       const highlightsPane = await openHighlightsPane(page);
 
@@ -468,7 +474,11 @@ test.describe("pdf reader", () => {
     page,
   }, testInfo) => {
     const seeded = readSeededPdfMedia();
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${seeded.password_media_id}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-pdf-reader"),
+      `/media/${seeded.password_media_id}`,
+    );
     await expect(page.getByText("This PDF is password-protected")).toBeVisible();
     await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
   });
@@ -479,7 +489,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
-    await gotoSinglePaneWorkspace(page, testInfo.testId, "/libraries");
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
+    await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
     await resetPdfReaderState(page, mediaId);
     const fileEndpointPath = `/api/media/${mediaId}/file`;
     let fileEndpointRequests = 0;
@@ -501,7 +512,7 @@ test.describe("pdf reader", () => {
       }
     });
 
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${mediaId}`);
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
       timeout: 20_000,
     });

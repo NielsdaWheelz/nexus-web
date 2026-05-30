@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openMediaInSinglePaneWorkspace, openReaderSecondary } from "./reader";
+import { workspaceE2eDeviceId } from "./workspace";
 
 interface NonPdfSeed {
   media_id: string;
@@ -17,7 +18,11 @@ test.describe("reader pane tabs (references cutover)", () => {
     page,
   }, testInfo) => {
     const seed = readNonPdfSeed();
-    await openMediaInSinglePaneWorkspace(page, testInfo.testId, seed.media_id);
+    await openMediaInSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-pane-tabs"),
+      seed.media_id,
+    );
 
     const secondary = await openReaderSecondary(page);
     const tablist = secondary.getByRole("tablist", { name: "Secondary surfaces" });

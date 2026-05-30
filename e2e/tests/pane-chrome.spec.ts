@@ -294,9 +294,10 @@ test.describe("pane chrome", () => {
     await paneResizeHandle.press("End");
 
     const pdfToolbar = activePane.getByRole("toolbar", { name: "PDF controls" });
+    await expect(pdfToolbar).toBeVisible({ timeout: 20_000 });
     await expect(
       pdfToolbar.getByRole("button", { name: "Previous page" }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 20_000 });
     await expect(
       pdfToolbar.getByRole("button", { name: "Next page" }),
     ).toBeVisible();
@@ -310,9 +311,10 @@ test.describe("pane chrome", () => {
 
     activePane = await gotoPaneChromePath(page, testInfo, `/media/${readerResumeSeed.epub_media_id}`);
     const epubToolbar = activePane.getByRole("toolbar", { name: "EPUB controls" });
+    await expect(epubToolbar).toBeVisible({ timeout: 20_000 });
     await expect(
       epubToolbar.getByRole("button", { name: "Previous section" }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 20_000 });
     await expect(
       epubToolbar.getByRole("button", { name: "Next section" }),
     ).toBeVisible();

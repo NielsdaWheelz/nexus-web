@@ -3,6 +3,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  workspaceE2eDeviceId,
 } from "./workspace";
 
 function workspacePaneButton(page: Page, name: RegExp | string) {
@@ -17,7 +18,7 @@ test.describe("workspace pane minimize", () => {
   }, testInfo) => {
     await gotoWithWorkspaceSession(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-workspace-minimize"),
       makeWorkspaceState(
         [
           makeWorkspacePane("pane-libraries", "/libraries", { primaryWidthPx: 480 }),

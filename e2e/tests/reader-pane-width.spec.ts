@@ -2,7 +2,11 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openReaderSecondary } from "./reader";
-import { activeWorkspacePane, gotoSinglePaneWorkspace } from "./workspace";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 interface MediaSeed {
   media_id: string;
@@ -86,20 +90,29 @@ test.describe("reader pane width floor", () => {
   test("web article panes cannot stay below the configured text floor", async ({
     page,
   }, testInfo) => {
-    await expectReflowableFloor(page, testInfo.testId, readSeed("non-pdf-media.json").media_id);
+    await expectReflowableFloor(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-pane-width"),
+      readSeed("non-pdf-media.json").media_id,
+    );
   });
 
   test("EPUB panes cannot stay below the configured text floor", async ({
     page,
   }, testInfo) => {
-    await expectReflowableFloor(page, testInfo.testId, readSeed("epub-media.json").media_id);
+    await expectReflowableFloor(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-pane-width"),
+      readSeed("epub-media.json").media_id,
+    );
   });
 
   test("PDF panes use intrinsic page width and transcripts use the workspace floor", async ({
     page,
   }, testInfo) => {
     const pdf = readSeed("pdf-media.json");
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${pdf.media_id}`, {
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-reader-pane-width");
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${pdf.media_id}`, {
       primaryWidthPx: 320,
     });
     let activePane = activeWorkspacePane(page);
@@ -115,7 +128,7 @@ test.describe("reader pane width floor", () => {
       .toBe(pdfFloor);
 
     const youtube = readSeed("youtube-media.json");
-    await gotoSinglePaneWorkspace(page, testInfo.testId, `/media/${youtube.media_id}`, {
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${youtube.media_id}`, {
       primaryWidthPx: 320,
     });
     activePane = activeWorkspacePane(page);
@@ -140,7 +153,7 @@ test.describe("reader pane width floor", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await gotoSinglePaneWorkspace(
       page,
-      testInfo.testId,
+      workspaceE2eDeviceId(testInfo, "e2e-reader-pane-width"),
       `/media/${readSeed("non-pdf-media.json").media_id}`,
       { primaryWidthPx: 320 },
     );

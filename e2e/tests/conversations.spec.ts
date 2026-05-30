@@ -155,15 +155,20 @@ test.describe("conversations", () => {
     }
   });
 
-  test("send message", async ({ page }) => {
+  test("send message", async ({ page }, testInfo) => {
     const conversationId = await createConversationViaApi(page);
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-send"),
+        `/conversations/${conversationId}`,
+      );
 
-      const modelSettingsButton = page.getByRole("button", {
+      const activePane = activeWorkspacePane(page);
+      const modelSettingsButton = activePane.getByRole("button", {
         name: /model settings:/i,
       });
-      const input = page.getByRole("textbox", {
+      const input = activePane.getByRole("textbox", {
         name: /ask anything|type a message/i,
       });
 

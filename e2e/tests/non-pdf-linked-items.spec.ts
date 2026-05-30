@@ -9,6 +9,7 @@ import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspacePaneButton,
+  workspaceE2eDeviceId,
 } from "./workspace";
 
 interface SeededNonPdfMedia {
@@ -142,7 +143,11 @@ test.describe("non-pdf linked-items", () => {
     const quoteNote = "Seeded note for non-PDF linked-items e2e.";
     const focusNote = "Seeded focus note for non-PDF linked-items e2e.";
 
-    await gotoSinglePaneWorkspace(page, testInfo.testId, mediaUrl);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-non-pdf-linked-items"),
+      mediaUrl,
+    );
     const activePane = activeWorkspacePane(page);
     const contentPane = activePane.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });

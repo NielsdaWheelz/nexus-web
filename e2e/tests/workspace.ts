@@ -3,6 +3,7 @@ import {
   type APIRequestContext,
   type Locator,
   type Page,
+  type Response,
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
@@ -15,6 +16,12 @@ export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 const DEVICE_ID_WINDOW_NAME_PREFIX = "nexus:e2e:workspace-device:";
+const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
+const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
+  back: ["/browse"],
+  forward: [],
+};
+const WORKSPACE_SESSION_SEED_ATTEMPTS = 3;
 export const ACTIVE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-active="true"]';
 
 export interface WorkspacePaneHistory {
@@ -93,12 +100,17 @@ export function singlePaneWorkspaceState(
   href: string,
   options?: { paneId?: string; primaryWidthPx?: number; history?: WorkspacePaneHistory },
 ): WorkspaceState {
+  const history =
+    options?.history ??
+    (href === WORKSPACE_DEFAULT_FALLBACK_HREF
+      ? EXPLICIT_FALLBACK_HISTORY
+      : undefined);
   const paneId = options?.paneId ?? "pane-e2e-primary";
   return makeWorkspaceState(
     [
       makeWorkspacePane(paneId, href, {
         primaryWidthPx: options?.primaryWidthPx ?? 684,
-        history: options?.history,
+        history,
       }),
     ],
     { activePrimaryPaneId: paneId },
@@ -145,16 +157,52 @@ async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
   await page.goto("about:blank");
 }
 
+function isWorkspaceSessionRestoreResponse(
+  response: Response,
+  deviceId: string,
+): boolean {
+  const request = response.request();
+  if (request.method() !== "GET") {
+    return false;
+  }
+  const url = new URL(response.url());
+  return (
+    url.pathname === WORKSPACE_SESSION_PATH &&
+    url.searchParams.get("device_id") === deviceId
+  );
+}
+
 export async function seedWorkspaceSession(
   request: APIRequestContext,
   deviceId: string,
   state: WorkspaceState,
 ): Promise<void> {
-  const response = await request.put(WORKSPACE_SESSION_PATH, {
-    headers: stateChangingApiHeaders(),
-    data: { device_id: deviceId, state },
-  });
-  expect(response.ok()).toBeTruthy();
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < WORKSPACE_SESSION_SEED_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await request.put(WORKSPACE_SESSION_PATH, {
+        headers: stateChangingApiHeaders(),
+        data: { device_id: deviceId, state },
+      });
+      if (response.ok()) {
+        return;
+      }
+      lastError = new Error(
+        `PUT ${WORKSPACE_SESSION_PATH} failed: status=${response.status()}; body=${(await response.text()).slice(0, 400)}`,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < WORKSPACE_SESSION_SEED_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`PUT ${WORKSPACE_SESSION_PATH} failed while seeding workspace session.`);
 }
 
 // Leave any mounted workspace before seeding. The app flushes pending session
@@ -169,7 +217,14 @@ export async function gotoWithWorkspaceSession(
   await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
   await seedWorkspaceSession(page.request, deviceId, state);
+  const restoreResponse = page
+    .waitForResponse(
+      (response) => isWorkspaceSessionRestoreResponse(response, deviceId),
+      { timeout: 15_000 },
+    )
+    .catch(() => null);
   await page.goto(path, { waitUntil: "domcontentloaded" });
+  await restoreResponse;
 }
 
 export function activeWorkspacePane(page: Page): Locator {

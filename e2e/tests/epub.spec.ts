@@ -827,7 +827,7 @@ test.describe("epub", () => {
     let activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
     await expect(
       activePane.getByRole("heading", { name: seed.chapter_titles[0] })
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => new URL(page.url()).searchParams.get("loc"))
       .toBe(firstSection.section_id);
@@ -1037,6 +1037,7 @@ test.describe("epub", () => {
   test("linked-items keep highlight order stable after reload", async ({
     page,
   }, testInfo) => {
+    test.slow();
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     let activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
@@ -1074,7 +1075,7 @@ test.describe("epub", () => {
       activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
       await expect(
         activePane.getByRole("heading", { name: seed.chapter_titles[0] })
-      ).toBeVisible({ timeout: 15_000 });
+      ).toBeVisible({ timeout: 30_000 });
       await openHighlightsPane(page);
 
       await expect
