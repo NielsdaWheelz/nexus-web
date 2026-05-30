@@ -274,24 +274,24 @@
  * focus-mode banner, secondary column). Pointer movement temporarily reveals
  * chrome via data-chrome-revealed on the same shell node. The shell mirrors
  * data-focus-mode from the reader root. */
-.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .mismatchBanner,
-.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .retrievalBanner,
-.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .focusModeBanner {
+.readerLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .mismatchBanner,
+.readerLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .retrievalBanner,
+.readerLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .focusModeBanner {
   opacity: 0;
   transition: opacity 180ms var(--ease-glide);
 }
 
-.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .mismatchBanner,
-.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .retrievalBanner,
-.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .focusModeBanner {
+.readerLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .mismatchBanner,
+.readerLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .retrievalBanner,
+.readerLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .focusModeBanner {
   opacity: 1;
   transition: opacity 180ms var(--ease-glide);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .splitLayout[data-focus-mode="distraction_free"] .mismatchBanner,
-  .splitLayout[data-focus-mode="distraction_free"] .retrievalBanner,
-  .splitLayout[data-focus-mode="distraction_free"] .focusModeBanner {
+  .readerLayout[data-focus-mode="distraction_free"] .mismatchBanner,
+  .readerLayout[data-focus-mode="distraction_free"] .retrievalBanner,
+  .readerLayout[data-focus-mode="distraction_free"] .focusModeBanner {
     transition: none;
   }
 }
@@ -719,7 +719,7 @@
 
 /* --- Split layout: reader column plus stable sidecar --- */
 
-.splitLayout {
+.readerLayout {
   position: relative;
   display: flex;
   flex-direction: row;
@@ -763,49 +763,4 @@
   color: var(--ink-faint);
   font-size: var(--text-sm);
   text-align: center;
-}
-
-.highlightsBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgb(0 0 0 / 0.24);
-}
-
-.highlightsDrawer {
-  width: 100%;
-  max-height: min(80vh, 640px);
-  max-height: min(80dvh, 640px);
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background: var(--surface-canvas);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-
-.highlightsDrawerHeader {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--edge-subtle);
-  background: var(--surface-2);
-}
-
-.highlightsDrawerHeader h2 {
-  margin: 0;
-  font-size: var(--text-base);
-}
-
-.highlightsDrawerBody {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
 }

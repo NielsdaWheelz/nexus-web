@@ -85,6 +85,7 @@ import {
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
+import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
@@ -162,8 +163,6 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Highlighter,
   ListTree,
   RefreshCw,
 } from "lucide-react";
@@ -664,9 +663,6 @@ export default function MediaPaneBody({
     conversationId: string | null;
     quoteUri: string | null;
   } | null>(null);
-  const [isMobileDocChatDrawerOpen, setMobileDocChatDrawerOpen] = useState(false);
-  const [isMobileHighlightsDrawerOpen, setMobileHighlightsDrawerOpen] =
-    useState(false);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -3052,13 +3048,8 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   const revealDocChatSidecar = useCallback(() => {
-    if (isMobileViewport) {
-      setMobileDocChatDrawerOpen(true);
-    } else {
-      paneRuntime?.openSidecar("reader-doc-chat");
-    }
-    setMobileHighlightsDrawerOpen(false);
-  }, [isMobileViewport, paneRuntime]);
+    paneRuntime?.openSidecar("reader-doc-chat");
+  }, [paneRuntime]);
 
   // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
   const openDocChat = useCallback(() => {
@@ -3237,13 +3228,12 @@ export default function MediaPaneBody({
       : styles.readerThemeLight
   }`;
   const activeReaderSidecarSurface =
-    !isMobileViewport &&
     paneRuntime?.sidecar?.groupId === "reader-tools" &&
     paneRuntime.sidecar.visibility === "visible"
       ? paneRuntime.sidecar.activeSurfaceId
       : null;
   const readerSidecarWidthPx =
-    activeReaderSidecarSurface && paneRuntime?.sidecar
+    !isMobileViewport && activeReaderSidecarSurface && paneRuntime?.sidecar
       ? paneRuntime.sidecar.widthPx
       : 0;
   // The overview ruler is always on for desktop readable media; the sidecar opens
@@ -3325,18 +3315,13 @@ export default function MediaPaneBody({
         isPdf && pdfIntrinsicWidthPx !== null
           ? { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx }
           : { kind: "workspace" },
-      fixedPrimaryChromeWidthPx:
-        !isMobileViewport && canRead ? desktopOverviewRulerWidthPx : 0,
     });
     return () => {
       paneRuntime.setPaneLayout({
         primaryWidth: { kind: "workspace" },
-        fixedPrimaryChromeWidthPx: 0,
       });
     };
   }, [
-    canRead,
-    desktopOverviewRulerWidthPx,
     isMobileViewport,
     isPdf,
     paneRuntime,
@@ -3509,20 +3494,20 @@ export default function MediaPaneBody({
     (e: React.MouseEvent) => {
       const highlightId = handleReaderContentClick(e);
       if (highlightId && isMobileViewport && showHighlightsPane) {
-        setMobileHighlightsDrawerOpen(true);
+        paneRuntime?.openSidecar("reader-highlights");
       }
     },
-    [handleReaderContentClick, isMobileViewport, showHighlightsPane],
+    [handleReaderContentClick, isMobileViewport, paneRuntime, showHighlightsPane],
   );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
       focusHighlight(highlightId);
       if (isMobileViewport && showHighlightsPane) {
-        setMobileHighlightsDrawerOpen(true);
+        paneRuntime?.openSidecar("reader-highlights");
       }
     },
-    [focusHighlight, isMobileViewport, showHighlightsPane],
+    [focusHighlight, isMobileViewport, paneRuntime, showHighlightsPane],
   );
 
   const handleDocumentScroll = useCallback(
@@ -3570,19 +3555,12 @@ export default function MediaPaneBody({
   // Drop the parked quote and the inline chat once the doc-chat list is no
   // longer the visible surface (tab switch, sidecar close).
   useEffect(() => {
-    const docChatVisible = isMobileViewport
-      ? isMobileDocChatDrawerOpen || sidecarChat !== null
-      : activeReaderSidecarSurface === "reader-doc-chat";
+    const docChatVisible = activeReaderSidecarSurface === "reader-doc-chat";
     if (!docChatVisible) {
       setPendingQuoteUri(null);
       setSidecarChat(null);
     }
-  }, [
-    activeReaderSidecarSurface,
-    isMobileDocChatDrawerOpen,
-    isMobileViewport,
-    sidecarChat,
-  ]);
+  }, [activeReaderSidecarSurface, sidecarChat]);
 
   useEffect(() => {
     const handleChatShortcut = (event: KeyboardEvent) => {
@@ -3729,7 +3707,7 @@ export default function MediaPaneBody({
     mediaReaderOptions.push({
       id: "show-highlights",
       label: "Show highlights",
-      onSelect: () => setMobileHighlightsDrawerOpen(true),
+      onSelect: () => paneRuntime?.openSidecar("reader-highlights"),
     });
   }
 
@@ -3930,7 +3908,6 @@ export default function MediaPaneBody({
     if (showHighlightsPane) {
       return;
     }
-    setMobileHighlightsDrawerOpen(false);
     if (paneRuntime?.sidecar?.groupId === "reader-tools") {
       paneRuntime.closeSidecar();
     }
@@ -3990,9 +3967,13 @@ export default function MediaPaneBody({
       return;
     }
     const releaseLocks: Array<() => void> = [];
-    if (isMobileHighlightsDrawerOpen) {
+    if (
+      paneRuntime?.sidecar?.groupId === "reader-tools" &&
+      paneRuntime.sidecar.visibility === "visible" &&
+      paneRuntime.sidecar.activeSurfaceId === "reader-highlights"
+    ) {
       releaseLocks.push(
-        paneMobileChrome.acquireVisibleLock("highlights-drawer"),
+        paneMobileChrome.acquireVisibleLock("mobile-sidecar"),
       );
     }
     if (libraryPanelOpen) {
@@ -4007,11 +3988,11 @@ export default function MediaPaneBody({
       }
     };
   }, [
-    isMobileHighlightsDrawerOpen,
     libraryPanelOpen,
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
+    paneRuntime?.sidecar,
     selection,
   ]);
 
@@ -4248,12 +4229,8 @@ export default function MediaPaneBody({
   );
 
   const onOpenHighlights = useCallback(() => {
-    if (isMobileViewport) {
-      setMobileHighlightsDrawerOpen(true);
-    } else {
-      paneRuntime?.openSidecar("reader-highlights");
-    }
-  }, [isMobileViewport, paneRuntime]);
+    paneRuntime?.openSidecar("reader-highlights");
+  }, [paneRuntime]);
 
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
@@ -4368,11 +4345,6 @@ export default function MediaPaneBody({
     ],
   );
 
-  const showMobileChatListDrawer =
-    isMobileViewport &&
-    isMobileDocChatDrawerOpen &&
-    !sidecarChat;
-
   const readerSidecarDescriptor = useMemo(
     () =>
       showHighlightsPane
@@ -4382,9 +4354,6 @@ export default function MediaPaneBody({
             surfaces: [
               {
                 id: "reader-highlights" as const,
-                groupId: "reader-tools" as const,
-                title: "Highlights",
-                icon: Highlighter,
                 body: (
                   <div className={styles.readerSidecarBody}>
                     {highlightsSidecarBody ?? (
@@ -4397,9 +4366,6 @@ export default function MediaPaneBody({
               },
               {
                 id: "reader-doc-chat" as const,
-                groupId: "reader-tools" as const,
-                title: "Document chat",
-                icon: FileText,
                 body: (
                   <div className={styles.readerSidecarBody}>
                     {sidecarChat ? (
@@ -4443,6 +4409,36 @@ export default function MediaPaneBody({
     ],
   );
   usePaneSidecar(readerSidecarDescriptor);
+  const fixedChromePublication = useMemo(
+    () =>
+      showDesktopOverviewRuler
+        ? {
+            id: "reader-overview-ruler" as const,
+            widthPx: desktopOverviewRulerWidthPx,
+            body: (
+              <ReaderOverviewRuler
+                positioned={positioned}
+                contentRef={isPdf ? pdfContentRef : contentRef}
+                documentSpan={documentSpan}
+                onActivateHighlight={onActivateHighlight}
+                onOpenHighlights={onOpenHighlights}
+              />
+            ),
+          }
+        : null,
+    [
+      contentRef,
+      desktopOverviewRulerWidthPx,
+      documentSpan,
+      isPdf,
+      onActivateHighlight,
+      onOpenHighlights,
+      pdfContentRef,
+      positioned,
+      showDesktopOverviewRuler,
+    ],
+  );
+  usePaneFixedChrome(fixedChromePublication);
 
   // ==========================================================================
   // Render
@@ -4529,7 +4525,7 @@ export default function MediaPaneBody({
         }}
       />
       <div
-        className={styles.splitLayout}
+        className={styles.readerLayout}
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
       >
@@ -4746,112 +4742,7 @@ export default function MediaPaneBody({
           )}
         </div>
 
-        {showDesktopOverviewRuler ? (
-          <ReaderOverviewRuler
-            positioned={positioned}
-            contentRef={isPdf ? pdfContentRef : contentRef}
-            documentSpan={documentSpan}
-            onActivateHighlight={onActivateHighlight}
-            onOpenHighlights={onOpenHighlights}
-          />
-        ) : null}
-
       </div>
-
-      {isMobileViewport && isMobileHighlightsDrawerOpen && highlightsSidecarBody ? (
-        <div
-          className={styles.highlightsBackdrop}
-          data-testid="mobile-highlights-backdrop"
-          onClick={() => setMobileHighlightsDrawerOpen(false)}
-        >
-          <aside
-            className={styles.highlightsDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Highlights"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.highlightsDrawerHeader}>
-              <h2>Highlights</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMobileHighlightsDrawerOpen(false)}
-              >
-                Close
-              </Button>
-            </header>
-            <div className={styles.highlightsDrawerBody}>{highlightsSidecarBody}</div>
-          </aside>
-        </div>
-      ) : null}
-
-      {showMobileChatListDrawer ? (
-        <div
-          className={styles.highlightsBackdrop}
-          data-testid="mobile-reader-chat-list-backdrop"
-          onClick={() => setMobileDocChatDrawerOpen(false)}
-        >
-          <aside
-            className={styles.highlightsDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Document chat"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.highlightsDrawerHeader}>
-              <h2>Document chat</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMobileDocChatDrawerOpen(false)}
-              >
-                Close
-              </Button>
-            </header>
-            <div className={styles.highlightsDrawerBody}>
-              <DocChatTab
-                mediaId={media.id}
-                onOpenChat={openChatInSidecar}
-                onStartNewChat={startChatInSidecar}
-                pendingQuoteUri={pendingQuoteUri}
-                onPendingQuoteResolved={() => setPendingQuoteUri(null)}
-              />
-            </div>
-          </aside>
-        </div>
-      ) : null}
-
-      {isMobileViewport && sidecarChat ? (
-        <div
-          className={styles.highlightsBackdrop}
-          data-testid="mobile-reader-chat-detail-backdrop"
-          onClick={() => setSidecarChat(null)}
-        >
-          <aside
-            className={styles.highlightsDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chat"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className={styles.highlightsDrawerBody}>
-              <ReaderChatDetail
-                key={`${sidecarChat.conversationId ?? "new"}:${sidecarChat.quoteUri ?? ""}`}
-                conversationId={sidecarChat.conversationId}
-                mediaId={id}
-                pendingQuoteUri={sidecarChat.quoteUri}
-                onBack={() => setSidecarChat(null)}
-                onOpenFullChat={(cid) => {
-                  setSidecarChat(null);
-                  handleOpenFullChat(cid);
-                }}
-                onReaderSourceActivate={handleReaderSourceActivate}
-              />
-            </div>
-          </aside>
-        </div>
-      ) : null}
 
       {!isPdf &&
         selection &&

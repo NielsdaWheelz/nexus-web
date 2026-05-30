@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
@@ -157,34 +158,38 @@ function renderMediaPane() {
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
   const onOpenSidecar = vi.fn();
+  const onSetFixedChrome = vi.fn();
 
   render(
     <FeedbackProvider>
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href={href}
-        routeId={identity.routeId}
-        resourceRef={identity.resourceRef}
-        resourceKey={identity.resourceKey}
-        canGoBack={false}
-        canGoForward={false}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-        pathParams={{ id: "media-1" }}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneLayout={onSetPaneLayout}
-        onOpenSidecar={onOpenSidecar}
-      >
-        <MediaPaneBody />
-      </PaneRuntimeProvider>
+      <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          href={href}
+          routeId={identity.routeId}
+          resourceRef={identity.resourceRef}
+          resourceKey={identity.resourceKey}
+          canGoBack={false}
+          canGoForward={false}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+          pathParams={{ id: "media-1" }}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={vi.fn()}
+          onSetPaneLayout={onSetPaneLayout}
+          onOpenSidecar={onOpenSidecar}
+        >
+          <MediaPaneBody />
+        </PaneRuntimeProvider>
+      </PaneFixedChromeContext.Provider>
     </FeedbackProvider>,
   );
 
   return {
     onSetPaneLayout,
     onOpenSidecar,
+    onSetFixedChrome,
     resourceKey: identity.resourceKey,
   };
 }
@@ -267,10 +272,11 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each(["web_article", "epub"] as const)(
-    "publishes workspace primary layout and opens highlights sidecar for %s",
+    "publishes workspace primary layout and fixed chrome for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneLayout, onOpenSidecar, resourceKey } = renderMediaPane();
+      const { onSetPaneLayout, onSetFixedChrome, resourceKey } =
+        renderMediaPane();
 
       await waitFor(() => {
         expect(onSetPaneLayout).toHaveBeenCalledWith({
@@ -278,25 +284,25 @@ describe("MediaPaneBody pane sizing", () => {
           resourceKey,
           layout: {
             primaryWidth: { kind: "workspace" },
-            fixedPrimaryChromeWidthPx: OVERVIEW_RULER_WIDTH_PX,
           },
         });
       });
-
-      fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
-
       await waitFor(() => {
-        expect(onOpenSidecar).toHaveBeenCalledWith(
-          "pane-1",
-          "reader-highlights",
+        expect(onSetFixedChrome).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: "reader-overview-ruler",
+            widthPx: OVERVIEW_RULER_WIDTH_PX,
+          }),
         );
       });
+
     },
   );
 
-  it("publishes intrinsic PDF primary layout without sidecar width", async () => {
+  it("publishes intrinsic PDF primary layout and fixed chrome", async () => {
     testState.mediaKind = "pdf";
-    const { onSetPaneLayout, onOpenSidecar, resourceKey } = renderMediaPane();
+    const { onSetPaneLayout, onSetFixedChrome, resourceKey } =
+      renderMediaPane();
 
     await waitFor(() => {
       expect(onSetPaneLayout).toHaveBeenCalledWith({
@@ -304,16 +310,18 @@ describe("MediaPaneBody pane sizing", () => {
         resourceKey,
         layout: {
           primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
-          fixedPrimaryChromeWidthPx: OVERVIEW_RULER_WIDTH_PX,
         },
       });
     });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
-
     await waitFor(() => {
-      expect(onOpenSidecar).toHaveBeenCalledWith("pane-1", "reader-highlights");
+      expect(onSetFixedChrome).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "reader-overview-ruler",
+          widthPx: OVERVIEW_RULER_WIDTH_PX,
+        }),
+      );
     });
+
   });
 
   it.each(["epub", "web_article"] as const)(

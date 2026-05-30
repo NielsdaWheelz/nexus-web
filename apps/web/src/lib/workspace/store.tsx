@@ -52,7 +52,7 @@ import {
   getSidecarWidthPolicy,
   resolveEffectiveSidecarSizing,
   type WorkspaceSidecarSurfaceId,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 
 type PaneNavigationMode = "replace" | "push";
@@ -171,15 +171,15 @@ function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
 
 export function mergeRestoredWorkspaceWithDeepLink(
   restored: WorkspaceState,
-  urlIntent: WorkspaceState,
+  deepLinkIntent: WorkspaceState,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspaceState {
-  if (isNeutralWorkspaceRestoreIntent(urlIntent)) {
+  if (isNeutralWorkspaceRestoreIntent(deepLinkIntent)) {
     return restored;
   }
 
-  const requestedPane = urlIntent.panes.find(
-    (pane) => pane.id === urlIntent.activePaneId && pane.visibility === "visible"
+  const requestedPane = deepLinkIntent.panes.find(
+    (pane) => pane.id === deepLinkIntent.activePaneId && pane.visibility === "visible"
   );
   if (!requestedPane) {
     return restored;
@@ -787,12 +787,12 @@ export function WorkspaceStoreProvider({
   stateRef.current = state;
 
   const applyRestoredState = useCallback(
-    (restored: WorkspaceState, urlIntent: WorkspaceState) =>
+    (restored: WorkspaceState, deepLinkIntent: WorkspaceState) =>
       dispatch({
         type: "hydrate",
         state: mergeRestoredWorkspaceWithDeepLink(
           restored,
-          urlIntent,
+          deepLinkIntent,
           workspacePrimaryMetrics,
         ),
       }),

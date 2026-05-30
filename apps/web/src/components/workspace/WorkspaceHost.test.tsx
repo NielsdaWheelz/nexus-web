@@ -4,12 +4,14 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
+import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
   runtimeLayout: null as PaneRuntimeLayout | null,
+  fixedChromeWidthPx: null as number | null,
   store: {
     state: {
       panes: [
@@ -68,6 +70,15 @@ function mediaRoute(href: string) {
 function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
+  usePaneFixedChrome(
+    hostMocks.fixedChromeWidthPx === null
+      ? null
+      : {
+          id: "reader-overview-ruler",
+          widthPx: hostMocks.fixedChromeWidthPx,
+          body: <div>Fixed chrome</div>,
+        },
+  );
   useEffect(() => {
     const id = instanceId.current;
     hostMocks.mountedBodyIds.push(id);
@@ -114,11 +125,13 @@ vi.mock("@/components/workspace/PaneShell", () => ({
     children,
     sizing,
     sidecarSizing,
+    fixedChromePublication,
     navigation,
   }: {
     children: ReactNode;
-    sizing: { primaryMinWidthPx: number; fixedPrimaryChromeWidthPx: number };
+    sizing: { primaryMinWidthPx: number };
     sidecarSizing: { widthPx: number } | null;
+    fixedChromePublication: { widthPx: number } | null;
     navigation: {
       canGoBack: boolean;
       canGoForward: boolean;
@@ -129,7 +142,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
     <section
       data-testid="pane-shell"
       data-min-width-px={sizing.primaryMinWidthPx}
-      data-fixed-primary-chrome-width-px={sizing.fixedPrimaryChromeWidthPx}
+      data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
       data-sidecar-width-px={sidecarSizing?.widthPx ?? 0}
     >
       <nav aria-label="Mock pane chrome">
@@ -212,6 +225,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.runtimeLayout = null;
+    hostMocks.fixedChromeWidthPx = null;
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
     hostMocks.store.navigatePane.mockReset();
@@ -258,7 +272,6 @@ describe("WorkspaceHost pane route lifecycle", () => {
   it("auto-resizes a visible pane when runtime content raises the minimum width", async () => {
     hostMocks.runtimeLayout = {
       primaryWidth: { kind: "intrinsic", widthPx: 900 },
-      fixedPrimaryChromeWidthPx: 0,
     };
 
     render(<WorkspaceHost />);
@@ -271,16 +284,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
   it("ignores stale runtime layout records after the pane resource changes", async () => {
     hostMocks.runtimeLayout = {
       primaryWidth: { kind: "intrinsic", widthPx: 900 },
-      fixedPrimaryChromeWidthPx: 28,
     };
     const { rerender } = render(<WorkspaceHost />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
-        "data-fixed-primary-chrome-width-px",
-        "28",
-      );
-    });
     await waitFor(() => {
       expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith("pane-1", 900);
     });
@@ -295,7 +301,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "684",
     );
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
-      "data-fixed-primary-chrome-width-px",
+      "data-fixed-chrome-width-px",
       "0",
     );
     expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith("pane-1", 684);

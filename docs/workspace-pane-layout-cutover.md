@@ -2,6 +2,12 @@
 
 ## Status
 
+Superseded for current implementation details by
+`docs/workspace-pane-system-consolidation-cutover.md`. Keep this document as
+historical discovery/context only; current code should follow the consolidated
+pane system spec, `apps/web/src/lib/panes/paneSidecarModel.ts`, and the
+shell-owned fixed chrome/sidecar hosts.
+
 This is the target contract and implementation plan for simplifying primary
 workspace pane widths.
 

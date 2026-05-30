@@ -498,9 +498,11 @@ Port ownership:
 - `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and `TEST_WEB_PORT`
   are exact overrides. If one is set and cannot bind, the command fails instead
   of silently switching ports.
-- Playwright specs that need a specific pane should navigate with an encoded
-  `ws=` workspace URL or a shared helper. Bare direct URLs are product behavior;
-  pane-sensitive tests should not rely on restored workspace state being empty.
+- Playwright specs that need a specific pane layout should use the shared
+  workspace session-seeding helpers in `e2e/tests/workspace.ts`. Bare direct URLs
+  are product behavior; pane-sensitive tests should not rely on restored
+  workspace state being empty. Workspace layout must not be encoded in URL query
+  params.
 
 Target CI shape:
 

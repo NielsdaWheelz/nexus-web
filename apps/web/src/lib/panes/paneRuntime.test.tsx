@@ -45,7 +45,6 @@ function PublishLayoutOnMount() {
     }
     runtime.setPaneLayout({
       primaryWidth: { kind: "intrinsic", widthPx: 640 },
-      fixedPrimaryChromeWidthPx: 28,
     });
   }, [runtime]);
   return null;
@@ -274,7 +273,6 @@ describe("PaneRuntimeProvider", () => {
         resourceKey: identity.resourceKey,
         layout: {
           primaryWidth: { kind: "intrinsic", widthPx: 640 },
-          fixedPrimaryChromeWidthPx: 28,
         },
       });
     });

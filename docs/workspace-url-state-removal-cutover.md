@@ -417,7 +417,7 @@ on `dispatchAndSync`, `skipSyncRef`.
 
 ## Files To Add
 
-- None required. (`activePaneAddressBarHref` lives in `workspaceHref.ts`.)
+- None required.
 
 ## Files Or Symbols To Delete
 
@@ -533,8 +533,8 @@ on `dispatchAndSync`, `skipSyncRef`.
    `store.tsx` imports — expected.
 2. **Strip versioning from `schema.ts`.** Remove the version constant, the param
    constants, the `schemaVersion` field, and version checks in sanitize/default.
-3. **Rewrite the store's URL boundary.** Add `readDeepLinkIntent` and
-   `activePaneAddressBarHref`; seed at mount; convert the sync effect to
+3. **Rewrite the store's URL boundary.** Inline the mount deep-link intent and
+   active-pane projection; seed at mount; convert the sync effect to
    `replaceState`-only; delete the `popstate` handler, history-mode machinery,
    `skipSyncRef`, and decode/encode telemetry; rename the merge function.
 4. **Simplify the session hook.** Remove `isColdOpen`; always restore; trim before

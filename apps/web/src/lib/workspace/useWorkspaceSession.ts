@@ -17,7 +17,7 @@ const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 export function useWorkspaceSession(
   state: WorkspaceState,
   mounted: boolean,
-  applyRestoredState: (restored: WorkspaceState, urlIntent: WorkspaceState) => void,
+  applyRestoredState: (restored: WorkspaceState, deepLinkIntent: WorkspaceState) => void,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): void {
   const captureArmedRef = useRef(false);
@@ -27,9 +27,9 @@ export function useWorkspaceSession(
 
   stateRef.current = state;
 
-  // (1) RESTORE — on a cold open, fetch the last session and apply it
-  // silently. Capture stays suspended until the fetch resolves, so the
-  // default workspace cannot overwrite the saved session.
+  // (1) RESTORE — fetch the last session after mount and merge it with the
+  // current deep-link intent. Capture stays suspended until the fetch resolves,
+  // so the initial workspace cannot overwrite the saved session.
   useEffect(() => {
     if (!mounted) {
       return;

@@ -13,7 +13,6 @@ export type PaneRuntimePrimaryWidth =
 
 export interface PaneRuntimeLayout {
   primaryWidth: PaneRuntimePrimaryWidth;
-  fixedPrimaryChromeWidthPx: number;
 }
 
 export interface EffectivePaneSizing {
@@ -23,24 +22,17 @@ export interface EffectivePaneSizing {
   renderedPrimarySlotWidthPx: number;
   renderedPrimarySlotMinWidthPx: number;
   renderedPrimarySlotMaxWidthPx: number;
-  fixedPrimaryChromeWidthPx: number;
+  fixedChromeWidthPx: number;
   storedWidthCorrectionPx: number | null;
 }
 
 export const DEFAULT_PANE_RUNTIME_LAYOUT: PaneRuntimeLayout = {
   primaryWidth: { kind: "workspace" },
-  fixedPrimaryChromeWidthPx: 0,
 };
 
 export function normalizePaneRuntimeLayout(
   layout: PaneRuntimeLayout
 ): PaneRuntimeLayout {
-  if (
-    !Number.isFinite(layout.fixedPrimaryChromeWidthPx) ||
-    layout.fixedPrimaryChromeWidthPx < 0
-  ) {
-    throw new Error("Pane runtime fixed chrome width must be non-negative.");
-  }
   let primaryWidth: PaneRuntimePrimaryWidth;
   switch (layout.primaryWidth.kind) {
     case "workspace":
@@ -65,15 +57,11 @@ export function normalizePaneRuntimeLayout(
   }
   return {
     primaryWidth,
-    fixedPrimaryChromeWidthPx: Math.ceil(layout.fixedPrimaryChromeWidthPx),
   };
 }
 
 export function isEmptyPaneRuntimeLayout(layout: PaneRuntimeLayout): boolean {
-  return (
-    layout.primaryWidth.kind === "workspace" &&
-    layout.fixedPrimaryChromeWidthPx === 0
-  );
+  return layout.primaryWidth.kind === "workspace";
 }
 
 export function resolveEffectivePaneSizing(input: {
@@ -81,6 +69,7 @@ export function resolveEffectivePaneSizing(input: {
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   routeWidth: PaneWidthContract;
   runtimeLayout: PaneRuntimeLayout;
+  fixedChromeWidthPx: number;
   isMobile: boolean;
 }): EffectivePaneSizing {
   const runtimeLayout = input.isMobile
@@ -105,18 +94,19 @@ export function resolveEffectivePaneSizing(input: {
     primaryMaxWidthPx,
     Math.max(primaryMinWidthPx, storedWidthPx)
   );
-  const fixedPrimaryChromeWidthPx = input.isMobile
-    ? 0
-    : runtimeLayout.fixedPrimaryChromeWidthPx;
+  const fixedChromeWidthPx =
+    input.isMobile || !Number.isFinite(input.fixedChromeWidthPx)
+      ? 0
+      : Math.max(0, Math.ceil(input.fixedChromeWidthPx));
 
   return {
     primaryWidthPx,
     primaryMinWidthPx,
     primaryMaxWidthPx,
-    renderedPrimarySlotWidthPx: primaryWidthPx + fixedPrimaryChromeWidthPx,
-    renderedPrimarySlotMinWidthPx: primaryMinWidthPx + fixedPrimaryChromeWidthPx,
-    renderedPrimarySlotMaxWidthPx: primaryMaxWidthPx + fixedPrimaryChromeWidthPx,
-    fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotWidthPx: primaryWidthPx + fixedChromeWidthPx,
+    renderedPrimarySlotMinWidthPx: primaryMinWidthPx + fixedChromeWidthPx,
+    renderedPrimarySlotMaxWidthPx: primaryMaxWidthPx + fixedChromeWidthPx,
+    fixedChromeWidthPx,
     storedWidthCorrectionPx:
       !input.isMobile && storedWidthPx < primaryMinWidthPx
         ? primaryMinWidthPx

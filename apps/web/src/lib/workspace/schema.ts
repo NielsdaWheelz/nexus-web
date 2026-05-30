@@ -17,7 +17,7 @@ import {
   isWorkspaceSidecarSurfaceId,
   resolveEffectiveSidecarSizing,
   type WorkspaceSidecarState,
-} from "@/lib/workspace/sidecarSizing";
+} from "@/lib/panes/paneSidecarModel";
 
 export const MAX_PANES = 12;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
@@ -295,8 +295,5 @@ export function sanitizeWorkspaceState(
     return createDefaultWorkspaceState(fallbackHref, options.workspacePrimaryMetrics);
   }
 
-  return trimWorkspacePaneHistory({
-    activePaneId,
-    panes,
-  });
+  return trimWorkspacePaneHistory({ activePaneId, panes });
 }

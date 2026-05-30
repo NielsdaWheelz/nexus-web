@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useRef, type ReactNode } from "react";
-import { MessageSquare } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import PaneShell, {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
-import { usePaneSidecar } from "@/components/workspace/PaneSidecar";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 
 const disabledNavigation = {
@@ -21,9 +19,9 @@ function paneSizing(input: {
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
-  fixedPrimaryChromeWidthPx?: number;
+  fixedChromeWidthPx?: number;
 }): EffectivePaneSizing {
-  const fixedPrimaryChromeWidthPx = input.fixedPrimaryChromeWidthPx ?? 0;
+  const fixedChromeWidthPx = input.fixedChromeWidthPx ?? 0;
   const primaryWidthPx = Math.min(
     input.maxWidthPx,
     Math.max(input.minWidthPx, input.widthPx)
@@ -32,10 +30,10 @@ function paneSizing(input: {
     primaryWidthPx,
     primaryMinWidthPx: input.minWidthPx,
     primaryMaxWidthPx: input.maxWidthPx,
-    renderedPrimarySlotWidthPx: primaryWidthPx + fixedPrimaryChromeWidthPx,
-    renderedPrimarySlotMinWidthPx: input.minWidthPx + fixedPrimaryChromeWidthPx,
-    renderedPrimarySlotMaxWidthPx: input.maxWidthPx + fixedPrimaryChromeWidthPx,
-    fixedPrimaryChromeWidthPx,
+    renderedPrimarySlotWidthPx: primaryWidthPx + fixedChromeWidthPx,
+    renderedPrimarySlotMinWidthPx: input.minWidthPx + fixedChromeWidthPx,
+    renderedPrimarySlotMaxWidthPx: input.maxWidthPx + fixedChromeWidthPx,
+    fixedChromeWidthPx,
     storedWidthCorrectionPx: null,
   };
 }
@@ -573,6 +571,20 @@ describe("PaneShell", () => {
 
   it("composes visible sidecar width without changing primary resize values", async () => {
     const onResizeSidecarPane = vi.fn();
+    const sidecarPublication = {
+      groupId: "reader-tools" as const,
+      defaultSurfaceId: "reader-highlights" as const,
+      surfaces: [
+        {
+          id: "reader-highlights" as const,
+          body: <div>Highlights sidecar</div>,
+        },
+        {
+          id: "reader-doc-chat" as const,
+          body: <div>Document chat sidecar</div>,
+        },
+      ],
+    };
     const props = {
       paneId: "pane-a",
       title: "Reader",
@@ -586,7 +598,7 @@ describe("PaneShell", () => {
         {...props}
         sizing={paneSizing({ widthPx: 700, minWidthPx: 684, maxWidthPx: 2400 })}
       >
-        <SidecarDescriptorProbe />
+        <div>Body content</div>
       </PaneShell>
     );
     const shell = screen.getByTestId("pane-shell-root");
@@ -618,8 +630,9 @@ describe("PaneShell", () => {
           maxWidthPx: 720,
           storedWidthCorrectionPx: null,
         }}
+        sidecarPublication={sidecarPublication}
       >
-        <SidecarDescriptorProbe />
+        <div>Body content</div>
       </PaneShell>
     );
     await screen.findByTestId("workspace-sidecar-pane");
@@ -641,37 +654,14 @@ describe("PaneShell", () => {
           widthPx: 360,
           visibility: "collapsed",
         }}
+        sidecarPublication={sidecarPublication}
       >
-        <SidecarDescriptorProbe />
+        <div>Body content</div>
       </PaneShell>
     );
     expect(shell).toHaveStyle({ width: "700px" });
   });
 });
-
-function SidecarDescriptorProbe() {
-  usePaneSidecar({
-    groupId: "reader-tools",
-    defaultSurfaceId: "reader-highlights",
-    surfaces: [
-      {
-        id: "reader-highlights",
-        groupId: "reader-tools",
-        title: "Highlights",
-        icon: MessageSquare,
-        body: <div>Highlights sidecar</div>,
-      },
-      {
-        id: "reader-doc-chat",
-        groupId: "reader-tools",
-        title: "Document chat",
-        icon: MessageSquare,
-        body: <div>Document chat sidecar</div>,
-      },
-    ],
-  });
-  return <div>Body content</div>;
-}
 
 function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
   usePaneChromeOverride(
@@ -744,7 +734,7 @@ function TwoLocksProbe() {
         onClick={() => {
           secondReleaseRef.current?.();
           secondReleaseRef.current =
-            paneMobileChrome?.acquireVisibleLock("highlights-drawer") ?? null;
+            paneMobileChrome?.acquireVisibleLock("mobile-sidecar") ?? null;
         }}
       >
         Lock second
