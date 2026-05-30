@@ -454,8 +454,8 @@ class TestReaderState:
 
         clear_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json=None,
-            headers=auth_headers(user_id),
+            content="null",
+            headers={**auth_headers(user_id), "content-type": "application/json"},
         )
 
         assert clear_resp.status_code == 200

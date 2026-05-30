@@ -910,6 +910,22 @@ def create_ready_epub_with_chapters(
                 source="toc" if with_toc else "spine",
             )
         )
+    session.flush()
+
+    fragments = (
+        session.query(Fragment)
+        .filter(Fragment.media_id == media.id)
+        .order_by(Fragment.idx.asc())
+        .all()
+    )
+    rebuild_fragment_content_index(
+        session,
+        media_id=media.id,
+        source_kind="epub",
+        artifact_ref=f"media/{media.id}/original.epub",
+        fragments=fragments,
+        reason="test_factory",
+    )
 
     session.commit()
     return media.id, frag_ids

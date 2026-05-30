@@ -398,8 +398,8 @@ class TestEpubExtractMissingTocIsNonFatal:
         assert frag_count == 1
 
 
-class TestEpubExtractTitleFallbackFilenameThenLiteral:
-    """test_epub_extract_title_fallback_filename_then_literal"""
+class TestEpubExtractTitleResolution:
+    """test_epub_extract_title_resolution"""
 
     def test_missing_title_uses_filename(self, db_session: Session):
         storage = FakeStorageClient()
@@ -418,20 +418,8 @@ class TestEpubExtractTitleFallbackFilenameThenLiteral:
 
         assert isinstance(result, EpubExtractionResult)
         media = db_session.get(Media, mid)
-        # storage_path ends with original.epub, so filename fallback produces "original"
-        # but the spec says "filename sans extension", and storage_path is media/{id}/original.epub
-        # so the fallback from _filename_from_storage_path yields "" since "original" is filtered
-        # which means it falls through to "Untitled EPUB" — wait no, let me check the logic.
-        # The title is resolved from OPF dc:title first. If empty, then filename.
-        # The storage_path is "media/{id}/original.epub" → basename "original.epub" → name "original"
-        # "original" is filtered out (lowercase == "original"), so it falls to "Untitled EPUB".
-        # But we need the title to come from the *filename* passed to init_upload.
-        # The media.title was set to "my_great_book.epub" at creation time.
-        # The extract_epub_artifacts function calls _resolve_title which uses storage_path.
-        # This is actually correct per spec: "filename sans extension" refers to the stored filename.
-        # Since we store as "original.epub", the test needs adjusting.
-        # Let's verify the actual title is "Untitled EPUB" since "original" is filtered.
-        assert media.title == "Untitled EPUB"
+        assert result.title == "Untitled EPUB"
+        assert media.title == "my_great_book.epub"
 
     def test_no_title_no_usable_filename(self, db_session: Session):
         storage = FakeStorageClient()
@@ -450,7 +438,8 @@ class TestEpubExtractTitleFallbackFilenameThenLiteral:
 
         assert isinstance(result, EpubExtractionResult)
         media = db_session.get(Media, mid)
-        assert media.title == "Untitled EPUB"
+        assert result.title == "Untitled EPUB"
+        assert media.title == "test.epub"
 
     def test_valid_dc_title_used(self, db_session: Session):
         storage = FakeStorageClient()
@@ -469,7 +458,8 @@ class TestEpubExtractTitleFallbackFilenameThenLiteral:
 
         assert isinstance(result, EpubExtractionResult)
         media = db_session.get(Media, mid)
-        assert media.title == "My Great Book"
+        assert result.title == "My Great Book"
+        assert media.title == "test.epub"
 
 
 class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
@@ -840,24 +830,16 @@ class TestEpubExtractFailureClassificationMatrix:
                 "OEBPS/content.opf": _build_opf(
                     spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
                 ),
-                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Good content.</p>"),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<!-- comment-only chapter -->"),
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        # TEMPORARY EXCEPTION: Patching internal function to simulate error condition.
-        # This is an internal seam exception per the test-refactor PR spec decision ledger.
-        # Replacement: E2E test with corrupt EPUB input, or architectural refactor to inject
-        # error simulation at an external boundary.
-        # Remove by: next cleanup PR.
-        with patch(
-            "nexus.services.epub_ingest._epub_sanitize",
-            side_effect=ValueError("Forced sanitization failure"),
-        ):
-            result = extract_epub_artifacts(db_session, mid, storage)
+        result = extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
         assert result.error_code == ApiErrorCode.E_SANITIZATION_FAILED.value
+        assert db_session.get(Media, mid).title == "test.epub"
 
     def test_structural_parse_failure(self, db_session: Session):
         storage = FakeStorageClient()
@@ -915,6 +897,7 @@ class TestIngestEpubTaskMarksReadyForReadingOnSuccess:
         db_session.expire_all()
         media = db_session.get(Media, mid)
         assert media.processing_status.value == "ready_for_reading"
+        assert media.title == "Test Book"
         assert media.processing_completed_at is not None
         assert media.failure_stage is None
         assert media.last_error_code is None
@@ -1025,27 +1008,20 @@ class TestEpubExtractCommitsArtifactsAtomically:
                 "OEBPS/content.opf": _build_opf(
                     spine_items=[
                         ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
-                        ("ch2", "chapter2.xhtml", "application/xhtml+xml"),
+                        ("img1", "images/missing.png", "image/png"),
                     ],
                 ),
-                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Chapter one.</p>"),
-                "OEBPS/chapter2.xhtml": _build_chapter_xhtml("<p>Chapter two.</p>"),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<img src="images/missing.png" alt="missing"/>'
+                ),
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        # TEMPORARY EXCEPTION: Patching internal function to simulate error condition.
-        # This is an internal seam exception per the test-refactor PR spec decision ledger.
-        # Replacement: E2E test with corrupt EPUB input, or architectural refactor to inject
-        # error simulation at an external boundary.
-        # Remove by: next cleanup PR.
-        with patch(
-            "nexus.services.epub_ingest.insert_fragment_blocks",
-            side_effect=RuntimeError("Forced pre-commit failure"),
-        ):
-            result = extract_epub_artifacts(db_session, mid, storage)
+        result = extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
+        assert "Referenced EPUB image asset missing" in result.error_message
 
         # After rollback, no partial artifacts should exist — including
         # fragments that were successfully flushed before the failure point.

@@ -2181,8 +2181,8 @@ class TestPodcastBillingQuota:
             json={"reason": "episode_open"},
             headers=auth_headers(user_id),
         )
-        assert blocked.status_code == 429
-        assert blocked.json()["error"]["code"] == "E_PODCAST_QUOTA_EXCEEDED"
+        assert blocked.status_code == 402
+        assert blocked.json()["error"]["code"] == "E_BILLING_REQUIRED"
         assert job_count == 0, "metadata-first sync must enqueue zero transcription jobs"
 
     def test_manual_plan_change_applies_immediately(self, auth_client, monkeypatch, direct_db):
@@ -2252,8 +2252,8 @@ class TestPodcastBillingQuota:
             json={"reason": "episode_open"},
             headers=auth_headers(user_id),
         )
-        assert blocked_request.status_code == 429
-        assert blocked_request.json()["error"]["code"] == "E_PODCAST_QUOTA_EXCEEDED"
+        assert blocked_request.status_code == 402
+        assert blocked_request.json()["error"]["code"] == "E_BILLING_REQUIRED"
 
         _set_plan(
             auth_client,
@@ -3754,7 +3754,11 @@ class TestPodcastTranscriptRequestAdmission:
             )
             session.commit()
 
-        retry_response = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=auth_headers(user_id),
+        )
         assert retry_response.status_code == 429, (
             "retry must reuse transcript admission controls and reject over-budget requests"
         )
@@ -7804,6 +7808,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         retry_response = auth_client.post(
             f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
             headers=auth_headers(user_id),
         )
 
@@ -7867,6 +7872,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         second_retry = auth_client.post(
             f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
             headers=auth_headers(user_id),
         )
         assert second_retry.status_code == 202
@@ -8906,6 +8912,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
 
         retry_response = auth_client.post(
             f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
             headers=auth_headers(user_id),
         )
 
@@ -8953,6 +8960,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
 
         second_retry = auth_client.post(
             f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
             headers=auth_headers(user_id),
         )
         assert second_retry.status_code == 202

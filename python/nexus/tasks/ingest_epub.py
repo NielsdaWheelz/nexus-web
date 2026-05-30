@@ -118,27 +118,14 @@ def ingest_epub(
             "title": result.title,
         }
 
-    except Exception as e:
+    except Exception as exc:
         db.rollback()
-        logger.error(
+        logger.exception(
             "ingest_epub_unexpected_error",
             media_id=media_id,
-            error=str(e),
+            error=str(exc),
             request_id=request_id,
         )
-        try:
-            media = db.get(Media, media_uuid)
-            if media and media.processing_status == ProcessingStatus.extracting:
-                now = datetime.now(UTC)
-                media.processing_status = ProcessingStatus.failed
-                media.failure_stage = FailureStage.extract
-                media.last_error_code = "E_INGEST_FAILED"
-                media.last_error_message = str(e)[:_MAX_ERROR_MSG_LEN]
-                media.failed_at = now
-                media.updated_at = now
-                db.commit()
-        except Exception:
-            logger.exception("ingest_epub_failed_to_mark_failed", media_id=media_id)
         raise
     finally:
         db.close()
@@ -165,6 +152,9 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
 
 def _persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
     """Persist EPUB OPF metadata to media and contributor credits."""
+    if result.title:
+        media.title = result.title
+
     replace_media_contributor_credits(
         db,
         media_id=media.id,

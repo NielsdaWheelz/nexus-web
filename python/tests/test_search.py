@@ -569,7 +569,7 @@ class TestBasicSearch:
         highlight_row = next(
             r for r in highlight_response.json()["results"] if r["id"] == str(highlight_id)
         )
-        assert highlight_row["source_version"] == "fragments_v1"
+        assert highlight_row["source_version"].startswith("web_article:fragments:")
         assert highlight_row["citation_label"]
         assert highlight_row["locator"]["type"] == "web_text_offsets"
         assert highlight_row["locator"]["media_id"] == str(media_id)

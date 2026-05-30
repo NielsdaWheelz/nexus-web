@@ -152,6 +152,8 @@ class MediaIngestRequest(BaseModel):
 
     library_ids: list[UUID] = Field(default_factory=list)
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class ArticleCaptureRequest(BaseModel):
     """Request schema for browser-captured web articles."""
@@ -196,6 +198,8 @@ class TranscriptRequestRequest(BaseModel):
 
     reason: TranscriptRequestReason = "episode_open"
     dry_run: bool = False
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TranscriptRequestBatchRequest(BaseModel):

@@ -389,6 +389,10 @@ class _ArchiveSafetyConfig:
     max_parse_time_ms: int
 
 
+class _EpubExtractionFailure(Exception):
+    """Modeled failure caused by the EPUB payload, not service infrastructure."""
+
+
 # ---------------------------------------------------------------------------
 # Public entrypoint
 # ---------------------------------------------------------------------------
@@ -477,8 +481,6 @@ def extract_epub_artifacts(
 
         # ---- title resolution ----------------------------------------------
         title = _resolve_title(opf_tree, media_file.storage_path)
-        media.title = title
-        media.updated_at = now
 
         # ---- OPF metadata extraction --------------------------------------
         opf_meta = _extract_opf_metadata(opf_tree)
@@ -574,7 +576,7 @@ def extract_epub_artifacts(
                 storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
                 uploaded_asset_paths.append(asset_storage_key)
             except StorageError as exc:
-                for path in uploaded_asset_paths:
+                for path in [*uploaded_asset_paths, asset_storage_key]:
                     try:
                         storage_client.delete_object(path)
                     except StorageError as cleanup_exc:
@@ -680,7 +682,7 @@ def extract_epub_artifacts(
             language=media.language,
         )
 
-    except (SQLAlchemyError, ApiError) as exc:
+    except (_EpubExtractionFailure, ApiError) as exc:
         db.rollback()
         for path in uploaded_asset_paths:
             try:
@@ -701,6 +703,22 @@ def extract_epub_artifacts(
             error_code=error_code,
             error_message=f"Extraction failed: {exc}",
         )
+    except SQLAlchemyError:
+        db.rollback()
+        for path in uploaded_asset_paths:
+            try:
+                storage_client.delete_object(path)
+            except StorageError as cleanup_exc:
+                # justify-ignore-error: asset cleanup is secondary to the
+                # primary persistence failure being re-raised below.
+                logger.warning(
+                    "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
+                    media_id,
+                    path,
+                    cleanup_exc.message,
+                )
+        logger.exception("epub_artifact_persistence_failed media_id=%s", media_id)
+        raise
     finally:
         zf.close()
 
@@ -1059,7 +1077,9 @@ def _rewrite_chapter_resources(
     try:
         doc = _parse_epub_html_document(html)
     except LxmlError as exc:
-        raise ValueError(f"Failed to parse EPUB chapter resources: {chapter_href}") from exc
+        raise _EpubExtractionFailure(
+            f"Failed to parse EPUB chapter resources: {chapter_href}"
+        ) from exc
 
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
@@ -1252,7 +1272,9 @@ def _ensure_asset_entry(
             ".svg",
             ".webp",
         }:
-            raise ValueError(f"Referenced EPUB image asset missing from OPF manifest: {epub_path}")
+            raise _EpubExtractionFailure(
+                f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
+            )
         return None
     if manifest_item.media_type not in _SUPPORTED_IMAGE_TYPES:
         return None
@@ -1260,7 +1282,9 @@ def _ensure_asset_entry(
     try:
         content = zf.read(epub_path)
     except KeyError as exc:
-        raise ValueError(f"Referenced EPUB image asset missing from archive: {epub_path}") from exc
+        raise _EpubExtractionFailure(
+            f"Referenced EPUB image asset missing from archive: {epub_path}"
+        ) from exc
 
     content_type = manifest_item.media_type
     if content_type == _SUPPORTED_SVG_IMAGE_TYPE:
@@ -1312,10 +1336,10 @@ def _sanitize_svg_asset(content: bytes, epub_path: str) -> bytes:
     try:
         root = ET.fromstring(content)
     except ET.ParseError as exc:
-        raise ValueError(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
+        raise _EpubExtractionFailure(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
 
     if _local_name(root.tag) != "svg":
-        raise ValueError(f"Referenced SVG asset is not an SVG document: {epub_path}")
+        raise _EpubExtractionFailure(f"Referenced SVG asset is not an SVG document: {epub_path}")
 
     _sanitize_svg_asset_element(root)
     return ET.tostring(root, encoding="utf-8", method="xml")
