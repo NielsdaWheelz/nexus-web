@@ -17,8 +17,8 @@ def test_default_engine_pool_handles_browser_and_api_concurrency(
 
     engine = create_db_engine("postgresql+psycopg://user:pass@localhost/db")
     try:
-        assert engine.pool.size() == 5
-        assert engine.pool._max_overflow == 5
+        assert engine.pool.size() == 10
+        assert engine.pool._max_overflow == 20
         assert engine.pool._timeout == 30
     finally:
         engine.dispose()

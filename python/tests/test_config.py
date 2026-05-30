@@ -34,6 +34,7 @@ def _make_settings(**overrides) -> Settings:
         "PODCAST_INDEX_API_KEY": "test-key",
         "PODCAST_INDEX_API_SECRET": "test-secret",
         "YOUTUBE_DATA_API_KEY": "test-youtube-key",
+        "X_API_BEARER_TOKEN": "test-x-token",
     }
     defaults.update(overrides)
     return Settings(_env_file=None, **defaults)
@@ -141,8 +142,8 @@ class TestPodcastProviderConfiguration:
 class TestDatabasePoolConfiguration:
     def test_defaults_are_bounded_for_small_databases(self):
         settings = _make_settings()
-        assert settings.database_pool_size == 5
-        assert settings.database_max_overflow == 5
+        assert settings.database_pool_size == 10
+        assert settings.database_max_overflow == 20
         assert settings.database_pool_timeout_seconds == 30.0
 
     def test_pool_can_be_capped_for_small_databases(self):
