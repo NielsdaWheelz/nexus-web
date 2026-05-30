@@ -8,6 +8,7 @@ export type WorkspaceSecondaryGroupId =
 export type WorkspaceSecondarySurfaceId =
   | "reader-highlights"
   | "reader-doc-chat"
+  | "reader-contents"
   | "conversation-references"
   | "conversation-forks"
   | "library-chat"
@@ -19,6 +20,7 @@ export type PaneSecondaryIconId =
   | "git-branch"
   | "highlighter"
   | "link-2"
+  | "list-tree"
   | "message-square";
 
 export interface WorkspaceSecondaryState {
@@ -83,6 +85,11 @@ const PANE_SECONDARY_SURFACES = {
     groupId: "reader-tools",
     title: "Document chat",
     iconId: "file-text",
+  },
+  "reader-contents": {
+    groupId: "reader-tools",
+    title: "Contents",
+    iconId: "list-tree",
   },
   "conversation-references": {
     groupId: "conversation-context",

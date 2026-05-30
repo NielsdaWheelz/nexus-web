@@ -610,93 +610,6 @@
   font-size: var(--text-xs);
 }
 
-/* =============================================================================
-   Text Document Reader
-   ============================================================================= */
-
-.textDocumentContainer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-/* =============================================================================
-   Reader Table of Contents
-   ============================================================================= */
-
-.tocSection {
-  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
-  padding-bottom: var(--space-3);
-}
-
-.tocHeading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) 0;
-  color: var(--reader-text-secondary, var(--ink-muted));
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.tocWarning {
-  color: var(--reader-text-muted, var(--ink-faint));
-  font-style: italic;
-}
-
-.tocTree {
-  padding: var(--space-2) 0 0 var(--space-2);
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.tocList {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 var(--space-3);
-}
-
-.tocSection > .tocTree > .tocList {
-  padding-left: 0;
-}
-
-.tocItem {
-  margin: 0;
-  padding: 0;
-}
-
-.tocLink {
-  display: block;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--reader-accent, var(--accent));
-  font-size: var(--text-sm);
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
-  transition: background var(--duration-fast) var(--ease-glide);
-}
-
-.tocLink:hover {
-  background: var(--reader-surface, var(--surface-2));
-}
-
-.tocLink.tocActive {
-  background: var(--reader-bg-secondary, var(--surface-2));
-  color: var(--reader-text, var(--ink));
-  font-weight: var(--weight-semibold);
-}
-
-.tocLabel {
-  display: block;
-  padding: var(--space-1) var(--space-2);
-  color: var(--reader-text-muted, var(--ink-faint));
-  font-size: var(--text-sm);
-  cursor: default;
-}
-
 @media (max-width: 768px) {
   .documentViewport {
     padding-top: calc(
@@ -705,10 +618,6 @@
     scroll-padding-top: calc(
       env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
     );
-  }
-
-  .tocTree {
-    max-height: 200px;
   }
 
   .transcriptSegments {

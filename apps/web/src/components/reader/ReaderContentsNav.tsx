@@ -1,57 +1,19 @@
-import { useId } from "react";
+import { type JSX } from "react";
 import {
   parseReaderNavigationHrefAnchorId,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/readerNavigation";
-import styles from "./page.module.css";
+import styles from "./ReaderContentsNav.module.css";
 
 export default function ReaderContentsNav({
   nodes,
   activeSectionId,
-  expanded,
-  warning,
-  onNavigate,
-}: {
-  nodes: NormalizedNavigationTocNode[];
-  activeSectionId: string | null;
-  expanded: boolean;
-  warning: boolean;
-  onNavigate: (target: { sectionId: string; anchorId: string | null }) => void;
-}) {
-  const labelId = useId();
-  const hasNodes = nodes.length > 0;
-
-  return (
-    <nav className={styles.tocSection} aria-labelledby={labelId}>
-      <div id={labelId} className={styles.tocHeading}>
-        Contents
-        {warning && !hasNodes ? (
-          <span className={styles.tocWarning}> (unavailable)</span>
-        ) : null}
-      </div>
-
-      {expanded && hasNodes ? (
-        <div className={styles.tocTree}>
-          <TocNodeList
-            nodes={nodes}
-            activeSectionId={activeSectionId}
-            onNavigate={onNavigate}
-          />
-        </div>
-      ) : null}
-    </nav>
-  );
-}
-
-function TocNodeList({
-  nodes,
-  activeSectionId,
   onNavigate,
 }: {
   nodes: NormalizedNavigationTocNode[];
   activeSectionId: string | null;
   onNavigate: (target: { sectionId: string; anchorId: string | null }) => void;
-}) {
+}): JSX.Element {
   return (
     <ul className={styles.tocList}>
       {nodes.map((node) => (
@@ -79,7 +41,7 @@ function TocNodeList({
             <span className={styles.tocLabel}>{node.label}</span>
           )}
           {node.children.length > 0 ? (
-            <TocNodeList
+            <ReaderContentsNav
               nodes={node.children}
               activeSectionId={activeSectionId}
               onNavigate={onNavigate}

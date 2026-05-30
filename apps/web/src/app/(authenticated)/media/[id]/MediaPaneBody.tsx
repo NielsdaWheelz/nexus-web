@@ -84,7 +84,11 @@ import {
   usePaneChromeOverride,
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
+import {
+  usePaneSecondary,
+  type PaneSecondaryPublication,
+  type PaneSecondarySurfacePublication,
+} from "@/components/workspace/PaneSecondary";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
@@ -122,7 +126,7 @@ import {
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
-import ReaderContentsNav from "./ReaderContentsNav";
+import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
 import TextDocumentReader from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
@@ -521,16 +525,13 @@ export default function MediaPaneBody({
   const [restorePhase, setRestorePhase] = useState<ReaderRestorePhase>("idle");
   const [activeEpubSection, setActiveEpubSection] =
     useState<EpubSectionContent | null>(null);
-  const [tocWarning, setTocWarning] = useState(false);
   const [epubSectionLoading, setEpubSectionLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
-  const [epubTocExpanded, setEpubTocExpanded] = useState(false);
 
   // ---- Web article navigation state ----
   const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
     null,
   );
-  const [webTocExpanded, setWebTocExpanded] = useState(false);
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(null);
@@ -1276,7 +1277,6 @@ export default function MediaPaneBody({
     appliedEpubNavigationRef.current = epubSections;
 
     const sessionId = beginRestoreSession("resolving");
-    setTocWarning(false);
     setEpubError(null);
 
     const restoreRequest = resolveInitialEpubRestoreRequest({
@@ -1437,7 +1437,6 @@ export default function MediaPaneBody({
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
     setActiveWebSectionId(null);
-    setWebTocExpanded(false);
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
@@ -3149,6 +3148,7 @@ export default function MediaPaneBody({
   const hasEpubToc = epubToc !== null && epubToc.length > 0;
   const hasWebToc =
     webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
+  const contentsAvailable = hasEpubToc || hasWebToc;
 
   const epubTextDocumentContentState = (() => {
     if (epubNavigationResource.status === "error") {
@@ -3427,7 +3427,6 @@ export default function MediaPaneBody({
       setFragments([]);
       setActiveSectionId(null);
       setActiveWebSectionId(null);
-      setWebTocExpanded(false);
       setEpubError(null);
       if (!media) return;
       const targetId = media.id;
@@ -3763,166 +3762,214 @@ export default function MediaPaneBody({
     updateTheme,
   ]);
 
+  const closeSecondaryOnMobile = useCallback(() => {
+    if (isMobileViewport) paneRuntime?.closeSecondaryPane();
+  }, [isMobileViewport, paneRuntime]);
+
+  const contentsSurfaceBody = useMemo(
+    () => (
+      <div className={styles.readerSecondaryBody}>
+        {isEpub ? (
+          <ReaderContentsNav
+            nodes={epubToc ?? []}
+            activeSectionId={activeSectionId}
+            onNavigate={({ sectionId, anchorId }) => {
+              navigateToSection(sectionId, anchorId);
+              closeSecondaryOnMobile();
+            }}
+          />
+        ) : (
+          <ReaderContentsNav
+            nodes={webToc ?? []}
+            activeSectionId={activeWebSectionId}
+            onNavigate={({ sectionId }) => {
+              navigateToWebSection(sectionId);
+              closeSecondaryOnMobile();
+            }}
+          />
+        )}
+      </div>
+    ),
+    [
+      activeSectionId,
+      activeWebSectionId,
+      closeSecondaryOnMobile,
+      epubToc,
+      isEpub,
+      navigateToSection,
+      navigateToWebSection,
+      webToc,
+    ],
+  );
+
+  const contentsSurfaceActive =
+    activeReaderSecondarySurface === "reader-contents";
+
+  const toggleContents = useCallback(() => {
+    if (contentsSurfaceActive) {
+      paneRuntime?.closeSecondaryPane();
+      return;
+    }
+    paneRuntime?.requestSecondarySurface("reader-contents");
+  }, [contentsSurfaceActive, paneRuntime]);
+
+  const contentsToolbarButton = useMemo(
+    () =>
+      contentsAvailable ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ListTree size={16} aria-hidden="true" />}
+          onClick={toggleContents}
+          aria-pressed={contentsSurfaceActive}
+        >
+          Contents
+        </Button>
+      ) : null,
+    [contentsAvailable, contentsSurfaceActive, toggleContents],
+  );
+
   const mediaToolbar = useMemo(
     () =>
       isPdf && canRead && pdfControlsState ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="PDF controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => pdfControlsRef.current?.goToPreviousPage()}
-            disabled={!pdfControlsState.canGoPrev}
-            aria-label="Previous page"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          <span
-            className={styles.mediaToolbarStatus}
-            aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
-          >
-            {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => pdfControlsRef.current?.goToNextPage()}
-            disabled={!pdfControlsState.canGoNext}
-            aria-label="Next page"
-          >
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          <ActionMenu
-            label="More actions"
-            options={[
-              {
-                id: "zoom-out",
-                label: "Zoom out",
-                disabled: !pdfControlsState.canZoomOut,
-                onSelect: () => pdfControlsRef.current?.zoomOut(),
-              },
-              {
-                id: "zoom-in",
-                label: "Zoom in",
-                disabled: !pdfControlsState.canZoomIn,
-                onSelect: () => pdfControlsRef.current?.zoomIn(),
-              },
-            ]}
-          />
-        </div>
-      </div>
-    ) : isEpub && canRead ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="EPUB controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          {(hasEpubToc || tocWarning) ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="PDF controls"
+        >
+          <div className={styles.mediaToolbarRow}>
             <Button
               variant="ghost"
               size="sm"
-              leadingIcon={<ListTree size={16} aria-hidden="true" />}
-              onClick={() => setEpubTocExpanded((value) => !value)}
-              aria-pressed={epubTocExpanded}
+              iconOnly
+              onClick={() => pdfControlsRef.current?.goToPreviousPage()}
+              disabled={!pdfControlsState.canGoPrev}
+              aria-label="Previous page"
             >
-              Contents
+              <ChevronLeft size={16} aria-hidden="true" />
             </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => {
-              if (prevSection) {
-                navigateToSection(prevSection.section_id);
-              }
-            }}
-            disabled={!prevSection}
-            aria-label="Previous section"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </Button>
-          {activeSectionPosition >= 0 && epubSections ? (
             <span
-              className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
-              aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
+              className={styles.mediaToolbarStatus}
+              aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
             >
-              {activeSectionPosition + 1} / {epubSections.length}
+              {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
             </span>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => {
-              if (nextSection) {
-                navigateToSection(nextSection.section_id);
-              }
-            }}
-            disabled={!nextSection}
-            aria-label="Next section"
-          >
-            <ChevronRight size={16} aria-hidden="true" />
-          </Button>
-          {epubSections ? (
-            <Select
-              className={styles.mediaToolbarSectionSelect}
+            <Button
+              variant="ghost"
               size="sm"
-              value={activeSectionId ?? ""}
-              onChange={(event) => {
-                if (event.target.value) {
-                  navigateToSection(event.target.value);
+              iconOnly
+              onClick={() => pdfControlsRef.current?.goToNextPage()}
+              disabled={!pdfControlsState.canGoNext}
+              aria-label="Next page"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </Button>
+            <ActionMenu
+              label="More actions"
+              options={[
+                {
+                  id: "zoom-out",
+                  label: "Zoom out",
+                  disabled: !pdfControlsState.canZoomOut,
+                  onSelect: () => pdfControlsRef.current?.zoomOut(),
+                },
+                {
+                  id: "zoom-in",
+                  label: "Zoom in",
+                  disabled: !pdfControlsState.canZoomIn,
+                  onSelect: () => pdfControlsRef.current?.zoomIn(),
+                },
+              ]}
+            />
+          </div>
+        </div>
+      ) : isEpub && canRead ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="EPUB controls"
+        >
+          <div className={styles.mediaToolbarRow}>
+            {contentsToolbarButton}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => {
+                if (prevSection) {
+                  navigateToSection(prevSection.section_id);
                 }
               }}
-              aria-label="Select section"
-              title={
-                epubSections.find(
-                  (section) => section.section_id === activeSectionId,
-                )?.label
-              }
+              disabled={!prevSection}
+              aria-label="Previous section"
             >
-              {epubSections.map((section) => (
-                <option key={section.section_id} value={section.section_id}>
-                  {section.label}
-                </option>
-              ))}
-            </Select>
-          ) : null}
+              <ChevronLeft size={16} aria-hidden="true" />
+            </Button>
+            {activeSectionPosition >= 0 && epubSections ? (
+              <span
+                className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
+                aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
+              >
+                {activeSectionPosition + 1} / {epubSections.length}
+              </span>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => {
+                if (nextSection) {
+                  navigateToSection(nextSection.section_id);
+                }
+              }}
+              disabled={!nextSection}
+              aria-label="Next section"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </Button>
+            {epubSections ? (
+              <Select
+                className={styles.mediaToolbarSectionSelect}
+                size="sm"
+                value={activeSectionId ?? ""}
+                onChange={(event) => {
+                  if (event.target.value) {
+                    navigateToSection(event.target.value);
+                  }
+                }}
+                aria-label="Select section"
+                title={
+                  epubSections.find(
+                    (section) => section.section_id === activeSectionId,
+                  )?.label
+                }
+              >
+                {epubSections.map((section) => (
+                  <option key={section.section_id} value={section.section_id}>
+                    {section.label}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+          </div>
         </div>
-      </div>
-    ) : media?.kind === "web_article" && canRead && hasWebToc ? (
-      <div
-        className={styles.mediaToolbar}
-        role="toolbar"
-        aria-label="Article controls"
-      >
-        <div className={styles.mediaToolbarRow}>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<ListTree size={16} aria-hidden="true" />}
-            onClick={() => setWebTocExpanded((value) => !value)}
-            aria-pressed={webTocExpanded}
-          >
-            Contents
-          </Button>
+      ) : media?.kind === "web_article" && canRead && hasWebToc ? (
+        <div
+          className={styles.mediaToolbar}
+          role="toolbar"
+          aria-label="Article controls"
+        >
+          <div className={styles.mediaToolbarRow}>
+            {contentsToolbarButton}
+          </div>
         </div>
-      </div>
       ) : null,
     [
       activeSectionId,
       activeSectionPosition,
       canRead,
+      contentsToolbarButton,
       epubSections,
-      epubTocExpanded,
-      hasEpubToc,
       hasWebToc,
       isEpub,
       isPdf,
@@ -3931,8 +3978,6 @@ export default function MediaPaneBody({
       nextSection,
       pdfControlsState,
       prevSection,
-      tocWarning,
-      webTocExpanded,
     ],
   );
   const paneChromeOverrides = useMemo(
@@ -4378,72 +4423,80 @@ export default function MediaPaneBody({
     ],
   );
 
-  const readerSecondaryDescriptor = useMemo(
-    () =>
-      ({
-        groupId: "reader-tools" as const,
-        defaultSurfaceId: showHighlightsPane
-          ? ("reader-highlights" as const)
-          : ("reader-doc-chat" as const),
-        surfaces: [
-          ...(showHighlightsPane
-            ? [
-                {
-                  id: "reader-highlights" as const,
-                  body: (
-                    <div className={styles.readerSecondaryBody}>
-                      {highlightsSecondaryBody ?? (
-                        <div className={styles.readerSecondaryEmpty}>
-                          Highlights are unavailable for this document.
-                        </div>
-                      )}
-                    </div>
-                  ),
-                },
-              ]
-            : []),
-          {
-            id: "reader-doc-chat" as const,
-            body: (
-              <div className={styles.readerSecondaryBody}>
-                {secondaryChat ? (
-                  <ReaderChatDetail
-                    key={`${secondaryChat.conversationId ?? "new"}:${secondaryChat.quoteUri ?? ""}`}
-                    conversationId={secondaryChat.conversationId}
-                    mediaId={id}
-                    pendingQuoteUri={secondaryChat.quoteUri}
-                    onBack={() => setSecondaryChat(null)}
-                    onOpenFullChat={(cid) => {
-                      setSecondaryChat(null);
-                      handleOpenFullChat(cid);
-                    }}
-                    onReaderSourceActivate={handleReaderSourceActivate}
-                  />
-                ) : (
-                  <DocChatTab
-                    mediaId={id}
-                    onOpenChat={openChatInSecondary}
-                    onStartNewChat={startChatInSecondary}
-                    pendingQuoteUri={pendingQuoteUri}
-                    onPendingQuoteResolved={() => setPendingQuoteUri(null)}
-                  />
-                )}
+  const readerSecondarySurfaces = useMemo<PaneSecondarySurfacePublication[]>(() => {
+    const surfaces: PaneSecondarySurfacePublication[] = [];
+    if (showHighlightsPane) {
+      surfaces.push({
+        id: "reader-highlights",
+        body: (
+          <div className={styles.readerSecondaryBody}>
+            {highlightsSecondaryBody ?? (
+              <div className={styles.readerSecondaryEmpty}>
+                Highlights are unavailable for this document.
               </div>
-            ),
-          },
-        ],
-      }),
-    [
-      handleOpenFullChat,
-      handleReaderSourceActivate,
-      highlightsSecondaryBody,
-      id,
-      openChatInSecondary,
-      pendingQuoteUri,
-      secondaryChat,
-      showHighlightsPane,
-      startChatInSecondary,
-    ],
+            )}
+          </div>
+        ),
+      });
+    }
+    if (contentsAvailable) {
+      surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
+    }
+    surfaces.push({
+      id: "reader-doc-chat",
+      body: (
+        <div className={styles.readerSecondaryBody}>
+          {secondaryChat ? (
+            <ReaderChatDetail
+              key={`${secondaryChat.conversationId ?? "new"}:${secondaryChat.quoteUri ?? ""}`}
+              conversationId={secondaryChat.conversationId}
+              mediaId={id}
+              pendingQuoteUri={secondaryChat.quoteUri}
+              onBack={() => setSecondaryChat(null)}
+              onOpenFullChat={(cid) => {
+                setSecondaryChat(null);
+                handleOpenFullChat(cid);
+              }}
+              onReaderSourceActivate={handleReaderSourceActivate}
+            />
+          ) : (
+            <DocChatTab
+              mediaId={id}
+              onOpenChat={openChatInSecondary}
+              onStartNewChat={startChatInSecondary}
+              pendingQuoteUri={pendingQuoteUri}
+              onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+            />
+          )}
+        </div>
+      ),
+    });
+    return surfaces;
+  }, [
+    contentsAvailable,
+    contentsSurfaceBody,
+    handleOpenFullChat,
+    handleReaderSourceActivate,
+    highlightsSecondaryBody,
+    id,
+    openChatInSecondary,
+    pendingQuoteUri,
+    secondaryChat,
+    showHighlightsPane,
+    startChatInSecondary,
+  ]);
+
+  const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication>(
+    () => ({
+      groupId: "reader-tools",
+      defaultSurfaceId: showHighlightsPane
+        ? "reader-highlights"
+        : contentsAvailable
+          ? "reader-contents"
+          : "reader-doc-chat",
+      surfaces: readerSecondarySurfaces,
+    }),
+    [contentsAvailable, readerSecondarySurfaces, showHighlightsPane],
   );
   usePaneSecondary(readerSecondaryDescriptor);
   const fixedChromePublication = useMemo(
@@ -4724,19 +4777,6 @@ export default function MediaPaneBody({
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={epubTextDocumentContentState}
-              contentsNav={
-                hasEpubToc || tocWarning ? (
-                  <ReaderContentsNav
-                    nodes={epubToc ?? []}
-                    activeSectionId={activeSectionId}
-                    expanded={epubTocExpanded}
-                    warning={tocWarning}
-                    onNavigate={({ sectionId, anchorId }) =>
-                      navigateToSection(sectionId, anchorId)
-                    }
-                  />
-                ) : null
-              }
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
               onInternalLinkClick={(href) => {
@@ -4762,17 +4802,6 @@ export default function MediaPaneBody({
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={webTextDocumentContentState}
-              contentsNav={
-                hasWebToc ? (
-                  <ReaderContentsNav
-                    nodes={webToc ?? []}
-                    activeSectionId={activeWebSectionId}
-                    expanded={webTocExpanded}
-                    warning={false}
-                    onNavigate={({ sectionId }) => navigateToWebSection(sectionId)}
-                  />
-                ) : null
-              }
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
             />
