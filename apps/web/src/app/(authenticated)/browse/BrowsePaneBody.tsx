@@ -14,6 +14,7 @@ import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
@@ -58,7 +59,7 @@ import styles from "./page.module.css";
 
 export default function BrowsePaneBody() {
   const paneRouter = usePaneRouter();
-  const paneRuntime = usePaneRuntime();
+  const { openInNewPane } = usePaneRuntime() ?? {};
   const paneSearchParams = usePaneSearchParams();
   const appliedQuery = normalizeBrowseQuery(paneSearchParams.get("q"));
   const visibleTypes = parseVisibleTypes(paneSearchParams);
@@ -66,17 +67,33 @@ export default function BrowsePaneBody() {
   const [draftQuery, setDraftQuery] = useState(appliedQuery);
   const [sections, setSections] =
     useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
-  const [searching, setSearching] = useState(false);
   const [loadingMoreTypes, setLoadingMoreTypes] = useState<
     Set<BrowseSectionType>
   >(new Set());
   const busyKeys = useStringIdSet();
-  const [error, setError] = useState<FeedbackContent | null>(null);
-  const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
+  const [actionError, setActionError] = useState<FeedbackContent | null>(null);
   const libraryPicker = useNonDefaultLibraries();
   const [rowLibraryIds, setRowLibraryIds] = useState<Record<string, string[]>>(
     {},
   );
+  const browseResource = useApiResource<BrowseResponse>({
+    cacheKey: appliedQuery || null,
+    path: (query) => {
+      const params = new URLSearchParams({ q: query, limit: "10" });
+      return `/api/browse?${params.toString()}`;
+    },
+  });
+  const searching = browseResource.status === "loading";
+  const hasSearched = Boolean(appliedQuery);
+  const error = useMemo(() => {
+    if (actionError) {
+      return actionError;
+    }
+    if (browseResource.status === "error") {
+      return toFeedback(browseResource.error, { fallback: "Browse failed" });
+    }
+    return null;
+  }, [actionError, browseResource]);
 
   const pickerLibraries = useMemo(
     () =>
@@ -107,51 +124,24 @@ export default function BrowsePaneBody() {
   }, [appliedQuery]);
 
   useEffect(() => {
-    let cancelled = false;
     if (!appliedQuery) {
       setSections(emptySections());
-      setHasSearched(false);
-      setSearching(false);
-      setError(null);
-      return () => {
-        cancelled = true;
-      };
+      setActionError(null);
+      return;
     }
 
-    setSearching(true);
-    setError(null);
-    void (async () => {
-      try {
-        const params = new URLSearchParams({
-          q: appliedQuery,
-          limit: "10",
-        });
-        const response = await apiFetch<BrowseResponse>(
-          `/api/browse?${params.toString()}`,
-        );
-        if (cancelled) {
-          return;
-        }
-        setSections(normalizeSections(response.data));
-        setHasSearched(true);
-      } catch (searchError) {
-        if (cancelled) {
-          return;
-        }
-        setSections(emptySections());
-        setHasSearched(true);
-        setError(toFeedback(searchError, { fallback: "Browse failed" }));
-      } finally {
-        if (!cancelled) {
-          setSearching(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [appliedQuery]);
+    setActionError(null);
+    if (browseResource.status === "ready") {
+      setSections(normalizeSections(browseResource.data.data));
+      return;
+    }
+    if (
+      browseResource.status === "loading" ||
+      browseResource.status === "error"
+    ) {
+      setSections(emptySections());
+    }
+  }, [appliedQuery, browseResource]);
 
   function updateVisibleTypes(nextVisibleTypes: BrowseSectionType[]) {
     paneRouter.replace(buildBrowseHref(appliedQuery, nextVisibleTypes));
@@ -163,13 +153,13 @@ export default function BrowsePaneBody() {
     const titleHint =
       result.type === "podcasts" ? result.title : result.podcast_title;
     if (result.podcast_id) {
-      paneRuntime?.openInNewPane(`/podcasts/${result.podcast_id}`, titleHint);
+      openInNewPane?.(`/podcasts/${result.podcast_id}`, titleHint);
       return;
     }
 
     const busyKey = `podcast:${result.provider_podcast_id}`;
     busyKeys.add(busyKey);
-    setError(null);
+    setActionError(null);
     try {
       const response = await apiFetch<{ data: { podcast_id: string } }>(
         "/api/podcasts/ensure",
@@ -211,11 +201,13 @@ export default function BrowsePaneBody() {
                 ? { ...row, podcast_id: podcastId }
                 : row,
             ),
-        ),
+          ),
       );
-      paneRuntime?.openInNewPane(`/podcasts/${podcastId}`, titleHint);
+      openInNewPane?.(`/podcasts/${podcastId}`, titleHint);
     } catch (openError) {
-      setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
+      setActionError(
+        toFeedback(openError, { fallback: "Failed to open podcast" }),
+      );
     } finally {
       busyKeys.remove(busyKey);
     }
@@ -227,7 +219,7 @@ export default function BrowsePaneBody() {
   ) {
     const busyKey = `podcast:${result.provider_podcast_id}`;
     busyKeys.add(busyKey);
-    setError(null);
+    setActionError(null);
     try {
       const response = await subscribeToPodcast({
         provider_podcast_id: result.provider_podcast_id,
@@ -249,7 +241,7 @@ export default function BrowsePaneBody() {
         ),
       );
     } catch (followError) {
-      setError(
+      setActionError(
         toFeedback(followError, { fallback: "Failed to follow podcast" }),
       );
     } finally {
@@ -262,7 +254,7 @@ export default function BrowsePaneBody() {
     libraryIds: string[] = [],
   ) {
     if (result.media_id) {
-      paneRuntime?.openInNewPane(`/media/${result.media_id}`, result.title);
+      openInNewPane?.(`/media/${result.media_id}`, result.title);
       return;
     }
 
@@ -271,7 +263,7 @@ export default function BrowsePaneBody() {
         ? `document:${result.url}`
         : `video:${result.provider_video_id}`;
     busyKeys.add(busyKey);
-    setError(null);
+    setActionError(null);
     try {
       const added = await addMediaFromUrl({
         url: result.type === "documents" ? result.url : result.watch_url,
@@ -293,9 +285,11 @@ export default function BrowsePaneBody() {
           );
         }),
       );
-      paneRuntime?.openInNewPane(`/media/${added.mediaId}`, result.title);
+      openInNewPane?.(`/media/${added.mediaId}`, result.title);
     } catch (addError) {
-      setError(toFeedback(addError, { fallback: "Failed to add result" }));
+      setActionError(
+        toFeedback(addError, { fallback: "Failed to add result" }),
+      );
     } finally {
       busyKeys.remove(busyKey);
     }
@@ -307,7 +301,7 @@ export default function BrowsePaneBody() {
       return;
     }
     setLoadingMoreTypes((current) => new Set(current).add(sectionType));
-    setError(null);
+    setActionError(null);
     try {
       const params = new URLSearchParams({
         q: appliedQuery,
@@ -326,7 +320,7 @@ export default function BrowsePaneBody() {
         ),
       );
     } catch (loadMoreError) {
-      setError(
+      setActionError(
         toFeedback(loadMoreError, { fallback: "Failed to load more results" }),
       );
     } finally {

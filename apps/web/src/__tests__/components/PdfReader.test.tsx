@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PdfReader from "@/components/PdfReader";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
@@ -44,7 +44,7 @@ vi.mock("@/lib/api/client", () => ({
       (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
         path ===
           "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
-      !init
+      (init?.method ?? "GET") === "GET"
     ) {
       return {
         data: {
@@ -333,6 +333,33 @@ describe("PdfReader selection chat destinations", () => {
         maxRenderedPageWidthPx: 736,
       });
     });
+  });
+
+  it("loads active page highlights once per page owner, not per render event", async () => {
+    render(<PdfReader mediaId="media-1" />);
+
+    await screen.findByTestId("pdf-page-text-layer-1");
+
+    const highlightCalls = () =>
+      vi
+        .mocked(apiFetch)
+        .mock.calls.filter(
+          ([path, init]) =>
+            path ===
+              "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false" &&
+            (init?.method ?? "GET") === "GET",
+        );
+
+    await waitFor(() => {
+      expect(highlightCalls()).toHaveLength(1);
+    });
+
+    act(() => {
+      pdfRuntimeState.eventBus?.dispatch("pagerendered", { pageNumber: 1 });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(highlightCalls()).toHaveLength(1);
   });
 
   it("pulses only the requested PDF highlight", async () => {

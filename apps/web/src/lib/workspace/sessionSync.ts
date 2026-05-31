@@ -1,6 +1,6 @@
 "use client";
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, apiKeepaliveJson } from "@/lib/api/client";
 import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import {
   createDefaultWorkspaceState,
@@ -35,17 +35,12 @@ export async function putWorkspaceSession(
   state: WorkspaceState,
   keepalive = false
 ): Promise<void> {
-  const body = JSON.stringify({ device_id: deviceId, state });
+  const body = { device_id: deviceId, state };
   if (keepalive) {
-    await fetch(WORKSPACE_SESSION_PATH, {
-      method: "PUT",
-      keepalive: true,
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
+    await apiKeepaliveJson(WORKSPACE_SESSION_PATH, body);
     return;
   }
-  await apiFetch(WORKSPACE_SESSION_PATH, { method: "PUT", body });
+  await apiFetch(WORKSPACE_SESSION_PATH, { method: "PUT", body: JSON.stringify(body) });
 }
 
 export function prepareRestoredState(

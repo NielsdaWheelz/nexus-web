@@ -29,9 +29,12 @@ import {
   useState,
 } from "react";
 import type { RefObject } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { createRandomId } from "@/lib/createRandomId";
+import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
   activeBranchGraphForPath,
@@ -55,6 +58,19 @@ import type {
 import type { ChatScrollHandle } from "./useChatScroll";
 
 type ChatRunData = ChatRunResponse["data"];
+type ConversationHistorySnapshot =
+  | {
+      kind: "branching";
+      conversationId: string;
+      tree: ConversationTreeResponse;
+      activeRuns: ChatRunData[];
+    }
+  | {
+      kind: "linear";
+      conversationId: string;
+      messages: ConversationMessage[];
+      olderCursor: string | null;
+    };
 
 const MESSAGE_PAGE_SIZE = 30;
 
@@ -207,6 +223,17 @@ export function useConversation(
     [],
   );
 
+  const shouldStartRunForCurrentConversation = useCallback(
+    ({ conversationId: runConversationId }: { conversationId: string }) => {
+      const currentConversationId = conversationIdRef.current;
+      return (
+        currentConversationId === null ||
+        currentConversationId === runConversationId
+      );
+    },
+    [],
+  );
+
   const { tailChatRun, abortAll } = useChatRunTail(
     branching
       ? {
@@ -214,12 +241,14 @@ export function useConversation(
           setForkOptionsByParentId,
           onReferenceAdded,
           onConversationAvailable: onConversationCreated,
+          shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
       : {
           setMessages,
           onReferenceAdded,
           onConversationAvailable: onConversationCreated,
+          shouldStartRun: shouldStartRunForCurrentConversation,
         },
   );
   const tailChatRunRef = useRef(tailChatRun);
@@ -232,35 +261,50 @@ export function useConversation(
   // Branching: active-runs resumption + tree application
   // --------------------------------------------------------------------------
 
+  const loadVisibleActiveRuns = useCallback(
+    async (
+      id: string,
+      visibleMessageIds: Set<string>,
+      signal?: AbortSignal,
+    ): Promise<ChatRunData[]> => {
+      if (visibleMessageIds.size === 0) return [];
+      const path = `/api/chat-runs?${new URLSearchParams({
+        conversation_id: id,
+        status: "active",
+      })}` as ApiPath;
+      const activeRuns = signal
+        ? await apiFetch<ChatRunListResponse>(path, { signal })
+        : await (activeRunsRequestRef.current ??
+            (activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
+              path,
+            ).finally(() => {
+              activeRunsRequestRef.current = null;
+            })));
+      return activeRuns.data.filter(
+        (runData) =>
+          runData.conversation.id === id &&
+          (visibleMessageIds.has(runData.user_message.id) ||
+            visibleMessageIds.has(runData.assistant_message.id)),
+      );
+    },
+    [],
+  );
+
   const tailVisibleActiveRuns = useCallback(
     async (visibleMessageIds: Set<string>) => {
       const id = conversationId;
       if (!id || visibleMessageIds.size === 0) return;
       try {
-        if (!activeRunsRequestRef.current) {
-          activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
-            `/api/chat-runs?${new URLSearchParams({
-              conversation_id: id,
-              status: "active",
-            })}`,
-          ).finally(() => {
-            activeRunsRequestRef.current = null;
-          });
-        }
-        const activeRuns = await activeRunsRequestRef.current;
-        for (const runData of activeRuns.data) {
-          if (
-            visibleMessageIds.has(runData.user_message.id) ||
-            visibleMessageIds.has(runData.assistant_message.id)
-          ) {
-            void tailChatRunRef.current(runData);
-          }
+        const activeRuns = await loadVisibleActiveRuns(id, visibleMessageIds);
+        if (conversationIdRef.current !== id) return;
+        for (const runData of activeRuns) {
+          void tailChatRunRef.current(runData);
         }
       } catch (err) {
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [conversationId],
+    [conversationId, loadVisibleActiveRuns],
   );
 
   const applyConversationTree = useCallback(
@@ -279,7 +323,13 @@ export function useConversation(
     [messageIdsForPath],
   );
 
-  const loadConversationTree = useCallback((id: string) => {
+  const loadConversationTree = useCallback((id: string, signal?: AbortSignal) => {
+    if (signal) {
+      return apiFetch<{ data: ConversationTreeResponse }>(
+        `/api/conversations/${id}/tree`,
+        { signal },
+      );
+    }
     if (treeRequestRef.current?.conversationId === id) {
       return treeRequestRef.current.promise;
     }
@@ -312,6 +362,72 @@ export function useConversation(
     [applyConversationTree, loadConversationTree],
   );
 
+  const loadConversationHistory = useCallback(
+    async (
+      id: string,
+      nextBranching: boolean,
+      signal: AbortSignal,
+    ): Promise<ConversationHistorySnapshot> => {
+      if (nextBranching) {
+        const response = await loadConversationTree(id, signal);
+        const visibleMessageIds = messageIdsForPath(
+          response.data.selected_path,
+          response.data.active_leaf_message_id,
+        );
+        let activeRuns: ChatRunData[] = [];
+        try {
+          activeRuns = await loadVisibleActiveRuns(
+            id,
+            visibleMessageIds,
+            signal,
+          );
+        } catch (err) {
+          if (isAbortError(err) || signal.aborted) throw err;
+          console.error("Failed to load active chat runs:", err);
+        }
+        return {
+          kind: "branching",
+          conversationId: id,
+          tree: response.data,
+          activeRuns,
+        };
+      }
+
+      const history = await apiFetch<ConversationMessagesResponse>(
+        `/api/conversations/${id}/messages?${new URLSearchParams({
+          limit: String(MESSAGE_PAGE_SIZE),
+          window: "latest",
+        })}`,
+        { signal },
+      );
+      return {
+        kind: "linear",
+        conversationId: id,
+        messages: history.data,
+        olderCursor: history.page.before_cursor ?? null,
+      };
+    },
+    [loadConversationTree, loadVisibleActiveRuns, messageIdsForPath],
+  );
+
+  const shouldLoadConversation =
+    conversationId !== null && !locallyCreatedIdsRef.current.has(conversationId);
+  const titleResource = useApiResource<{ data: { title: string } }>({
+    cacheKey: shouldLoadConversation && !branching ? conversationId : null,
+    path: (id) => `/api/conversations/${id}` as ApiPath,
+  });
+  const historyResource = useAsyncResource<ConversationHistorySnapshot>({
+    cacheKey: shouldLoadConversation
+      ? `${branching ? "branching" : "linear"}:${conversationId}`
+      : null,
+    load: (signal) => {
+      if (!conversationId) {
+        throw new Error("Cannot load conversation history without an id");
+      }
+      return loadConversationHistory(conversationId, branching, signal);
+    },
+  });
+
   // --------------------------------------------------------------------------
   // History load (mode selected by `branching`)
   // --------------------------------------------------------------------------
@@ -319,6 +435,7 @@ export function useConversation(
   useLayoutEffect(() => {
     if (routeConversationIdRef.current === initialConversationId) return;
     routeConversationIdRef.current = initialConversationId;
+    conversationIdRef.current = initialConversationId;
     activePathSwitchSeqRef.current += 1;
     activeRunsRequestRef.current = null;
     treeRequestRef.current = null;
@@ -362,73 +479,59 @@ export function useConversation(
   }, [conversationId]);
 
   useEffect(() => {
+    if (titleResource.status === "ready") {
+      setTitle(titleResource.data.data.title);
+      return;
+    }
+    if (titleResource.status === "error") {
+      // justify-ignore-error: the title is cosmetic and must never block or hide
+      // the transcript; recover silently but log for an operator.
+      console.error("Failed to load conversation title:", titleResource.error);
+    }
+  }, [titleResource]);
+
+  useEffect(() => {
     const id = conversationId;
     if (!id || locallyCreatedIdsRef.current.has(id)) {
       setLoading(false);
       return;
     }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+    if (historyResource.status === "loading") {
+      setLoading(true);
+      setError(null);
+      return;
+    }
+    if (historyResource.status === "error") {
+      setError(
+        toFeedback(historyResource.error, {
+          fallback: "Failed to load conversation",
+        }),
+      );
+      setLoading(false);
+      return;
+    }
+    if (
+      historyResource.status !== "ready" ||
+      historyResource.data.conversationId !== id ||
+      conversationIdRef.current !== id
+    ) {
+      return;
+    }
 
-    const load = async () => {
-      try {
-        if (branching) {
-          const response = await loadConversationTree(id);
-          if (cancelled) return;
-          applyConversationTree(response.data);
-          await tailVisibleActiveRuns(
-            messageIdsForPath(
-              response.data.selected_path,
-              response.data.active_leaf_message_id,
-            ),
-          );
-        } else {
-          // The title is fetched independently and non-blocking: a failing
-          // title endpoint must never reject the load or hide the transcript
-          // (mirrors the original ReaderChatDetail's separate `.catch(() => {})`
-          // title fetch).
-          void apiFetch<{ data: { title: string } }>(
-            `/api/conversations/${id}`,
-          )
-            .then((conversation) => {
-              if (!cancelled) setTitle(conversation.data.title);
-            })
-            .catch((err: unknown) => {
-              // justify-ignore-error: the title is cosmetic and must never block
-              // or hide the transcript; recover silently but log for an operator.
-              console.error("Failed to load conversation title:", err);
-            });
-          const history = await apiFetch<ConversationMessagesResponse>(
-            `/api/conversations/${id}/messages?${new URLSearchParams({
-              limit: String(MESSAGE_PAGE_SIZE),
-              window: "latest",
-            })}`,
-          );
-          if (cancelled) return;
-          setMessages(history.data);
-          setOlderCursor(history.page.before_cursor ?? null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(toFeedback(err, { fallback: "Failed to load conversation" }));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+    if (historyResource.data.kind === "branching") {
+      if (!branching) return;
+      applyConversationTree(historyResource.data.tree);
+      for (const runData of historyResource.data.activeRuns) {
+        void tailChatRunRef.current(runData);
       }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    applyConversationTree,
-    branching,
-    conversationId,
-    loadConversationTree,
-    messageIdsForPath,
-    tailVisibleActiveRuns,
-  ]);
+    } else {
+      if (branching) return;
+      setMessages(historyResource.data.messages);
+      setOlderCursor(historyResource.data.olderCursor);
+    }
+    setError(null);
+    setLoading(false);
+  }, [applyConversationTree, branching, conversationId, historyResource]);
 
   useEffect(() => abortAll, [abortAll]);
 
@@ -507,6 +610,7 @@ export function useConversation(
     );
     locallyCreatedIdsRef.current.add(created.data.id);
     attachedRefsRef.current = { id: created.data.id, uris: new Set(refUris) };
+    conversationIdRef.current = created.data.id;
     setConversationId(created.data.id);
     return created.data.id;
   }, [conversationId]);
@@ -517,9 +621,17 @@ export function useConversation(
 
   const onChatRunCreated = useCallback(
     (runData: ChatRunData) => {
+      const currentConversationId = conversationIdRef.current;
+      if (
+        currentConversationId !== null &&
+        currentConversationId !== runData.conversation.id
+      ) {
+        return;
+      }
       if (!conversationIdRef.current) {
         locallyCreatedIdsRef.current.add(runData.conversation.id);
       }
+      conversationIdRef.current = runData.conversation.id;
       setConversationId(runData.conversation.id);
       setTitle(runData.conversation.title);
       if (branching) {

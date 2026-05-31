@@ -29,7 +29,7 @@ from sqlalchemy import select, text
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment, ObjectSearchDocument, ObjectSearchEmbedding, Page
-from nexus.errors import InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import notes, object_search
 from nexus.services.content_indexing import (
@@ -2788,6 +2788,34 @@ class TestSemanticTranscriptChunkSearch:
             f"{response.status_code}: {response.text}"
         )
         assert response.json()["error"]["code"] == "E_LLM_PROVIDER_DOWN"
+
+    def test_semantic_search_missing_embedding_key_falls_back_to_lexical(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        def missing_key(_text: str) -> tuple[str, list[float]]:
+            raise ApiError(ApiErrorCode.E_LLM_NO_KEY, "OPENAI_API_KEY is required.")
+
+        monkeypatch.setattr("nexus.services.search.build_text_embedding", missing_key)
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results), (
+            "missing query-embedding credentials should fall back to lexical search"
+        )
 
     @respx.mock
     def test_default_semantic_search_builds_one_query_embedding(

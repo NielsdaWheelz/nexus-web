@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import ContributorFilter from "./ContributorFilter";
@@ -57,6 +57,69 @@ describe("ContributorFilter", () => {
       expect(screen.queryByRole("button", { name: "Octavia E. Butler" })).not.toBeInTheDocument();
     });
   });
+
+  it("does not duplicate in-flight selected author hydration", async () => {
+    const ursulaResponse = deferred<Response>();
+    const octaviaResponse = deferred<Response>();
+    const fetchMock = vi.fn((path: string) => {
+      if (path === "/api/contributors/ursula-le-guin") {
+        return ursulaResponse.promise;
+      }
+      if (path === "/api/contributors/octavia-butler") {
+        return octaviaResponse.promise;
+      }
+      throw new Error(`Unexpected fetch path: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ContributorFilter
+        selectedHandles={["ursula-le-guin", "octavia-butler"]}
+        onChange={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining([
+          "/api/contributors/ursula-le-guin",
+          "/api/contributors/octavia-butler",
+        ])
+      );
+    });
+
+    await act(async () => {
+      ursulaResponse.resolve(
+        jsonResponse({
+          data: {
+            handle: "ursula-le-guin",
+            display_name: "Ursula K. Le Guin",
+          },
+        })
+      );
+    });
+
+    expect(await screen.findByRole("link", { name: "Ursula K. Le Guin" })).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler")
+    ).toHaveLength(1);
+
+    await act(async () => {
+      octaviaResponse.resolve(
+        jsonResponse({
+          data: {
+            handle: "octavia-butler",
+            display_name: "Octavia E. Butler",
+          },
+        })
+      );
+    });
+
+    expect(await screen.findByRole("link", { name: "Octavia E. Butler" })).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === "/api/contributors/octavia-butler")
+    ).toHaveLength(1);
+  });
 });
 
 function jsonResponse(body: unknown): Response {
@@ -64,4 +127,14 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }

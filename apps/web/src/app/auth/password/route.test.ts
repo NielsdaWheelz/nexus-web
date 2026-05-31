@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PASSWORD_SIGN_IN_FAILURE_MESSAGE } from "@/lib/auth/messages";
+import {
+  PASSWORD_SIGN_IN_FAILURE_MESSAGE,
+  PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE,
+} from "@/lib/auth/messages";
 
 interface CookieFixture {
   name: string;
@@ -18,7 +21,11 @@ const mockCookieStore = {
 };
 
 const signInWithPasswordSpy = vi.fn();
+const signUpSpy = vi.fn();
+const boundedAuthFetchSpy = vi.fn();
 let signInError: { message: string } | null = null;
+let signUpError: { message: string } | null = null;
+let signUpSession: { access_token: string } | null = null;
 let authCookiesToSet: SetAllCookie[] = [];
 
 vi.mock("next/headers", () => ({
@@ -40,14 +47,29 @@ vi.mock("@supabase/ssr", () => ({
           }
           return { error: signInError };
         },
-        signUp: async () => ({
-          data: { session: null },
-          error: { message: "not scripted" },
-        }),
+        signUp: async (credentials: unknown) => {
+          signUpSpy(credentials);
+          if (!signUpError && authCookiesToSet.length > 0) {
+            options.cookies.setAll(authCookiesToSet);
+          }
+          return {
+            data: { session: signUpSession },
+            error: signUpError,
+          };
+        },
       },
     })
   ),
 }));
+
+vi.mock("@/lib/auth/internal-fetch", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/auth/internal-fetch")>();
+  return {
+    ...actual,
+    boundedAuthFetch: boundedAuthFetchSpy,
+  };
+});
 
 function passwordRequest(
   fields: Record<string, string>,
@@ -74,7 +96,12 @@ describe("POST /auth/password", () => {
     mockCookieStore.getAll.mockReset().mockReturnValue([]);
     mockCookieStore.set.mockReset();
     signInWithPasswordSpy.mockReset();
+    signUpSpy.mockReset();
+    boundedAuthFetchSpy.mockReset();
+    boundedAuthFetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
     signInError = null;
+    signUpError = null;
+    signUpSession = null;
     authCookiesToSet = [];
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://local.supabase.co";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
@@ -170,5 +197,77 @@ describe("POST /auth/password", () => {
     expect(location.searchParams.get("error_description")).toBe(
       PASSWORD_SIGN_IN_FAILURE_MESSAGE,
     );
+  });
+
+  it("creates accounts through same-origin form posts and commits auth cookies", async () => {
+    signUpSession = { access_token: "new-session-access-token" };
+    authCookiesToSet = [
+      {
+        name: "sb-local-auth-token",
+        value: "new-session-cookie",
+        options: { path: "/", httpOnly: true },
+      },
+    ];
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      passwordRequest(
+        {
+          mode: "create",
+          email: "Ada@Example.com ",
+          password: "long-enough-password",
+          display_name: " Ada Lovelace ",
+        },
+        { origin: "http://localhost:3000" },
+      ),
+    );
+
+    expect(signUpSpy).toHaveBeenCalledWith({
+      email: "ada@example.com",
+      password: "long-enough-password",
+      options: { data: { display_name: "Ada Lovelace" } },
+    });
+    expect(boundedAuthFetchSpy).toHaveBeenCalledWith(
+      "http://localhost:8000/me",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ display_name: "Ada Lovelace" }),
+      }),
+      "Display-name PATCH timed out",
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("http://localhost:3000/libraries");
+    expect(response.headers.get("set-cookie")).toContain(
+      "sb-local-auth-token=new-session-cookie",
+    );
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("redirects create-account errors back to create mode", async () => {
+    signUpError = { message: "User already registered" };
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      passwordRequest(
+        {
+          mode: "create",
+          email: "ada@example.com",
+          password: "long-enough-password",
+          display_name: "Ada Lovelace",
+          next: "/search",
+        },
+        { origin: "http://localhost:3000" },
+      ),
+    );
+
+    const location = new URL(response.headers.get("location")!);
+    expect(response.status).toBe(303);
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("mode")).toBe("create");
+    expect(location.searchParams.get("next")).toBe("/search");
+    expect(location.searchParams.get("error_description")).toBe(
+      PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE,
+    );
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 });

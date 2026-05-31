@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition, type FormEvent } from "react";
+import { useState } from "react";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import {
@@ -13,10 +13,6 @@ import {
   buildAuthNativeGoogleDeepLink,
   buildAuthStartDeepLink,
 } from "@/lib/auth/redirects";
-import {
-  signInWithPasswordAction,
-  signUpWithPasswordAction,
-} from "@/lib/auth/password-actions";
 import styles from "./page.module.css";
 
 type AuthMode = "signin" | "create";
@@ -117,27 +113,11 @@ export default function LoginPageClient({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
 
   const isCreate = mode === "create";
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError(null);
-    startTransition(async () => {
-      const result = isCreate
-        ? await signUpWithPasswordAction({ email, password, displayName })
-        : await signInWithPasswordAction({ email, password, nextPath });
-      if (!result.ok) {
-        setFormError(result.error);
-      }
-    });
-  }
-
   function toggleMode() {
     setMode((current) => (current === "signin" ? "create" : "signin"));
-    setFormError(null);
   }
 
   return (
@@ -149,16 +129,12 @@ export default function LoginPageClient({
         </div>
 
         {initialFeedback ? <FeedbackNotice feedback={initialFeedback} /> : null}
-        {formError ? (
-          <FeedbackNotice severity="error" title={formError} />
-        ) : null}
 
         <form
           aria-label={isCreate ? "Credential account creation" : "Credential sign in"}
           className={styles.form}
           method="post"
           action="/auth/password"
-          onSubmit={handleSubmit}
         >
           <input type="hidden" name="mode" value={isCreate ? "create" : "signin"} />
           <input type="hidden" name="next" value={nextPath} />
@@ -172,7 +148,6 @@ export default function LoginPageClient({
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              disabled={pending}
             />
           </label>
 
@@ -187,7 +162,6 @@ export default function LoginPageClient({
               minLength={12}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              disabled={pending}
             />
           </label>
 
@@ -204,12 +178,11 @@ export default function LoginPageClient({
                 maxLength={80}
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
-                disabled={pending}
               />
             </label>
           ) : null}
 
-          <Button variant="primary" size="lg" type="submit" loading={pending}>
+          <Button variant="primary" size="lg" type="submit">
             {isCreate ? "Create account" : "Continue"}
           </Button>
         </form>
@@ -243,7 +216,6 @@ export default function LoginPageClient({
                 type="button"
                 className={styles.toggleLink}
                 onClick={toggleMode}
-                disabled={pending}
               >
                 Sign in
               </button>
@@ -255,7 +227,6 @@ export default function LoginPageClient({
                 type="button"
                 className={styles.toggleLink}
                 onClick={toggleMode}
-                disabled={pending}
               >
                 Create an account
               </button>

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -117,5 +117,27 @@ describe("ConversationsPaneBody", () => {
 
     const actionTriggers = screen.getAllByRole("button", { name: "Actions" });
     expect(actionTriggers).toHaveLength(2);
+  });
+
+  it("aborts the in-flight list request on unmount", async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations") {
+          requestSignal = init?.signal ?? undefined;
+          return new Promise<Response>(() => {});
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    const { unmount } = render(withPaneRuntime(<ConversationsPaneBody />));
+    await waitFor(() => expect(requestSignal).toBeDefined());
+
+    unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.errors import NotFoundError
 from nexus.services.seq import assign_next_message_seq
 
 pytestmark = pytest.mark.integration
@@ -78,14 +79,14 @@ class TestSeqAssignmentBasic:
         assert seq3 == 3
 
     def test_nonexistent_conversation_raises(self, db_session: Session):
-        """Assigning seq for nonexistent conversation raises ValueError."""
+        """Assigning seq for nonexistent conversation uses the typed not-found error."""
         nonexistent_id = uuid4()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NotFoundError) as exc_info:
             assign_next_message_seq(db_session, nonexistent_id)
 
-        assert str(nonexistent_id) in str(exc_info.value)
-        assert "not found" in str(exc_info.value)
+        assert exc_info.value.code.value == "E_CONVERSATION_NOT_FOUND"
+        assert "Conversation not found" in str(exc_info.value)
 
 
 class TestSeqConcurrency:

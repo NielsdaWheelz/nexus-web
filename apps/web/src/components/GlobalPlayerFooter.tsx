@@ -199,13 +199,14 @@ export default function GlobalPlayerFooter() {
     upcomingQueueCount,
     hasNextInQueue,
   } = useGlobalPlayer();
+  const trackMediaId = track?.media_id ?? null;
 
   useEffect(() => {
-    if (!queueOpen || !track) {
+    if (!queueOpen || !trackMediaId) {
       return;
     }
     void refreshQueue();
-  }, [queueOpen, refreshQueue, track]);
+  }, [queueOpen, refreshQueue, trackMediaId]);
 
   useBodyOverflowLock(mobileExpanded && isMobile);
 

@@ -7,6 +7,7 @@ import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
@@ -14,27 +15,25 @@ export default function NotesPaneBody() {
   const [pages, setPages] = useState<NotePageSummary[]>([]);
   const [title, setTitle] = useState("");
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [loading, setLoading] = useState(true);
+  const pagesResource = useAsyncResource<NotePageSummary[]>({
+    cacheKey: "notes:pages",
+    load: () => fetchNotePages(),
+  });
+  const loading = pagesResource.status === "loading" && pages.length === 0;
 
   useSetPaneTitle("Notes");
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchNotePages()
-      .then((items) => {
-        if (!cancelled) setPages(items);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setFeedback(toFeedback(error, { fallback: "Notes could not be loaded." }));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (pagesResource.status === "ready") {
+      setPages(pagesResource.data);
+      setFeedback(null);
+      return;
+    }
+
+    if (pagesResource.status === "error") {
+      setFeedback(toFeedback(pagesResource.error, { fallback: "Notes could not be loaded." }));
+    }
+  }, [pagesResource]);
 
   const createPage = useCallback(async () => {
     const nextTitle = title.trim() || "Untitled";

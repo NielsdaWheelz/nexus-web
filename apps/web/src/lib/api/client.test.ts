@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch, apiPostFormData } from "./client";
+import { ApiError, apiFetch, apiKeepaliveJson, apiPostFormData } from "./client";
 
 describe("apiFetch", () => {
   afterEach(() => {
@@ -120,6 +120,38 @@ describe("apiFetch", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("coalesces concurrent no-store GET requests while they are in flight", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+
+    const first = apiFetch<{ data: string }>("/api/libraries", { cache: "no-store" });
+    const second = apiFetch<{ data: string }>("/api/libraries", { cache: "no-store" });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    resolveFetch?.(Response.json({ data: "ok" }));
+
+    await expect(first).resolves.toEqual({ data: "ok" });
+    await expect(second).resolves.toEqual({ data: "ok" });
+  });
+
+  it("does not coalesce signaled GET requests", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ data: "ok" }))
+      .mockResolvedValueOnce(Response.json({ data: "ok" }));
+
+    await Promise.all([
+      apiFetch("/api/libraries", { signal: new AbortController().signal }),
+      apiFetch("/api/libraries", { signal: new AbortController().signal }),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("redirects browser callers to login on unauthenticated API responses", async () => {
     const assign = vi.fn();
     vi.stubGlobal("window", {
@@ -169,6 +201,22 @@ describe("apiFetch", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/podcasts/import/opml", {
       method: "POST",
       body: formData,
+    });
+  });
+
+  it("sends keepalive JSON through the shared API helper", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(
+      apiKeepaliveJson("/api/me/workspace-session", { device_id: "device-1" })
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/me/workspace-session", {
+      method: "PUT",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: "device-1" }),
     });
   });
 });

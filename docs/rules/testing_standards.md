@@ -159,11 +159,17 @@ What belongs here:
 
 Rules:
 
-- Run against real services (Next.js, FastAPI, PostgreSQL, Supabase local)
+- Run against real services (production-built Next.js, non-reload FastAPI,
+  PostgreSQL, Supabase local)
 - No MSW, no mock API servers, no `vi.mock(fetch)` style shortcuts
 - Use Playwright `storageState` for login reuse (authenticate once per worker where possible)
 - Seed data through app APIs or dedicated seed scripts, not ad hoc SQL from browser tests
-- Tests must be independent and parallelizable
+- Tests must be order-independent. Shared authenticated seed-user mutations must
+  either be isolated by the test or serialized by the runner.
+- Shared E2E seed users still exercise production rate limiting, but the E2E
+  runtime owns an explicit capacity budget high enough for a full shard. A
+  successful deterministic suite must not depend on wall-clock waiting for a
+  one-minute production RPM window to refill.
 - CI shards Playwright to keep wall time down; local `make test-e2e` remains a single command.
 
 ### Android Shell Tests

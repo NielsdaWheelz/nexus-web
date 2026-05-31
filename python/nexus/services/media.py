@@ -11,7 +11,7 @@ import hashlib
 import json
 import posixpath
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -2596,8 +2596,17 @@ class EpubAssetOut:
     content_type: str
 
 
+@dataclass(frozen=True)
+class _EpubAssetMetadata:
+    storage_path: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+
+
 def get_epub_asset_for_viewer(
-    db: Session,
+    *,
+    session_factory: Callable[[], Session],
     viewer_id: UUID,
     media_id: UUID,
     asset_key: str,
@@ -2608,9 +2617,46 @@ def get_epub_asset_for_viewer(
     Enforces visibility, kind, readiness, and key-format guards.
     Returns binary payload without exposing raw private storage URLs.
     """
-    from nexus.errors import ApiError
     from nexus.storage.client import get_storage_client
 
+    with session_factory() as db:
+        asset_metadata = _get_epub_asset_metadata_for_viewer(
+            db=db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            asset_key=asset_key,
+        )
+
+    sc = storage_client or get_storage_client()
+    try:
+        hasher = hashlib.sha256()
+        chunks = []
+        total_bytes = 0
+        for chunk in sc.stream_object(asset_metadata.storage_path):
+            total_bytes += len(chunk)
+            if total_bytes > asset_metadata.size_bytes:
+                raise StorageError("Stored EPUB asset is larger than persisted metadata")
+            hasher.update(chunk)
+            chunks.append(chunk)
+        if total_bytes != asset_metadata.size_bytes or hasher.hexdigest() != asset_metadata.sha256:
+            raise StorageError("Stored EPUB asset integrity mismatch")
+        data = b"".join(chunks)
+    except StorageError as exc:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR,
+            "Stored EPUB asset object is missing or unreadable",
+        ) from exc
+
+    return EpubAssetOut(data=data, content_type=asset_metadata.content_type)
+
+
+def _get_epub_asset_metadata_for_viewer(
+    *,
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    asset_key: str,
+) -> _EpubAssetMetadata:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -2634,42 +2680,31 @@ def get_epub_asset_for_viewer(
     if any(part in {"", ".", ".."} for part in asset_key.split("/")):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid asset key format")
 
-    row = db.execute(
-        text(
-            """
-            SELECT storage_path, content_type, size_bytes, sha256
-            FROM epub_resources
-            WHERE media_id = :media_id
-              AND asset_key = :asset_key
-            """
-        ),
-        {"media_id": media_id, "asset_key": asset_key},
-    ).fetchone()
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT storage_path, content_type, size_bytes, sha256
+                FROM epub_resources
+                WHERE media_id = :media_id
+                  AND asset_key = :asset_key
+                """
+            ),
+            {"media_id": media_id, "asset_key": asset_key},
+        )
+        .mappings()
+        .fetchone()
+    )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "EPUB asset not found")
 
-    content_type = row[1]
+    content_type = str(row["content_type"])
     if content_type not in _EPUB_ASSET_CONTENT_TYPES:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "EPUB asset not found")
 
-    sc = storage_client or get_storage_client()
-    try:
-        hasher = hashlib.sha256()
-        chunks = []
-        total_bytes = 0
-        for chunk in sc.stream_object(row[0]):
-            total_bytes += len(chunk)
-            if total_bytes > row[2]:
-                raise StorageError("Stored EPUB asset is larger than persisted metadata")
-            hasher.update(chunk)
-            chunks.append(chunk)
-        if total_bytes != row[2] or hasher.hexdigest() != row[3]:
-            raise StorageError("Stored EPUB asset integrity mismatch")
-        data = b"".join(chunks)
-    except StorageError as exc:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            "Stored EPUB asset object is missing or unreadable",
-        ) from exc
-
-    return EpubAssetOut(data=data, content_type=content_type)
+    return _EpubAssetMetadata(
+        storage_path=str(row["storage_path"]),
+        content_type=content_type,
+        size_bytes=int(row["size_bytes"]),
+        sha256=str(row["sha256"]),
+    )

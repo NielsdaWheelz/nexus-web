@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
@@ -12,10 +12,16 @@ import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import Button from "@/components/ui/Button";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { usePaneParam, usePaneRuntime, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneRuntime,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { isRecord } from "@/lib/validation";
 import {
   createEmptyOutlineDoc,
@@ -57,6 +63,13 @@ interface PageDraftMetadata {
   focusedRootParentBlockId: string | null;
 }
 
+interface LoadedNoteEditorResource {
+  loadKey: string;
+  saveScope: string;
+  page: NotePage;
+  focusedBlock: NoteBlock | null;
+}
+
 export default function PagePaneBody({
   pageIdOverride,
   focusBlockId,
@@ -67,7 +80,9 @@ export default function PagePaneBody({
   initialPage?: NotePage;
 }) {
   const routePageId = usePaneParam("pageId");
+  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const openInNewPaneCommand = paneRuntime?.openInNewPane;
   const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
@@ -81,6 +96,11 @@ export default function PagePaneBody({
   const [conflictAction, setConflictAction] = useState<"discard" | "overwrite" | null>(null);
   const saveScope = focusBlockId ? `block:${focusBlockId}` : `page:${pageId}`;
   const editorResourceKey = `${saveScope}:editor:${editorResetVersion}`;
+  const initialPageKey =
+    initialPage && initialPage.id === pageId
+      ? `initial:${initialPage.id}:${initialPage.revision}`
+      : "server";
+  const editorLoadKey = `${saveScope}:load:${initialPageKey}`;
   const pageRevisionRef = useRef<number | null>(null);
   const knownBlockIdsRef = useRef<Set<string>>(new Set());
   const knownBlockParentIdsRef = useRef<Map<string, string | null>>(new Map());
@@ -88,11 +108,13 @@ export default function PagePaneBody({
   const knownBlockDraftsRef = useRef<Map<string, PersistedDraftBlock>>(new Map());
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
+  const editorLoadKeyRef = useRef(editorLoadKey);
 
   const fallbackTitle = focusBlockId ? "Note" : "Page";
   useSetPaneTitle(page ? page.title || fallbackTitle : feedback ? fallbackTitle : null);
 
   currentSaveScopeRef.current = saveScope;
+  editorLoadKeyRef.current = editorLoadKey;
 
   const saveDoc = useCallback(
     async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {
@@ -203,6 +225,20 @@ export default function PagePaneBody({
     flush: flushSession,
     reset: resetSession,
   } = session;
+  const editorLoadResource = useAsyncResource<LoadedNoteEditorResource>({
+    cacheKey: editorLoadKey,
+    load: async () => {
+      const loadedPage =
+        initialPage && initialPage.id === pageId ? initialPage : await fetchNotePage(pageId);
+      const focusedBlock = focusBlockId ? await fetchNoteBlock(focusBlockId) : null;
+      return {
+        loadKey: editorLoadKey,
+        saveScope,
+        page: loadedPage,
+        focusedBlock,
+      };
+    },
+  });
 
   const loadServerDocument = useCallback(async (): Promise<ProseMirrorNode> => {
     const loadedPage = await fetchNotePage(pageId);
@@ -236,19 +272,15 @@ export default function PagePaneBody({
     return doc;
   }, [focusBlockId, pageId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setFeedback(null);
-    setPage(null);
-    setTitleDraft("");
-    setInitialDoc(null);
-    resetSession();
-    const loadPage =
-      initialPage && initialPage.id === pageId ? Promise.resolve(initialPage) : fetchNotePage(pageId);
-    loadPage
-      .then(async (loadedPage) => {
-        if (cancelled) return;
-        if (!focusBlockId) {
+  const applyLoadedEditorResource = useCallback(
+    (loaded: LoadedNoteEditorResource) => {
+      if (loaded.loadKey !== editorLoadKeyRef.current) {
+        return;
+      }
+
+      try {
+        const loadedPage = loaded.page;
+        if (!loaded.focusedBlock) {
           setPage(loadedPage);
           setTitleDraft(loadedPage.title);
           pageRevisionRef.current = requiredRevision(loadedPage.revision);
@@ -262,7 +294,7 @@ export default function PagePaneBody({
           knownBlockDraftsRef.current = persistedDoc
             ? draftBlocksById(readDraftBlocksForPersistence(persistedDoc))
             : new Map();
-          const storedDraft = readStoredNoteEditorDraft(saveScope);
+          const storedDraft = readStoredNoteEditorDraft(loaded.saveScope);
           const storedMetadata = storedDraft
             ? pageDraftMetadataFromStorage(storedDraft.metadata)
             : null;
@@ -282,13 +314,13 @@ export default function PagePaneBody({
             return;
           }
           if (storedDraft) {
-            clearStoredNoteEditorDraft(saveScope);
+            clearStoredNoteEditorDraft(loaded.saveScope);
           }
           setInitialDoc(persistedDoc ?? createEmptyOutlineDoc(newBlockId()));
           return;
         }
-        const block = await fetchNoteBlock(focusBlockId);
-        if (cancelled) return;
+
+        const block = loaded.focusedBlock;
         setPage({ ...loadedPage, blocks: [block] });
         setTitleDraft(loadedPage.title);
         pageRevisionRef.current = requiredRevision(loadedPage.revision);
@@ -298,7 +330,7 @@ export default function PagePaneBody({
         knownBlockRevisionsRef.current = flatBlockRevisions([block]);
         const doc = noteBlocksToOutlineDoc([block]);
         knownBlockDraftsRef.current = draftBlocksById(readDraftBlocksForPersistence(doc));
-        const storedDraft = readStoredNoteEditorDraft(saveScope);
+        const storedDraft = readStoredNoteEditorDraft(loaded.saveScope);
         const storedMetadata = storedDraft
           ? pageDraftMetadataFromStorage(storedDraft.metadata)
           : null;
@@ -316,26 +348,37 @@ export default function PagePaneBody({
           return;
         }
         if (storedDraft) {
-          clearStoredNoteEditorDraft(saveScope);
+          clearStoredNoteEditorDraft(loaded.saveScope);
         }
         setInitialDoc(doc);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setFeedback(toFeedback(error, { fallback: "Note could not be loaded." }));
-      });
+      } catch (error: unknown) {
+        setFeedback(toFeedback(error, { fallback: "Note could not be loaded." }));
+      }
+    },
+    [scheduleSessionSave]
+  );
+
+  useEffect(() => {
+    setFeedback(null);
+    setPage(null);
+    setTitleDraft("");
+    setInitialDoc(null);
+    resetSession();
     return () => {
-      cancelled = true;
       flushSession();
     };
-  }, [
-    flushSession,
-    focusBlockId,
-    initialPage,
-    pageId,
-    resetSession,
-    saveScope,
-    scheduleSessionSave,
-  ]);
+  }, [editorLoadKey, flushSession, resetSession]);
+
+  useEffect(() => {
+    if (editorLoadResource.status === "ready") {
+      applyLoadedEditorResource(editorLoadResource.data);
+      return;
+    }
+
+    if (editorLoadResource.status === "error") {
+      setFeedback(toFeedback(editorLoadResource.error, { fallback: "Note could not be loaded." }));
+    }
+  }, [applyLoadedEditorResource, editorLoadResource]);
 
   const saveTitle = useCallback(
     async (title: string) => {
@@ -386,10 +429,10 @@ export default function PagePaneBody({
     (blockId: string, openInNewPane: boolean) => {
       if (!blockId) return;
       const href = `/notes/${blockId}`;
-      if (openInNewPane) paneRuntime?.openInNewPane(href);
-      else paneRuntime?.router.push(href);
+      if (openInNewPane) openInNewPaneCommand?.(href);
+      else router.push(href);
     },
-    [paneRuntime]
+    [openInNewPaneCommand, router]
   );
 
   const openObject = useCallback(
@@ -404,13 +447,13 @@ export default function PagePaneBody({
         return;
       }
       if (!href) return;
-      if (openInNewPane) paneRuntime?.openInNewPane(href);
-      else paneRuntime?.router.push(href);
+      if (openInNewPane) openInNewPaneCommand?.(href);
+      else router.push(href);
     },
-    [paneRuntime]
+    [openInNewPaneCommand, router]
   );
 
-  async function pinCurrentObject() {
+  const pinCurrentObject = useCallback(async () => {
     try {
       if (focusBlockId) {
         await pinObjectToNavbar("note_block", focusBlockId);
@@ -426,17 +469,20 @@ export default function PagePaneBody({
         })
       );
     }
-  }
+  }, [focusBlockId, pinPageId, toast]);
 
-  const paneOptions = [
-    {
-      id: focusBlockId ? "pin-current-note" : "pin-current-page",
-      label: focusBlockId ? "Pin current note" : "Pin current page",
-      onSelect: () => {
-        void pinCurrentObject();
+  const paneOptions = useMemo(
+    () => [
+      {
+        id: focusBlockId ? "pin-current-note" : "pin-current-page",
+        label: focusBlockId ? "Pin current note" : "Pin current page",
+        onSelect: () => {
+          void pinCurrentObject();
+        },
       },
-    },
-  ];
+    ],
+    [focusBlockId, pinCurrentObject]
+  );
   usePaneChromeOverride({ options: paneOptions });
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;

@@ -1,22 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
-  PASSWORD_SIGN_IN_FAILURE_MESSAGE,
-  PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE,
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
-
-const signInWithPasswordAction = vi.hoisted(() => vi.fn());
-const signUpWithPasswordAction = vi.hoisted(() => vi.fn());
-
-vi.mock("@/lib/auth/password-actions", () => ({
-  signInWithPasswordAction,
-  signUpWithPasswordAction,
-  setPasswordAction: vi.fn(),
-  changePasswordAction: vi.fn(),
-  removePasswordAction: vi.fn(),
-}));
 
 import LoginPageClient from "./LoginPageClient";
 
@@ -92,41 +79,19 @@ describe("LoginPageClient", () => {
     ).toBeInTheDocument();
   });
 
-  it("submits sign-in via signInWithPasswordAction with the nextPath", async () => {
-    signInWithPasswordAction.mockReset();
-    signInWithPasswordAction.mockResolvedValue({
-      ok: false,
-      error: PASSWORD_SIGN_IN_FAILURE_MESSAGE,
-    });
-    const user = userEvent.setup();
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+  it("posts sign-in credentials to the password route with the nextPath", () => {
+    render(<LoginPageClient nextPath="/search" isShell={false} />);
 
-    await user.type(screen.getByLabelText(/email/i), "user@example.com");
-    await user.type(
-      screen.getByLabelText(/password/i),
-      "wrong-password-123"
-    );
-    await user.click(screen.getByRole("button", { name: /^continue$/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        PASSWORD_SIGN_IN_FAILURE_MESSAGE
-      );
-    });
-    expect(signInWithPasswordAction).toHaveBeenCalledWith({
-      email: "user@example.com",
-      password: "wrong-password-123",
-      nextPath: "/libraries",
-    });
+    const form = screen.getByRole("form", { name: /credential sign in/i });
+    expect(form).toHaveAttribute("method", "post");
+    expect(form).toHaveAttribute("action", "/auth/password");
+    expect(within(form).getByDisplayValue("signin")).toHaveAttribute("name", "mode");
+    expect(within(form).getByDisplayValue("/search")).toHaveAttribute("name", "next");
+    expect(screen.getByLabelText(/email/i)).toHaveAttribute("name", "email");
+    expect(screen.getByLabelText(/password/i)).toHaveAttribute("name", "password");
   });
 
-  it("submits create-account via signUpWithPasswordAction with display name", async () => {
-    signUpWithPasswordAction.mockReset();
-    signUpWithPasswordAction.mockResolvedValue({
-      ok: false,
-      error: PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE,
-    });
-    const user = userEvent.setup();
+  it("posts create-account credentials to the password route with display name", () => {
     render(
       <LoginPageClient
         nextPath="/libraries"
@@ -135,53 +100,30 @@ describe("LoginPageClient", () => {
       />
     );
 
-    await user.type(screen.getByLabelText(/display name/i), "Ada Lovelace");
-    await user.type(screen.getByLabelText(/email/i), "ada@example.com");
-    await user.type(
-      screen.getByLabelText(/password/i),
-      "long-enough-password-12"
-    );
-    await user.click(
-      screen.getByRole("button", { name: /^create account$/i })
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE
-      );
+    const form = screen.getByRole("form", {
+      name: /credential account creation/i,
     });
-    expect(signUpWithPasswordAction).toHaveBeenCalledWith({
-      email: "ada@example.com",
-      password: "long-enough-password-12",
-      displayName: "Ada Lovelace",
-    });
+    expect(form).toHaveAttribute("method", "post");
+    expect(form).toHaveAttribute("action", "/auth/password");
+    expect(within(form).getByDisplayValue("create")).toHaveAttribute("name", "mode");
+    expect(within(form).getByDisplayValue("/libraries")).toHaveAttribute("name", "next");
+    expect(screen.getByLabelText(/display name/i)).toHaveAttribute(
+      "name",
+      "display_name"
+    );
   });
 
-  it("clears the form error when the user toggles modes", async () => {
-    signInWithPasswordAction.mockReset();
-    signInWithPasswordAction.mockResolvedValue({
-      ok: false,
-      error: PASSWORD_SIGN_IN_FAILURE_MESSAGE,
-    });
+  it("updates the posted mode when the user toggles modes", async () => {
     const user = userEvent.setup();
     render(<LoginPageClient nextPath="/libraries" isShell={false} />);
-
-    await user.type(screen.getByLabelText(/email/i), "user@example.com");
-    await user.type(
-      screen.getByLabelText(/password/i),
-      "wrong-password-123"
-    );
-    await user.click(screen.getByRole("button", { name: /^continue$/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toBeInTheDocument();
-    });
 
     await user.click(
       screen.getByRole("button", { name: /create an account/i })
     );
+    expect(screen.getByDisplayValue("create")).toHaveAttribute("name", "mode");
 
-    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+    expect(screen.getByDisplayValue("signin")).toHaveAttribute("name", "mode");
   });
 
   it("renders a calm 'you were signed out' notice for forced sign-out feedback", () => {

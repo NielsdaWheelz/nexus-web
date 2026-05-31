@@ -40,6 +40,7 @@ import {
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
 import LibraryChatTab from "@/components/chat/LibraryChatTab";
@@ -172,17 +173,34 @@ export default function LibraryPaneBody() {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
-  const paneRuntime = usePaneRuntime();
+  const { openInNewPane, requestSecondarySurface } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const removedEntryIds = useStringIdSet();
   const retryingMediaIds = useStringIdSet();
   const refreshingMediaIds = useStringIdSet();
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  useSetPaneTitle(library?.name ?? (loading ? null : "Library"));
+  const libraryResource = useAsyncResource<{
+    library: Library;
+    entries: LibraryEntry[];
+  }>({
+    cacheKey: id,
+    load: async (signal) => {
+      const [libraryResp, entriesResp] = await Promise.all([
+        apiFetch<{ data: Library }>(`/api/libraries/${id}`, { signal }),
+        apiFetch<{ data: LibraryEntry[] }>(`/api/libraries/${id}/entries`, {
+          signal,
+        }),
+      ]);
+      return { library: libraryResp.data, entries: entriesResp.data };
+    },
+  });
+  const currentLibrary = library?.id === id ? library : null;
+  const loading =
+    libraryResource.status === "loading" && currentLibrary === null;
+  useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
 
   const [editOpen, setEditOpen] = useState(false);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
@@ -199,52 +217,37 @@ export default function LibraryPaneBody() {
   const [libraryPanelError, setLibraryPanelError] = useState<string | null>(
     null,
   );
-  const loadRequestIdRef = useRef(0);
   const libraryPanelRequestIdRef = useRef(0);
 
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   useEffect(() => {
-    const requestId = loadRequestIdRef.current + 1;
-    loadRequestIdRef.current = requestId;
-    setLoading(true);
-    const fetchData = async () => {
-      try {
-        const [libraryResp, entriesResp] = await Promise.all([
-          apiFetch<{ data: Library }>(`/api/libraries/${id}`),
-          apiFetch<{ data: LibraryEntry[] }>(`/api/libraries/${id}/entries`),
-        ]);
-        if (loadRequestIdRef.current !== requestId) {
-          return;
-        }
-        setLibrary(libraryResp.data);
-        setEntries(entriesResp.data);
-        clearRemovedEntryIds();
-        setError(null);
-      } catch (err) {
-        if (loadRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (isApiError(err) && err.status === 404) {
-          router.push("/libraries");
-          return;
-        }
-        setError(toFeedback(err, { fallback: "Failed to load library" }));
-      } finally {
-        if (loadRequestIdRef.current === requestId) {
-          setLoading(false);
-        }
-      }
-    };
+    if (libraryResource.status === "ready") {
+      setLibrary(libraryResource.data.library);
+      setEntries(libraryResource.data.entries);
+      clearRemovedEntryIds();
+      setError(null);
+      return;
+    }
 
-    void fetchData();
-    return () => {
-      if (loadRequestIdRef.current === requestId) {
-        loadRequestIdRef.current += 1;
+    if (libraryResource.status === "error") {
+      if (
+        isApiError(libraryResource.error) &&
+        libraryResource.error.status === 404
+      ) {
+        router.push("/libraries");
+        return;
       }
-    };
-  }, [clearRemovedEntryIds, id, router]);
+      setError(
+        toFeedback(libraryResource.error, {
+          fallback: "Failed to load library",
+        }),
+      );
+      setLibrary((current) => (current?.id === id ? null : current));
+      setEntries([]);
+    }
+  }, [clearRemovedEntryIds, id, libraryResource, router]);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -258,14 +261,14 @@ export default function LibraryPaneBody() {
   }, []);
 
   const openLibraryEntry = useCallback(
-    (href: string, title: string, openInNewPane: boolean) => {
-      if (openInNewPane) {
-        paneRuntime?.openInNewPane(href, title);
+    (href: string, title: string, openInSeparatePane: boolean) => {
+      if (openInSeparatePane) {
+        openInNewPane?.(href, title);
         return;
       }
       router.push(href, { titleHint: title });
     },
-    [paneRuntime, router],
+    [openInNewPane, router],
   );
 
   const handleLibraryEntryRowClick = useCallback(
@@ -568,15 +571,15 @@ export default function LibraryPaneBody() {
   );
 
   const handleDeleteLibrary = async () => {
-    if (!library || library.is_default) {
+    if (!currentLibrary || currentLibrary.is_default) {
       return;
     }
-    if (!confirm(`Delete "${library.name}"? This cannot be undone.`)) {
+    if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
       return;
     }
 
     try {
-      await apiFetch(`/api/libraries/${library.id}`, {
+      await apiFetch(`/api/libraries/${currentLibrary.id}`, {
         method: "DELETE",
       });
       router.push("/libraries");
@@ -594,10 +597,10 @@ export default function LibraryPaneBody() {
   };
 
   const openEditDialog = useCallback(async () => {
-    if (!library) return;
+    if (!currentLibrary) return;
     setEditOpen(true);
     try {
-      const sharing = await fetchEditableLibrarySharing(library);
+      const sharing = await fetchEditableLibrarySharing(currentLibrary);
       setEditMembers(sharing.members);
       setEditInvites(sharing.invites);
     } catch (err) {
@@ -609,7 +612,7 @@ export default function LibraryPaneBody() {
         );
       }
     }
-  }, [library]);
+  }, [currentLibrary]);
 
   const closeEditDialog = useCallback(() => {
     setEditOpen(false);
@@ -619,20 +622,20 @@ export default function LibraryPaneBody() {
 
   const handleRename = useCallback(
     async (name: string) => {
-      if (!library) return;
-      await apiFetch(`/api/libraries/${library.id}`, {
+      if (!currentLibrary) return;
+      await apiFetch(`/api/libraries/${currentLibrary.id}`, {
         method: "PATCH",
         body: JSON.stringify({ name }),
       });
-      setLibrary({ ...library, name });
+      setLibrary({ ...currentLibrary, name });
     },
-    [library],
+    [currentLibrary],
   );
 
   const handleUpdateMemberRole = useCallback(
     async (userId: string, role: string) => {
-      if (!library) return;
-      await apiFetch(`/api/libraries/${library.id}/members/${userId}`, {
+      if (!currentLibrary) return;
+      await apiFetch(`/api/libraries/${currentLibrary.id}/members/${userId}`, {
         method: "PATCH",
         body: JSON.stringify({ role }),
       });
@@ -642,28 +645,28 @@ export default function LibraryPaneBody() {
         ),
       );
     },
-    [library],
+    [currentLibrary],
   );
 
   const handleRemoveMember = useCallback(
     async (userId: string) => {
-      if (!library) return;
-      await apiFetch(`/api/libraries/${library.id}/members/${userId}`, {
+      if (!currentLibrary) return;
+      await apiFetch(`/api/libraries/${currentLibrary.id}/members/${userId}`, {
         method: "DELETE",
       });
       setEditMembers((prev) =>
         prev.filter((member) => member.user_id !== userId),
       );
     },
-    [library],
+    [currentLibrary],
   );
 
   const handleCreateInvite = useCallback(
     async (inviteeIdentifier: string, role: string) => {
-      if (!library) return;
+      if (!currentLibrary) return;
       const isEmail = inviteeIdentifier.includes("@");
       const response = await apiFetch<{ data: LibraryInvite }>(
-        `/api/libraries/${library.id}/invites`,
+        `/api/libraries/${currentLibrary.id}/invites`,
         {
           method: "POST",
           body: JSON.stringify(
@@ -675,7 +678,7 @@ export default function LibraryPaneBody() {
       );
       setEditInvites((prev) => [response.data, ...prev]);
     },
-    [library],
+    [currentLibrary],
   );
 
   const handleSearchUsers = useCallback(
@@ -700,30 +703,33 @@ export default function LibraryPaneBody() {
   }, []);
 
   const handleDeleteFromDialog = useCallback(async () => {
-    if (!library) return;
-    if (!confirm(`Delete "${library.name}"? This cannot be undone.`)) {
+    if (!currentLibrary) return;
+    if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
       return;
     }
-    await apiFetch(`/api/libraries/${library.id}`, {
+    await apiFetch(`/api/libraries/${currentLibrary.id}`, {
       method: "DELETE",
     });
     closeEditDialog();
     router.push("/libraries");
-  }, [library, closeEditDialog, router]);
+  }, [currentLibrary, closeEditDialog, router]);
 
   const handleOpenLibraryChat = useCallback(() => {
-    paneRuntime?.requestSecondarySurface("library-chat");
-  }, [paneRuntime]);
+    requestSecondarySurface?.("library-chat");
+  }, [requestSecondarySurface]);
 
   const handleOpenLibraryIntelligence = useCallback(() => {
-    paneRuntime?.requestSecondarySurface("library-intelligence");
-  }, [paneRuntime]);
+    requestSecondarySurface?.("library-intelligence");
+  }, [requestSecondarySurface]);
 
   const handleOpenFullLibraryChat = useCallback(
     (conversationId: string) => {
-      paneRuntime?.openInNewPane(`/conversations/${conversationId}`, library?.name);
+      openInNewPane?.(
+        `/conversations/${conversationId}`,
+        currentLibrary?.name,
+      );
     },
-    [library?.name, paneRuntime],
+    [currentLibrary?.name, openInNewPane],
   );
 
   const handleOpenMediaChat = useCallback(
@@ -736,7 +742,7 @@ export default function LibraryPaneBody() {
           body: JSON.stringify({ initial_references: [`media:${media.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
-        paneRuntime?.openInNewPane(route, media.title);
+        openInNewPane?.(route, media.title);
       } catch (err) {
         setError(
           toFeedback(err, {
@@ -745,11 +751,11 @@ export default function LibraryPaneBody() {
         );
       }
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!library || library.role !== "admin") {
+    if (!currentLibrary || currentLibrary.role !== "admin") {
       return;
     }
     const previousEntries = entries;
@@ -780,7 +786,7 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions = library
+  const paneOptions = currentLibrary
     ? [
         {
           id: "add-content",
@@ -789,7 +795,7 @@ export default function LibraryPaneBody() {
           onSelect: () => dispatchOpenAddContent("content"),
         },
         ...libraryResourceOptions({
-          library,
+          library: currentLibrary,
           onOpenChat: handleOpenLibraryChat,
           onViewIntelligence: handleOpenLibraryIntelligence,
           onEdit: () => void openEditDialog(),
@@ -803,7 +809,7 @@ export default function LibraryPaneBody() {
   usePaneChromeOverride({ options: paneOptions });
   const secondaryDescriptor = useMemo(
     () =>
-      library
+      currentLibrary
         ? {
             groupId: "library-tools" as const,
             defaultSurfaceId: "library-chat" as const,
@@ -824,7 +830,7 @@ export default function LibraryPaneBody() {
             ],
           }
         : null,
-    [handleOpenFullLibraryChat, id, library],
+    [currentLibrary, handleOpenFullLibraryChat, id],
   );
   usePaneSecondary(secondaryDescriptor);
 
@@ -832,7 +838,7 @@ export default function LibraryPaneBody() {
     return <FeedbackNotice severity="info" title="Loading library..." />;
   }
 
-  if (!library) {
+  if (!currentLibrary) {
     return (
       <FeedbackNotice
         {...(error ?? { severity: "error", title: "Library not found" })}
@@ -841,11 +847,11 @@ export default function LibraryPaneBody() {
   }
 
   const editLibraryForDialog: LibraryForEdit = {
-    id: library.id,
-    name: library.name,
-    is_default: library.is_default,
-    role: library.role,
-    owner_user_id: library.owner_user_id,
+    id: currentLibrary.id,
+    name: currentLibrary.name,
+    is_default: currentLibrary.is_default,
+    role: currentLibrary.role,
+    owner_user_id: currentLibrary.owner_user_id,
   };
   const visibleEntries = entries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
@@ -889,7 +895,7 @@ export default function LibraryPaneBody() {
               onReorder={handleReorderEntries}
               renderItem={({ item, handleProps, isDragging }) => {
                 const dragHandleBindings =
-                  library.role === "admin"
+                  currentLibrary.role === "admin"
                     ? {
                         ...handleProps.attributes,
                         ...handleProps.listeners,
@@ -909,7 +915,7 @@ export default function LibraryPaneBody() {
                       : null,
                   ].filter(Boolean);
                   const rowOptions = podcastResourceOptions({
-                    canUsePodcastActions: library.role === "admin",
+                    canUsePodcastActions: currentLibrary.role === "admin",
                     onManageLibraries: ({ triggerEl }) => {
                       void openLibraryPanel(item, triggerEl);
                     },
@@ -937,7 +943,7 @@ export default function LibraryPaneBody() {
                       }
                     >
                       <div className={styles.mediaRowMain}>
-                        {library.role === "admin" && (
+                        {currentLibrary.role === "admin" && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -1058,7 +1064,7 @@ export default function LibraryPaneBody() {
                     }
                   >
                     <div className={styles.mediaRowMain}>
-                      {library.role === "admin" && (
+                      {currentLibrary.role === "admin" && (
                         <Button
                           variant="secondary"
                           size="sm"

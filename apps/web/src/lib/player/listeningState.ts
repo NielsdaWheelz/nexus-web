@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, apiKeepaliveJson, type ApiPath } from "@/lib/api/client";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const SYNC_INTERVAL_MS = 15_000;
@@ -45,15 +45,10 @@ async function persist(
   keepalive: boolean,
 ): Promise<void> {
   const payload = buildPayload(audio, playbackRate);
-  const endpoint = `/api/media/${mediaId}/listening-state`;
+  const endpoint: ApiPath = `/api/media/${mediaId}/listening-state`;
   try {
     if (keepalive) {
-      await fetch(endpoint, {
-        method: "PUT",
-        keepalive: true,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      await apiKeepaliveJson(endpoint, payload);
       return;
     }
     await apiFetch(endpoint, {
@@ -93,6 +88,8 @@ export function useListeningStatePersistence(args: {
     [audioElementRef, playbackRateRef],
   );
 
+  // justify-polling: playback position is local media-element state with no
+  // push source; the poll runs only while a track is actively playing.
   useIntervalPoll({
     enabled: Boolean(track) && isPlaying,
     onPoll: () => {

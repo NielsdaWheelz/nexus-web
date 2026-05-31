@@ -9,6 +9,7 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import styles from "./page.module.css";
 
 type IntelligenceStatus =
@@ -100,28 +101,32 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
   const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(
     null,
   );
-  const [loading, setLoading] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await apiFetch<{ data: LibraryIntelligence }>(
-        `/api/libraries/${libraryId}/intelligence`,
-      );
-      setIntelligence(response.data);
-    } catch (err) {
-      setError(toFeedback(err, { fallback: "Failed to load library intelligence" }));
-    } finally {
-      setLoading(false);
-    }
-  }, [libraryId]);
+  const intelligenceResource = useApiResource<{ data: LibraryIntelligence }>({
+    cacheKey: `library-intelligence:${libraryId}:${refreshVersion}`,
+    path: () => `/api/libraries/${libraryId}/intelligence`,
+  });
+  const loading = intelligenceResource.status === "loading";
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (intelligenceResource.status === "ready") {
+      setIntelligence(intelligenceResource.data.data);
+      setError(null);
+      setRefreshing(false);
+      return;
+    }
+
+    if (intelligenceResource.status === "error") {
+      setError(
+        toFeedback(intelligenceResource.error, {
+          fallback: "Failed to load library intelligence",
+        }),
+      );
+      setRefreshing(false);
+    }
+  }, [intelligenceResource]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -131,22 +136,31 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
         `/api/libraries/${libraryId}/intelligence/refresh`,
         { method: "POST" },
       );
-      await load();
+      setRefreshVersion((version) => version + 1);
     } catch (err) {
-      setError(toFeedback(err, { fallback: "Failed to refresh library intelligence" }));
-    } finally {
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to refresh library intelligence",
+        }),
+      );
       setRefreshing(false);
     }
-  }, [libraryId, load]);
+  }, [libraryId]);
 
-  const sections = intelligence?.sections ?? [];
-  const updatedAt = formatDateTime(intelligence?.updated_at);
+  const currentIntelligence =
+    intelligence?.library_id === libraryId ? intelligence : null;
+  const sections = currentIntelligence?.sections ?? [];
+  const updatedAt = formatDateTime(currentIntelligence?.updated_at);
   const buildUpdatedAt = formatDateTime(
-    intelligence?.build?.updated_at ?? intelligence?.build?.completed_at ?? null,
+    currentIntelligence?.build?.updated_at ??
+      currentIntelligence?.build?.completed_at ??
+      null,
   );
-  const buildStartedAt = formatDateTime(intelligence?.build?.started_at ?? null);
-  const status = intelligence?.status ?? "unavailable";
-  const buildStatus = intelligence?.build?.status ?? null;
+  const buildStartedAt = formatDateTime(
+    currentIntelligence?.build?.started_at ?? null,
+  );
+  const status = currentIntelligence?.status ?? "unavailable";
+  const buildStatus = currentIntelligence?.build?.status ?? null;
   const statusText =
     status === "building"
       ? "Building"
@@ -178,18 +192,22 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
 
       {error ? <FeedbackNotice {...error} /> : null}
 
-      {loading && !intelligence ? (
+      {loading && !currentIntelligence ? (
         <FeedbackNotice severity="info" title="Loading intelligence..." />
-      ) : intelligence ? (
+      ) : currentIntelligence ? (
         <>
           <div className={styles.intelligenceStats}>
             <div className={styles.intelligenceStat}>
               <span className={styles.statLabel}>Sources</span>
-              <strong>{intelligence.source_count.toLocaleString()}</strong>
+              <strong>
+                {currentIntelligence.source_count.toLocaleString()}
+              </strong>
             </div>
             <div className={styles.intelligenceStat}>
               <span className={styles.statLabel}>Chunks</span>
-              <strong>{intelligence.chunk_count.toLocaleString()}</strong>
+              <strong>
+                {currentIntelligence.chunk_count.toLocaleString()}
+              </strong>
             </div>
             <div className={styles.intelligenceStat}>
               <span className={styles.statLabel}>Updated</span>
@@ -216,7 +234,7 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
                       : `Build ${formatLabel(buildStatus ?? "pending")}`}
               </strong>
               <span>
-                {intelligence.build?.error ||
+                {currentIntelligence.build?.error ||
                   [
                     buildStartedAt ? `Started ${buildStartedAt}` : null,
                     buildUpdatedAt ? `Updated ${buildUpdatedAt}` : null,
@@ -260,9 +278,9 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
 
           <section className={styles.intelligenceSection}>
             <h3>Coverage</h3>
-            {intelligence.coverage.length > 0 ? (
+            {currentIntelligence.coverage.length > 0 ? (
               <dl className={styles.coverageList}>
-                {intelligence.coverage.map((source) => (
+                {currentIntelligence.coverage.map((source) => (
                   <div
                     className={styles.coverageItem}
                     key={source.media_id ?? source.podcast_id ?? source.title}

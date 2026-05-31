@@ -55,6 +55,39 @@ describe("SettingsKeysPaneBody", () => {
     expect(alert).toHaveTextContent("Provider test failed");
     expect(alert).toHaveTextContent("Nexus request ID: nexus-req-123");
   });
+
+  it("does not reload keys while opening and closing the editor", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/keys") {
+        return jsonResponse({
+          data: [
+            {
+              id: null,
+              provider: "openai",
+              provider_display_name: "OpenAI",
+              fingerprint: null,
+              key_fingerprint: null,
+              status: "missing",
+              created_at: null,
+              last_tested_at: null,
+              last_used_at: null,
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected request path: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SettingsKeysPaneBody />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 function jsonResponse(body: unknown, status = 200): Response {

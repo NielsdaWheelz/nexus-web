@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isRecord } from "@/lib/validation";
@@ -176,16 +176,21 @@ export function useMediaProcessingStatus(
   snapshot: MediaProcessingSnapshot | null;
   connectionState: "connecting" | "open" | "error";
 } {
-  const [snapshot, setSnapshot] = useState<MediaProcessingSnapshot | null>(null);
+  const [snapshotState, setSnapshotState] = useState<{
+    mediaId: string;
+    snapshot: MediaProcessingSnapshot;
+  } | null>(null);
   const [connectionState, setConnectionState] = useState<
     "connecting" | "open" | "error"
   >("connecting");
-  const initialStatusRef = useRef(initialStatus);
+  const shouldStream =
+    mediaId !== null && !TERMINAL_STATUSES.has(initialStatus);
 
   useEffect(() => {
-    // Effect deps intentionally omit initialStatus: it mutates as snapshots
-    // arrive, and reopening the stream per change would churn stream tokens.
-    if (!mediaId || TERMINAL_STATUSES.has(initialStatusRef.current)) return;
+    if (!mediaId || !shouldStream) {
+      setConnectionState("open");
+      return;
+    }
     setConnectionState("connecting");
     const controller = new AbortController();
     let firstToken: { token: string; stream_base_url: string } | null = null;
@@ -212,16 +217,23 @@ export function useMediaProcessingStatus(
         decode: decodeMediaSSEEvent,
         isTerminal: (event) => event.type === "done",
         onEvent: (event) => {
+          if (controller.signal.aborted) return;
           setConnectionState("open");
-          setSnapshot(event.data);
+          setSnapshotState({ mediaId, snapshot: event.data });
         },
-        onError: () => setConnectionState("error"),
+        onError: () => {
+          if (!controller.signal.aborted) setConnectionState("error");
+        },
         signal: controller.signal,
       });
     })();
 
     return () => controller.abort();
-  }, [mediaId]);
+  }, [mediaId, shouldStream]);
 
-  return { snapshot, connectionState };
+  return {
+    snapshot:
+      snapshotState?.mediaId === mediaId ? snapshotState.snapshot : null,
+    connectionState,
+  };
 }

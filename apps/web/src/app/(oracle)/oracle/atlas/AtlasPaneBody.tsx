@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { toRoman } from "@/lib/toRoman";
 import { useStickyHeadline } from "../../OracleShell";
 import styles from "./atlas.module.css";
@@ -235,12 +235,21 @@ function drawConstellation(
 
 export default function AtlasPaneBody() {
   const router = useRouter();
-  const [readings, setReadings] = useState<OracleSummary[] | null>(null);
-  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [peerIds, setPeerIds] = useState<readonly string[]>([]);
   const headlineRef = useStickyHeadline("The Atlas");
+  const readingsResource = useApiResource<{ data: OracleSummary[] }>({
+    cacheKey: "oracle-readings",
+    path: () => "/api/oracle/readings",
+  });
+  const readings = readingsResource.status === "ready" ? readingsResource.data.data : null;
+  const loadError =
+    readingsResource.status === "error"
+      ? toFeedback(readingsResource.error, {
+          fallback: "The Atlas could not be loaded.",
+        })
+      : null;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -261,6 +270,7 @@ export default function AtlasPaneBody() {
   const lastFrameRef = useRef<number>(0);
   const selectionStartRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+  const selectionNavigationTimeoutRef = useRef<number | null>(null);
 
   const stars = useMemo<readonly FolioStar[]>(
     () => (readings ? placeFolios(readings) : []),
@@ -275,23 +285,6 @@ export default function AtlasPaneBody() {
   selectedIdRef.current = selectedId;
   const peerIdsRef = useRef(peerIds);
   peerIdsRef.current = peerIds;
-
-  // Fetch all of the user's oracle readings on mount.
-  useEffect(() => {
-    let active = true;
-    apiFetch<{ data: OracleSummary[] }>("/api/oracle/readings")
-      .then((body) => {
-        if (active) setReadings(body.data);
-      })
-      .catch((error) => {
-        if (active) {
-          setLoadError(toFeedback(error, { fallback: "The Atlas could not be loaded." }));
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Resolve the canvas geometry — DPR-aware, so lines stay crisp.
   const resolveGeometry = useCallback(() => {
@@ -416,8 +409,24 @@ export default function AtlasPaneBody() {
     return nearest;
   }, [resolveGeometry]);
 
+  const clearSelectionNavigationTimeout = useCallback(() => {
+    if (selectionNavigationTimeoutRef.current === null) {
+      return;
+    }
+    window.clearTimeout(selectionNavigationTimeoutRef.current);
+    selectionNavigationTimeoutRef.current = null;
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearSelectionNavigationTimeout();
+    },
+    [clearSelectionNavigationTimeout],
+  );
+
   const onSelectStar = useCallback(
     (star: FolioStar) => {
+      clearSelectionNavigationTimeout();
       // Already selected → second click navigates to the folio.
       if (selectedIdRef.current === star.id) {
         router.push(`/oracle/${star.id}`);
@@ -427,27 +436,15 @@ export default function AtlasPaneBody() {
       setPeerIds([]);
       selectionStartRef.current = performance.now();
 
-      // Fetch concordance peers for the selection. Failures are silent —
-      // the constellation just stays a lone star, which is also beautiful.
-      apiFetch<{ data: ConcordanceEntry[] }>(
-        `/api/oracle/readings/${star.id}/concordance`,
-      )
-        .then((body) => {
-          if (selectedIdRef.current !== star.id) return;
-          setPeerIds(body.data.map((entry) => entry.id));
-        })
-        .catch(() => {
-          // intentional: silent fall-through
-        });
-
       // After a beat for the user to take in the constellation, navigate.
-      window.setTimeout(() => {
+      selectionNavigationTimeoutRef.current = window.setTimeout(() => {
+        selectionNavigationTimeoutRef.current = null;
         if (selectedIdRef.current === star.id) {
           router.push(`/oracle/${star.id}`);
         }
       }, SELECTION_LINGER_MS);
     },
-    [router],
+    [clearSelectionNavigationTimeout, router],
   );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -493,13 +490,14 @@ export default function AtlasPaneBody() {
         if (star) onSelectStar(star);
         else {
           // Tap on empty sky clears the constellation.
+          clearSelectionNavigationTimeout();
           setSelectedId(null);
           setPeerIds([]);
           selectionStartRef.current = null;
         }
       }
     }
-  }, [hitTest, onSelectStar]);
+  }, [clearSelectionNavigationTimeout, hitTest, onSelectStar]);
 
   const onPointerLeave = useCallback(() => {
     setHoveredId(null);
@@ -520,6 +518,14 @@ export default function AtlasPaneBody() {
 
   return (
     <div data-theme="oracle" className={styles.surface}>
+      {selectedId !== null && (
+        <AtlasConcordancePeerLoader
+          key={selectedId}
+          readingId={selectedId}
+          onPeerIds={setPeerIds}
+        />
+      )}
+
       <div className={styles.headline} ref={headlineRef as React.RefObject<HTMLDivElement>}>
         <span className={styles.headlineTitle}>The Atlas</span>
         <span className={styles.headlineDash}>·</span>
@@ -588,4 +594,29 @@ export default function AtlasPaneBody() {
       <Link className={styles.backToAleph} href="/oracle">← Aleph</Link>
     </div>
   );
+}
+
+function AtlasConcordancePeerLoader({
+  readingId,
+  onPeerIds,
+}: {
+  readingId: string;
+  onPeerIds: (peerIds: readonly string[]) => void;
+}) {
+  const concordanceResource = useApiResource<{ data: ConcordanceEntry[] }>({
+    cacheKey: readingId,
+    path: (id) => `/api/oracle/readings/${id}/concordance`,
+  });
+
+  useEffect(() => {
+    if (concordanceResource.status === "ready") {
+      onPeerIds(concordanceResource.data.data.map((entry) => entry.id));
+      return;
+    }
+    if (concordanceResource.status === "error") {
+      onPeerIds([]);
+    }
+  }, [concordanceResource, onPeerIds]);
+
+  return null;
 }

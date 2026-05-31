@@ -55,6 +55,9 @@ export default function Conversation() {
   const conversationId = usePaneParam("id");
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
+  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
+  const resourceRef = paneRuntime?.resourceRef ?? null;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
 
@@ -193,13 +196,13 @@ export default function Conversation() {
           locator: target.locator,
         });
       if (event?.shiftKey) {
-        paneRuntime?.openInNewPane(href);
+        openInNewPane?.(href);
         return;
       }
-      if (paneRuntime?.resourceRef === `media:${target.media_id}`) return;
+      if (resourceRef === `media:${target.media_id}`) return;
       router.push(href);
     },
-    [paneRuntime, router],
+    [openInNewPane, resourceRef, router],
   );
 
   const handleOpenResource = useCallback(
@@ -207,7 +210,7 @@ export default function Conversation() {
       const parsed = parseResourceUri(uri);
       if (!parsed) return;
       if (parsed.scheme === "library") {
-        paneRuntime?.openInNewPane(`/libraries/${parsed.id}`);
+        openInNewPane?.(`/libraries/${parsed.id}`);
         return;
       }
       const objectType = resourceObjectTypeForScheme(parsed.scheme);
@@ -218,12 +221,12 @@ export default function Conversation() {
         ]);
         const href = resolved?.route;
         if (!href) return;
-        paneRuntime?.openInNewPane(href);
+        openInNewPane?.(href);
       } catch (err) {
         console.error("Failed to open reference:", err);
       }
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   // --------------------------------------------------------------------------
@@ -236,7 +239,7 @@ export default function Conversation() {
         id: "open-references",
         label: "References",
         onSelect: () =>
-          paneRuntime?.requestSecondarySurface("conversation-references"),
+          requestSecondarySurface?.("conversation-references"),
       },
       ...(branch && convo.conversationId
         ? [
@@ -244,7 +247,7 @@ export default function Conversation() {
               id: "open-forks",
               label: "Forks",
               onSelect: () =>
-                paneRuntime?.requestSecondarySurface("conversation-forks"),
+                requestSecondarySurface?.("conversation-forks"),
             },
           ]
         : []),
@@ -262,7 +265,7 @@ export default function Conversation() {
       convo.conversationId,
       deleting,
       handleDeleteConversation,
-      paneRuntime,
+      requestSecondarySurface,
     ],
   );
   usePaneChromeOverride({ options: paneOptions });

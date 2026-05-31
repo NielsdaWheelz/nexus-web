@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
+import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { retryMediaSource } from "@/lib/media/retryClient";
 import {
   episodeResourceOptions,
@@ -90,10 +93,17 @@ import styles from "./page.module.css";
 const EPISODES_PAGE_SIZE = 100;
 const EPISODE_SEARCH_DEBOUNCE_MS = 300;
 
+interface PodcastDetailLoadResult {
+  detail: PodcastDetailResponse;
+  episodes: PodcastEpisodeMedia[];
+  podcastLibraries: PodcastLibraryMembership[];
+}
+
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
   const paneSearchParams = usePaneSearchParams();
   const isMobileViewport = useIsMobileViewport();
   const { account: billingAccount } = useBillingAccount();
@@ -159,7 +169,10 @@ export default function PodcastDetailPaneBody() {
   const expandedShowNotesMediaIds = useStringIdSet();
   const expandedTranscriptMediaIds = useStringIdSet();
   const requestingTranscriptMediaIds = useStringIdSet();
-  const forecastingTranscriptMediaIdsRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  const loadRequestIdRef = useRef(0);
+  const forecastingTranscriptRequestKeysRef = useRef<Set<string>>(new Set());
+  const [forecastSettledVersion, setForecastSettledVersion] = useState(0);
   const [
     transcriptRequestForecastByMediaId,
     setTranscriptRequestForecastByMediaId,
@@ -202,6 +215,13 @@ export default function PodcastDetailPaneBody() {
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
+
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
   const loadPodcastLibraries = useCallback(
     async (force = false) => {
@@ -265,17 +285,25 @@ export default function PodcastDetailPaneBody() {
 
   const { clear: clearLoadingEpisodeLibraryMediaIds } =
     loadingEpisodeLibraryMediaIds;
+  const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const closeSettingsModal = settingsModal.close;
-  const load = useCallback(async () => {
-    if (!podcastId) {
-      setLoading(false);
-      setError({ severity: "error", title: "Podcast id is missing" });
-      return;
-    }
+  const podcastDetailCacheKey = podcastId
+    ? [
+        "podcast-detail",
+        podcastId,
+        episodeStateFilter,
+        episodeSort,
+        episodeSearchQuery.trim(),
+      ].join(":")
+    : null;
+  const podcastDetailCacheKeyRef = useRef(podcastDetailCacheKey);
+  podcastDetailCacheKeyRef.current = podcastDetailCacheKey;
 
-    setLoading(true);
-    setError(null);
-    try {
+  const fetchPodcastDetail = useCallback(
+    async (signal?: AbortSignal): Promise<PodcastDetailLoadResult> => {
+      if (!podcastId) {
+        throw new Error("Podcast id is missing");
+      }
       const episodeParams = new URLSearchParams({
         limit: String(EPISODES_PAGE_SIZE),
         offset: "0",
@@ -286,52 +314,131 @@ export default function PodcastDetailPaneBody() {
         episodeParams.set("q", episodeSearchQuery.trim());
       }
 
+      const fetchOptions = signal ? { signal } : undefined;
       const [detailResp, episodesResp] = await Promise.all([
-        apiFetch<{ data: PodcastDetailResponse }>(`/api/podcasts/${podcastId}`),
+        apiFetch<{ data: PodcastDetailResponse }>(
+          `/api/podcasts/${podcastId}`,
+          fetchOptions,
+        ),
         apiFetch<{ data: PodcastEpisodeMedia[] }>(
           `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
+          fetchOptions,
         ),
       ]);
-      setDetail(detailResp.data);
-      setEpisodes(episodesResp.data);
-      expandedShowNotesMediaIds.clear();
-      setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
-      forecastingTranscriptMediaIdsRef.current.clear();
+      if (signal?.aborted) {
+        throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      }
+      let podcastLibraries: PodcastLibraryMembership[] = [];
+      if (detailResp.data.subscription) {
+        try {
+          podcastLibraries = await fetchPodcastLibraries(podcastId);
+        } catch {
+          podcastLibraries = [];
+        }
+      }
+      return {
+        detail: detailResp.data,
+        episodes: episodesResp.data,
+        podcastLibraries,
+      };
+    },
+    [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId],
+  );
+
+  const applyPodcastDetailLoad = useCallback(
+    (result: PodcastDetailLoadResult) => {
+      setDetail(result.detail);
+      setEpisodes(result.episodes);
+      clearExpandedShowNotesMediaIds();
+      setHasMoreEpisodes(result.episodes.length === EPISODES_PAGE_SIZE);
       setTranscriptRequestForecastByMediaId({});
       closeSettingsModal();
-      try {
-        setPodcastLibraries(
-          detailResp.data.subscription
-            ? await fetchPodcastLibraries(podcastId)
-            : [],
-        );
-        setEpisodeLibrariesById({});
-        clearLoadingEpisodeLibraryMediaIds();
-      } catch {
-        setPodcastLibraries([]);
-        setEpisodeLibrariesById({});
-        clearLoadingEpisodeLibraryMediaIds();
+      setPodcastLibraries(result.podcastLibraries);
+      setEpisodeLibrariesById({});
+      clearLoadingEpisodeLibraryMediaIds();
+    },
+    [
+      clearExpandedShowNotesMediaIds,
+      clearLoadingEpisodeLibraryMediaIds,
+      closeSettingsModal,
+    ],
+  );
+
+  const podcastDetailResource = useAsyncResource<PodcastDetailLoadResult>({
+    cacheKey: podcastDetailCacheKey,
+    load: fetchPodcastDetail,
+  });
+
+  useEffect(() => {
+    if (!podcastId) {
+      setLoading(false);
+      setError({ severity: "error", title: "Podcast id is missing" });
+      return;
+    }
+
+    if (podcastDetailResource.status === "loading") {
+      setLoading(true);
+      setError(null);
+      return;
+    }
+
+    if (podcastDetailResource.status === "ready") {
+      applyPodcastDetailLoad(podcastDetailResource.data);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (podcastDetailResource.status === "error") {
+      setError(
+        toFeedback(podcastDetailResource.error, {
+          fallback: "Failed to load podcast detail",
+        }),
+      );
+      setLoading(false);
+    }
+  }, [applyPodcastDetailLoad, podcastDetailResource, podcastId]);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++loadRequestIdRef.current;
+    const scopeKey = podcastDetailCacheKeyRef.current;
+    const isCurrent = () =>
+      loadRequestIdRef.current === requestId &&
+      podcastDetailCacheKeyRef.current === scopeKey &&
+      !signal?.aborted;
+
+    if (!podcastId) {
+      setLoading(false);
+      setError({ severity: "error", title: "Podcast id is missing" });
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchPodcastDetail(signal);
+      if (!isCurrent()) {
+        return;
       }
+      applyPodcastDetailLoad(result);
+      setError(null);
     } catch (loadError) {
+      if (!isCurrent() || isAbortError(loadError)) {
+        return;
+      }
       setError(
         toFeedback(loadError, { fallback: "Failed to load podcast detail" }),
       );
     } finally {
-      setLoading(false);
+      if (isCurrent()) {
+        setLoading(false);
+      }
     }
   }, [
-    clearLoadingEpisodeLibraryMediaIds,
-    closeSettingsModal,
-    episodeSearchQuery,
-    episodeSort,
-    episodeStateFilter,
-    expandedShowNotesMediaIds,
+    applyPodcastDetailLoad,
+    fetchPodcastDetail,
     podcastId,
   ]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const { load: loadAvailableLibraries } = availableLibraries;
   useEffect(() => {
@@ -697,14 +804,14 @@ export default function PodcastDetailPaneBody() {
           body: JSON.stringify({ initial_references: [`media:${episode.id}`] }),
         });
         const route = `/conversations/${response.data.id}`;
-        paneRuntime?.openInNewPane(route, episode.title);
+        openInNewPane?.(route, episode.title);
       } catch (chatError) {
         setError(
           toFeedback(chatError, { fallback: "Failed to open episode chat" }),
         );
       }
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   const handleRetryEpisodeProcessing = useCallback(
@@ -1130,24 +1237,15 @@ export default function PodcastDetailPaneBody() {
     [episodes],
   );
 
-  useEffect(() => {
-    if (provisioningEpisodeIds.length === 0) {
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) {
-        return;
-      }
-      void refreshEpisodeStates(provisioningEpisodeIds).catch(() => {
-        // Keep rows responsive even when one poll cycle fails.
-      });
-    }, TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [provisioningEpisodeIds, refreshEpisodeStates]);
+  // justify-polling: transcript provisioning is backend async work without a
+  // push stream here; the eligible episode set terminates the schedule.
+  useIntervalPoll({
+    enabled: provisioningEpisodeIds.length > 0,
+    onPoll: async () => {
+      await refreshEpisodeStates(provisioningEpisodeIds);
+    },
+    pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
+  });
 
   useEffect(() => {
     const pendingForecastEpisodes = episodes
@@ -1156,10 +1254,14 @@ export default function PodcastDetailPaneBody() {
         if (requestingTranscriptMediaIds.ids.has(episode.id)) {
           return false;
         }
-        if (forecastingTranscriptMediaIdsRef.current.has(episode.id)) {
+        const reason = transcriptReasonByMediaId[episode.id] ?? "search";
+        if (
+          forecastingTranscriptRequestKeysRef.current.has(
+            `${episode.id}:${reason}`,
+          )
+        ) {
           return false;
         }
-        const reason = transcriptReasonByMediaId[episode.id] ?? "search";
         const existingForecast = transcriptRequestForecastByMediaId[episode.id];
         return !existingForecast || existingForecast.reason !== reason;
       })
@@ -1169,14 +1271,17 @@ export default function PodcastDetailPaneBody() {
       return;
     }
 
-    const forecastingSet = forecastingTranscriptMediaIdsRef.current;
+    const forecastingSet = forecastingTranscriptRequestKeysRef.current;
     let cancelled = false;
     const pendingForecastRequests = pendingForecastEpisodes.map((episode) => ({
       media_id: episode.id,
       reason: transcriptReasonByMediaId[episode.id] ?? "search",
     }));
-    for (const request of pendingForecastRequests) {
-      forecastingSet.add(request.media_id);
+    const pendingForecastKeys = pendingForecastRequests.map(
+      (request) => `${request.media_id}:${request.reason}`,
+    );
+    for (const key of pendingForecastKeys) {
+      forecastingSet.add(key);
     }
 
     const loadForecasts = async () => {
@@ -1189,8 +1294,11 @@ export default function PodcastDetailPaneBody() {
       } catch {
         // Keep CTA enabled when forecast preflight fails.
       } finally {
-        for (const request of pendingForecastRequests) {
-          forecastingSet.delete(request.media_id);
+        for (const key of pendingForecastKeys) {
+          forecastingSet.delete(key);
+        }
+        if (cancelled && mountedRef.current) {
+          setForecastSettledVersion((version) => version + 1);
         }
       }
     };
@@ -1198,14 +1306,12 @@ export default function PodcastDetailPaneBody() {
     void loadForecasts();
     return () => {
       cancelled = true;
-      for (const request of pendingForecastRequests) {
-        forecastingSet.delete(request.media_id);
-      }
     };
   }, [
     applyTranscriptForecasts,
     episodes,
     fetchTranscriptForecasts,
+    forecastSettledVersion,
     requestingTranscriptMediaIds,
     transcriptReasonByMediaId,
     transcriptRequestForecastByMediaId,

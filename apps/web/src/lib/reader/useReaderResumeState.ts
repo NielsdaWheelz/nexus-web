@@ -25,16 +25,26 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
   const [resolvedMediaId, setResolvedMediaId] = useState<string | null>(null);
   const stateRef = useRef<ReaderResumeState | null>(null);
   const pendingRef = useRef<ReaderResumeState | null>(null);
+  const pendingMediaIdRef = useRef<string | null>(null);
   const hasPendingRef = useRef(false);
   const hydratedRef = useRef(false);
+  const hydratedMediaIdRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadRequestRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
   const flush = useCallback(async () => {
-    if (!mediaId || !hydratedRef.current || !hasPendingRef.current) {
+    const targetMediaId = pendingMediaIdRef.current;
+    if (
+      !targetMediaId ||
+      mediaId !== targetMediaId ||
+      !hydratedRef.current ||
+      hydratedMediaIdRef.current !== targetMediaId ||
+      !hasPendingRef.current
+    ) {
       return;
     }
     if (debounceRef.current) {
@@ -46,25 +56,35 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
     hasPendingRef.current = false;
 
     try {
-      const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`, {
+      const res = await fetchFn<{ data: unknown }>(`/api/media/${targetMediaId}/reader-state`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
       const savedState = parseReaderResumeState(res.data);
+      if (!hydratedRef.current || hydratedMediaIdRef.current !== targetMediaId) {
+        return;
+      }
       stateRef.current = savedState;
       setState(savedState);
     } catch (err) {
       console.error("Failed to save reader state:", err);
-      pendingRef.current = payload;
-      hasPendingRef.current = true;
+      if (hydratedRef.current && hydratedMediaIdRef.current === targetMediaId) {
+        pendingRef.current = payload;
+        pendingMediaIdRef.current = targetMediaId;
+        hasPendingRef.current = true;
+      }
     }
-  }, [mediaId, fetchFn]);
+  }, [fetchFn, mediaId]);
 
   const load = useCallback(async () => {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
     if (!mediaId) {
       hydratedRef.current = false;
+      hydratedMediaIdRef.current = null;
       hasPendingRef.current = false;
       pendingRef.current = null;
+      pendingMediaIdRef.current = null;
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
@@ -79,8 +99,10 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
 
     const targetMediaId = mediaId;
     hydratedRef.current = false;
+    hydratedMediaIdRef.current = null;
     hasPendingRef.current = false;
     pendingRef.current = null;
+    pendingMediaIdRef.current = null;
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
@@ -92,10 +114,16 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
     setError(null);
     try {
       const res = await fetchFn<{ data: unknown }>(`/api/media/${targetMediaId}/reader-state`);
+      if (loadRequestRef.current !== requestId) {
+        return;
+      }
       const nextState = parseReaderResumeState(res.data);
       stateRef.current = nextState;
       setState(nextState);
     } catch (err) {
+      if (loadRequestRef.current !== requestId) {
+        return;
+      }
       if (isApiError(err) && err.status === 404) {
         stateRef.current = null;
         setState(null);
@@ -103,7 +131,11 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
         setError(toFeedback(err, { fallback: "Failed to load reader state" }).title);
       }
     } finally {
+      if (loadRequestRef.current !== requestId) {
+        return;
+      }
       hydratedRef.current = true;
+      hydratedMediaIdRef.current = targetMediaId;
       setResolvedMediaId(targetMediaId);
       setLoading(false);
     }
@@ -115,7 +147,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
 
   const save = useCallback(
     (nextState: ReaderResumeState | null) => {
-      if (!mediaId || !hydratedRef.current) {
+      if (!mediaId || !hydratedRef.current || hydratedMediaIdRef.current !== mediaId) {
         return;
       }
 
@@ -125,6 +157,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       }
 
       pendingRef.current = nextState;
+      pendingMediaIdRef.current = mediaId;
       hasPendingRef.current = true;
 
       if (debounceRef.current) {

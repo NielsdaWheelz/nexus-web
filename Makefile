@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
+.PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
@@ -52,7 +52,9 @@ help:
 	@echo "  make dev                - Start local Postgres, MinIO, and Supabase Auth"
 	@echo "  make down               - Stop local dev services"
 	@echo "  make api                - Start FastAPI on API_PORT (default 8000)"
+	@echo "  make api-e2e            - Start FastAPI without reload for Playwright E2E"
 	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
+	@echo "  make web-e2e            - Build and start Next.js for Playwright E2E"
 	@echo "  make worker             - Start the Postgres queue worker"
 	@echo ""
 	@echo "Routine gates:"
@@ -189,6 +191,16 @@ api:
 		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
 		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
 
+api-e2e:
+	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
+		SUPABASE_AUTH_ADMIN_KEY= \
+		NEXUS_ENV=$${NEXUS_ENV:-test} \
+		STREAM_BASE_URL=$(STREAM_BASE_URL) \
+		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
+		RATE_LIMIT_RPM=$${RATE_LIMIT_RPM:-240} \
+		RATE_LIMIT_CONCURRENT=$${RATE_LIMIT_CONCURRENT:-8} \
+		uv run --project ../../python uvicorn main:app --port $(API_PORT)
+
 web:
 	cd apps/web && \
 		FASTAPI_BASE_URL=http://localhost:$(API_PORT) \
@@ -197,6 +209,20 @@ web:
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
 		AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)} \
 		bun run dev
+
+web-e2e:
+	cd apps/web && \
+		export FASTAPI_BASE_URL=http://localhost:$(API_PORT); \
+		export NEXUS_ENV=$${NEXUS_ENV:-test}; \
+		export NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)}; \
+		export NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)}; \
+		export AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)}; \
+		export NEXUS_INTERNAL_SECRET=$${NEXUS_INTERNAL_SECRET:-test-internal-secret}; \
+		export E2E_DISABLE_CSP=$${E2E_DISABLE_CSP:-1}; \
+		export NEXT_TELEMETRY_DISABLED=1; \
+		export PORT=$(WEB_PORT); \
+		bun run build; \
+		bun run start
 
 worker:
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \

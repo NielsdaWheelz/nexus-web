@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   buildForkTree,
@@ -58,13 +59,21 @@ export function useForkPanel(input: {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [nodes, setNodes] = useState<ConversationForkNode[]>(fallbackNodes);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const expandedIds = useStringIdSet();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const loadSeqRef = useRef(0);
+  const forksPath = useMemo<ApiPath>(() => {
+    const params = submittedQuery
+      ? `?${new URLSearchParams({ search: submittedQuery })}`
+      : "";
+    return `/api/conversations/${conversationId}/forks${params}`;
+  }, [conversationId, submittedQuery]);
+  const forksResource = useApiResource<ConversationForksResponse>({
+    cacheKey: forksPath,
+    path: (path) => path as ApiPath,
+  });
 
   useEffect(() => {
     setNodes(fallbackNodes);
@@ -75,35 +84,22 @@ export function useForkPanel(input: {
     replaceExpandedIds(collectExpandableIds(nodes));
   }, [nodes, replaceExpandedIds]);
 
-  const loadForks = useCallback(async () => {
-    const loadSeq = loadSeqRef.current + 1;
-    loadSeqRef.current = loadSeq;
-    setLoading(true);
-    setError(null);
-    try {
-      const params = submittedQuery
-        ? `?${new URLSearchParams({ search: submittedQuery })}`
-        : "";
-      const response = await apiFetch<ConversationForksResponse>(
-        `/api/conversations/${conversationId}/forks${params}`,
-      );
-      if (loadSeqRef.current !== loadSeq) return;
-      setNodes(buildForkTree(response.data.forks, branchGraph));
-    } catch (err) {
-      if (loadSeqRef.current !== loadSeq) return;
-      console.error("Failed to load forks:", err);
+  useEffect(() => {
+    if (forksResource.status === "loading") {
+      setError(null);
+      return;
+    }
+    if (forksResource.status === "ready") {
+      setNodes(buildForkTree(forksResource.data.data.forks, branchGraph));
+      setError(null);
+      return;
+    }
+    if (forksResource.status === "error") {
+      console.error("Failed to load forks:", forksResource.error);
       setError("Fork search is unavailable.");
       setNodes(fallbackNodes);
-    } finally {
-      if (loadSeqRef.current === loadSeq) {
-        setLoading(false);
-      }
     }
-  }, [branchGraph, conversationId, fallbackNodes, submittedQuery]);
-
-  useEffect(() => {
-    void loadForks();
-  }, [loadForks]);
+  }, [branchGraph, fallbackNodes, forksResource]);
 
   const submitQuery = useCallback(() => {
     setSubmittedQuery(query.trim());
@@ -183,7 +179,7 @@ export function useForkPanel(input: {
 
   return {
     nodes,
-    loading,
+    loading: forksResource.status === "loading",
     error,
     query,
     setQuery: setQueryAndResetSubmitted,

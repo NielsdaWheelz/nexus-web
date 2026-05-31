@@ -24,6 +24,18 @@ vi.mock("@/lib/auth/password-actions", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
+  ApiError: class ApiError extends Error {
+    readonly status: number;
+    readonly code: string;
+    readonly requestId?: string;
+
+    constructor(status: number, code: string, message: string, requestId?: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+      this.requestId = requestId;
+    }
+  },
   apiFetch: (...args: unknown[]) => apiFetch(...args),
   isApiError: () => false,
 }));
@@ -54,6 +66,23 @@ describe("SettingsAccountPaneBody", () => {
     expect(
       screen.getByRole("button", { name: /update display name/i })
     ).toBeInTheDocument();
+  });
+
+  it("does not reload account data while local form fields change", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({
+      data: { email: "ada@example.com", display_name: "Ada" },
+    });
+    const user = userEvent.setup();
+
+    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+
+    const nameInput = await screen.findByDisplayValue("Ada");
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    await user.type(nameInput, " Updated");
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
   });
 
   it("shows a success notice when the email-change action resolves ok", async () => {

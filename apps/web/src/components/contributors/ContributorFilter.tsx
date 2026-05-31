@@ -13,6 +13,8 @@ interface ContributorFilterProps {
   onChange: (handles: string[]) => void;
 }
 
+const CONTRIBUTOR_SEARCH_DEBOUNCE_MS = 200;
+
 function dedupeHandles(handles: string[]): string[] {
   const seen = new Set<string>();
   const next: string[] = [];
@@ -35,40 +37,57 @@ export default function ContributorFilter({
   const [suggestions, setSuggestions] = useState<ContributorSummary[]>([]);
   const [selectedByHandle, setSelectedByHandle] = useState<Record<string, ContributorSummary>>({});
   const requestIdRef = useRef(0);
+  const selectedHandleRequestsRef = useRef(new Set<string>());
+  const selectedHandleSetRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
   const normalizedHandles = useMemo(() => dedupeHandles(selectedHandles), [selectedHandles]);
 
   useEffect(() => {
-    let cancelled = false;
+    selectedHandleSetRef.current = new Set(normalizedHandles);
+  }, [normalizedHandles]);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     for (const handle of normalizedHandles) {
-      if (selectedByHandle[handle]) {
+      if (selectedByHandle[handle] || selectedHandleRequestsRef.current.has(handle)) {
         continue;
       }
+      selectedHandleRequestsRef.current.add(handle);
       void fetchContributor(handle)
         .then((response) => {
-          if (cancelled) {
+          if (!mountedRef.current || !selectedHandleSetRef.current.has(handle)) {
             return;
           }
-          setSelectedByHandle((current) => ({
-            ...current,
-            [handle]: response,
-          }));
+          setSelectedByHandle((current) =>
+            current[handle]
+              ? current
+              : {
+                  ...current,
+                  [handle]: response,
+                }
+          );
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          selectedHandleRequestsRef.current.delete(handle);
+        });
     }
-    return () => {
-      cancelled = true;
-    };
   }, [normalizedHandles, selectedByHandle]);
 
   useEffect(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     const trimmed = query.trim();
     if (trimmed.length < 2) {
       setSuggestions([]);
       return;
     }
 
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
     const timer = setTimeout(() => {
       void fetchContributors(trimmed)
         .then((contributors) => {
@@ -85,7 +104,7 @@ export default function ContributorFilter({
             setSuggestions([]);
           }
         });
-    }, 200);
+    }, CONTRIBUTOR_SEARCH_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timer);

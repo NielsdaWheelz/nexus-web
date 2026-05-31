@@ -47,6 +47,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from llm_calling.router import LLMRouter
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
@@ -71,6 +72,37 @@ from nexus.responses import (
 from nexus.services.bootstrap import ensure_user_and_default_library
 
 logger = get_logger(__name__)
+
+
+async def validate_json_request_body(request: Request) -> JSONResponse | None:
+    """Pre-validate JSON request bodies without treating disconnects as 500s."""
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return None
+    content_type = request.headers.get("content-type", "")
+    if "application/json" not in content_type:
+        return None
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.info(
+            "request_body_client_disconnected",
+            path=request.url.path,
+            method=request.method,
+        )
+        return JSONResponse(
+            status_code=499,
+            content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
+        )
+    if not body:
+        return None
+    try:
+        json.loads(body)
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=400,
+            content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Malformed JSON body"),
+        )
+    return None
 
 
 def create_bootstrap_callback():
@@ -239,20 +271,9 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     @app.middleware("http")
     async def catch_json_decode_errors(request: Request, call_next):
         """Catch JSON decode errors before they reach route handlers."""
-        if request.method in ("POST", "PUT", "PATCH"):
-            content_type = request.headers.get("content-type", "")
-            if "application/json" in content_type:
-                body = await request.body()
-                if body:
-                    try:
-                        json.loads(body)
-                    except json.JSONDecodeError:
-                        return JSONResponse(
-                            status_code=400,
-                            content=error_response(
-                                ApiErrorCode.E_INVALID_REQUEST, "Malformed JSON body"
-                            ),
-                        )
+        body_error_response = await validate_json_request_body(request)
+        if body_error_response is not None:
+            return body_error_response
         return await call_next(request)
 
     # Include API routes (must be before middleware for correct ordering)

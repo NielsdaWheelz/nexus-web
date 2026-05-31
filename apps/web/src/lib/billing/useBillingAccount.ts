@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { useCallback, useState } from "react";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { toFeedback } from "@/components/feedback/Feedback";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
@@ -39,28 +39,24 @@ interface BillingAccountResponse {
 }
 
 export function useBillingAccount() {
-  const [account, setAccount] = useState<BillingAccount | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadAccount = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await apiFetch<BillingAccountResponse>("/api/billing/account");
-      setAccount(response.data);
-    } catch (loadError) {
-      setError(toFeedback(loadError, { fallback: "Failed to load billing account" }).title);
-      setAccount(null);
-    } finally {
-      setLoading(false);
-    }
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const accountResource = useApiResource<BillingAccountResponse>({
+    cacheKey: `billing-account:${reloadVersion}`,
+    path: () => "/api/billing/account",
+  });
+  const reload = useCallback(() => {
+    setReloadVersion((version) => version + 1);
   }, []);
 
-  useEffect(() => {
-    void loadAccount();
-  }, [loadAccount]);
+  const account =
+    accountResource.status === "ready" ? accountResource.data.data : null;
+  const loading = accountResource.status === "loading";
+  const error =
+    accountResource.status === "error"
+      ? toFeedback(accountResource.error, {
+          fallback: "Failed to load billing account",
+        }).title
+      : null;
 
-  return { account, loading, error, reload: loadAccount };
+  return { account, loading, error, reload };
 }

@@ -63,6 +63,7 @@ export function useChatRunTail({
   onRunDone,
   onConversationAvailable,
   onReferenceAdded,
+  shouldStartRun,
   shouldApplyRun,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
@@ -72,9 +73,11 @@ export function useChatRunTail({
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
   onReferenceAdded?: (data: SSEReferenceAddedEvent["data"]) => void;
+  shouldStartRun?: (target: RunVisibilityTarget) => boolean;
   shouldApplyRun?: (target: RunVisibilityTarget) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const mountedRef = useRef(false);
   const activeStreamsRef = useRef<Map<string, () => void>>(new Map());
   const runTokensRef = useRef<Map<string, number>>(new Map());
   const firstDeltaRunIdsRef = useRef<Set<string>>(new Set());
@@ -116,8 +119,17 @@ export function useChatRunTail({
     setActiveRunId(null);
   }, []);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortAll();
+    };
+  }, [abortAll]);
+
   const tailChatRun = useCallback(
     async (runData: ChatRunData) => {
+      if (!mountedRef.current) return;
       const runId = runData.run.id;
 
       const originalUserId = runData.user_message.id;
@@ -148,6 +160,16 @@ export function useChatRunTail({
       const currentRunIsVisible = () =>
         runIsVisible(runData, currentUserId, currentAssistantId);
 
+      const runCanStart = () =>
+        mountedRef.current &&
+        (shouldStartRun?.({
+          runId,
+          conversationId: runData.conversation.id,
+          userMessageId: currentUserId,
+          assistantMessageId: currentAssistantId,
+        }) ??
+          true);
+
       const mergeRunMessagesIfVisible = (
         data: ChatRunData,
         idsToReplace?: string[],
@@ -157,6 +179,8 @@ export function useChatRunTail({
         }
         mergeRunMessages(data, idsToReplace);
       };
+
+      if (!runCanStart()) return;
 
       if (activeStreamsRef.current.has(runId)) {
         mergeRunMessagesIfVisible(runData);
@@ -271,7 +295,10 @@ export function useChatRunTail({
       };
 
       const startStream = async (): Promise<void> => {
-        if (runTokensRef.current.get(runId) !== token || finished) return;
+        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
+          finishRun();
+          return;
+        }
         clearRetryTimer();
         let streamBaseUrl: string;
         let firstStreamToken: string | null = null;
@@ -286,7 +313,10 @@ export function useChatRunTail({
           return;
         }
 
-        if (runTokensRef.current.get(runId) !== token || finished) return;
+        if (runTokensRef.current.get(runId) !== token || finished || !runCanStart()) {
+          finishRun();
+          return;
+        }
 
         const abort = sseClientDirect<SSEEvent>({
           url: `${streamBaseUrl}/chat-runs/${runId}/events`,
@@ -405,10 +435,9 @@ export function useChatRunTail({
       onRunDone,
       onRunFinished,
       shouldApplyRun,
+      shouldStartRun,
     ],
   );
-
-  useEffect(() => abortAll, [abortAll]);
 
   return {
     activeRunId,

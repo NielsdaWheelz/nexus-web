@@ -39,6 +39,18 @@ vi.mock("@/lib/vault/localVault", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
+  ApiError: class ApiError extends Error {
+    readonly status: number;
+    readonly code: string;
+    readonly requestId?: string;
+
+    constructor(status: number, code: string, message: string, requestId?: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+      this.requestId = requestId;
+    }
+  },
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
   isApiError: () => false,
 }));

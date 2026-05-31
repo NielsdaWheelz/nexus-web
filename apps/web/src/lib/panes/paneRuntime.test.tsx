@@ -79,6 +79,20 @@ function RouterIdentityProbe({ onRouter }: { onRouter: (value: unknown) => void 
   return null;
 }
 
+function RouterStateProbe({ onRouter }: { onRouter: (value: unknown) => void }) {
+  const router = usePaneRouter();
+  useEffect(() => {
+    onRouter(router);
+  }, [onRouter, router]);
+  return (
+    <div
+      data-testid="router-state"
+      data-can-go-back={router.canGoBack ? "true" : "false"}
+      data-can-go-forward={router.canGoForward ? "true" : "false"}
+    />
+  );
+}
+
 function GoBackForwardOnMount() {
   const router = usePaneRouter();
   useEffect(() => {
@@ -284,6 +298,59 @@ describe("PaneRuntimeProvider", () => {
     );
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(onRouter).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps scoped router commands stable across navigation state changes", async () => {
+    const onRouter = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const stableProps = {
+      paneId: "pane-1",
+      href: "/libraries/library-1",
+      routeId: identity.routeId,
+      resourceRef: identity.resourceRef,
+      resourceKey: identity.resourceKey,
+      onNavigatePane: vi.fn(),
+      onReplacePane: vi.fn(),
+      onOpenInNewPane: vi.fn(),
+      onGoBackPane: vi.fn(),
+      onGoForwardPane: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <PaneRuntimeProvider
+        {...stableProps}
+        canGoBack={false}
+        canGoForward={false}
+      >
+        <RouterStateProbe onRouter={onRouter} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(onRouter).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("router-state")).toHaveAttribute("data-can-go-back", "false");
+    expect(screen.getByTestId("router-state")).toHaveAttribute(
+      "data-can-go-forward",
+      "false",
+    );
+
+    rerender(
+      <PaneRuntimeProvider
+        {...stableProps}
+        canGoBack
+        canGoForward
+      >
+        <RouterStateProbe onRouter={onRouter} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("router-state")).toHaveAttribute("data-can-go-back", "true");
+    });
+    expect(screen.getByTestId("router-state")).toHaveAttribute(
+      "data-can-go-forward",
+      "true",
+    );
     expect(onRouter).toHaveBeenCalledTimes(1);
   });
 

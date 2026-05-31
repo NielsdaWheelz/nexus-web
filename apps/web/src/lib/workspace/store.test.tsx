@@ -1015,6 +1015,78 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("does not recapture restored sessions or rerestore after metric changes", async () => {
+    window.history.replaceState({}, "", "/conversations/conversation-1");
+    const sessionCalls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
+        sessionCalls.push("PUT");
+        return jsonResponse({ data: null });
+      }
+      if (url.pathname === "/api/me/workspace-session") {
+        sessionCalls.push("GET");
+        return jsonResponse({
+          data: {
+            own: {
+              state: workspaceState({
+                activePrimaryPaneId: "pane-libraries",
+                primaryPanes: [
+                  pane("pane-libraries", "/libraries"),
+                  pane("pane-conversation", "/conversations/conversation-1"),
+                  pane("pane-notes", "/notes"),
+                ],
+              }),
+            },
+            most_recent_elsewhere: null,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    });
+
+    let store: WorkspaceStore | null = null;
+    const { rerender } = render(
+      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
+      </WorkspaceStoreProvider>,
+    );
+    const workspace = () => {
+      if (!store) {
+        throw new Error("Workspace store has not mounted yet");
+      }
+      return store;
+    };
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
+        "/libraries",
+        "/conversations/conversation-1",
+        "/notes",
+      ]);
+    });
+    expect(sessionCalls).toEqual(["GET"]);
+
+    rerender(
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={{ primaryMinWidthPx: 720, primaryDefaultWidthPx: 720 }}
+      >
+        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
+      </WorkspaceStoreProvider>,
+    );
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
+        "/libraries",
+        "/conversations/conversation-1",
+        "/notes",
+      ]);
+      expect(activeHref(workspace())).toBe("/conversations/conversation-1");
+    });
+    flushWorkspaceSession();
+    expect(sessionCalls).toEqual(["GET"]);
+  });
+
   it("projects the active pane href to the address bar via replaceState, never pushState", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
     const pushStateSpy = vi.spyOn(window.history, "pushState");

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   isReaderPulseTarget,
   READER_PULSE_HIGHLIGHT,
@@ -40,26 +40,46 @@ function targetFromPulse(detail: ReaderPulseTarget): ReaderTarget | null {
   return null;
 }
 
+function hashFromPaneHref(href: string | null): string {
+  if (!href) return "";
+  try {
+    return new URL(href, window.location.origin).hash;
+  } catch {
+    return "";
+  }
+}
+
 export function useReaderTarget(mediaId: string): ReaderTargetState {
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
+  const paneHref = paneRuntime?.href ?? null;
+  const hasPaneRuntime = paneRuntime !== null;
   const [state, setState] = useState<{
     target: ReaderTarget | null;
     status: ReaderTargetState["status"];
   }>(() => ({ target: null, status: "idle" }));
   const stateRef = useRef(state);
+  const mediaIdRef = useRef(mediaId);
   stateRef.current = state;
 
   useEffect(() => {
-    const parsed =
+    const mediaChanged = mediaIdRef.current !== mediaId;
+    mediaIdRef.current = mediaId;
+    const hash =
       typeof window === "undefined"
-        ? null
-        : parseReaderTargetHash(window.location.hash);
-    setState(
-      parsed
-        ? { target: { ...parsed, origin: "hash" }, status: "pending" }
-        : { target: null, status: "idle" },
-    );
-  }, [mediaId]);
+        ? ""
+        : hasPaneRuntime
+          ? hashFromPaneHref(paneHref)
+          : window.location.hash;
+    const parsed = parseReaderTargetHash(hash);
+    if (parsed) {
+      setState({ target: { ...parsed, origin: "hash" }, status: "pending" });
+      return;
+    }
+    if (mediaChanged) {
+      setState({ target: null, status: "idle" });
+    }
+  }, [hasPaneRuntime, mediaId, paneHref]);
 
   useEffect(() => {
     function listener(event: Event) {
@@ -84,9 +104,16 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
     const prev = stateRef.current.target;
     setState((s) => ({ ...s, status: "active" }));
     if (prev?.origin === "hash") {
-      router.replace(window.location.pathname + window.location.search);
+      const pathname = paneRuntime?.pathname ?? window.location.pathname;
+      const search =
+        paneRuntime?.searchParams
+          ? paneRuntime.searchParams.size > 0
+            ? `?${paneRuntime.searchParams.toString()}`
+            : ""
+          : window.location.search;
+      router.replace(pathname + search);
     }
-  }, [router]);
+  }, [paneRuntime?.pathname, paneRuntime?.searchParams, router]);
 
   const clearTarget = useCallback(() => {
     setState({ target: null, status: "dismissed" });

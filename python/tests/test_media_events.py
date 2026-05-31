@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.api.routes import media_events as media_events_route
+from nexus.db.listen import open_stream_listener
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.factories import create_test_media_in_library
 from tests.utils.db import DirectSessionManager
@@ -75,8 +76,16 @@ async def test_media_events_emits_state_on_open_and_changes_then_done(
     direct_db.register_cleanup("users", "id", user_id)
 
     request = _FakeRequest()
+    listener = await open_stream_listener(
+        "media_events",
+        str(media_id),
+        media_events_route.KEEPALIVE_INTERVAL_SECONDS,
+    )
     generator = media_events_route._tail_media_events(
-        request=request, media_id=media_id, viewer_id=user_id
+        request=request,
+        media_id=media_id,
+        viewer_id=user_id,
+        listener=listener,
     )
 
     # First yield: the initial `state` snapshot reflecting `pending`.

@@ -25,6 +25,7 @@ export interface LibraryForEdit {
 }
 
 type InviteRole = "admin" | "member";
+const INVITE_SEARCH_DEBOUNCE_MS = 300;
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                             */
@@ -99,6 +100,7 @@ export default function LibraryEditDialog({
     null
   );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestRef = useRef(0);
   const resultsRef = useRef<HTMLUListElement>(null);
 
   const nameChanged = draftName.trim() !== library.name;
@@ -116,39 +118,53 @@ export default function LibraryEditDialog({
 
   // Debounced search
   const doSearch = useCallback(
-    async (q: string) => {
-      if (!onSearchUsers || q.length < 3) {
-        setSearchResults([]);
-        setShowResults(false);
+    async (q: string, requestId: number) => {
+      if (!onSearchUsers) {
         return;
       }
       setSearching(true);
       try {
         const results = await onSearchUsers(q);
+        if (searchRequestRef.current !== requestId) {
+          return;
+        }
         setSearchResults(results);
         setShowResults(results.length > 0);
       } catch {
-        setSearchResults([]);
-        setShowResults(false);
+        if (searchRequestRef.current === requestId) {
+          setSearchResults([]);
+          setShowResults(false);
+        }
       } finally {
-        setSearching(false);
+        if (searchRequestRef.current === requestId) {
+          setSearching(false);
+        }
       }
     },
     [onSearchUsers]
   );
 
   useEffect(() => {
-    if (selectedUser) return; // Don't search while a user is selected
+    const requestId = searchRequestRef.current + 1;
+    searchRequestRef.current = requestId;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = inviteQuery.trim();
+    if (selectedUser || !onSearchUsers || trimmed.length < 3) {
+      setSearchResults([]);
+      setShowResults(false);
+      setSearching(false);
+      return;
+    }
     debounceRef.current = setTimeout(() => {
-      void doSearch(inviteQuery);
-    }, 300);
+      void doSearch(trimmed, requestId);
+    }, INVITE_SEARCH_DEBOUNCE_MS);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [inviteQuery, doSearch, selectedUser]);
+  }, [inviteQuery, doSearch, onSearchUsers, selectedUser]);
 
   const handleSelectUser = (user: UserSearchResult) => {
+    searchRequestRef.current += 1;
     setSelectedUser(user);
     setInviteQuery(user.email || user.user_id);
     setShowResults(false);
@@ -156,6 +172,7 @@ export default function LibraryEditDialog({
   };
 
   const handleInviteQueryChange = (value: string) => {
+    searchRequestRef.current += 1;
     setInviteQuery(value);
     if (selectedUser) {
       setSelectedUser(null);
@@ -170,6 +187,7 @@ export default function LibraryEditDialog({
     setInviting(true);
     try {
       await onCreateInvite(identifier, inviteRole);
+      searchRequestRef.current += 1;
       setInviteQuery("");
       setSelectedUser(null);
       setSearchResults([]);

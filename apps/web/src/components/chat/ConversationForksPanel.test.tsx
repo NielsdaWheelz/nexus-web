@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -19,6 +20,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) return new URL(input.url).pathname;
   return new URL(String(input), "http://localhost").pathname;
+}
+
+function urlOf(input: RequestInfo | URL): URL {
+  if (input instanceof Request) return new URL(input.url);
+  return new URL(String(input), "http://localhost");
 }
 
 const parentFork: ForkOption = {
@@ -268,6 +274,47 @@ describe("ConversationForksPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("treeitem")).toHaveLength(3);
     });
+  });
+
+  it("aborts superseded fork searches and ignores late results", async () => {
+    let resolveChildSearch: (response: Response) => void = () => undefined;
+    const childSearchPromise = new Promise<Response>((resolve) => {
+      resolveChildSearch = resolve;
+    });
+    let childSearchSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = urlOf(input);
+        if (url.searchParams.get("search") === "child") {
+          childSearchSignal = init?.signal ?? undefined;
+          return childSearchPromise;
+        }
+        return jsonResponse({
+          data: { forks: [parentFork, childFork, siblingFork] },
+        });
+      }),
+    );
+
+    renderPanel();
+    await visibleTreeItems();
+
+    const searchInput = screen.getByRole("textbox", { name: "Search forks" });
+    fireEvent.change(searchInput, { target: { value: "child" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(childSearchSignal).toBeDefined());
+
+    fireEvent.change(searchInput, { target: { value: "" } });
+    await waitFor(() => expect(childSearchSignal?.aborted).toBe(true));
+    await waitFor(() => {
+      expect(screen.getAllByRole("treeitem")).toHaveLength(3);
+    });
+
+    await act(async () => {
+      resolveChildSearch(jsonResponse({ data: { forks: [childFork] } }));
+    });
+
+    expect(screen.getAllByRole("treeitem")).toHaveLength(3);
   });
 
   it("saves a renamed fork and refreshes fork state", async () => {

@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import {
   FeedbackNotice,
   toFeedback,
@@ -35,6 +36,10 @@ interface ApiKey {
   created_at: string | null;
   last_tested_at: string | null;
   last_used_at: string | null;
+}
+
+interface ApiKeysResponse {
+  data: ApiKey[];
 }
 
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
@@ -91,13 +96,18 @@ function statusLabel(status: ApiKeyStatus): string {
 
 export default function SettingsKeysPaneBody() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [keysRefreshVersion, setKeysRefreshVersion] = useState(0);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [editing, setEditing] = useState<EditState>(null);
   const [apiKey, setApiKey] = useState("");
   const [formError, setFormError] = useState<FeedbackContent | null>(null);
   const [formSuccess, setFormSuccess] = useState<FeedbackContent | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const keysResource = useApiResource<ApiKeysResponse>({
+    cacheKey: `settings-keys:${keysRefreshVersion}`,
+    path: () => "/api/keys",
+  });
+  const loading = keysResource.status === "loading" && keys.length === 0;
 
   const providerStates = useMemo(() => {
     return [...keys].sort((a, b) => {
@@ -107,21 +117,21 @@ export default function SettingsKeysPaneBody() {
     });
   }, [keys]);
 
-  const fetchKeys = useCallback(async () => {
-    try {
-      const response = await apiFetch<{ data: ApiKey[] }>("/api/keys");
-      setKeys(response.data);
-      setError(null);
-    } catch (err) {
-      setError(toFeedback(err, { fallback: "Failed to load keys" }));
-    } finally {
-      setLoading(false);
-    }
+  const refreshKeys = useCallback(() => {
+    setKeysRefreshVersion((version) => version + 1);
   }, []);
 
   useEffect(() => {
-    fetchKeys();
-  }, [fetchKeys]);
+    if (keysResource.status === "ready") {
+      setKeys(keysResource.data.data);
+      setError(null);
+      return;
+    }
+
+    if (keysResource.status === "error") {
+      setError(toFeedback(keysResource.error, { fallback: "Failed to load keys" }));
+    }
+  }, [keysResource]);
 
   const openEditor = useCallback((provider: string, mode: "connect" | "replace") => {
     setEditing({ provider, mode });
@@ -153,7 +163,7 @@ export default function SettingsKeysPaneBody() {
         });
         setFormSuccess({ severity: "success", title: `${providerLabel(provider)} key saved.` });
         setEditing(null);
-        await fetchKeys();
+        refreshKeys();
       } catch (err) {
         setFormError(toFeedback(err, { fallback: "Failed to save key" }));
       } finally {
@@ -162,7 +172,7 @@ export default function SettingsKeysPaneBody() {
         setBusyProvider(null);
       }
     },
-    [apiKey, editing, fetchKeys]
+    [apiKey, editing, refreshKeys]
   );
 
   const handleRevoke = useCallback(
@@ -174,7 +184,7 @@ export default function SettingsKeysPaneBody() {
       setBusyProvider(key.provider);
       try {
         await apiFetch(`/api/keys/${key.id}`, { method: "DELETE" });
-        await fetchKeys();
+        refreshKeys();
         setFormSuccess({
           severity: "success",
           title: `${providerLabel(key.provider, key)} key revoked.`,
@@ -185,7 +195,7 @@ export default function SettingsKeysPaneBody() {
         setBusyProvider(null);
       }
     },
-    [fetchKeys]
+    [refreshKeys]
   );
 
   const handleTest = useCallback(
@@ -203,7 +213,7 @@ export default function SettingsKeysPaneBody() {
       setBusyProvider(key.provider);
       try {
         await apiFetch(`/api/keys/${key.id}/test`, { method: "POST" });
-        await fetchKeys();
+        refreshKeys();
         setFormSuccess({
           severity: "success",
           title: `${providerLabel(key.provider, key)} key tested.`,
@@ -214,7 +224,7 @@ export default function SettingsKeysPaneBody() {
         setBusyProvider(null);
       }
     },
-    [fetchKeys]
+    [refreshKeys]
   );
 
   return (

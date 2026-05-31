@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { toFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { isAbortError } from "@/lib/errors";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -14,6 +15,7 @@ import {
   type TranscriptRequestForecast,
   type TranscriptState,
 } from "@/lib/media/transcriptView";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./page.module.css";
 
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
@@ -53,6 +55,7 @@ export default function TranscriptStatePanel({
   const [transcriptRequestForecast, setTranscriptRequestForecast] =
     useState<TranscriptRequestForecast | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const onTranscriptStateChangeRef = useRef(onTranscriptStateChange);
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionLocked = billingAccount != null && !billingAccount.can_transcribe;
   const requestDisabled =
@@ -61,6 +64,29 @@ export default function TranscriptStatePanel({
     transcriptionLocked ||
     transcriptRequestInFlight ||
     (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
+
+  useEffect(() => {
+    onTranscriptStateChangeRef.current = onTranscriptStateChange;
+  }, [onTranscriptStateChange]);
+
+  const transcriptForecastKey = useMemo(() => {
+    if (
+      billingLoading ||
+      billingDisabled ||
+      transcriptionLocked ||
+      !canRequestTranscript(transcriptState)
+    ) {
+      return null;
+    }
+
+    return mediaId;
+  }, [
+    billingDisabled,
+    billingLoading,
+    mediaId,
+    transcriptState,
+    transcriptionLocked,
+  ]);
 
   const refreshTranscriptState = useCallback(async () => {
     const mediaResponse = await apiFetch<{
@@ -97,18 +123,13 @@ export default function TranscriptStatePanel({
   }, [mediaId, onTranscriptStateChange]);
 
   useEffect(() => {
-    if (
-      billingLoading ||
-      billingDisabled ||
-      transcriptionLocked ||
-      !canRequestTranscript(transcriptState)
-    ) {
+    if (transcriptForecastKey === null) {
       setTranscriptRequestForecast(null);
       setRequestError(null);
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     const loadForecast = async () => {
       try {
         const forecastResponse = await apiFetch<{
@@ -125,8 +146,9 @@ export default function TranscriptStatePanel({
             reason: "episode_open",
             dry_run: true,
           }),
+          signal: controller.signal,
         });
-        if (cancelled) {
+        if (controller.signal.aborted) {
           return;
         }
 
@@ -137,15 +159,15 @@ export default function TranscriptStatePanel({
           fitsBudget: payload.fits_budget,
         });
         setRequestError(null);
-        onTranscriptStateChange({
+        onTranscriptStateChangeRef.current({
           transcriptState: payload.transcript_state,
           transcriptCoverage: payload.transcript_coverage,
           capabilities: null,
           lastErrorCode: null,
           fragments: null,
         });
-      } catch {
-        if (!cancelled) {
+      } catch (error) {
+        if (!controller.signal.aborted && !isAbortError(error)) {
           setTranscriptRequestForecast(null);
         }
       }
@@ -153,32 +175,21 @@ export default function TranscriptStatePanel({
 
     void loadForecast();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [
-    billingDisabled,
-    billingLoading,
-    mediaId,
-    onTranscriptStateChange,
-    transcriptState,
-    transcriptionLocked,
-  ]);
+  }, [mediaId, transcriptForecastKey]);
 
-  useEffect(() => {
-    if (!shouldPollTranscriptProvisioning(transcriptState)) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void refreshTranscriptState().catch(() => {
+  // justify-polling: transcript provisioning is backend async work without a
+  // stream today; transcript state terminates the schedule.
+  useIntervalPoll({
+    enabled: shouldPollTranscriptProvisioning(transcriptState),
+    onPoll: async () => {
+      await refreshTranscriptState().catch(() => {
         // Keep the request UI responsive even if one poll cycle fails.
       });
-    }, TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [refreshTranscriptState, transcriptState]);
+    },
+    pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
+  });
 
   const handleRequestTranscript = useCallback(async () => {
     if (billingDisabled || billingLoading || transcriptionLocked) {

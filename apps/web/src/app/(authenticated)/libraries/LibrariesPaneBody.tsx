@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
@@ -36,37 +37,43 @@ interface Library {
 }
 
 export default function LibrariesPaneBody() {
-  const paneRuntime = usePaneRuntime();
+  const { openInNewPane } = usePaneRuntime() ?? {};
   const [libraries, setLibraries] = useState<Library[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
+  const librariesResource = useApiResource<{ data: Library[] }>({
+    cacheKey: `libraries:${librariesRefreshVersion}`,
+    path: () => "/api/libraries",
+  });
+  const loading =
+    librariesResource.status === "loading" && libraries.length === 0;
+
+  const refreshLibraries = useCallback(() => {
+    setLibrariesRefreshVersion((version) => version + 1);
+  }, []);
 
   /* ---- Edit dialog state ---- */
   const [editLibrary, setEditLibrary] = useState<Library | null>(null);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
   const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
 
-  const fetchLibraries = async () => {
-    try {
-      const libsResponse = await apiFetch<{ data: Library[] }>("/api/libraries");
-      setLibraries(libsResponse.data);
-      setError(null);
-    } catch (err) {
-      setError(
-        toFeedback(err, {
-          fallback: "Failed to load libraries",
-        })
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchLibraries();
-  }, []);
+    if (librariesResource.status === "ready") {
+      setLibraries(librariesResource.data.data);
+      setError(null);
+      return;
+    }
+
+    if (librariesResource.status === "error") {
+      setError(
+        toFeedback(librariesResource.error, {
+          fallback: "Failed to load libraries",
+        }),
+      );
+    }
+  }, [librariesResource]);
 
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,7 +86,7 @@ export default function LibrariesPaneBody() {
         body: JSON.stringify({ name: newLibraryName.trim() }),
       });
       setNewLibraryName("");
-      await fetchLibraries();
+      refreshLibraries();
     } catch (err) {
       setError(
         toFeedback(err, {
@@ -98,7 +105,10 @@ export default function LibrariesPaneBody() {
       await apiFetch(`/api/libraries/${library.id}`, {
         method: "DELETE",
       });
-      await fetchLibraries();
+      setLibraries((current) =>
+        current.filter((item) => item.id !== library.id),
+      );
+      refreshLibraries();
     } catch (err) {
       setError(
         toFeedback(err, {
@@ -110,13 +120,13 @@ export default function LibrariesPaneBody() {
 
   const handleOpenLibraryChat = useCallback(
     (library: Library) => {
-      paneRuntime?.openInNewPane(
+      openInNewPane?.(
         `/libraries/${library.id}`,
         library.name,
         "library-chat",
       );
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   /* ---- Edit dialog handlers ---- */
@@ -150,9 +160,14 @@ export default function LibrariesPaneBody() {
         body: JSON.stringify({ name }),
       });
       setEditLibrary((prev) => (prev ? { ...prev, name } : null));
-      await fetchLibraries();
+      setLibraries((current) =>
+        current.map((library) =>
+          library.id === editLibrary.id ? { ...library, name } : library,
+        ),
+      );
+      refreshLibraries();
     },
-    [editLibrary]
+    [editLibrary, refreshLibraries],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -234,8 +249,11 @@ export default function LibrariesPaneBody() {
       method: "DELETE",
     });
     closeEditDialog();
-    await fetchLibraries();
-  }, [editLibrary, closeEditDialog]);
+    setLibraries((current) =>
+      current.filter((library) => library.id !== editLibrary.id),
+    );
+    refreshLibraries();
+  }, [editLibrary, closeEditDialog, refreshLibraries]);
 
   /* ---- Edit dialog library data ---- */
 
@@ -304,7 +322,7 @@ export default function LibrariesPaneBody() {
                     library,
                     onOpenChat: () => handleOpenLibraryChat(library),
                     onViewIntelligence: () => {
-                      paneRuntime?.openInNewPane(
+                      openInNewPane?.(
                         `/libraries/${library.id}`,
                         library.name,
                         "library-intelligence",

@@ -58,6 +58,10 @@ interface PaneRuntimeContextValue {
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
+const PaneRouterNavigationContext = createContext<{
+  canGoBack: boolean;
+  canGoForward: boolean;
+} | null>(null);
 
 interface PaneRuntimeProviderProps {
   paneId: string;
@@ -142,40 +146,76 @@ export function PaneRuntimeProvider({
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
   const secondaryPaneId = secondaryPane?.id ?? null;
+  const commandsRef = useRef({
+    paneId,
+    resourceKey,
+    secondaryPaneId,
+    onNavigatePane,
+    onReplacePane,
+    onOpenInNewPane,
+    onGoBackPane,
+    onGoForwardPane,
+    onSetPaneTitle,
+    onSetPaneLayout,
+    onRequestSecondarySurface,
+    onCloseSecondaryPane,
+    onSetSecondarySurface,
+  });
+  commandsRef.current = {
+    paneId,
+    resourceKey,
+    secondaryPaneId,
+    onNavigatePane,
+    onReplacePane,
+    onOpenInNewPane,
+    onGoBackPane,
+    onGoForwardPane,
+    onSetPaneTitle,
+    onSetPaneLayout,
+    onRequestSecondarySurface,
+    onCloseSecondaryPane,
+    onSetSecondarySurface,
+  };
+  const navigationStateRef = useRef({ canGoBack, canGoForward });
+  navigationStateRef.current = { canGoBack, canGoForward };
+  const navigationState = useMemo(
+    () => ({ canGoBack, canGoForward }),
+    [canGoBack, canGoForward],
+  );
   const router = useMemo<PaneScopedRouter>(
     () => ({
-      canGoBack,
-      canGoForward,
+      get canGoBack() {
+        return navigationStateRef.current.canGoBack;
+      },
+      get canGoForward() {
+        return navigationStateRef.current.canGoForward;
+      },
       push: (nextHref: string, options?: { titleHint?: string }) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
-        onNavigatePane(paneId, normalized, options);
+        const current = commandsRef.current;
+        current.onNavigatePane(current.paneId, normalized, options);
       },
       replace: (nextHref: string, options?: { titleHint?: string }) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
-        onReplacePane(paneId, normalized, options);
+        const current = commandsRef.current;
+        current.onReplacePane(current.paneId, normalized, options);
       },
       back: () => {
-        onGoBackPane(paneId);
+        const current = commandsRef.current;
+        current.onGoBackPane(current.paneId);
       },
       forward: () => {
-        onGoForwardPane(paneId);
+        const current = commandsRef.current;
+        current.onGoForwardPane(current.paneId);
       },
     }),
-    [
-      canGoBack,
-      canGoForward,
-      onGoBackPane,
-      onGoForwardPane,
-      onNavigatePane,
-      onReplacePane,
-      paneId,
-    ],
+    [],
   );
   const openInNewPane = useCallback(
     (
@@ -187,40 +227,53 @@ export function PaneRuntimeProvider({
       if (!normalized) {
         return;
       }
-      onOpenInNewPane(normalized, titleHint, secondarySurfaceId);
+      commandsRef.current.onOpenInNewPane(normalized, titleHint, secondarySurfaceId);
     },
-    [onOpenInNewPane],
+    [],
   );
   const setPaneTitle = useCallback(
     (title: string | null) => {
-      onSetPaneTitle?.({ paneId, resourceKey, title });
+      const current = commandsRef.current;
+      current.onSetPaneTitle?.({
+        paneId: current.paneId,
+        resourceKey: current.resourceKey,
+        title,
+      });
     },
-    [onSetPaneTitle, paneId, resourceKey],
+    [],
   );
   const setPaneLayout = useCallback(
     (layout: PaneRuntimeLayout) => {
-      onSetPaneLayout?.({ paneId, resourceKey, layout });
+      const current = commandsRef.current;
+      current.onSetPaneLayout?.({
+        paneId: current.paneId,
+        resourceKey: current.resourceKey,
+        layout,
+      });
     },
-    [onSetPaneLayout, paneId, resourceKey],
+    [],
   );
   const requestSecondarySurface = useCallback(
     (surfaceId: WorkspaceSecondarySurfaceId) => {
-      onRequestSecondarySurface?.(paneId, surfaceId);
+      const current = commandsRef.current;
+      current.onRequestSecondarySurface?.(current.paneId, surfaceId);
     },
-    [onRequestSecondarySurface, paneId],
+    [],
   );
   const closeSecondaryPane = useCallback(() => {
-    if (secondaryPaneId) {
-      onCloseSecondaryPane?.(secondaryPaneId);
+    const current = commandsRef.current;
+    if (current.secondaryPaneId) {
+      current.onCloseSecondaryPane?.(current.secondaryPaneId);
     }
-  }, [onCloseSecondaryPane, secondaryPaneId]);
+  }, []);
   const setSecondarySurface = useCallback(
     (surfaceId: WorkspaceSecondarySurfaceId) => {
-      if (secondaryPaneId) {
-        onSetSecondarySurface?.(secondaryPaneId, surfaceId);
+      const current = commandsRef.current;
+      if (current.secondaryPaneId) {
+        current.onSetSecondarySurface?.(current.secondaryPaneId, surfaceId);
       }
     },
-    [onSetSecondarySurface, secondaryPaneId],
+    [],
   );
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
@@ -261,7 +314,13 @@ export function PaneRuntimeProvider({
     ]
   );
 
-  return <PaneRuntimeContext.Provider value={value}>{children}</PaneRuntimeContext.Provider>;
+  return (
+    <PaneRuntimeContext.Provider value={value}>
+      <PaneRouterNavigationContext.Provider value={navigationState}>
+        {children}
+      </PaneRouterNavigationContext.Provider>
+    </PaneRuntimeContext.Provider>
+  );
 }
 
 export function usePaneRuntime(): PaneRuntimeContextValue | null {
@@ -270,7 +329,8 @@ export function usePaneRuntime(): PaneRuntimeContextValue | null {
 
 export function usePaneRouter(): PaneScopedRouter {
   const paneRuntime = usePaneRuntime();
-  if (!paneRuntime) {
+  const navigationState = useContext(PaneRouterNavigationContext);
+  if (!paneRuntime || !navigationState) {
     throw new Error("usePaneRouter must be used inside PaneRuntimeProvider");
   }
   return paneRuntime.router;

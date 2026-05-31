@@ -25,6 +25,7 @@ from nexus.auth.stream_token import (
     mint_stream_token,
     verify_stream_token,
 )
+from nexus.db.listen import StreamListenCapacityError
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -270,6 +271,17 @@ def _response_start_headers(sent_messages: list[dict]) -> dict[str, str]:
         key.decode("latin1").lower(): value.decode("latin1")
         for key, value in start.get("headers", [])
     }
+
+
+class _FakeListener:
+    def __init__(self) -> None:
+        self.closed_reason: str | None = None
+
+    async def notifications(self):
+        yield
+
+    async def close(self, *, reason: str = "closed") -> None:
+        self.closed_reason = reason
 
 
 class TestStreamTokenMint:
@@ -537,11 +549,16 @@ class TestChatRunEventStream:
         assert response.text == ""
 
     @pytest.mark.asyncio
-    async def test_tail_closes_when_run_disappears_after_stream_open(self, chat_runs_schema):
+    async def test_tail_closes_when_run_disappears_after_stream_open(self, monkeypatch):
         class Request:
             async def is_disconnected(self) -> bool:
                 return False
 
+        def missing_run(*_args):
+            raise ApiError(ApiErrorCode.E_NOT_FOUND, "Not found")
+
+        monkeypatch.setattr(stream_routes, "_read_chat_run_events", missing_run)
+        listener = _FakeListener()
         chunks = [
             chunk
             async for chunk in stream_routes._tail_chat_run_events(
@@ -549,10 +566,29 @@ class TestChatRunEventStream:
                 run_id=uuid4(),
                 viewer_id=uuid4(),
                 after=0,
+                listener=listener,
             )
         ]
 
         assert chunks == []
+        assert listener.closed_reason == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_route_rejects_listener_capacity_before_response(self, monkeypatch):
+        async def reject_capacity(*_args, **_kwargs):
+            raise StreamListenCapacityError()
+
+        monkeypatch.setattr(stream_routes, "_assert_chat_run_owner", lambda *_args: None)
+        monkeypatch.setattr(stream_routes, "open_stream_listener", reject_capacity)
+
+        with pytest.raises(StreamListenCapacityError):
+            await stream_routes.stream_chat_run_events(
+                request=object(),
+                run_id=uuid4(),
+                viewer_id=uuid4(),
+                after=None,
+                last_event_id=None,
+            )
 
 
 class TestStreamCORSMiddleware:

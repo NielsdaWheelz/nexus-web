@@ -35,6 +35,7 @@ import PdfReader, {
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import {
   FeedbackNotice,
   PDF_PASSWORD_PROTECTED_MESSAGE,
@@ -262,6 +263,17 @@ function metadataRetryTerminalState(
   return null;
 }
 
+function shouldLoadInitialFragments(media: Media): boolean {
+  return (
+    media.kind !== "epub" &&
+    media.kind !== "pdf" &&
+    media.kind !== "web_article" &&
+    (media.kind !== "podcast_episode" && media.kind !== "video"
+      ? true
+      : Boolean(media.capabilities?.can_read))
+  );
+}
+
 interface SelectionState {
   fragmentId: string;
   startOffset: number;
@@ -405,6 +417,12 @@ export default function MediaPaneBody({
 
   const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
+  const paneRouterPush = paneRuntime?.router.push;
+  const openInNewPane = paneRuntime?.openInNewPane;
+  const setPaneLayout = paneRuntime?.setPaneLayout;
+  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
+  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
+  const secondaryPane = paneRuntime?.secondaryPane ?? null;
   const paneMobileChrome = usePaneMobileChromeController();
   const {
     target,
@@ -546,8 +564,7 @@ export default function MediaPaneBody({
     null,
   );
 
-  // Request-version guard for stale EPUB/highlight responses
-  const epubSectionVersionRef = useRef(0);
+  // Request-version guard for stale highlight responses.
   const highlightVersionRef = useRef(0);
 
   // ---- Highlight interaction state ----
@@ -564,45 +581,31 @@ export default function MediaPaneBody({
   const [pdfDocumentHighlights, setPdfDocumentHighlights] = useState<
     PdfHighlightOut[]
   >([]);
-  const [resolvedEvidence, setResolvedEvidence] = useState<
-    EvidenceResolutionResponse["data"] | null
-  >(null);
   const [readerSourceTarget, setReaderSourceTarget] =
     useState<ReaderSourceTarget | null>(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
 
+  const resolvedEvidenceResource = useApiResource<EvidenceResolutionResponse>({
+    cacheKey: requestedEvidenceId ? `${id}:${requestedEvidenceId}` : null,
+    path: () => `/api/media/${id}/evidence/${requestedEvidenceId!}`,
+  });
+
   useEffect(() => {
-    if (!requestedEvidenceId) {
-      setResolvedEvidence(null);
-      return;
-    }
-
-    let cancelled = false;
-    void apiFetch<EvidenceResolutionResponse>(
-      `/api/media/${id}/evidence/${requestedEvidenceId}`,
-    )
-      .then((response) => {
-        if (!cancelled) {
-          setResolvedEvidence(response.data);
-        }
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setResolvedEvidence(null);
-        if (!isApiError(error) || error.status !== 404) {
-          feedback.show({
-            severity: "error",
-            title: "Failed to resolve citation",
-          });
-        }
+    if (
+      resolvedEvidenceResource.status === "error" &&
+      resolvedEvidenceResource.error.status !== 404
+    ) {
+      feedback.show({
+        severity: "error",
+        title: "Failed to resolve citation",
       });
+    }
+  }, [feedback, resolvedEvidenceResource]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [feedback, id, requestedEvidenceId]);
+  const resolvedEvidence =
+    resolvedEvidenceResource.status === "ready"
+      ? resolvedEvidenceResource.data.data
+      : null;
 
   const resolvedEvidenceParams = resolvedEvidence?.resolver.params ?? null;
   const resolvedEvidenceHighlight =
@@ -1087,62 +1090,62 @@ export default function MediaPaneBody({
   // Data Fetching — initial load
   // ==========================================================================
 
+  const initialMediaResource = useAsyncResource<{
+    media: Media;
+    fragments: Fragment[];
+  }>({
+    cacheKey: id,
+    load: async (signal) => {
+      const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${id}`, {
+        signal,
+      });
+      const nextMedia = mediaResp.data;
+      if (!shouldLoadInitialFragments(nextMedia)) {
+        return { media: nextMedia, fragments: [] };
+      }
+
+      const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
+        `/api/media/${id}/fragments`,
+        { signal },
+      );
+      return { media: nextMedia, fragments: fragmentsResp.data };
+    },
+  });
+
   useEffect(() => {
-    let cancelled = false;
     metadataRetryBaselineRef.current = null;
     setMetadataRetryPollsRemaining(0);
     setMetadataRetryPollExhausted(false);
-
-    const fetchData = async () => {
-      try {
-        const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${id}`);
-        if (cancelled) return;
-        const m = mediaResp.data;
-        setMedia(m);
-
-        const shouldLoadFragments =
-          m.kind !== "epub" &&
-          m.kind !== "pdf" &&
-          (m.kind !== "podcast_episode" && m.kind !== "video"
-            ? true
-            : Boolean(m.capabilities?.can_read));
-
-        if (shouldLoadFragments) {
-          const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
-            `/api/media/${id}/fragments`,
-          );
-          if (cancelled) return;
-          setFragments(fragmentsResp.data);
-        } else {
-          setFragments([]);
-        }
-        setActiveTranscriptFragmentId(null);
-
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        if (isApiError(err)) {
-          if (err.status === 404) {
-            setError({
-              severity: "error",
-              title: "Media not found or you don't have access to it.",
-            });
-          } else {
-            setError(toFeedback(err, { fallback: "Failed to load media" }));
-          }
-        } else {
-          setError({ severity: "error", title: "Failed to load media" });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    fetchData();
-    return () => {
-      cancelled = true;
-    };
   }, [id]);
+
+  useEffect(() => {
+    if (initialMediaResource.status === "loading") {
+      setLoading(true);
+      return;
+    }
+
+    if (initialMediaResource.status === "ready") {
+      setMedia(initialMediaResource.data.media);
+      setFragments(initialMediaResource.data.fragments);
+      setActiveTranscriptFragmentId(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (initialMediaResource.status === "error") {
+      const err = initialMediaResource.error;
+      if (err.status === 404) {
+        setError({
+          severity: "error",
+          title: "Media not found or you don't have access to it.",
+        });
+      } else {
+        setError(toFeedback(err, { fallback: "Failed to load media" }));
+      }
+      setLoading(false);
+    }
+  }, [initialMediaResource]);
 
   const handleTranscriptStateChange = useCallback(
     ({
@@ -1263,6 +1266,8 @@ export default function MediaPaneBody({
     }
   }, [refreshMetadataRetryState]);
 
+  // justify-polling: metadata retry completion is backend async work without a
+  // stream today; the named remaining-count state terminates the schedule.
   useIntervalPoll({
     enabled:
       metadataRetryPollsRemaining > 0 &&
@@ -1368,53 +1373,52 @@ export default function MediaPaneBody({
     );
   }, []);
 
+  const epubSectionResource = useAsyncResource<EpubSectionContent>({
+    cacheKey: isEpub && activeSectionId ? `${id}:${activeSectionId}` : null,
+    load: async (signal) => {
+      const sectionResp = await apiFetch<{ data: EpubSectionContent }>(
+        `/api/media/${id}/sections/${encodeURIComponent(activeSectionId!)}`,
+        { signal },
+      );
+      return sectionResp.data;
+    },
+  });
+
   useEffect(() => {
-    if (!isEpub || !activeSectionId) return;
+    if (!isEpub || !activeSectionId) {
+      return;
+    }
 
-    const version = ++epubSectionVersionRef.current;
-    const controller = new AbortController();
-
-    setEpubSectionLoading(true);
     setActiveEpubSection(null);
     clearFocus();
     setHighlights([]);
     clearRetainedSelection(false);
-
-    const load = async () => {
-      try {
-        const sectionResp = await apiFetch<{ data: EpubSectionContent }>(
-          `/api/media/${id}/sections/${encodeURIComponent(activeSectionId)}`,
-          { signal: controller.signal },
-        );
-        if (version !== epubSectionVersionRef.current) return;
-        setActiveEpubSection(sectionResp.data);
-        setEpubError(null);
-      } catch (err) {
-        if (
-          controller.signal.aborted ||
-          version !== epubSectionVersionRef.current
-        )
-          return;
-        handleEpubSectionFetchError(err);
-      } finally {
-        if (version === epubSectionVersionRef.current) {
-          setEpubSectionLoading(false);
-        }
-      }
-    };
-
-    load();
-    return () => {
-      controller.abort();
-    };
   }, [
     activeSectionId,
     clearFocus,
     clearRetainedSelection,
-    handleEpubSectionFetchError,
     id,
     isEpub,
   ]);
+
+  useEffect(() => {
+    if (epubSectionResource.status === "loading") {
+      setEpubSectionLoading(true);
+      return;
+    }
+
+    if (epubSectionResource.status === "ready") {
+      setActiveEpubSection(epubSectionResource.data);
+      setEpubError(null);
+      setEpubSectionLoading(false);
+      return;
+    }
+
+    if (epubSectionResource.status === "error") {
+      handleEpubSectionFetchError(epubSectionResource.error);
+    }
+    setEpubSectionLoading(false);
+  }, [epubSectionResource, handleEpubSectionFetchError]);
 
   // EPUB URL/state sync for browser back/forward on ?loc=
   useEffect(() => {
@@ -2594,7 +2598,6 @@ export default function MediaPaneBody({
   useEffect(() => {
     if (targetStatus !== "dismissed") return;
     clearFocus();
-    setResolvedEvidence(null);
     setReaderSourceTarget(null);
   }, [targetStatus, clearFocus]);
 
@@ -3065,8 +3068,8 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   const revealDocChatSecondary = useCallback(() => {
-    paneRuntime?.requestSecondarySurface("reader-doc-chat");
-  }, [paneRuntime]);
+    requestSecondarySurface?.("reader-doc-chat");
+  }, [requestSecondarySurface]);
 
   // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
   const openDocChat = useCallback(() => {
@@ -3117,9 +3120,9 @@ export default function MediaPaneBody({
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
       const route = `/conversations/${conversationId}`;
-      paneRuntime?.openInNewPane(route, title);
+      openInNewPane?.(route, title);
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   // ==========================================================================
@@ -3133,7 +3136,7 @@ export default function MediaPaneBody({
       );
       if (!section) return;
       appliedRequestedReaderLocRef.current = sectionId;
-      paneRuntime?.router.push(buildEpubLocationHref(id, sectionId));
+      paneRouterPush?.(buildEpubLocationHref(id, sectionId));
       beginRestoreSession("opening_target");
       setEpubRestoreRequest(
         buildManualSectionRestoreRequest(sectionId, anchorId),
@@ -3144,7 +3147,7 @@ export default function MediaPaneBody({
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections, id, paneRuntime],
+    [activeSectionId, beginRestoreSession, epubSections, id, paneRouterPush],
   );
 
   const navigateToWebSection = useCallback(
@@ -3171,7 +3174,7 @@ export default function MediaPaneBody({
       setActiveWebSectionId(section.section_id);
       const params = new URLSearchParams({ loc: section.section_id });
       params.set("fragment", section.fragment_id);
-      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
+      paneRouterPush?.(`/media/${id}?${params.toString()}`);
     },
     [
       cancelRestoreSession,
@@ -3179,7 +3182,7 @@ export default function MediaPaneBody({
       clearRetainedSelection,
       feedback,
       id,
-      paneRuntime,
+      paneRouterPush,
       setTarget,
       webSections,
     ],
@@ -3284,9 +3287,9 @@ export default function MediaPaneBody({
       : styles.readerThemeLight
   }`;
   const activeReaderSecondarySurface =
-    paneRuntime?.secondaryPane?.groupId === "reader-tools" &&
-    paneRuntime.secondaryPane.visibility === "visible"
-      ? paneRuntime.secondaryPane.activeSurfaceId
+    secondaryPane?.groupId === "reader-tools" &&
+    secondaryPane.visibility === "visible"
+      ? secondaryPane.activeSurfaceId
       : null;
   // The overview ruler is always on for desktop readable media; the secondary opens
   // to its right. Both occupy width the pane must reserve.
@@ -3357,25 +3360,25 @@ export default function MediaPaneBody({
     renderedHtml,
   );
   useEffect(() => {
-    if (!paneRuntime) {
+    if (!setPaneLayout) {
       return;
     }
-    paneRuntime.setPaneLayout({
+    setPaneLayout({
       primaryWidth:
         isPdf && pdfIntrinsicWidthPx !== null
           ? { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx }
           : { kind: "workspace" },
     });
     return () => {
-      paneRuntime.setPaneLayout({
+      setPaneLayout({
         primaryWidth: { kind: "workspace" },
       });
     };
   }, [
     isMobileViewport,
     isPdf,
-    paneRuntime,
     pdfIntrinsicWidthPx,
+    setPaneLayout,
   ]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
@@ -3543,20 +3546,30 @@ export default function MediaPaneBody({
     (e: React.MouseEvent) => {
       const highlightId = handleReaderContentClick(e);
       if (highlightId && isMobileViewport && showHighlightsPane) {
-        paneRuntime?.requestSecondarySurface("reader-highlights");
+        requestSecondarySurface?.("reader-highlights");
       }
     },
-    [handleReaderContentClick, isMobileViewport, paneRuntime, showHighlightsPane],
+    [
+      handleReaderContentClick,
+      isMobileViewport,
+      requestSecondarySurface,
+      showHighlightsPane,
+    ],
   );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
       focusHighlight(highlightId);
       if (isMobileViewport && showHighlightsPane) {
-        paneRuntime?.requestSecondarySurface("reader-highlights");
+        requestSecondarySurface?.("reader-highlights");
       }
     },
-    [focusHighlight, isMobileViewport, paneRuntime, showHighlightsPane],
+    [
+      focusHighlight,
+      isMobileViewport,
+      requestSecondarySurface,
+      showHighlightsPane,
+    ],
   );
 
   const handleDocumentScroll = useCallback(
@@ -3573,9 +3586,9 @@ export default function MediaPaneBody({
   const handleOpenFullChat = useCallback(
     (conversationId: string) => {
       const route = `/conversations/${conversationId}`;
-      paneRuntime?.openInNewPane(route, "Chat");
+      openInNewPane?.(route, "Chat");
     },
-    [paneRuntime],
+    [openInNewPane],
   );
 
   // Quote a highlight into a brand-new (unsent) conversation in the secondary. The
@@ -3775,7 +3788,7 @@ export default function MediaPaneBody({
         label: "Reader settings",
         restoreFocusOnClose: false,
         onSelect: () => {
-          paneRuntime?.openInNewPane("/settings/reader", "Reader settings");
+          openInNewPane?.("/settings/reader", "Reader settings");
         },
       },
     ];
@@ -3785,7 +3798,7 @@ export default function MediaPaneBody({
         id: "show-highlights",
         label: "Show highlights",
         onSelect: () =>
-          paneRuntime?.requestSecondarySurface("reader-highlights"),
+          requestSecondarySurface?.("reader-highlights"),
       });
     }
 
@@ -3826,9 +3839,10 @@ export default function MediaPaneBody({
     loadLibraryPickerLibraries,
     media,
     openDocChat,
-    paneRuntime,
+    openInNewPane,
     readerProfile.theme,
     refreshSourceBusy,
+    requestSecondarySurface,
     retryMetadataBusy,
     retryProcessingBusy,
     showHighlightsPane,
@@ -3836,15 +3850,15 @@ export default function MediaPaneBody({
   ]);
 
   const closeSecondaryOnMobile = useCallback(() => {
-    if (isMobileViewport) paneRuntime?.closeSecondaryPane();
-  }, [isMobileViewport, paneRuntime]);
+    if (isMobileViewport) closeSecondaryPane?.();
+  }, [closeSecondaryPane, isMobileViewport]);
 
   const handleOpenNoteLink = useCallback(
     (href: string, options: { newPane: boolean }) => {
-      if (options.newPane) paneRuntime?.openInNewPane(href);
-      else paneRuntime?.router.push(href);
+      if (options.newPane) openInNewPane?.(href);
+      else paneRouterPush?.(href);
     },
-    [paneRuntime],
+    [openInNewPane, paneRouterPush],
   );
 
   const contentsSurfaceBody = useMemo(
@@ -3888,11 +3902,11 @@ export default function MediaPaneBody({
 
   const toggleContents = useCallback(() => {
     if (contentsSurfaceActive) {
-      paneRuntime?.closeSecondaryPane();
+      closeSecondaryPane?.();
       return;
     }
-    paneRuntime?.requestSecondarySurface("reader-contents");
-  }, [contentsSurfaceActive, paneRuntime]);
+    requestSecondarySurface?.("reader-contents");
+  }, [closeSecondaryPane, contentsSurfaceActive, requestSecondarySurface]);
 
   const contentsToolbarButton = useMemo(
     () =>
@@ -4105,7 +4119,7 @@ export default function MediaPaneBody({
       if (target.media_id !== id) {
         const route = target.href || `/media/${target.media_id}`;
         const titleHint = target.label ?? "Source";
-        paneRuntime?.openInNewPane(route, titleHint);
+        openInNewPane?.(route, titleHint);
         return;
       }
 
@@ -4122,7 +4136,7 @@ export default function MediaPaneBody({
         }
       }
     },
-    [handleTranscriptSeek, id, paneRuntime],
+    [handleTranscriptSeek, id, openInNewPane],
   );
 
   useEffect(() => {
@@ -4131,9 +4145,9 @@ export default function MediaPaneBody({
     }
     const releaseLocks: Array<() => void> = [];
     if (
-      paneRuntime?.secondaryPane?.groupId === "reader-tools" &&
-      paneRuntime.secondaryPane.visibility === "visible" &&
-      paneRuntime.secondaryPane.activeSurfaceId === "reader-highlights"
+      secondaryPane?.groupId === "reader-tools" &&
+      secondaryPane.visibility === "visible" &&
+      secondaryPane.activeSurfaceId === "reader-highlights"
     ) {
       releaseLocks.push(
         paneMobileChrome.acquireVisibleLock("mobile-secondary"),
@@ -4155,7 +4169,7 @@ export default function MediaPaneBody({
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
-    paneRuntime?.secondaryPane,
+    secondaryPane,
     selection,
   ]);
 
@@ -4374,7 +4388,7 @@ export default function MediaPaneBody({
       }
 
       const params = new URLSearchParams({ fragment: fragmentId });
-      paneRuntime?.router.push(`/media/${id}?${params.toString()}`);
+      paneRouterPush?.(`/media/${id}?${params.toString()}`);
       pendingRulerPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
@@ -4389,14 +4403,14 @@ export default function MediaPaneBody({
       isTranscriptMedia,
       mediaHighlights,
       navigateToSection,
-      paneRuntime,
+      paneRouterPush,
       setTarget,
     ],
   );
 
   const onOpenHighlights = useCallback(() => {
-    paneRuntime?.requestSecondarySurface("reader-highlights");
-  }, [paneRuntime]);
+    requestSecondarySurface?.("reader-highlights");
+  }, [requestSecondarySurface]);
 
   const anchoredHighlightsMeasureKey = useMemo(
     () =>

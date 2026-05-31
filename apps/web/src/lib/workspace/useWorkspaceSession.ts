@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getInstallationId } from "@/lib/workspace/deviceId";
 import {
   getWorkspaceSession,
@@ -17,23 +17,33 @@ const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 export function useWorkspaceSession(
   state: WorkspaceState,
   mounted: boolean,
-  applyRestoredState: (restored: WorkspaceState, deepLinkIntent: WorkspaceState) => void,
+  applyRestoredState: (
+    restored: WorkspaceState,
+    deepLinkIntent: WorkspaceState,
+  ) => WorkspaceState,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): void {
+  const [captureArmed, setCaptureArmed] = useState(false);
   const captureArmedRef = useRef(false);
+  const restoreStartedRef = useRef(false);
   const stateRef = useRef(state);
   const lastSavedRef = useRef(state);
+  const applyRestoredStateRef = useRef(applyRestoredState);
+  const workspacePrimaryMetricsRef = useRef(workspacePrimaryMetrics);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   stateRef.current = state;
+  applyRestoredStateRef.current = applyRestoredState;
+  workspacePrimaryMetricsRef.current = workspacePrimaryMetrics;
 
   // (1) RESTORE — fetch the last session after mount and merge it with the
   // current deep-link intent. Capture stays suspended until the fetch resolves,
   // so the initial workspace cannot overwrite the saved session.
   useEffect(() => {
-    if (!mounted) {
+    if (!mounted || restoreStartedRef.current) {
       return;
     }
+    restoreStartedRef.current = true;
 
     let cancelled = false;
     const baseline = stateRef.current;
@@ -45,11 +55,12 @@ export function useWorkspaceSession(
         if (cancelled) {
           return;
         }
+        const metrics = workspacePrimaryMetricsRef.current;
         const ownState =
-          own != null ? prepareRestoredState(own, workspacePrimaryMetrics) : null;
+          own != null ? prepareRestoredState(own, metrics) : null;
         const elsewhereState =
           mostRecentElsewhere != null
-            ? prepareRestoredState(mostRecentElsewhere, workspacePrimaryMetrics)
+            ? prepareRestoredState(mostRecentElsewhere, metrics)
             : null;
         const restored =
           ownState && isNonTrivialSession(ownState)
@@ -60,24 +71,25 @@ export function useWorkspaceSession(
         // Skip the restore if the user already changed the workspace while
         // the fetch was in flight.
         if (restored && workspaceStatesEqual(stateRef.current, baseline)) {
-          applyRestoredState(restored, baseline);
+          lastSavedRef.current = applyRestoredStateRef.current(restored, baseline);
         }
       } catch {
         // Network or parse failure — proceed without restoring.
       }
       if (!cancelled) {
         captureArmedRef.current = true;
+        setCaptureArmed(true);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [mounted, applyRestoredState, workspacePrimaryMetrics]);
+  }, [mounted]);
 
   // (2) CAPTURE — debounced PUT of the current state once capture is armed.
   useEffect(() => {
-    if (!captureArmedRef.current) {
+    if (!captureArmed) {
       return;
     }
     if (workspaceStatesEqual(state, lastSavedRef.current)) {
@@ -92,7 +104,7 @@ export function useWorkspaceSession(
       lastSavedRef.current = snapshot;
       void putWorkspaceSession(getInstallationId(), snapshot).catch(() => {});
     }, WORKSPACE_SESSION_SYNC_DEBOUNCE_MS);
-  }, [state]);
+  }, [captureArmed, state]);
 
   // (3) FLUSH — keepalive PUT of any pending write on page hide / background.
   useEffect(() => {

@@ -16,7 +16,7 @@ import hashlib
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -1553,6 +1553,104 @@ class TestGetEpubAssetSuccessAndMasking:
         assert "image/png" in resp.headers.get("content-type", "")
         assert resp.headers.get("content-length") == str(len(asset_content))
         assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    def test_storage_read_starts_after_db_connection_release(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+        storage_path = f"media/{media_id}/assets/images/fig1.png"
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": storage_path,
+                    "size_bytes": len(asset_content),
+                    "sha256": hashlib.sha256(asset_content).hexdigest(),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from unittest.mock import patch
+
+        from nexus.db.session import create_session_factory
+        from tests.support.storage import FakeStorageClient
+
+        checked_out = {"count": 0}
+        storage_checked_out_counts: list[int] = []
+
+        class AssertingStorageClient(FakeStorageClient):
+            def stream_object(self, path):
+                storage_checked_out_counts.append(checked_out["count"])
+                yield from super().stream_object(path)
+
+        def on_checkout(*_args):
+            checked_out["count"] += 1
+
+        def on_checkin(*_args):
+            checked_out["count"] -= 1
+
+        fake = AssertingStorageClient()
+        fake.put_object(storage_path, asset_content, "image/png")
+        session_factory = create_session_factory(direct_db.engine)
+
+        event.listen(direct_db.engine, "checkout", on_checkout)
+        event.listen(direct_db.engine, "checkin", on_checkin)
+        try:
+            with (
+                patch("nexus.api.routes.media.get_session_factory", return_value=session_factory),
+                patch("nexus.storage.client.get_storage_client", return_value=fake),
+            ):
+                resp = auth_client.get(
+                    f"/media/{media_id}/assets/images/fig1.png",
+                    headers=auth_headers(user_id),
+                )
+        finally:
+            event.remove(direct_db.engine, "checkout", on_checkout)
+            event.remove(direct_db.engine, "checkin", on_checkin)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.content == asset_content
+        assert storage_checked_out_counts == [0]
 
     def test_unauthorized_viewer_gets_404(self, auth_client, direct_db: DirectSessionManager):
         other_user = create_test_user_id()

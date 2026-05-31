@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { formatPlaybackSpeedLabel } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -34,11 +35,8 @@ import {
 } from "./podcastSubscriptions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
 import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal";
-import {
-  fetchNonDefaultLibraries,
-  patchLibraryMembership,
-  type LibrarySummary,
-} from "@/lib/media/mediaLibraries";
+import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
+import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./page.module.css";
 
@@ -70,6 +68,7 @@ function formatLatestEpisodeLabel(value: string | null): string {
 
 export default function PodcastsPaneBody() {
   const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
   const [rows, setRows] = useState<PodcastSubscriptionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -82,8 +81,9 @@ export default function PodcastsPaneBody() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
-  const [librariesLoading, setLibrariesLoading] = useState(false);
+  const availableLibraries = useNonDefaultLibraries();
+  const libraries = availableLibraries.libraries;
+  const librariesLoading = availableLibraries.loading;
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>("");
   const [librariesByPodcastId, setLibrariesByPodcastId] = useState<
     Record<string, PodcastLibraryMembership[]>
@@ -94,6 +94,8 @@ export default function PodcastsPaneBody() {
   const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
     null
   );
+  const subscriptionRequestIdRef = useRef(0);
+  const subscriptionAbortRef = useRef<AbortController | null>(null);
   const settingsModal = usePodcastSubscriptionSettingsModal({
     onSaved: (response) => {
       setRows((prev) =>
@@ -112,27 +114,93 @@ export default function PodcastsPaneBody() {
     },
   });
 
-  const loadLibraries = useCallback(async () => {
-    if (librariesLoading) {
+  const subscriptionListResource = useAsyncResource<
+    PodcastSubscriptionListItem[]
+  >({
+    cacheKey: [
+      "podcast-subscriptions",
+      subscriptionSort,
+      subscriptionFilter,
+      selectedLibraryId,
+      appliedSearch,
+    ].join(":"),
+    load: async (signal) => {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: "0",
+        sort: subscriptionSort,
+        filter: subscriptionFilter,
+      });
+      if (appliedSearch) {
+        params.set("q", appliedSearch);
+      }
+      if (selectedLibraryId) {
+        params.set("library_id", selectedLibraryId);
+      }
+      const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
+        `/api/podcasts/subscriptions?${params.toString()}`,
+        { signal },
+      );
+      return response.data;
+    },
+  });
+
+  useEffect(() => {
+    if (subscriptionListResource.status === "loading") {
+      subscriptionRequestIdRef.current += 1;
+      subscriptionAbortRef.current?.abort();
+      subscriptionAbortRef.current = null;
+      setLoading(true);
+      setLoadingMore(false);
+      setError(null);
       return;
     }
-    setLibrariesLoading(true);
-    try {
-      setLibraries(await fetchNonDefaultLibraries());
-    } catch (loadError) {
-      setError(toFeedback(loadError, { fallback: "Failed to load libraries" }));
-    } finally {
-      setLibrariesLoading(false);
-    }
-  }, [librariesLoading]);
 
-  const loadSubscriptions = useCallback(
-    async (offset = 0, append = false) => {
-      if (append) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
+    if (subscriptionListResource.status === "ready") {
+      setRows(subscriptionListResource.data);
+      setHasMore(subscriptionListResource.data.length === PAGE_SIZE);
+      setNextOffset(subscriptionListResource.data.length);
+      setLoading(false);
+      setLoadingMore(false);
+      setError(null);
+      return;
+    }
+
+    if (subscriptionListResource.status === "error") {
+      setError(
+        toFeedback(subscriptionListResource.error, {
+          fallback: "Failed to load followed podcasts",
+        }),
+      );
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [subscriptionListResource]);
+
+  const { load: loadAvailableLibraries } = availableLibraries;
+  useEffect(() => {
+    void loadAvailableLibraries();
+  }, [loadAvailableLibraries]);
+
+  useEffect(() => {
+    if (availableLibraries.error) {
+      setError(availableLibraries.error);
+    }
+  }, [availableLibraries.error]);
+
+  const loadMoreSubscriptions = useCallback(
+    async () => {
+      if (loadingMore || !hasMore) {
+        return;
       }
+      const offset = nextOffset;
+      const requestId = subscriptionRequestIdRef.current + 1;
+      const controller = new AbortController();
+      subscriptionAbortRef.current?.abort();
+      subscriptionRequestIdRef.current = requestId;
+      subscriptionAbortRef.current = controller;
+
+      setLoadingMore(true);
       setError(null);
       try {
         const params = new URLSearchParams({
@@ -148,23 +216,47 @@ export default function PodcastsPaneBody() {
           params.set("library_id", selectedLibraryId);
         }
         const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
-          `/api/podcasts/subscriptions?${params.toString()}`
+          `/api/podcasts/subscriptions?${params.toString()}`,
+          { signal: controller.signal }
         );
-        setRows((prev) => (append ? [...prev, ...response.data] : response.data));
+        if (subscriptionRequestIdRef.current !== requestId) {
+          return;
+        }
+        setRows((prev) => [...prev, ...response.data]);
         setHasMore(response.data.length === PAGE_SIZE);
         setNextOffset(offset + response.data.length);
       } catch (loadError) {
+        if (controller.signal.aborted || subscriptionRequestIdRef.current !== requestId) {
+          return;
+        }
         setError(toFeedback(loadError, { fallback: "Failed to load followed podcasts" }));
       } finally {
-        if (append) {
-          setLoadingMore(false);
-        } else {
-          setLoading(false);
+        if (subscriptionRequestIdRef.current !== requestId) {
+          return;
         }
+        if (subscriptionAbortRef.current === controller) {
+          subscriptionAbortRef.current = null;
+        }
+        setLoadingMore(false);
       }
     },
-    [appliedSearch, selectedLibraryId, subscriptionFilter, subscriptionSort]
+    [
+      appliedSearch,
+      hasMore,
+      loadingMore,
+      nextOffset,
+      selectedLibraryId,
+      subscriptionFilter,
+      subscriptionSort,
+    ],
   );
+
+  useEffect(() => {
+    return () => {
+      subscriptionRequestIdRef.current += 1;
+      subscriptionAbortRef.current?.abort();
+    };
+  }, []);
 
   const loadPodcastLibraries = useCallback(
     async (podcastId: string, force = false) => {
@@ -192,14 +284,6 @@ export default function PodcastsPaneBody() {
     },
     [librariesByPodcastId, loadingLibraryPodcastIds]
   );
-
-  useEffect(() => {
-    void loadLibraries();
-  }, [loadLibraries]);
-
-  useEffect(() => {
-    void loadSubscriptions(0, false);
-  }, [loadSubscriptions]);
 
   const handleAddPodcastToLibrary = useCallback(
     async (podcastId: string, libraryId: string) => {
@@ -438,7 +522,7 @@ export default function PodcastsPaneBody() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => paneRuntime?.openInNewPane("/browse?types=podcasts")}
+                onClick={() => openInNewPane?.("/browse?types=podcasts")}
               >
                 Browse
               </Button>
@@ -507,7 +591,7 @@ export default function PodcastsPaneBody() {
                     variant="ghost"
                     size="sm"
                     className={styles.inlineButton}
-                    onClick={() => paneRuntime?.openInNewPane("/browse?types=podcasts")}
+                    onClick={() => openInNewPane?.("/browse?types=podcasts")}
                   >
                     Browse podcasts
                   </Button>
@@ -634,7 +718,7 @@ export default function PodcastsPaneBody() {
               size="md"
               className={styles.loadMoreButton}
               onClick={() => {
-                void loadSubscriptions(nextOffset, true);
+                void loadMoreSubscriptions();
               }}
               disabled={loadingMore}
             >

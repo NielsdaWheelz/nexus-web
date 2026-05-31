@@ -6,11 +6,13 @@ import {
   type ReactNode,
 } from "react";
 import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import styles from "./WorkspaceHost.module.css";
 
 export default function PaneRouteBoundary({ children }: { children: ReactNode }) {
+  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
 
   const handleClickCapture = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -20,10 +22,14 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       }
       const anchor = target.closest("a[href]");
       if (anchor instanceof HTMLAnchorElement) {
-        handlePaneInternalAnchorClick(event, paneRuntime, anchor);
+        handlePaneInternalAnchorClick(
+          event,
+          openInNewPane ? { router, openInNewPane } : null,
+          anchor,
+        );
       }
     },
-    [paneRuntime],
+    [openInNewPane, router],
   );
 
   return (

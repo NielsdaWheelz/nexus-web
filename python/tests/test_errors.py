@@ -7,10 +7,14 @@ Verifies:
 - Malformed JSON returns E_INVALID_REQUEST
 """
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
+from nexus.app import validate_json_request_body
 from nexus.errors import (
     ERROR_CODE_TO_STATUS,
     ApiError,
@@ -190,6 +194,24 @@ class TestMalformedJsonHandling:
         )
         # Should not crash - either 405 (method not allowed) or handled gracefully
         assert response.status_code in (400, 405)
+
+    @pytest.mark.asyncio
+    async def test_json_body_client_disconnect_returns_499(self):
+        """Client disconnects during body read use the disconnect error contract."""
+
+        class DisconnectingRequest:
+            method = "POST"
+            headers = {"content-type": "application/json"}
+            url = SimpleNamespace(path="/api/test")
+
+            async def body(self) -> bytes:
+                raise ClientDisconnect()
+
+        response = await validate_json_request_body(DisconnectingRequest())  # type: ignore[arg-type]
+
+        assert response is not None
+        assert response.status_code == 499
+        assert b"E_CLIENT_DISCONNECT" in response.body
 
 
 class TestUnhandledExceptionHandling:

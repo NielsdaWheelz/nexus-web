@@ -2,17 +2,18 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { ApiError, apiFetch } from "@/lib/api/client";
-import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse-stream";
+import { apiFetch } from "@/lib/api/client";
+import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
 import { toRoman } from "@/lib/toRoman";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { isRecord } from "@/lib/validation";
 import type { OracleCreateResponse } from "../types";
 import { useStickyHeadline } from "../../OracleShell";
@@ -92,7 +93,6 @@ type OracleStreamEvent = {
   payload: Record<string, unknown>;
 };
 
-const ORACLE_RECONNECT_DELAY_MS = 1000;
 const ORACLE_RECONNECT_MAX_ATTEMPTS = 3;
 const LOAD_ERROR_MESSAGE = "The reading could not be loaded. Please retry.";
 const STREAM_ERROR_MESSAGE =
@@ -290,117 +290,27 @@ function applyEvent(
   }
 }
 
-class OracleStreamHttpError extends Error {
-  readonly status: number;
-
-  constructor(status: number) {
-    super("Oracle stream request failed");
-    this.name = "OracleStreamHttpError";
-    this.status = status;
-  }
-}
-
 class OracleStreamParseError extends Error {
-  constructor() {
-    super("Oracle stream data could not be parsed");
+  constructor(message = "Invalid SSE payload for oracle reading") {
+    super(message);
     this.name = "OracleStreamParseError";
   }
 }
 
-function toOracleStreamEvent(event: SSEJsonEvent): OracleStreamEvent | null {
-  const seq = Number(event.id);
-  if (!Number.isSafeInteger(seq) || seq <= 0 || !isRecord(event.data)) {
-    return null;
+function decodeOracleStreamEvent(
+  type: string,
+  data: unknown,
+  eventId: string,
+): OracleStreamEvent {
+  const seq = Number(eventId);
+  if (!Number.isSafeInteger(seq) || seq <= 0 || !isRecord(data)) {
+    throw new OracleStreamParseError();
   }
   return {
     seq,
-    event_type: event.type,
-    payload: event.data,
+    event_type: type,
+    payload: data,
   };
-}
-
-function isRetryableOracleStreamError(error: unknown): boolean {
-  if (error instanceof OracleStreamParseError) return false;
-  if (error instanceof OracleStreamHttpError) {
-    return error.status === 429 || error.status >= 500;
-  }
-  if (error instanceof ApiError) {
-    return error.status === 429 || error.status >= 500;
-  }
-  return true;
-}
-
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timeout = window.setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        window.clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-async function streamEvents(
-  streamBaseUrl: string,
-  token: string,
-  readingId: string,
-  cursor: number,
-  onEvent: (event: OracleStreamEvent) => void,
-  signal: AbortSignal,
-): Promise<boolean> {
-  const response = await fetch(
-    `${streamBaseUrl}/stream/oracle-readings/${readingId}/events`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "text/event-stream",
-        ...(cursor > 0 ? { "Last-Event-ID": String(cursor) } : {}),
-      },
-      signal,
-    },
-  );
-  if (!response.ok) {
-    throw new OracleStreamHttpError(response.status);
-  }
-  if (response.body === null) {
-    throw new OracleStreamParseError();
-  }
-
-  let terminalEventSeen = false;
-
-  try {
-    await parseSSEJsonStream(
-      response.body,
-      (jsonEvent) => {
-        const event = toOracleStreamEvent(jsonEvent);
-        if (!event) return;
-        onEvent(event);
-        if (event.event_type === "done" || event.event_type === "error") {
-          terminalEventSeen = true;
-        }
-      },
-      () => {},
-    );
-  } catch (error) {
-    if (isAbortError(error) || signal.aborted) {
-      return terminalEventSeen;
-    }
-    throw error instanceof Error &&
-      (error.message.startsWith("SSE event exceeds maximum size") ||
-        error.message.startsWith("Failed to parse SSE data as JSON"))
-      ? new OracleStreamParseError()
-      : error;
-  }
-
-  return terminalEventSeen;
 }
 
 async function streamEventsWithReconnect(
@@ -409,36 +319,68 @@ async function streamEventsWithReconnect(
   onEvent: (event: OracleStreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
-  let cursor = initialCursor;
-  let reconnectAttempts = 0;
-  while (!signal.aborted) {
-    try {
-      const token = await fetchStreamToken();
-      const terminalEventSeen = await streamEvents(
-        token.stream_base_url,
-        token.token,
-        readingId,
-        cursor,
-        (event) => {
-          cursor = event.seq;
-          reconnectAttempts = 0;
-          onEvent(event);
-        },
-        signal,
-      );
-      if (terminalEventSeen) return;
-    } catch (error) {
-      if (isAbortError(error) || signal.aborted) return;
-      if (!isRetryableOracleStreamError(error)) throw error;
-    }
-
-    reconnectAttempts += 1;
-    if (reconnectAttempts >= ORACLE_RECONNECT_MAX_ATTEMPTS) {
-      throw new Error("Oracle stream reconnect budget exhausted");
-    }
-
-    await delay(ORACLE_RECONNECT_DELAY_MS, signal);
+  const firstToken = await fetchStreamToken();
+  if (signal.aborted) {
+    return;
   }
+
+  let firstStreamToken: string | null = firstToken.token;
+  let nextEventId = "";
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let abortStream: (() => void) | null = null;
+    function settle(callback: () => void) {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", handleAbort);
+      callback();
+    }
+    function handleAbort() {
+      abortStream?.();
+      settle(() => resolve());
+    }
+    abortStream = sseClientDirect<OracleStreamEvent>({
+      url: `${firstToken.stream_base_url}/stream/oracle-readings/${readingId}/events`,
+      streamToken: async () => {
+        if (firstStreamToken !== null) {
+          const token = firstStreamToken;
+          firstStreamToken = null;
+          return token;
+        }
+        return (await fetchStreamToken()).token;
+      },
+      decode: (type, data) => decodeOracleStreamEvent(type, data, nextEventId),
+      isTerminal: (event) =>
+        event.event_type === "done" || event.event_type === "error",
+      onEvent: (event) => {
+        nextEventId = "";
+        onEvent(event);
+      },
+      onError: (error) => settle(() => reject(error)),
+      onComplete: () => settle(() => resolve()),
+      onLastEventId: (eventId) => {
+        nextEventId = eventId;
+      },
+      signal,
+      lastEventId: initialCursor > 0 ? String(initialCursor) : undefined,
+      maxReconnects: ORACLE_RECONNECT_MAX_ATTEMPTS,
+    });
+    if (!settled) {
+      signal.addEventListener("abort", handleAbort, { once: true });
+    }
+  });
+}
+
+async function loadReadingDetail(
+  readingId: string,
+  signal: AbortSignal,
+): Promise<ReadingDetail> {
+  const detail = await apiFetch<{ data: ReadingDetail }>(
+    `/api/oracle/readings/${readingId}`,
+    { signal },
+  );
+  return detail.data;
 }
 
 const MONTHS = [
@@ -502,13 +444,32 @@ export default function OracleReadingPaneBody({
 }) {
   const router = useRouter();
   const [state, setState] = useState<ReadingState>(() =>
-    initialDetail !== null ? stateFromDetail(initialDetail) : initialState(),
+    initialDetail?.id === readingId
+      ? stateFromDetail(initialDetail)
+      : initialState(),
   );
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const headlineRef = useStickyHeadline(state.folioMotto ?? null);
+  const seededDetail = initialDetail?.id === readingId ? initialDetail : null;
+  const detailResource = useAsyncResource<ReadingDetail>({
+    cacheKey: seededDetail === null ? `${readingId}:${retryNonce}` : null,
+    load: (signal) => loadReadingDetail(readingId, signal),
+  });
+  const streamSeed = useMemo(() => {
+    if (seededDetail !== null) {
+      return stateFromDetail(seededDetail);
+    }
+    if (
+      detailResource.status === "ready" &&
+      detailResource.data.id === readingId
+    ) {
+      return stateFromDetail(detailResource.data);
+    }
+    return null;
+  }, [detailResource, readingId, seededDetail]);
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -521,50 +482,75 @@ export default function OracleReadingPaneBody({
     setRetryingReading(true);
     setRetryError(null);
     try {
-      const body = await apiFetch<{ data: OracleCreateResponse }>("/api/oracle/readings", {
-        method: "POST",
-        body: JSON.stringify({ question }),
-      });
+      const body = await apiFetch<{ data: OracleCreateResponse }>(
+        "/api/oracle/readings",
+        {
+          method: "POST",
+          body: JSON.stringify({ question }),
+        },
+      );
       router.push(`/oracle/${body.data.reading_id}`);
     } catch (error) {
       setRetryError(
-        toFeedback(error, { fallback: "The retry could not begin. Please try again." }),
+        toFeedback(error, {
+          fallback: "The retry could not begin. Please try again.",
+        }),
       );
       setRetryingReading(false);
     }
   }, [retryingReading, router, state.question]);
 
   useEffect(() => {
-    setState(initialDetail !== null ? stateFromDetail(initialDetail) : initialState());
+    setState(
+      seededDetail !== null ? stateFromDetail(seededDetail) : initialState(),
+    );
     setLoadError(null);
     setRetryError(null);
     setRetryingReading(false);
+  }, [readingId, retryNonce, seededDetail]);
+
+  useEffect(() => {
+    if (
+      detailResource.status === "idle" ||
+      detailResource.status === "loading"
+    ) {
+      return;
+    }
+    if (detailResource.status === "error") {
+      setLoadError(
+        toFeedback(detailResource.error, {
+          fallback: LOAD_ERROR_MESSAGE,
+        }),
+      );
+      return;
+    }
+    if (detailResource.data.id !== readingId) {
+      return;
+    }
+    setLoadError(null);
+    setState(stateFromDetail(detailResource.data));
+  }, [detailResource, readingId]);
+
+  useEffect(() => {
+    if (
+      streamSeed === null ||
+      (streamSeed.status !== "pending" && streamSeed.status !== "streaming")
+    ) {
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
-    let loadedDetail = false;
 
     (async () => {
       try {
-        let next: ReadingState;
-        if (initialDetail !== null) {
-          next = stateFromDetail(initialDetail);
-          loadedDetail = true;
-          if (!cancelled) setState(next);
-        } else {
-          const detail = await apiFetch<{ data: ReadingDetail }>(
-            `/api/oracle/readings/${readingId}`,
-          );
-          if (cancelled) return;
-          loadedDetail = true;
-          next = stateFromDetail(detail.data);
-          setState(next);
+        if (cancelled || controller.signal.aborted) {
+          return;
         }
-
-        if (next.status !== "pending" && next.status !== "streaming") return;
 
         await streamEventsWithReconnect(
           readingId,
-          next.cursor,
+          streamSeed.cursor,
           (event) => {
             if (cancelled) return;
             setState((current) => applyEvent(current, event));
@@ -576,7 +562,7 @@ export default function OracleReadingPaneBody({
         if (!isAbortError(error)) {
           setLoadError(
             toFeedback(error, {
-              fallback: loadedDetail ? STREAM_ERROR_MESSAGE : LOAD_ERROR_MESSAGE,
+              fallback: STREAM_ERROR_MESSAGE,
             }),
           );
         }
@@ -587,7 +573,7 @@ export default function OracleReadingPaneBody({
       cancelled = true;
       controller.abort();
     };
-  }, [initialDetail, readingId, retryNonce]);
+  }, [readingId, streamSeed]);
 
   const showSkeletons =
     state.status === "pending" ||

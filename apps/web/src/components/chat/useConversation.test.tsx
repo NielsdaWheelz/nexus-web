@@ -215,7 +215,10 @@ function retryRunData(): ChatRunResponse["data"] {
   };
 }
 
-type FetchHandler = (input: RequestInfo | URL, init?: RequestInit) => Response;
+type FetchHandler = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Response | Promise<Response>;
 
 function stubFetch(handler: FetchHandler) {
   const mock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
@@ -229,6 +232,14 @@ function stubFetch(handler: FetchHandler) {
 // path-changing setMessages (the view normally populates scrollRef.current).
 function fakeScrollHandle() {
   return { captureAnchor: vi.fn(), scrollToMessage: vi.fn() };
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 describe("useConversation", () => {
@@ -724,6 +735,89 @@ describe("useConversation", () => {
           "/api/conversations/conversation-2/messages",
       ),
     ).toBe(true);
+  });
+
+  it("does not tail active runs returned for a stale route conversation", async () => {
+    const activeRunsResponse = deferred<Response>();
+    const staleRun = {
+      ...chatRunData(),
+      run: {
+        ...chatRunData().run,
+        id: "stale-run",
+        conversation_id: "conversation-1",
+        user_message_id: branchAUser.id,
+        assistant_message_id: branchAAssistant.id,
+      },
+      user_message: branchAUser,
+      assistant_message: {
+        ...branchAAssistant,
+        status: "pending" as const,
+      },
+    };
+    const fetchMock = stubFetch((input) => {
+      const path = pathOf(input);
+      const search = searchOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse("a") });
+      }
+      if (
+        path === "/api/chat-runs" &&
+        search.includes("conversation_id=conversation-1")
+      ) {
+        return activeRunsResponse.promise;
+      }
+      if (path === "/api/conversations/conversation-2/tree") {
+        return jsonResponse({ data: emptyTreeResponse() });
+      }
+      throw new Error(`Unexpected fetch: ${path}${search}`);
+    });
+
+    const { result, rerender } = renderHook(
+      ({ conversationId }: { conversationId: string | null }) =>
+        useConversation({ conversationId, branching: true }),
+      { initialProps: { conversationId: "conversation-1" } },
+    );
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input]) => pathOf(input as RequestInfo | URL) === "/api/chat-runs",
+        ),
+      ).toBe(true);
+    });
+
+    rerender({ conversationId: "conversation-2" });
+    activeRunsResponse.resolve(jsonResponse({ data: [staleRun] }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.conversationId).toBe("conversation-2");
+    expect(tailMocks.tailChatRun).not.toHaveBeenCalledWith(staleRun);
+  });
+
+  it("ignores a run-created payload for a different active conversation", async () => {
+    stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-2") {
+        return jsonResponse({ data: { title: "Second chat" } });
+      }
+      if (path === "/api/conversations/conversation-2/messages") {
+        return jsonResponse({ data: [], page: { before_cursor: null } });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-2", branching: false }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const staleRun = chatRunData();
+    act(() => {
+      result.current.onChatRunCreated(staleRun);
+    });
+
+    expect(result.current.conversationId).toBe("conversation-2");
+    expect(tailMocks.tailChatRun).not.toHaveBeenCalledWith(staleRun);
   });
 
   it("refetches an existing conversation when returning after a send", async () => {

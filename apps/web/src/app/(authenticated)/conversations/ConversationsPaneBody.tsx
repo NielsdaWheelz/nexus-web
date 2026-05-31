@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import {
   FeedbackNotice,
@@ -19,39 +20,46 @@ interface ConversationsResponse {
 }
 
 export default function ConversationsPaneBody() {
+  const initialConversations = useApiResource<ConversationsResponse>({
+    cacheKey: "conversations:list:initial",
+    path: () => "/api/conversations?limit=50",
+  });
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-
-  const fetchConversations = useCallback(
-    async (cursor?: string) => {
-      try {
-        const params = new URLSearchParams({ limit: "50" });
-        if (cursor) params.set("cursor", cursor);
-
-        const response = await apiFetch<ConversationsResponse>(
-          `/api/conversations?${params}`
-        );
-        if (cursor) {
-          setConversations((prev) => [...prev, ...response.data]);
-        } else {
-          setConversations(response.data);
-        }
-        setNextCursor(response.page.next_cursor);
-        setError(null);
-      } catch (err) {
-        setError(toFeedback(err, { fallback: "Failed to load conversations" }));
-      } finally {
-        setLoading(false);
-      }
-    },
-    []
-  );
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
+    if (initialConversations.status === "ready") {
+      setConversations(initialConversations.data.data);
+      setNextCursor(initialConversations.data.page.next_cursor);
+      setError(null);
+    } else if (initialConversations.status === "error") {
+      setError(
+        toFeedback(initialConversations.error, {
+          fallback: "Failed to load conversations",
+        }),
+      );
+    }
+  }, [initialConversations]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ limit: "50", cursor: nextCursor });
+      const response = await apiFetch<ConversationsResponse>(
+        `/api/conversations?${params}`,
+      );
+      setConversations((prev) => [...prev, ...response.data]);
+      setNextCursor(response.page.next_cursor);
+      setError(null);
+    } catch (err) {
+      setError(toFeedback(err, { fallback: "Failed to load conversations" }));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor]);
 
   const handleDelete = useCallback(
     async (convId: string) => {
@@ -68,12 +76,16 @@ export default function ConversationsPaneBody() {
 
   return (
     <div className={styles.body}>
-      {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
+      {initialConversations.status === "loading" && (
+        <FeedbackNotice severity="info">Loading...</FeedbackNotice>
+      )}
       {error ? <FeedbackNotice feedback={error} /> : null}
 
-      {!loading && !error && conversations.length === 0 && (
+      {initialConversations.status !== "loading" &&
+        !error &&
+        conversations.length === 0 && (
         <FeedbackNotice severity="neutral">No conversations yet.</FeedbackNotice>
-      )}
+        )}
 
       {conversations.length > 0 && (
         <AppList>
@@ -92,7 +104,8 @@ export default function ConversationsPaneBody() {
           variant="secondary"
           className={styles.loadMore}
           aria-label="Load more conversations"
-          onClick={() => fetchConversations(nextCursor)}
+          loading={loadingMore}
+          onClick={() => void loadMore()}
         >
           Load more
         </Button>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell } from "@/lib/androidShell";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
   getVaultAutoSync,
@@ -24,6 +25,13 @@ import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
+
+interface LocalVaultInitResult {
+  supported: boolean;
+  autoSync: boolean;
+  directoryHandle: FileSystemDirectoryHandle | null;
+  permitted: boolean | null;
+}
 
 function statusLabel(status: VaultStatus): string {
   if (status === "notConnected") return "Not connected";
@@ -54,27 +62,64 @@ export default function SettingsLocalVaultPaneBody({
   const [status, setStatus] = useState<VaultStatus>("notConnected");
   const [message, setMessage] = useState("Choose a local folder for your Markdown vault.");
   const [busy, setBusy] = useState(false);
+  const initResource = useAsyncResource<LocalVaultInitResult>({
+    cacheKey: androidShell ? null : "settings-local-vault:init",
+    load: async () => {
+      const localSupported = isLocalVaultSupported();
+      const localAutoSync = getVaultAutoSync();
+      if (!localSupported) {
+        return {
+          supported: false,
+          autoSync: localAutoSync,
+          directoryHandle: null,
+          permitted: null,
+        };
+      }
+
+      const handle = await loadVaultDirectoryHandle();
+      if (!handle) {
+        return {
+          supported: true,
+          autoSync: localAutoSync,
+          directoryHandle: null,
+          permitted: null,
+        };
+      }
+
+      return {
+        supported: true,
+        autoSync: localAutoSync,
+        directoryHandle: handle,
+        permitted: await hasVaultPermission(handle, false),
+      };
+    },
+  });
 
   useEffect(() => {
-    if (androidShell) {
-      return;
-    }
-    setSupported(isLocalVaultSupported());
-    setAutoSyncState(getVaultAutoSync());
-    loadVaultDirectoryHandle().then(async (handle) => {
-      if (!handle) {
+    if (initResource.status === "ready") {
+      setSupported(initResource.data.supported);
+      setAutoSyncState(initResource.data.autoSync);
+      setDirectoryHandle(initResource.data.directoryHandle);
+      if (!initResource.data.supported || !initResource.data.directoryHandle) {
+        setStatus("notConnected");
+        setMessage("Choose a local folder for your Markdown vault.");
         return;
       }
-      setDirectoryHandle(handle);
-      const permitted = await hasVaultPermission(handle, false);
+      const permitted = initResource.data.permitted === true;
       setStatus(permitted ? "synced" : "needsPermission");
       setMessage(
         permitted
           ? "Folder connected. Nexus can read and write this vault."
           : "Reconnect folder access to keep this vault current."
       );
-    });
-  }, [androidShell]);
+      return;
+    }
+
+    if (initResource.status === "error") {
+      setStatus("error");
+      setMessage(toFeedback(initResource.error, { fallback: "Failed to load local vault settings" }).title);
+    }
+  }, [initResource]);
 
   const showError = useCallback((error: unknown, fallback: string) => {
     setStatus("error");

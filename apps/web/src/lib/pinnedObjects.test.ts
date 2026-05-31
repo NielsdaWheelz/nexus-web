@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchPinnedObjects, pinObjectToNavbar } from "./pinnedObjects";
+import {
+  fetchPinnedObjects,
+  pinnedObjectsPath,
+  pinObjectToNavbar,
+} from "./pinnedObjects";
 import { apiFetch } from "@/lib/api/client";
 
 vi.mock("@/lib/api/client", () => ({
@@ -11,6 +15,12 @@ const mockApiFetch = vi.mocked(apiFetch);
 describe("pinnedObjects", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
+  });
+
+  it("builds the shared pinned-object read path", () => {
+    expect(pinnedObjectsPath("reader tools")).toBe(
+      "/api/pinned-objects?surface_key=reader%20tools",
+    );
   });
 
   it("fetches pins for the requested surface", async () => {

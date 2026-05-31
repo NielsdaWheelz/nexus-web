@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import type {
   LibraryInvite,
   LibraryMember,
+  UserSearchResult,
 } from "@/lib/libraries/sharing";
 
 const baseLibrary: LibraryForEdit = {
@@ -149,6 +150,66 @@ describe("LibraryEditDialog", () => {
     );
   });
 
+  it("keeps invite user search results latest-wins", async () => {
+    const firstSearch = deferred<UserSearchResult[]>();
+    const secondSearch = deferred<UserSearchResult[]>();
+    const onSearchUsers = vi.fn((query: string) => {
+      if (query === "alice") {
+        return firstSearch.promise;
+      }
+      if (query === "alicia") {
+        return secondSearch.promise;
+      }
+      return Promise.resolve([]);
+    });
+    renderDialog({ onSearchUsers });
+    const invitationsRegion = screen.getByRole("region", { name: "Invitations" });
+    const inviteeInput = within(invitationsRegion).getByLabelText("Invitee email");
+
+    fireEvent.change(inviteeInput, { target: { value: "alice" } });
+    await waitFor(() => {
+      expect(onSearchUsers).toHaveBeenCalledWith("alice");
+    });
+
+    fireEvent.change(inviteeInput, { target: { value: "alicia" } });
+    await waitFor(() => {
+      expect(onSearchUsers).toHaveBeenCalledWith("alicia");
+    });
+
+    await act(async () => {
+      secondSearch.resolve([
+        {
+          user_id: "user-alicia",
+          email: "alicia@example.com",
+          display_name: "Alicia Example",
+        },
+      ]);
+    });
+
+    expect(
+      await screen.findByRole("option", { name: /alicia@example\.com/i })
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      firstSearch.resolve([
+        {
+          user_id: "user-alice",
+          email: "alice@example.com",
+          display_name: "Alice Example",
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: /alice@example\.com/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("option", { name: /alicia@example\.com/i })
+      ).toBeInTheDocument();
+    });
+  });
+
   it("falls back to user_id when a member has no name or email", () => {
     renderDialog({
       members: [
@@ -200,3 +261,13 @@ describe("LibraryEditDialog", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}

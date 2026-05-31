@@ -50,6 +50,7 @@ import {
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -284,6 +285,43 @@ function toUserFacingError(error: unknown): string {
   }).title;
 }
 
+function signedUrlAccessFromResponse(
+  response: PdfFileAccessResponse,
+): SignedUrlAccess {
+  const expiresAtMs = Date.parse(response.data.expires_at);
+  return {
+    url: response.data.url,
+    expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null,
+  };
+}
+
+async function loadSignedUrlAccess(
+  mediaId: string,
+  signal: AbortSignal,
+): Promise<SignedUrlAccess> {
+  return signedUrlAccessFromResponse(
+    await apiFetch<PdfFileAccessResponse>(`/api/media/${mediaId}/file`, {
+      signal,
+    }),
+  );
+}
+
+async function loadPageHighlights(
+  mediaId: string,
+  targetPage: number,
+  signal: AbortSignal,
+): Promise<PdfHighlightOut[]> {
+  const response = await apiFetch<PdfHighlightListResponse>(
+    `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`,
+    { signal },
+  );
+  return response.data.highlights.filter(
+    (highlight) =>
+      highlight.anchor.type === "pdf_page_geometry" &&
+      highlight.anchor.page_number === targetPage,
+  );
+}
+
 function isTextLayerEligibleNode(
   node: Node | null,
   textLayerRoot: HTMLElement | null,
@@ -473,6 +511,9 @@ export default function PdfReader({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
+  const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
+  const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
+    useState(0);
   const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
     null,
   );
@@ -513,6 +554,19 @@ export default function PdfReader({
     runId: number;
     frameId: number | null;
   } | null>(null);
+  const recoveryTargetPageRef = useRef<number | null>(null);
+
+  const signedUrlResource = useAsyncResource<SignedUrlAccess>({
+    cacheKey: `${mediaId}:${signedUrlRefreshToken}`,
+    load: (signal) => loadSignedUrlAccess(mediaId, signal),
+  });
+  const pageHighlightsResource = useAsyncResource<PdfHighlightOut[]>({
+    cacheKey:
+      documentRef.current && numPages > 0 && !loading && error === null
+        ? `${mediaId}:${pageNumber}:${highlightRefreshToken}:${localHighlightRefreshToken}`
+        : null,
+    load: (signal) => loadPageHighlights(mediaId, pageNumber, signal),
+  });
 
   // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
   onPageHighlightsChangeRef.current = onPageHighlightsChange;
@@ -990,31 +1044,6 @@ export default function PdfReader({
     };
   }, [clearPendingMobileSelectionPublish]);
 
-  const fetchSignedUrl = useCallback(async () => {
-    const response = await apiFetch<PdfFileAccessResponse>(
-      `/api/media/${mediaId}/file`,
-    );
-    const expiresAtMs = Date.parse(response.data.expires_at);
-    return {
-      url: response.data.url,
-      expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null,
-    } satisfies SignedUrlAccess;
-  }, [mediaId]);
-
-  const fetchPageHighlights = useCallback(
-    async (targetPage: number): Promise<PdfHighlightOut[]> => {
-      const response = await apiFetch<PdfHighlightListResponse>(
-        `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`,
-      );
-      return response.data.highlights.filter(
-        (highlight) =>
-          highlight.anchor.type === "pdf_page_geometry" &&
-          highlight.anchor.page_number === targetPage,
-      );
-    },
-    [mediaId],
-  );
-
   const openDocument = useCallback(
     async (signedUrl: string): Promise<OpenedPdfDocument> => {
       const pdfJs = await ensurePdfJs();
@@ -1072,7 +1101,7 @@ export default function PdfReader({
   }, [publishIntrinsicWidth, removeOverlayLayers]);
 
   const recoverAndRenderRef = useRef<
-    ((targetPage: number, runId: number) => Promise<void>) | null
+    ((targetPage: number, runId: number) => void) | null
   >(null);
 
   const initializeViewerIfNeeded = useCallback(
@@ -1127,12 +1156,15 @@ export default function PdfReader({
         const nextPage = Number.isFinite(event.pageNumber)
           ? Math.max(1, Math.floor(event.pageNumber as number))
           : 1;
+        const pageChanged = nextPage !== pageNumberRef.current;
         pageNumberRef.current = nextPage;
         setPageNumber(nextPage);
         setNavigating(false);
-        clearSelection();
-        setPageHighlights([]);
-        onPageHighlightsChangeRef.current?.(nextPage, []);
+        if (pageChanged) {
+          clearSelection();
+          setPageHighlights([]);
+          onPageHighlightsChangeRef.current?.(nextPage, []);
+        }
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
         setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
@@ -1216,24 +1248,6 @@ export default function PdfReader({
         rememberPageScale(renderedPage, event.source);
         scheduleIntrinsicWidthPublish();
         evaluatePageGeometryReliability(renderedPage);
-        void fetchPageHighlights(renderedPage)
-          .then((highlights) => {
-            if (runId !== runRef.current) {
-              return;
-            }
-            if (renderedPage === pageNumberRef.current) {
-              setPageHighlights(highlights);
-            }
-            onPageHighlightsChangeRef.current?.(renderedPage, highlights);
-          })
-          .catch(() => {
-            if (
-              runId === runRef.current &&
-              renderedPage === pageNumberRef.current
-            ) {
-              setSelectionError("Failed to load PDF highlights for this page.");
-            }
-          });
 
         if (
           event.error &&
@@ -1241,13 +1255,7 @@ export default function PdfReader({
           !recoveringFromRenderErrorRef.current
         ) {
           recoveringFromRenderErrorRef.current = true;
-          void recoverAndRenderRef
-            .current?.(pageNumberRef.current, runRef.current)
-            .finally(() => {
-              if (runId === runRef.current) {
-                recoveringFromRenderErrorRef.current = false;
-              }
-            });
+          recoverAndRenderRef.current?.(pageNumberRef.current, runRef.current);
         }
 
         if (renderedPage === pageNumberRef.current) {
@@ -1283,13 +1291,7 @@ export default function PdfReader({
         const expiryError = isLikelySignedUrlExpiryError(event.error);
         if (expiryError && !recoveringFromRenderErrorRef.current) {
           recoveringFromRenderErrorRef.current = true;
-          void recoverAndRenderRef
-            .current?.(renderedPage, runRef.current)
-            .finally(() => {
-              if (runId === runRef.current) {
-                recoveringFromRenderErrorRef.current = false;
-              }
-            });
+          recoverAndRenderRef.current?.(renderedPage, runRef.current);
           return;
         }
         if (!expiryError) {
@@ -1318,7 +1320,6 @@ export default function PdfReader({
       applyStartPageProgression,
       clearSelection,
       evaluatePageGeometryReliability,
-      fetchPageHighlights,
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
@@ -1373,56 +1374,25 @@ export default function PdfReader({
     [initializeViewerIfNeeded, removeOverlayLayers],
   );
 
-  const recoverAndRender = useCallback(
-    async (targetPage: number, runId: number) => {
-      setRecovering(true);
-      try {
-        const refreshedAccess = await fetchSignedUrl();
-        if (runId !== runRef.current) {
-          return;
-        }
-        const refreshedOpened = await openDocument(refreshedAccess.url);
-        if (runId !== runRef.current) {
-          await destroyPdfDocument(refreshedOpened.doc);
-          destroyPdfLoadingTask(refreshedOpened.loadingTask);
-          return;
-        }
-
-        signedUrlExpiryRef.current = refreshedAccess.expiresAtMs;
-        await replaceDocument(refreshedOpened);
-        await attachDocumentToViewer(refreshedOpened.doc, targetPage, runId);
-        setError(null);
-      } catch (err) {
-        if (runId === runRef.current) {
-          setError(toUserFacingError(err));
-        }
-      } finally {
-        if (runId === runRef.current) {
-          setRecovering(false);
-        }
-      }
-    },
-    [attachDocumentToViewer, fetchSignedUrl, openDocument, replaceDocument],
-  );
-
-  useEffect(() => {
-    recoverAndRenderRef.current = recoverAndRender;
-    return () => {
-      recoverAndRenderRef.current = null;
-    };
-  }, [recoverAndRender]);
-
-  const refreshPageHighlights = useCallback(
-    async (targetPage: number, runId: number) => {
-      const highlights = await fetchPageHighlights(targetPage);
+  const requestSignedUrlRecovery = useCallback(
+    (targetPage: number, runId: number) => {
       if (runId !== runRef.current) {
         return;
       }
-      setPageHighlights(highlights);
-      onPageHighlightsChangeRef.current?.(targetPage, highlights);
+      recoveryTargetPageRef.current = targetPage;
+      setRecovering(true);
+      setError(null);
+      setSignedUrlRefreshToken((value) => value + 1);
     },
-    [fetchPageHighlights],
+    [],
   );
+
+  useEffect(() => {
+    recoverAndRenderRef.current = requestSignedUrlRecovery;
+    return () => {
+      recoverAndRenderRef.current = null;
+    };
+  }, [requestSignedUrlRecovery]);
 
   const resolveTextLayerRootFromRange = useCallback(
     (
@@ -1676,7 +1646,7 @@ export default function PdfReader({
           createdHighlightId = response.data.id;
         }
 
-        await refreshPageHighlights(activeSelection.pageNumber, runRef.current);
+        setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
         clearSelection();
         return createdHighlightId;
@@ -1694,7 +1664,6 @@ export default function PdfReader({
       editingHighlightId,
       isCreating,
       mediaId,
-      refreshPageHighlights,
       resolveTextLayerRootFromRange,
       selection,
       textGeometryReliable,
@@ -1725,13 +1694,13 @@ export default function PdfReader({
           typeof expiryMs === "number" &&
           Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS
         ) {
-          await recoverAndRender(nextPage, currentRun);
+          requestSignedUrlRecovery(nextPage, currentRun);
           return;
         }
         applyViewerPageNumber(viewer, nextPage, "goToPage/currentPageNumber");
       } catch (err) {
         if (isLikelySignedUrlExpiryError(err)) {
-          await recoverAndRender(nextPage, currentRun);
+          requestSignedUrlRecovery(nextPage, currentRun);
         } else {
           setError(toUserFacingError(err));
         }
@@ -1741,7 +1710,12 @@ export default function PdfReader({
         }
       }
     },
-    [clearSelection, numPages, publishCurrentResumeLocator, recoverAndRender],
+    [
+      clearSelection,
+      numPages,
+      publishCurrentResumeLocator,
+      requestSignedUrlRecovery,
+    ],
   );
 
   const scrollToProjectedHighlight = useCallback(
@@ -1904,8 +1878,7 @@ export default function PdfReader({
   }, [evaluatePageGeometryReliability, scheduleIntrinsicWidthPublish, zoom]);
 
   useEffect(() => {
-    let active = true;
-    const runId = ++runRef.current;
+    runRef.current += 1;
     const pageScaleCache = pageScaleByNumberRef.current;
     const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
@@ -1936,37 +1909,10 @@ export default function PdfReader({
     signedUrlExpiryRef.current = null;
     recoveringFromRenderErrorRef.current = false;
     initialMobileFitDoneRef.current = false;
+    recoveryTargetPageRef.current = null;
     teardownViewer();
 
-    const bootstrap = async () => {
-      try {
-        const signedAccess = await fetchSignedUrl();
-        if (!active || runId !== runRef.current) {
-          return;
-        }
-        const opened = await openDocument(signedAccess.url);
-        if (!active || runId !== runRef.current) {
-          await destroyPdfDocument(opened.doc);
-          destroyPdfLoadingTask(opened.loadingTask);
-          return;
-        }
-        signedUrlExpiryRef.current = signedAccess.expiresAtMs;
-        await replaceDocument(opened);
-        await attachDocumentToViewer(opened.doc, startPage, runId);
-      } catch (err) {
-        if (active && runId === runRef.current) {
-          setError(toUserFacingError(err));
-        }
-      } finally {
-        if (active && runId === runRef.current) {
-          setLoading(false);
-        }
-      }
-    };
-    void bootstrap();
-
     return () => {
-      active = false;
       runRef.current += 1;
       signedUrlExpiryRef.current = null;
       pageScaleCache.clear();
@@ -1975,6 +1921,7 @@ export default function PdfReader({
       pendingViewerScaleRef.current = null;
       recoveringFromRenderErrorRef.current = false;
       initialMobileFitDoneRef.current = false;
+      recoveryTargetPageRef.current = null;
       clearSelection();
       teardownViewer();
       const existingDoc = documentRef.current;
@@ -1985,49 +1932,86 @@ export default function PdfReader({
       destroyPdfLoadingTask(existingTask);
     };
   }, [
-    attachDocumentToViewer,
     clearSelection,
-    fetchSignedUrl,
     mediaId,
-    openDocument,
-    replaceDocument,
     teardownViewer,
   ]);
 
   useEffect(() => {
-    if (!documentRef.current || numPages <= 0 || loading || error) {
+    if (
+      signedUrlResource.status === "idle" ||
+      signedUrlResource.status === "loading"
+    ) {
       return;
     }
 
     const runId = runRef.current;
-    let cancelled = false;
-    const sync = async () => {
+    const targetPage =
+      recoveryTargetPageRef.current ?? startPageNumberRef.current ?? 1;
+    let active = true;
+
+    if (signedUrlResource.status === "error") {
+      setError(toUserFacingError(signedUrlResource.error));
+      setLoading(false);
+      setRecovering(false);
+      recoveringFromRenderErrorRef.current = false;
+      recoveryTargetPageRef.current = null;
+      return;
+    }
+
+    const bootstrap = async () => {
       try {
-        const highlights = await fetchPageHighlights(pageNumber);
-        if (cancelled || runId !== runRef.current) {
+        const opened = await openDocument(signedUrlResource.data.url);
+        if (!active || runId !== runRef.current) {
+          await destroyPdfDocument(opened.doc);
+          destroyPdfLoadingTask(opened.loadingTask);
           return;
         }
-        setPageHighlights(highlights);
-        onPageHighlightsChangeRef.current?.(pageNumber, highlights);
-      } catch {
-        if (!cancelled && runId === runRef.current) {
-          setSelectionError("Failed to load PDF highlights for this page.");
+        signedUrlExpiryRef.current = signedUrlResource.data.expiresAtMs;
+        await replaceDocument(opened);
+        await attachDocumentToViewer(opened.doc, targetPage, runId);
+        if (active && runId === runRef.current) {
+          setError(null);
+        }
+      } catch (err) {
+        if (active && runId === runRef.current) {
+          setError(toUserFacingError(err));
+        }
+      } finally {
+        if (active && runId === runRef.current) {
+          setLoading(false);
+          setRecovering(false);
+          recoveringFromRenderErrorRef.current = false;
+          recoveryTargetPageRef.current = null;
         }
       }
     };
-    void sync();
+    void bootstrap();
 
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, [
-    error,
-    fetchPageHighlights,
-    highlightRefreshToken,
-    loading,
-    numPages,
-    pageNumber,
+    attachDocumentToViewer,
+    openDocument,
+    replaceDocument,
+    signedUrlResource,
   ]);
+
+  useEffect(() => {
+    if (
+      pageHighlightsResource.status === "idle" ||
+      pageHighlightsResource.status === "loading"
+    ) {
+      return;
+    }
+    if (pageHighlightsResource.status === "error") {
+      setSelectionError("Failed to load PDF highlights for this page.");
+      return;
+    }
+    setPageHighlights(pageHighlightsResource.data);
+    onPageHighlightsChangeRef.current?.(pageNumber, pageHighlightsResource.data);
+  }, [pageHighlightsResource, pageNumber]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);
@@ -2036,6 +2020,8 @@ export default function PdfReader({
     };
   }, [syncSelectionFromWindow]);
 
+  // justify-polling: browser PDF text-layer selection events can miss active
+  // selections, so this bounded UI poll runs only while a text layer is usable.
   useIntervalPoll({
     enabled: textLayerUsable,
     onPoll: () => {

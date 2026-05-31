@@ -1,8 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -45,25 +44,30 @@ export default function OracleConcordance({
   status: string;
 }) {
   const router = useRouter();
-  const [entries, setEntries] = useState<ConcordanceEntry[] | null>(null);
+  if (status !== "complete") return null;
 
-  useEffect(() => {
-    if (status !== "complete") return;
-    let active = true;
-    apiFetch<{ data: ConcordanceEntry[] }>(
-      `/api/oracle/readings/${readingId}/concordance`,
-    )
-      .then((body) => {
-        if (active) setEntries(body.data);
-      })
-      .catch(() => {
-        // concordance is supplementary — silently suppress errors
-      });
-    return () => {
-      active = false;
-    };
-  }, [readingId, status]);
+  return (
+    <OracleConcordanceEntries
+      key={readingId}
+      readingId={readingId}
+      onOpen={(id) => router.push(`/oracle/${id}`)}
+    />
+  );
+}
 
+function OracleConcordanceEntries({
+  readingId,
+  onOpen,
+}: {
+  readingId: string;
+  onOpen: (id: string) => void;
+}) {
+  const concordanceResource = useApiResource<{ data: ConcordanceEntry[] }>({
+    cacheKey: readingId,
+    path: (id) => `/api/oracle/readings/${id}/concordance`,
+  });
+  const entries =
+    concordanceResource.status === "ready" ? concordanceResource.data.data : null;
   if (entries === null || entries.length === 0) return null;
 
   return (
@@ -77,7 +81,7 @@ export default function OracleConcordance({
             <button
               type="button"
               className={styles.concordanceItem}
-              onClick={() => router.push(`/oracle/${entry.id}`)}
+              onClick={() => onOpen(entry.id)}
             >
               <span>Folio {toRoman(entry.folio_number)} · {entry.folio_theme ?? "—"}</span>
               <span className={styles.concordanceMotto}>{entry.folio_motto}</span>

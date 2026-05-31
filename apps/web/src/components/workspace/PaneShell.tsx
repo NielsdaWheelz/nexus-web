@@ -78,9 +78,31 @@ function arePaneChromeOverridesEqual(
   return (
     left.toolbar === right.toolbar &&
     left.actions === right.actions &&
-    left.options === right.options &&
+    areActionMenuOptionsEqual(left.options, right.options) &&
     left.meta === right.meta
   );
+}
+
+function areActionMenuOptionsEqual(
+  left: ActionMenuOption[] | undefined,
+  right: ActionMenuOption[] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((option, index) => {
+    const other = right[index];
+    return (
+      other?.id === option.id &&
+      other.label === option.label &&
+      other.render === option.render &&
+      other.onSelect === option.onSelect &&
+      other.href === option.href &&
+      other.disabled === option.disabled &&
+      other.tone === option.tone &&
+      other.restoreFocusOnClose === option.restoreFocusOnClose &&
+      other.separatorBefore === option.separatorBefore
+    );
+  });
 }
 
 export type PaneMobileChromeLockReason =

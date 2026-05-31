@@ -1,9 +1,9 @@
 """SSE replay/tail routes for durable chat runs and oracle readings.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-run / per-reading channel
-on each new event; the tail ``LISTEN``s via
-``wait_for_notifications`` and re-reads on each notification. The synchronous
-DB reads run in a threadpool so they never block the event loop.
+on each new event; the tail uses the shared stream LISTEN resource and re-reads
+on each notification. The synchronous DB reads run in a threadpool so they
+never block the event loop.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.stream_token import verify_stream_token
-from nexus.db.listen import wait_for_notifications
+from nexus.db.listen import StreamNotificationListener, open_stream_listener
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
@@ -62,8 +62,17 @@ async def stream_chat_run_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     await run_in_threadpool(_assert_chat_run_owner, viewer_id, run_id)
+    listener = await open_stream_listener(
+        "chat_run_events", str(run_id), KEEPALIVE_INTERVAL_SECONDS
+    )
     return StreamingResponse(
-        _tail_chat_run_events(request=request, run_id=run_id, viewer_id=viewer_id, after=cursor),
+        _tail_chat_run_events(
+            request=request,
+            run_id=run_id,
+            viewer_id=viewer_id,
+            after=cursor,
+            listener=listener,
+        ),
         media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -94,38 +103,48 @@ async def _tail_chat_run_events(
     run_id: UUID,
     viewer_id: UUID,
     after: int,
+    listener: StreamNotificationListener,
 ) -> AsyncIterator[str]:
     cursor = after
     last_keepalive = time.monotonic()
+    close_reason = "closed"
 
-    async for _ in wait_for_notifications(
-        "chat_run_events", str(run_id), KEEPALIVE_INTERVAL_SECONDS
-    ):
-        if await request.is_disconnected():
-            return
-
-        try:
-            events, terminal = await run_in_threadpool(
-                _read_chat_run_events, viewer_id, run_id, cursor
-            )
-        except ApiError as exc:
-            if exc.code == ApiErrorCode.E_NOT_FOUND:
-                return
-            raise
-
-        for event in events:
-            cursor = event.seq
-            yield _format_sse_event(event.seq, event.event_type, event.payload)
-            if event.event_type == "done":
+    try:
+        async for _ in listener.notifications():
+            if await request.is_disconnected():
+                close_reason = "client_disconnected"
                 return
 
-        if terminal:
-            return
+            try:
+                events, terminal = await run_in_threadpool(
+                    _read_chat_run_events, viewer_id, run_id, cursor
+                )
+            except ApiError as exc:
+                if exc.code == ApiErrorCode.E_NOT_FOUND:
+                    close_reason = "not_found"
+                    return
+                raise
 
-        now = time.monotonic()
-        if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
-            yield ": keepalive\n\n"
-            last_keepalive = now
+            for event in events:
+                cursor = event.seq
+                yield _format_sse_event(event.seq, event.event_type, event.payload)
+                if event.event_type == "done":
+                    close_reason = "terminal"
+                    return
+
+            if terminal:
+                close_reason = "terminal"
+                return
+
+            now = time.monotonic()
+            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+    except BaseException:
+        close_reason = "error"
+        raise
+    finally:
+        await listener.close(reason=close_reason)
 
 
 def _parse_last_event_id(value: str | None) -> int:
@@ -155,8 +174,16 @@ async def stream_oracle_reading_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     await run_in_threadpool(_assert_reading_owner, viewer_id, reading_id)
+    listener = await open_stream_listener(
+        "oracle_reading_events", str(reading_id), KEEPALIVE_INTERVAL_SECONDS
+    )
     return StreamingResponse(
-        _tail_oracle_reading_events(request=request, reading_id=reading_id, after=cursor),
+        _tail_oracle_reading_events(
+            request=request,
+            reading_id=reading_id,
+            after=cursor,
+            listener=listener,
+        ),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
@@ -179,28 +206,37 @@ async def _tail_oracle_reading_events(
     request: Request,
     reading_id: UUID,
     after: int,
+    listener: StreamNotificationListener,
 ) -> AsyncIterator[str]:
     cursor = after
     last_keepalive = time.monotonic()
+    close_reason = "closed"
 
-    async for _ in wait_for_notifications(
-        "oracle_reading_events", str(reading_id), KEEPALIVE_INTERVAL_SECONDS
-    ):
-        if await request.is_disconnected():
-            return
-
-        events, terminal = await run_in_threadpool(_read_reading_events, reading_id, cursor)
-
-        for event in events:
-            cursor = event.seq
-            yield _format_sse_event(event.seq, event.event_type, event.payload)
-            if event.event_type == "done":
+    try:
+        async for _ in listener.notifications():
+            if await request.is_disconnected():
+                close_reason = "client_disconnected"
                 return
 
-        if terminal:
-            return
+            events, terminal = await run_in_threadpool(_read_reading_events, reading_id, cursor)
 
-        now = time.monotonic()
-        if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
-            yield ": keepalive\n\n"
-            last_keepalive = now
+            for event in events:
+                cursor = event.seq
+                yield _format_sse_event(event.seq, event.event_type, event.payload)
+                if event.event_type == "done":
+                    close_reason = "terminal"
+                    return
+
+            if terminal:
+                close_reason = "terminal"
+                return
+
+            now = time.monotonic()
+            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+    except BaseException:
+        close_reason = "error"
+        raise
+    finally:
+        await listener.close(reason=close_reason)

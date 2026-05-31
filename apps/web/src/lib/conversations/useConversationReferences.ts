@@ -1,52 +1,98 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
+import { isAbortError } from "@/lib/errors";
 import type { ConversationReference } from "./types";
 
 export function useConversationReferences(conversationId: string | null) {
   const [references, setReferences] = useState<ConversationReference[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const conversationIdRef = useRef(conversationId);
+  const refreshSeqRef = useRef(0);
+  const refreshControllerRef = useRef<AbortController | null>(null);
+  const ignoreResourceForConversationRef = useRef<string | null>(null);
+  conversationIdRef.current = conversationId;
+  const referencesResource = useApiResource<{ data: ConversationReference[] }>({
+    cacheKey: conversationId,
+    path: (id) => `/api/conversations/${id}/references` as ApiPath,
+  });
+
+  const refreshReferences = useCallback(
+    async (nextConversationId: string) => {
+      const refreshSeq = refreshSeqRef.current + 1;
+      refreshSeqRef.current = refreshSeq;
+      refreshControllerRef.current?.abort();
+      const controller = new AbortController();
+      refreshControllerRef.current = controller;
+      ignoreResourceForConversationRef.current = nextConversationId;
+      try {
+        const response = await apiFetch<{ data: ConversationReference[] }>(
+          `/api/conversations/${nextConversationId}/references`,
+          { signal: controller.signal },
+        );
+        if (
+          controller.signal.aborted ||
+          refreshSeqRef.current !== refreshSeq ||
+          conversationIdRef.current !== nextConversationId
+        ) {
+          return;
+        }
+        setReferences(response.data);
+      } catch (err) {
+        if (
+          isAbortError(err) ||
+          controller.signal.aborted ||
+          refreshSeqRef.current !== refreshSeq ||
+          conversationIdRef.current !== nextConversationId
+        ) {
+          return;
+        }
+      } finally {
+        if (refreshControllerRef.current === controller) {
+          refreshControllerRef.current = null;
+        }
+      }
+    },
+    [],
+  );
 
   const mutate = useCallback(async () => {
     if (!conversationId) return;
-    try {
-      const response = await apiFetch<{ data: ConversationReference[] }>(
-        `/api/conversations/${conversationId}/references`,
-      );
-      setReferences(response.data);
-    } catch {
-      // Leave previous references in place on transient errors.
-    }
+    await refreshReferences(conversationId);
+  }, [conversationId, refreshReferences]);
+
+  useEffect(() => {
+    refreshSeqRef.current += 1;
+    refreshControllerRef.current?.abort();
+    refreshControllerRef.current = null;
+    ignoreResourceForConversationRef.current = null;
+    setReferences([]);
   }, [conversationId]);
 
   useEffect(() => {
-    if (!conversationId) {
-      setReferences([]);
+    if (
+      !conversationId ||
+      ignoreResourceForConversationRef.current === conversationId
+    ) {
       return;
     }
-    let cancelled = false;
-    setIsLoading(true);
-    apiFetch<{ data: ConversationReference[] }>(
-      `/api/conversations/${conversationId}/references`,
-    )
-      .then((response) => {
-        if (!cancelled) setReferences(response.data);
-      })
-      .catch(() => {
-        if (!cancelled) setReferences([]);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId]);
+    if (referencesResource.status === "ready") {
+      setReferences(referencesResource.data.data);
+      return;
+    }
+    if (referencesResource.status === "error") {
+      setReferences([]);
+    }
+  }, [conversationId, referencesResource]);
 
   const removeReference = useCallback(
     async (referenceId: string) => {
       if (!conversationId) return;
+      refreshSeqRef.current += 1;
+      refreshControllerRef.current?.abort();
+      refreshControllerRef.current = null;
+      ignoreResourceForConversationRef.current = conversationId;
       await apiFetch(
         `/api/conversations/${conversationId}/references/${referenceId}`,
         { method: "DELETE" },
@@ -57,6 +103,9 @@ export function useConversationReferences(conversationId: string | null) {
   );
 
   const upsertReference = useCallback((reference: ConversationReference) => {
+    if (conversationIdRef.current) {
+      ignoreResourceForConversationRef.current = conversationIdRef.current;
+    }
     setReferences((current) => {
       const index = current.findIndex((item) => item.id === reference.id);
       if (index >= 0) {
@@ -71,5 +120,13 @@ export function useConversationReferences(conversationId: string | null) {
     });
   }, []);
 
-  return { references, isLoading, removeReference, mutate, upsertReference };
+  return {
+    references,
+    isLoading:
+      referencesResource.status === "loading" &&
+      ignoreResourceForConversationRef.current !== conversationId,
+    removeReference,
+    mutate,
+    upsertReference,
+  };
 }

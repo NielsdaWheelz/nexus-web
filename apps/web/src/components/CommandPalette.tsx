@@ -14,7 +14,8 @@ import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { isAbortError } from "@/lib/errors";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
 import { createNotePage } from "@/lib/notes/api";
@@ -63,9 +64,17 @@ interface OracleReadingSummary {
   status: string;
 }
 
+type OracleReadingsResponse = { data: OracleReadingSummary[] } | OracleReadingSummary[];
+
 const PALETTE_HISTORY_DEBOUNCE_MS = 200;
 const PALETTE_SEARCH_DEBOUNCE_MS = 200;
 const PALETTE_ORACLE_TTL_MS = 5 * 60_000;
+const EMPTY_HISTORY_ROWS: PaletteHistoryResponse["data"]["recent"] = [];
+const EMPTY_FRECENCY_BOOSTS = new Map<string, number>();
+
+function oracleReadingsFromResponse(response: OracleReadingsResponse): OracleReadingSummary[] {
+  return Array.isArray(response) ? response : response.data;
+}
 
 export default function CommandPalette() {
   const androidShell = isAndroidShell();
@@ -74,12 +83,13 @@ export default function CommandPalette() {
   const [query, setQuery] = useState("");
   const [initialActiveCommandId, setInitialActiveCommandId] = useState<string | null>(null);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
-  const [historyRows, setHistoryRows] = useState<PaletteHistoryResponse["data"]["recent"]>([]);
-  const [frecencyBoosts, setFrecencyBoosts] = useState<Map<string, number>>(new Map());
+  const [paletteHistoryPath, setPaletteHistoryPath] = useState<ApiPath | null>(null);
+  const [oracleResourceKey, setOracleResourceKey] = useState<string | null>(null);
   const [oracleRows, setOracleRows] = useState<OracleReadingSummary[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResultRowViewModel[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const oracleFetchedAt = useRef(0);
+  const oracleLoadVersionRef = useRef(0);
   const {
     state: workspaceState,
     runtimeTitleByPaneId,
@@ -91,6 +101,73 @@ export default function CommandPalette() {
     () => getWorkspacePrimaryPanes(workspaceState),
     [workspaceState],
   );
+
+  const requestedPaletteHistoryPath = useMemo<ApiPath | null>(() => {
+    if (!open) return null;
+    const params = new URLSearchParams();
+    const trimmed = query.trim();
+    if (trimmed) params.set("query", trimmed);
+    return params.size > 0
+      ? `/api/me/palette-history?${params.toString()}`
+      : "/api/me/palette-history";
+  }, [open, query]);
+
+  useEffect(() => {
+    if (requestedPaletteHistoryPath === null) {
+      setPaletteHistoryPath(null);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPaletteHistoryPath(requestedPaletteHistoryPath);
+    }, PALETTE_HISTORY_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [requestedPaletteHistoryPath]);
+
+  const paletteHistoryResource = useApiResource<PaletteHistoryResponse>({
+    cacheKey: paletteHistoryPath,
+    path: (path) => path as ApiPath,
+  });
+
+  const historyRows =
+    paletteHistoryResource.status === "ready"
+      ? paletteHistoryResource.data.data.recent
+      : EMPTY_HISTORY_ROWS;
+  const frecencyBoosts = useMemo(
+    () =>
+      paletteHistoryResource.status === "ready"
+        ? new Map(Object.entries(paletteHistoryResource.data.data.frecency_boosts))
+        : EMPTY_FRECENCY_BOOSTS,
+    [paletteHistoryResource],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      setOracleResourceKey(null);
+      return;
+    }
+    if (Date.now() - oracleFetchedAt.current < PALETTE_ORACLE_TTL_MS) return;
+
+    oracleLoadVersionRef.current += 1;
+    setOracleResourceKey(`oracle-readings:${oracleLoadVersionRef.current}`);
+  }, [open]);
+
+  const oracleResource = useApiResource<OracleReadingsResponse>({
+    cacheKey: oracleResourceKey,
+    path: () => "/api/oracle/readings",
+  });
+
+  useEffect(() => {
+    if (oracleResource.status === "ready") {
+      oracleFetchedAt.current = Date.now();
+      setOracleRows(oracleReadingsFromResponse(oracleResource.data));
+      return;
+    }
+    if (oracleResource.status === "error") {
+      setOracleRows([]);
+    }
+  }, [oracleResource]);
 
   useEffect(() => {
     setKeybindings(loadKeybindings());
@@ -123,49 +200,6 @@ export default function CommandPalette() {
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
     return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
   }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (!open) return;
-      const params = new URLSearchParams();
-      const trimmed = query.trim();
-      if (trimmed) params.set("query", trimmed);
-      const path = params.size > 0 ? `/api/me/palette-history?${params.toString()}` : "/api/me/palette-history";
-      void apiFetch<PaletteHistoryResponse>(path, {
-        signal: controller.signal,
-      })
-        .then((response) => {
-          setHistoryRows(response.data.recent);
-          setFrecencyBoosts(new Map(Object.entries(response.data.frecency_boosts)));
-        })
-        .catch((error: unknown) => {
-          if (isAbortError(error)) return;
-          setHistoryRows([]);
-          setFrecencyBoosts(new Map());
-        });
-    }, PALETTE_HISTORY_DEBOUNCE_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [open, query]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (Date.now() - oracleFetchedAt.current < PALETTE_ORACLE_TTL_MS) return;
-
-    void apiFetch<{ data: OracleReadingSummary[] } | OracleReadingSummary[]>("/api/oracle/readings")
-      .then((response) => {
-        oracleFetchedAt.current = Date.now();
-        setOracleRows(Array.isArray(response) ? response : response.data);
-      })
-      .catch((error: unknown) => {
-        if (isAbortError(error)) return;
-        setOracleRows([]);
-      });
-  }, [open]);
 
   useEffect(() => {
     const trimmed = query.trim();

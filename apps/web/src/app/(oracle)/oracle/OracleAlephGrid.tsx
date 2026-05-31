@@ -2,9 +2,8 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -21,27 +20,23 @@ interface OracleSummary {
 
 export default function OracleAlephGrid() {
   const router = useRouter();
-  const [readings, setReadings] = useState<OracleSummary[] | null>(null);
-  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
+  const readingsResource = useApiResource<{ data: OracleSummary[] }>({
+    cacheKey: "oracle-readings",
+    path: () => "/api/oracle/readings",
+  });
 
-  useEffect(() => {
-    let active = true;
-    apiFetch<{ data: OracleSummary[] }>("/api/oracle/readings")
-      .then((body) => {
-        if (active) setReadings(body.data);
-      })
-      .catch((error) => {
-        if (active)
-          setLoadError(toFeedback(error, { fallback: "The Aleph could not be loaded." }));
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  if (loadError !== null) {
-    return <FeedbackNotice feedback={loadError} className={styles.oracleFeedback} />;
+  if (readingsResource.status === "error") {
+    return (
+      <FeedbackNotice
+        feedback={toFeedback(readingsResource.error, {
+          fallback: "The Aleph could not be loaded.",
+        })}
+        className={styles.oracleFeedback}
+      />
+    );
   }
+
+  const readings = readingsResource.status === "ready" ? readingsResource.data.data : null;
 
   if (readings === null || readings.length === 0) return null;
 

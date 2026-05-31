@@ -229,6 +229,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const silenceTrimLastTimestampRef = useRef<number | null>(null);
   const silenceBelowThresholdMsRef = useRef(0);
   const silenceAnalyserBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const refreshQueuePromiseRef = useRef<Promise<void> | null>(null);
 
   // Mirror state into refs so async callbacks (audio events, RAF loops) read
   // the latest values without re-binding listeners on every render. Direct
@@ -684,12 +685,25 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshQueue = useCallback(async () => {
-    try {
-      const nextQueueItems = await fetchPlaybackQueue();
-      setQueueItems(nextQueueItems);
-    } catch {
-      // Queue hydration is non-fatal for playback controls.
+    if (refreshQueuePromiseRef.current) {
+      return refreshQueuePromiseRef.current;
     }
+
+    const request = (async () => {
+      try {
+        const nextQueueItems = await fetchPlaybackQueue();
+        setQueueItems(nextQueueItems);
+      } catch {
+        // Queue hydration is non-fatal for playback controls.
+      }
+    })();
+    refreshQueuePromiseRef.current = request;
+    void request.finally(() => {
+      if (refreshQueuePromiseRef.current === request) {
+        refreshQueuePromiseRef.current = null;
+      }
+    });
+    return request;
   }, []);
 
   const addToQueue = useCallback(
@@ -868,6 +882,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [currentQueueIndex, queueItems.length, track]);
 
   const hasPreviousInQueue = useMemo(() => currentQueueIndex > 0, [currentQueueIndex]);
+  const activeTrackMediaId = track?.media_id ?? null;
 
   const { updatePositionState: updateMediaSessionPositionState } =
     useMediaSessionAdapter({
@@ -1129,11 +1144,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   ]);
 
   useEffect(() => {
-    if (!track) {
+    if (!activeTrackMediaId) {
       return;
     }
     void refreshQueue();
-  }, [refreshQueue, track]);
+  }, [activeTrackMediaId, refreshQueue]);
 
   useEffect(() => {
     const handleQueueUpdated = () => {

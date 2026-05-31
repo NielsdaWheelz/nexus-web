@@ -1,6 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
+
+const streamMocks = vi.hoisted(() => ({
+  fetchStreamToken: vi.fn(),
+  sseClientDirect: vi.fn(() => vi.fn()),
+}));
 
 vi.mock("next/navigation", () => ({
   __esModule: true,
@@ -12,7 +18,29 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+vi.mock("@/lib/api/streamToken", () => ({
+  fetchStreamToken: streamMocks.fetchStreamToken,
+}));
+
+vi.mock("@/lib/api/sse-client", () => ({
+  sseClientDirect: streamMocks.sseClientDirect,
+}));
+
 describe("OracleReadingPaneBody", () => {
+  beforeEach(() => {
+    streamMocks.fetchStreamToken.mockReset();
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      token: "stream-token-1",
+      stream_base_url: "https://stream.example.test",
+    });
+    streamMocks.sseClientDirect.mockReset();
+    streamMocks.sseClientDirect.mockReturnValue(vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("clears stale reading state when the reading id changes", async () => {
     const secondDetail = deferred<Response>();
     vi.stubGlobal(
@@ -60,6 +88,84 @@ describe("OracleReadingPaneBody", () => {
 
     expect(await screen.findByRole("heading", { name: "Where does the second path open?" }))
       .toBeVisible();
+  });
+
+  it("streams pending readings through the shared SSE client", async () => {
+    render(
+      <OracleReadingPaneBody
+        readingId="reading-1"
+        initialDetail={readingDetail({
+          id: "reading-1",
+          question: "What is still forming?",
+          folioNumber: 1,
+          status: "streaming",
+        })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(streamMocks.sseClientDirect).toHaveBeenCalledTimes(1);
+    });
+    const sseCalls = streamMocks.sseClientDirect.mock.calls as unknown as Array<
+      [Record<string, unknown>]
+    >;
+    expect(sseCalls[0]?.[0]).toMatchObject({
+      url: "https://stream.example.test/stream/oracle-readings/reading-1/events",
+      lastEventId: undefined,
+      maxReconnects: 3,
+    });
+  });
+
+  it("does not start a stream for a reading load that became stale", async () => {
+    const firstDetail = deferred<Response>();
+    const fetchMock = vi.fn(async (path: string) => {
+      if (path === "/api/oracle/readings/reading-1") {
+        return firstDetail.promise;
+      }
+      if (path === "/api/oracle/readings/reading-2") {
+        return jsonResponse({
+          data: readingDetail({
+            id: "reading-2",
+            question: "Where does the second path open?",
+            folioNumber: 2,
+          }),
+        });
+      }
+      throw new Error(`Unexpected fetch path: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<OracleReadingPaneBody readingId="reading-1" />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/oracle/readings/reading-1",
+        expect.objectContaining({
+          headers: { "Content-Type": "application/json" },
+          method: "GET",
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
+    rerender(<OracleReadingPaneBody readingId="reading-2" />);
+    firstDetail.resolve(
+      jsonResponse({
+        data: readingDetail({
+          id: "reading-1",
+          question: "What keeps the first lamp lit?",
+          folioNumber: 1,
+          status: "streaming",
+        }),
+      }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Where does the second path open?" }))
+      .toBeVisible();
+    await waitFor(() => {
+      expect(streamMocks.fetchStreamToken).not.toHaveBeenCalled();
+      expect(streamMocks.sseClientDirect).not.toHaveBeenCalled();
+    });
   });
 
   it("uses the backend-provided proxied plate URL without double wrapping it", async () => {
@@ -131,6 +237,81 @@ describe("OracleReadingPaneBody", () => {
     ).toBeVisible();
     expect(screen.queryByText("raw provider invalid_request_error detail")).not.toBeInTheDocument();
   });
+
+  it("clears concordance immediately when the reading status is no longer complete", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1/concordance") {
+          return jsonResponse({
+            data: [concordanceEntry({ id: "reading-2", motto: "In limine" })],
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const { rerender } = render(
+      <OracleConcordance readingId="reading-1" status="complete" />,
+    );
+
+    expect(await screen.findByText("Concordance")).toBeInTheDocument();
+    expect(screen.getByText("In limine")).toBeInTheDocument();
+
+    rerender(<OracleConcordance readingId="reading-1" status="streaming" />);
+
+    expect(screen.queryByText("Concordance")).not.toBeInTheDocument();
+    expect(screen.queryByText("In limine")).not.toBeInTheDocument();
+  });
+
+  it("aborts stale concordance loads when the reading id changes", async () => {
+    const firstConcordance = deferred<Response>();
+    const secondConcordance = deferred<Response>();
+    const signals: Record<string, AbortSignal> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string, init?: RequestInit) => {
+        if (path === "/api/oracle/readings/reading-1/concordance") {
+          signals.reading1 = init?.signal as AbortSignal;
+          return firstConcordance.promise;
+        }
+        if (path === "/api/oracle/readings/reading-2/concordance") {
+          signals.reading2 = init?.signal as AbortSignal;
+          return secondConcordance.promise;
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const { rerender } = render(
+      <OracleConcordance readingId="reading-1" status="complete" />,
+    );
+
+    await waitFor(() => {
+      expect(signals.reading1).toBeDefined();
+    });
+
+    rerender(<OracleConcordance readingId="reading-2" status="complete" />);
+
+    await waitFor(() => {
+      expect(signals.reading2).toBeDefined();
+    });
+    expect(signals.reading1.aborted).toBe(true);
+
+    firstConcordance.resolve(
+      jsonResponse({
+        data: [concordanceEntry({ id: "reading-stale", motto: "Stale motto" })],
+      }),
+    );
+    secondConcordance.resolve(
+      jsonResponse({
+        data: [concordanceEntry({ id: "reading-fresh", motto: "Fresh motto" })],
+      }),
+    );
+
+    expect(await screen.findByText("Fresh motto")).toBeInTheDocument();
+    expect(screen.queryByText("Stale motto")).not.toBeInTheDocument();
+  });
 });
 
 function readingDetail(input: {
@@ -165,6 +346,18 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function concordanceEntry(input: { id: string; motto: string }) {
+  return {
+    id: input.id,
+    folio_number: 2,
+    folio_motto: input.motto,
+    folio_theme: "Threshold",
+    shared_plate: false,
+    shared_theme: true,
+    shared_passage_count: 0,
+  };
 }
 
 function deferred<T>() {

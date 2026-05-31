@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { ConversationModel } from "@/lib/conversations/types";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
 
@@ -45,10 +46,6 @@ function loadComposerModels(): Promise<ConversationModel[]> {
       .then((response) => {
         cachedModels = response.data;
         return response.data;
-      })
-      .catch((error) => {
-        modelLoadPromise = null;
-        throw error;
       });
   }
   return modelLoadPromise;
@@ -123,24 +120,20 @@ export function useChatModels({
   const [selectedReasoning, setSelectedReasoning] =
     useState<ReasoningMode>(DEFAULT_REASONING);
 
-  useEffect(() => {
-    let cancelled = false;
-    void loadComposerModels()
-      .then((nextModels) => {
-        if (!cancelled) {
-          setModels(nextModels);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.error("Failed to load models:", err);
-        }
-      });
+  const modelsResource = useAsyncResource<ConversationModel[]>({
+    cacheKey: cachedModels ? null : "chat-composer-models",
+    load: () => loadComposerModels(),
+  });
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => {
+    if (modelsResource.status === "ready") {
+      setModels(modelsResource.data);
+      return;
+    }
+    if (modelsResource.status === "error") {
+      console.error("Failed to load models:", modelsResource.error);
+    }
+  }, [modelsResource]);
 
   const availableModels = useMemo(
     () => (onlyUseMyKeys ? models.filter(isAvailableViaUserKey) : models),

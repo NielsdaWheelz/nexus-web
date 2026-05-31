@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
-import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
+import {
+  usePaneFixedChrome,
+  type PaneFixedChromePublication,
+} from "@/components/workspace/PaneFixedChrome";
 import {
   usePaneSecondary,
   type PaneSecondaryPublication,
@@ -18,6 +21,10 @@ const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
+  paneShellSnapshots: [] as {
+    fixedChromeWidthPx: number;
+    secondarySurfaces: string;
+  }[],
   runtimeLayout: null as PaneRuntimeLayout | null,
   fixedChromeWidthPx: null as number | null,
   secondaryPublication: null as PaneSecondaryPublication | null,
@@ -98,15 +105,19 @@ function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
   const didOpenInNewPaneRef = useRef(false);
-  usePaneFixedChrome(
-    hostMocks.fixedChromeWidthPx === null
-      ? null
-      : {
-          id: "reader-overview-ruler",
-          widthPx: hostMocks.fixedChromeWidthPx,
-          body: <div>Fixed chrome</div>,
-        },
+  const fixedChromeWidthPx = hostMocks.fixedChromeWidthPx;
+  const fixedChromePublication = useMemo<PaneFixedChromePublication | null>(
+    () =>
+      fixedChromeWidthPx === null
+        ? null
+        : {
+            id: "reader-overview-ruler",
+            widthPx: fixedChromeWidthPx,
+            body: <div>Fixed chrome</div>,
+          },
+    [fixedChromeWidthPx],
   );
+  usePaneFixedChrome(fixedChromePublication);
   usePaneSecondary(hostMocks.secondaryPublication);
   useEffect(() => {
     const id = instanceId.current;
@@ -190,42 +201,47 @@ vi.mock("@/components/workspace/PaneShell", () => ({
       onBack: () => void;
       onForward: () => void;
     };
-  }) => (
-    <section
-      data-testid="pane-shell"
-      data-min-width-px={sizing.primaryMinWidthPx}
-      data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
-      data-secondary-width-px={secondarySizing?.widthPx ?? 0}
-      data-secondary-pane-id={secondaryPane?.id ?? "none"}
-      data-secondary-surfaces={
-        secondaryPublication
-          ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
-          : "none"
-      }
-    >
-      <nav aria-label="Mock pane chrome">
-        <button
-          type="button"
-          onClick={navigation.onBack}
-          disabled={!navigation.canGoBack}
-        >
-          Go back in this pane
-        </button>
-        <button
-          type="button"
-          onClick={navigation.onForward}
-          disabled={!navigation.canGoForward}
-        >
-          Go forward in this pane
-        </button>
-        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-        <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
-          Chrome Author
-        </a>
-      </nav>
-      {children}
-    </section>
-  ),
+  }) => {
+    const secondarySurfaces = secondaryPublication
+      ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
+      : "none";
+    hostMocks.paneShellSnapshots.push({
+      fixedChromeWidthPx: fixedChromePublication?.widthPx ?? 0,
+      secondarySurfaces,
+    });
+    return (
+      <section
+        data-testid="pane-shell"
+        data-min-width-px={sizing.primaryMinWidthPx}
+        data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
+        data-secondary-width-px={secondarySizing?.widthPx ?? 0}
+        data-secondary-pane-id={secondaryPane?.id ?? "none"}
+        data-secondary-surfaces={secondarySurfaces}
+      >
+        <nav aria-label="Mock pane chrome">
+          <button
+            type="button"
+            onClick={navigation.onBack}
+            disabled={!navigation.canGoBack}
+          >
+            Go back in this pane
+          </button>
+          <button
+            type="button"
+            onClick={navigation.onForward}
+            disabled={!navigation.canGoForward}
+          >
+            Go forward in this pane
+          </button>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
+            Chrome Author
+          </a>
+        </nav>
+        {children}
+      </section>
+    );
+  },
 }));
 
 vi.mock("@/components/workspace/WorkspacePaneStrip", () => ({
@@ -284,6 +300,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
+    hostMocks.paneShellSnapshots = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
@@ -299,6 +316,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
     hostMocks.store.resizeSecondaryPane.mockReset();
+    hostMocks.store.runtimeTitleByPaneId = new Map();
     setPaneHref("/media/media-1");
   });
 
@@ -487,6 +505,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
+    hostMocks.paneShellSnapshots = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
@@ -495,6 +514,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.store.requestSecondarySurface.mockReset();
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
+    hostMocks.store.runtimeTitleByPaneId = new Map();
     setPaneHref("/media/media-1");
   });
 
@@ -541,6 +561,37 @@ describe("WorkspaceHost secondary publication validation", () => {
       "secondary-1",
     );
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("does not clear and republish secondary or fixed chrome on unrelated host renders", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.fixedChromeWidthPx = 48;
+
+    const { rerender } = render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-surfaces",
+        "reader-highlights",
+      );
+    });
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-fixed-chrome-width-px",
+      "48",
+    );
+
+    hostMocks.paneShellSnapshots = [];
+    hostMocks.store.runtimeTitleByPaneId = new Map([["pane-1", "Resolved media"]]);
+    rerender(<WorkspaceHost />);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(hostMocks.paneShellSnapshots).toEqual([
+      { fixedChromeWidthPx: 48, secondarySurfaces: "reader-highlights" },
+    ]);
   });
 
   it("drops a persisted secondary when the publication group no longer matches", async () => {

@@ -476,6 +476,19 @@ describe("MediaPaneBody pane sizing", () => {
     },
   );
 
+  it("loads web article fragments once", async () => {
+    testState.mediaKind = "web_article";
+    renderMediaPane();
+
+    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
+
+    expect(
+      testState.apiFetch.mock.calls.filter(
+        ([input]) => pathOf(input) === "/api/media/media-1/fragments",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("publishes one-node web article contents independent of highlights", async () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;

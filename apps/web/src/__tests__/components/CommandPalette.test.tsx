@@ -18,8 +18,18 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function renderCommandPalette() {
-  render(
+  return render(
     <FeedbackProvider>
       <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
         <div data-testid="workspace-ready" />
@@ -207,6 +217,50 @@ describe("CommandPalette", () => {
 
     expect(await screen.findByRole("option", { name: /Searchable note/ })).toBeInTheDocument();
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
+  });
+
+  it("aborts in-flight Oracle recents when the palette unmounts", async () => {
+    vi.restoreAllMocks();
+    const oracleResponse = deferred<Response>();
+    const oracleSignals: AbortSignal[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+
+      if (url.pathname === "/api/me/palette-history") {
+        return jsonResponse({
+          data: {
+            recent: [],
+            frecency_boosts: {},
+          },
+        });
+      }
+      if (url.pathname === "/api/oracle/readings") {
+        if (init?.signal instanceof AbortSignal) {
+          oracleSignals.push(init.signal);
+        }
+        return oracleResponse.promise;
+      }
+      if (url.pathname === "/api/search") {
+        return jsonResponse({ results: [], page: { has_more: false, next_cursor: null } });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    });
+
+    const view = renderCommandPalette();
+    openPalette();
+
+    await waitFor(() => {
+      expect(oracleSignals).toHaveLength(1);
+    });
+
+    view.unmount();
+
+    expect(oracleSignals[0]?.aborted).toBe(true);
+
+    await act(async () => {
+      oracleResponse.resolve(jsonResponse({ data: [] }));
+    });
   });
 
   it("renders one open-tab row per pane with an inline close button", async () => {

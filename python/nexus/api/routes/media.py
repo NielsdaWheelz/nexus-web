@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from nexus.api.query_params import parse_comma_list
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_session_factory
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.media import (
@@ -623,14 +623,18 @@ def get_epub_asset(
     media_id: UUID,
     asset_key: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Serve an EPUB reader image asset through the canonical safe fetch path.
 
     Returns binary payload with resolved content type and cache headers.
     Visibility, kind, readiness, and key-format guards enforced by service layer.
     """
-    result = media_service.get_epub_asset_for_viewer(db, viewer.user_id, media_id, asset_key)
+    result = media_service.get_epub_asset_for_viewer(
+        session_factory=get_session_factory(),
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        asset_key=asset_key,
+    )
     headers = {
         "Cache-Control": "private, max-age=86400, immutable",
         "Content-Length": str(len(result.data)),

@@ -933,21 +933,25 @@ export function WorkspaceStoreProvider({
     Map<string, WorkspacePaneTitleRecord>
   >(() => new Map());
   const readyRef = useRef(false);
+  const urlHydratedRef = useRef(false);
   const pendingTitleHintByResourceKeyRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
 
   const applyRestoredState = useCallback(
-    (restored: WorkspaceState, deepLinkIntent: WorkspaceState) =>
+    (restored: WorkspaceState, deepLinkIntent: WorkspaceState) => {
+      const merged = mergeRestoredWorkspaceWithDeepLink(
+        restored,
+        deepLinkIntent,
+        workspacePrimaryMetrics,
+      );
       dispatch({
         type: "hydrate",
-        state: mergeRestoredWorkspaceWithDeepLink(
-          restored,
-          deepLinkIntent,
-          workspacePrimaryMetrics,
-        ),
-      }),
+        state: merged,
+      });
+      return merged;
+    },
     [workspacePrimaryMetrics]
   );
   useWorkspaceSession(
@@ -985,6 +989,10 @@ export function WorkspaceStoreProvider({
 
   // --- Hydrate from URL on mount ---
   useEffect(() => {
+    if (urlHydratedRef.current) {
+      return;
+    }
+    urlHydratedRef.current = true;
     dispatch({
       type: "hydrate",
       state: createDefaultWorkspaceState(

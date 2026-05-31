@@ -21,14 +21,27 @@ import {
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
 } from "@/lib/auth/messages";
+import { useApiResource } from "@/lib/api/useApiResource";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
+
+interface AccountResponse {
+  data: {
+    email?: string;
+    display_name: string | null;
+  };
+}
 
 export default function SettingsAccountPaneBody({
   initialEmail = "",
 }: {
   initialEmail?: string;
 }) {
+  const accountResource = useApiResource<AccountResponse>({
+    cacheKey: "settings-account:me",
+    path: () => "/api/me",
+  });
+
   const [currentEmail, setCurrentEmail] = useState(initialEmail);
   const [emailInput, setEmailInput] = useState(initialEmail);
   const emailDirtyRef = useRef(false);
@@ -45,34 +58,32 @@ export default function SettingsAccountPaneBody({
   const [displayNamePending, startDisplayNameTransition] = useTransition();
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const response = await apiFetch<{ data: { display_name: string | null } }>(
-          "/api/me"
-        );
-        const email =
-          "email" in response.data && typeof response.data.email === "string"
-            ? response.data.email
-            : "";
-        if (email) {
-          setCurrentEmail(email);
-          if (!emailDirtyRef.current) {
-            setEmailInput(email);
-          }
+    if (accountResource.status === "ready") {
+      const email =
+        typeof accountResource.data.data.email === "string"
+          ? accountResource.data.data.email
+          : "";
+      if (email) {
+        setCurrentEmail(email);
+        if (!emailDirtyRef.current) {
+          setEmailInput(email);
         }
-        const name = response.data.display_name ?? "";
-        setCurrentDisplayName(name);
-        if (!displayNameDirtyRef.current) {
-          setDisplayNameInput(name);
-        }
-      } catch {
-        setDisplayNameFeedback({
-          severity: "error",
-          title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
-        });
       }
-    })();
-  }, []);
+      const name = accountResource.data.data.display_name ?? "";
+      setCurrentDisplayName(name);
+      if (!displayNameDirtyRef.current) {
+        setDisplayNameInput(name);
+      }
+      return;
+    }
+
+    if (accountResource.status === "error") {
+      setDisplayNameFeedback({
+        severity: "error",
+        title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
+      });
+    }
+  }, [accountResource]);
 
   const handleEmailSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {

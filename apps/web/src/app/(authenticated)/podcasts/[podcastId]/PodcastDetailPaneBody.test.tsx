@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const subscribeToPodcastMock = vi.fn();
@@ -75,6 +82,103 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function podcastDetailResponse({
+  id = "podcast-1",
+  title = "Systems Podcast",
+  subscription = null,
+}: {
+  id?: string;
+  title?: string;
+  subscription?: unknown;
+} = {}) {
+  return {
+    data: {
+      podcast: {
+        id,
+        provider: "podcast_index",
+        provider_podcast_id: `provider-${id}`,
+        title,
+        contributors: [],
+        feed_url: "https://feeds.example.com/systems.xml",
+        website_url: null,
+        image_url: null,
+        description: "Systems thinking show",
+        created_at: "2026-03-06T00:00:00Z",
+        updated_at: "2026-03-06T00:00:00Z",
+      },
+      subscription,
+    },
+  };
+}
+
+function episodeMedia({
+  id = "episode-1",
+  title = "Episode 1",
+  descriptionText = null,
+  transcriptState = "ready",
+  transcriptCoverage = "full",
+}: {
+  id?: string;
+  title?: string;
+  descriptionText?: string | null;
+  transcriptState?: string;
+  transcriptCoverage?: string;
+} = {}) {
+  return {
+    id,
+    kind: "podcast_episode",
+    title,
+    canonical_source_url: "https://feeds.example.com/systems.xml",
+    processing_status: "ready_for_reading",
+    transcript_state: transcriptState,
+    transcript_coverage: transcriptCoverage,
+    listening_state: null,
+    subscription_default_playback_speed: null,
+    episode_state: "unplayed",
+    failure_stage: null,
+    last_error_code: null,
+    playback_source: null,
+    capabilities: {
+      can_read: true,
+      can_highlight: true,
+      can_quote: true,
+      can_search: true,
+      can_play: true,
+      can_download_file: false,
+    },
+    contributors: [],
+    published_date: null,
+    publisher: null,
+    language: null,
+    description: descriptionText,
+    description_html: null,
+    description_text: descriptionText,
+    created_at: "2026-03-06T00:00:00Z",
+    updated_at: "2026-03-06T00:00:00Z",
+  };
+}
+
+function transcriptForecast(mediaId = "episode-1") {
+  return {
+    media_id: mediaId,
+    processing_status: "ready_for_reading",
+    transcript_state: "not_requested",
+    transcript_coverage: "none",
+    required_minutes: 1,
+    remaining_minutes: 100,
+    fits_budget: true,
+    request_enqueued: false,
+  };
+}
+
 describe("PodcastDetailPaneBody subscribe flow", () => {
   beforeEach(() => {
     subscribeToPodcastMock.mockReset();
@@ -102,24 +206,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/podcast-1") {
-        return jsonResponse({
-          data: {
-            podcast: {
-              id: "podcast-1",
-              provider: "podcast_index",
-              provider_podcast_id: "provider-1",
-              title: "Systems Podcast",
-              contributors: [],
-              feed_url: "https://feeds.example.com/systems.xml",
-              website_url: null,
-              image_url: null,
-              description: "Systems thinking show",
-              created_at: "2026-03-06T00:00:00Z",
-              updated_at: "2026-03-06T00:00:00Z",
-            },
-            subscription: null,
-          },
-        });
+        return jsonResponse(podcastDetailResponse());
       }
       if (url.pathname === "/api/podcasts/podcast-1/episodes") {
         return jsonResponse({ data: [] });
@@ -168,5 +255,168 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       library_ids: string[];
     };
     expect(payload.library_ids).toEqual(["lib-research", "lib-books"]);
+  });
+
+  it("does not refetch podcast episodes when show notes expand", async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      calls.push(`${url.pathname}${url.search}`);
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({
+          data: [
+            episodeMedia({
+              descriptionText: "Detailed show notes",
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastDetailPaneBody />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show notes for Episode 1" }),
+    );
+    expect(await screen.findByText("Detailed show notes")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hide notes for Episode 1" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Detailed show notes")).not.toBeInTheDocument();
+    });
+    expect(calls.filter((call) => call === "/api/podcasts/podcast-1")).toHaveLength(
+      1,
+    );
+    expect(
+      calls.filter((call) =>
+        call.startsWith("/api/podcasts/podcast-1/episodes"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("ignores older podcast loads that resolve after a newer route load", async () => {
+    let currentPodcastId = "podcast-1";
+    mockUsePaneParam.mockImplementation((paramName) =>
+      paramName === "podcastId" ? currentPodcastId : null,
+    );
+    const oldDetail = deferredResponse();
+    const oldEpisodes = deferredResponse();
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      calls.push(`${url.pathname}${url.search}`);
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return oldDetail.promise;
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return oldEpisodes.promise;
+      }
+      if (url.pathname === "/api/podcasts/podcast-2") {
+        return jsonResponse(
+          podcastDetailResponse({ id: "podcast-2", title: "Current Podcast" }),
+        );
+      }
+      if (url.pathname === "/api/podcasts/podcast-2/episodes") {
+        return jsonResponse({
+          data: [episodeMedia({ id: "episode-2", title: "Current Episode" })],
+        });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    const { rerender } = render(<PodcastDetailPaneBody />);
+    await waitFor(() => {
+      expect(calls).toContain("/api/podcasts/podcast-1");
+    });
+
+    currentPodcastId = "podcast-2";
+    rerender(<PodcastDetailPaneBody />);
+
+    expect(await screen.findByText("Current Episode")).toBeInTheDocument();
+
+    await act(async () => {
+      oldDetail.resolve(jsonResponse(podcastDetailResponse()));
+      oldEpisodes.resolve(
+        jsonResponse({
+          data: [episodeMedia({ id: "episode-old", title: "Old Episode" })],
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Old Episode")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Current Episode")).toBeInTheDocument();
+  });
+
+  it("keeps transcript forecast reservations until the POST settles", async () => {
+    const firstForecast = deferredResponse();
+    let forecastCalls = 0;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      calls.push(`${url.pathname}${url.search}`);
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({
+          data: [
+            episodeMedia({
+              transcriptState: "not_requested",
+              transcriptCoverage: "none",
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        forecastCalls += 1;
+        if (forecastCalls === 1) {
+          return firstForecast.promise;
+        }
+        return jsonResponse({ data: [transcriptForecast()] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastDetailPaneBody />);
+
+    await waitFor(() => {
+      expect(forecastCalls).toBe(1);
+    });
+    fireEvent.change(screen.getByLabelText("Episode sort"), {
+      target: { value: "oldest" },
+    });
+    await waitFor(() => {
+      expect(
+        calls.some((call) =>
+          call.includes("/api/podcasts/podcast-1/episodes?") &&
+          call.includes("sort=oldest"),
+        ),
+      ).toBe(true);
+    });
+    expect(forecastCalls).toBe(1);
+
+    await act(async () => {
+      firstForecast.resolve(jsonResponse({ data: [transcriptForecast()] }));
+    });
+    await waitFor(() => {
+      expect(forecastCalls).toBe(2);
+    });
   });
 });

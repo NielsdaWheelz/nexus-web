@@ -4,7 +4,10 @@ import { cookies } from "next/headers";
 import { ApiError } from "@/lib/api/client";
 import { getInternalApiConfig } from "@/lib/api/internal-config";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
+
+const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
 
 function readApiErrorBody(body: unknown): {
   code?: string;
@@ -45,10 +48,30 @@ export async function callFastAPI<T>(path: string): Promise<T> {
   if (config.internalSecret) {
     headers["X-Nexus-Internal"] = config.internalSecret;
   }
-  const response = await fetch(`${config.fastApiBaseUrl}${path}`, {
-    headers,
-    cache: "no-store",
-  });
+  const requestId = createRandomId();
+  headers["X-Request-ID"] = requestId;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FASTAPI_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${config.fastApiBaseUrl}${path}`, {
+      headers,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new ApiError(
+        504,
+        "E_UPSTREAM_TIMEOUT",
+        "Backend service timed out",
+        requestId,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (response.status === 204 || response.status === 205) {
     return undefined as T;
   }

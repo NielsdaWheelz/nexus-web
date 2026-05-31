@@ -1,16 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import { ChevronLeft, ChevronRight, LogOut, Plus, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
-import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
+import { pinnedObjectsPath, type PinnedObject } from "@/lib/pinnedObjects";
+import { useApiResource } from "@/lib/api/useApiResource";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import styles from "./Navbar.module.css";
+
+interface PinnedObjectsResponse {
+  data: { pins: PinnedObject[] };
+}
 
 interface NavbarProps {
   onToggle?: (collapsed: boolean) => void;
@@ -31,8 +36,11 @@ function NavIcon({ href }: { href: string }) {
 
 export default function Navbar({ onToggle }: NavbarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [pins, setPins] = useState<PinnedObject[]>([]);
   const { state, navigatePane } = useWorkspaceStore();
+  const pinsResource = useApiResource<PinnedObjectsResponse>({
+    cacheKey: "navbar",
+    path: pinnedObjectsPath,
+  });
 
   const activePane = useMemo(
     () =>
@@ -98,24 +106,13 @@ export default function Navbar({ onToggle }: NavbarProps) {
     dispatchOpenAddContent("content");
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const loadedPins = await fetchPinnedObjects("navbar");
-        if (!cancelled) {
-          setPins(loadedPins.filter((pin) => pin.objectRef.route));
-        }
-      } catch {
-        if (!cancelled) {
-          setPins([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const pins = useMemo(
+    () =>
+      pinsResource.status === "ready"
+        ? pinsResource.data.data.pins.filter((pin) => pin.objectRef.route)
+        : [],
+    [pinsResource],
+  );
 
   return (
     <nav className={`${styles.navbar} ${collapsed ? styles.collapsed : ""}`}>

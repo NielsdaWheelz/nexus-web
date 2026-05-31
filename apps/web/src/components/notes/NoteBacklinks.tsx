@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Link2 } from "lucide-react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
+import type { ApiPath } from "@/lib/api/client";
 import type { HydratedObjectRef, ObjectRef } from "@/lib/objectRefs";
 import styles from "./NoteBacklinks.module.css";
 
@@ -30,31 +30,19 @@ interface ObjectLinksResponse {
 
 export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
   const { objectId, objectType } = objectRef;
-  const [links, setLinks] = useState<ObjectLink[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<FeedbackContent | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchObjectLinks({ objectId, objectType })
-      .then((items) => {
-        if (!cancelled) setLinks(items);
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setLinks([]);
-          setError(toFeedback(loadError, { fallback: "Backlinks could not be loaded." }));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [objectId, objectType]);
+  const linksResource = useApiResource<ObjectLinksResponse>({
+    cacheKey: `${objectType}:${objectId}`,
+    path: () => objectLinksPath({ objectId, objectType }),
+  });
+  const links =
+    linksResource.status === "ready" ? linksResource.data.data.links : [];
+  const loading = linksResource.status === "loading";
+  const error: FeedbackContent | null =
+    linksResource.status === "error"
+      ? toFeedback(linksResource.error, {
+          fallback: "Backlinks could not be loaded.",
+        })
+      : null;
 
   const backlinks = links.flatMap((link) => {
     const other =
@@ -90,13 +78,10 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
   );
 }
 
-async function fetchObjectLinks(object: ObjectRef): Promise<ObjectLink[]> {
+function objectLinksPath(object: ObjectRef): ApiPath {
   const params = new URLSearchParams({
     object_type: object.objectType,
     object_id: object.objectId,
   });
-  const response = await apiFetch<ObjectLinksResponse>(`/api/object-links?${params.toString()}`, {
-    cache: "no-store",
-  });
-  return response.data.links;
+  return `/api/object-links?${params.toString()}`;
 }

@@ -740,8 +740,21 @@ def search(
     ):
         if not transaction_active_at_entry and db.in_transaction():
             db.rollback()
-        semantic_query_embedding = build_text_embedding(q)
-        if len(semantic_query_embedding[1]) != transcript_embedding_dimensions():
+        try:
+            semantic_query_embedding = build_text_embedding(q)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_LLM_NO_KEY:
+                raise
+            logger.warning(
+                "search_semantic_embedding_unavailable_lexical_fallback",
+                error_code=exc.code.value,
+                result_types=",".join(normalized_types),
+            )
+            semantic_query_embedding = None
+        if (
+            semantic_query_embedding is not None
+            and len(semantic_query_embedding[1]) != transcript_embedding_dimensions()
+        ):
             raise ApiError(
                 ApiErrorCode.E_LLM_PROVIDER_DOWN,
                 "Embedding provider returned an invalid response.",

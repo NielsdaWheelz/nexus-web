@@ -1,71 +1,68 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import {
   FeedbackNotice,
   toFeedback,
-  type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { formatLocalDate, isLocalDate, todayLocalDate } from "@/lib/localDate";
-import { fetchDailyNotePage, type NotePage } from "@/lib/notes/api";
+import { fetchDailyNotePage } from "@/lib/notes/api";
 import {
   usePaneParam,
   usePaneRuntime,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { useAsyncResource } from "@/lib/useAsyncResource";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 
 export default function DailyNotePaneBody() {
   const paneRuntime = usePaneRuntime();
+  const paneRuntimeRef = useRef(paneRuntime);
   const routeLocalDate = usePaneParam("localDate");
   const localDate = routeLocalDate ?? todayLocalDate();
-  const [page, setPage] = useState<NotePage | null>(null);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const paneOptions = [
-    {
-      id: "daily-open-yesterday",
-      label: "Open yesterday",
-      onSelect: () => {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const href = `/daily/${formatLocalDate(yesterday)}`;
-        paneRuntime?.openInNewPane(href, "Yesterday");
-      },
-    },
-  ];
+  paneRuntimeRef.current = paneRuntime;
+  const validLocalDate = isLocalDate(localDate);
+  const dailyResource = useAsyncResource({
+    cacheKey: validLocalDate ? `daily:${localDate}` : null,
+    load: async () => ({
+      localDate,
+      page: await fetchDailyNotePage(localDate),
+    }),
+  });
 
-  useSetPaneTitle(routeLocalDate ? (feedback ? "Daily note" : null) : "Today");
+  const openYesterday = useCallback(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const href = `/daily/${formatLocalDate(yesterday)}`;
+    paneRuntimeRef.current?.openInNewPane(href, "Yesterday");
+  }, []);
+  const paneOptions = useMemo(
+    () => [
+      {
+        id: "daily-open-yesterday",
+        label: "Open yesterday",
+        onSelect: openYesterday,
+      },
+    ],
+    [openYesterday]
+  );
+
+  const page =
+    dailyResource.status === "ready" && dailyResource.data.localDate === localDate
+      ? dailyResource.data.page
+      : null;
+  const hasLoadError = !validLocalDate || dailyResource.status === "error";
+
+  useSetPaneTitle(routeLocalDate ? (hasLoadError ? "Daily note" : null) : "Today");
   usePaneChromeOverride({ options: paneOptions });
 
-  useEffect(() => {
-    let cancelled = false;
-    setPage(null);
-    setFeedback(null);
-    if (!isLocalDate(localDate)) {
-      setFeedback({
-        severity: "error",
-        title: "Daily note date must use YYYY-MM-DD.",
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    fetchDailyNotePage(localDate)
-      .then((dailyPage) => {
-        if (!cancelled) setPage(dailyPage);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setFeedback(toFeedback(error, { fallback: "Daily note could not be loaded." }));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [localDate]);
-
-  if (feedback) return <FeedbackNotice {...feedback} />;
+  if (!validLocalDate) {
+    return <FeedbackNotice severity="error" title="Daily note date must use YYYY-MM-DD." />;
+  }
+  if (dailyResource.status === "error") {
+    return <FeedbackNotice {...toFeedback(dailyResource.error, { fallback: "Daily note could not be loaded." })} />;
+  }
   if (!page) return <FeedbackNotice severity="info" title="Loading daily note..." />;
   return <PagePaneBody pageIdOverride={page.id} initialPage={page} />;
 }

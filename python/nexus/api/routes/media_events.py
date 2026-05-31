@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.routes.stream import get_stream_viewer
-from nexus.db.listen import wait_for_notifications
+from nexus.db.listen import StreamNotificationListener, open_stream_listener
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.media import MediaOut
@@ -42,9 +42,15 @@ async def stream_media_events(
     # Surfaces NotFoundError (E_MEDIA_NOT_FOUND, 404) if the viewer cannot
     # read the media — masks existence, matching GET /media/{id}.
     await run_in_threadpool(_assert_media_readable, viewer_id, media_id)
+    listener = await open_stream_listener("media_events", str(media_id), KEEPALIVE_INTERVAL_SECONDS)
 
     return StreamingResponse(
-        _tail_media_events(request=request, media_id=media_id, viewer_id=viewer_id),
+        _tail_media_events(
+            request=request,
+            media_id=media_id,
+            viewer_id=viewer_id,
+            listener=listener,
+        ),
         media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -69,36 +75,45 @@ async def _tail_media_events(
     request: Request,
     media_id: UUID,
     viewer_id: UUID,
+    listener: StreamNotificationListener,
 ) -> AsyncIterator[str]:
     last_payload: dict[str, Any] | None = None
     last_keepalive = time.monotonic()
+    close_reason = "closed"
 
-    async for _ in wait_for_notifications(
-        "media_events", str(media_id), KEEPALIVE_INTERVAL_SECONDS
-    ):
-        if await request.is_disconnected():
-            return
-
-        try:
-            payload = await run_in_threadpool(_read_media_state, viewer_id, media_id)
-        except ApiError as exc:
-            if exc.code == ApiErrorCode.E_MEDIA_NOT_FOUND:
+    try:
+        async for _ in listener.notifications():
+            if await request.is_disconnected():
+                close_reason = "client_disconnected"
                 return
-            raise
 
-        if payload != last_payload:
-            yield _format_sse_event("state", payload)
-            last_payload = payload
-            last_keepalive = time.monotonic()
+            try:
+                payload = await run_in_threadpool(_read_media_state, viewer_id, media_id)
+            except ApiError as exc:
+                if exc.code == ApiErrorCode.E_MEDIA_NOT_FOUND:
+                    close_reason = "not_found"
+                    return
+                raise
 
-        if payload["processing_status"] in _TERMINAL_STATUSES:
-            yield _format_sse_event("done", payload)
-            return
+            if payload != last_payload:
+                yield _format_sse_event("state", payload)
+                last_payload = payload
+                last_keepalive = time.monotonic()
 
-        now = time.monotonic()
-        if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
-            yield ": keepalive\n\n"
-            last_keepalive = now
+            if payload["processing_status"] in _TERMINAL_STATUSES:
+                yield _format_sse_event("done", payload)
+                close_reason = "terminal"
+                return
+
+            now = time.monotonic()
+            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+    except BaseException:
+        close_reason = "error"
+        raise
+    finally:
+        await listener.close(reason=close_reason)
 
 
 def _build_state_payload(media: MediaOut) -> dict[str, Any]:

@@ -8,6 +8,8 @@
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
 
+export type ApiPath = `/api/${string}`;
+
 /**
  * API error with status code and message.
  */
@@ -57,7 +59,7 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
 }
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
-const PLAIN_GET_COALESCING_OPTION_KEYS = new Set(["headers", "method"]);
+const PLAIN_GET_COALESCING_OPTION_KEYS = new Set(["cache", "headers", "method"]);
 
 function normalizeMethod(method: string | undefined): string {
   return method?.toUpperCase() ?? "GET";
@@ -85,6 +87,7 @@ function isPlainGetRequest(options: RequestInit): boolean {
   );
   return (
     hasOnlyPlainGetOptions &&
+    (options.cache === undefined || options.cache === "no-store") &&
     normalizeMethod(options.method) === "GET" &&
     options.body === undefined &&
     options.signal === undefined
@@ -165,7 +168,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
  * @throws ApiError on non-2xx responses
  */
 export async function apiFetch<T>(
-  path: string,
+  path: ApiPath,
   options: RequestInit = {}
 ): Promise<T> {
   const init = {
@@ -198,7 +201,7 @@ export async function apiFetch<T>(
 }
 
 export async function apiPostFormData<T>(
-  path: string,
+  path: ApiPath,
   formData: FormData
 ): Promise<T> {
   const response = await fetch(path, {
@@ -207,4 +210,14 @@ export async function apiPostFormData<T>(
   });
 
   return parseApiResponse<T>(response);
+}
+
+export async function apiKeepaliveJson(path: ApiPath, body: unknown): Promise<void> {
+  const response = await fetch(path, {
+    method: "PUT",
+    keepalive: true,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await parseApiResponse<void>(response);
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { useMemo } from "react";
+import type { ApiPath } from "@/lib/api/client";
+import { useApiResource } from "@/lib/api/useApiResource";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 interface ChatsByReferenceResponse {
@@ -12,35 +13,23 @@ export function useChatsByReference(resourceUri: string | null): {
   conversations: ConversationListItem[];
   isLoading: boolean;
 } {
-  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const conversationsPath = useMemo<ApiPath | null>(
+    () =>
+      resourceUri
+        ? `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}`
+        : null,
+    [resourceUri],
+  );
+  const conversationsResource = useApiResource<ChatsByReferenceResponse>({
+    cacheKey: conversationsPath,
+    path: (path) => path as ApiPath,
+  });
 
-  useEffect(() => {
-    if (!resourceUri) {
-      setConversations([]);
-      return;
-    }
-    let cancelled = false;
-    setIsLoading(true);
-    apiFetch<ChatsByReferenceResponse>(
-      `/api/conversations?has_reference=${encodeURIComponent(resourceUri)}`,
-    )
-      .then((response) => {
-        if (cancelled) return;
-        setConversations(response.data);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setConversations([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [resourceUri]);
-
-  return { conversations, isLoading };
+  return {
+    conversations:
+      conversationsResource.status === "ready"
+        ? conversationsResource.data.data
+        : [],
+    isLoading: conversationsResource.status === "loading",
+  };
 }

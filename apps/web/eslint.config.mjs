@@ -13,11 +13,22 @@ const eslintConfig = [
   {
     rules: {
       "react/no-danger": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.name='setInterval']",
+          message: "Product polling must go through useIntervalPoll.",
+        },
+      ],
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
     },
+  },
+  {
+    files: ["src/lib/useIntervalPoll.ts"],
+    rules: { "no-restricted-syntax": "off" },
   },
   {
     // HtmlRenderer is the sole sanctioned sink for API-sanitized HTML.

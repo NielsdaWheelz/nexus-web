@@ -5,6 +5,7 @@ import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer
 import {
   buildPlaybackQueueItem,
   installPlaybackFetchMock,
+  jsonResponse,
   setViewportWidth,
 } from "../helpers/audio";
 
@@ -57,14 +58,67 @@ function App() {
   );
 }
 
+function RefreshHarness() {
+  const { queueItems, refreshQueue } = useGlobalPlayer();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          void refreshQueue();
+          void refreshQueue();
+        }}
+      >
+        Refresh twice
+      </button>
+      <span>{queueItems.length} queued</span>
+    </>
+  );
+}
+
 describe("GlobalPlayer queue behavior", () => {
   beforeEach(() => {
     setViewportWidth(1280);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("coalesces concurrent queue refreshes", async () => {
+    const item = buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0);
+    let resolveQueue: (response: Response) => void = () => {};
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/playback/queue" && method === "GET") {
+        return new Promise<Response>((resolve) => {
+          resolveQueue = resolve;
+        });
+      }
+      return jsonResponse({ data: {} });
+    });
+
+    render(
+      <GlobalPlayerProvider>
+        <RefreshHarness />
+      </GlobalPlayerProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh twice" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveQueue(jsonResponse({ data: [item] }));
+    expect(await screen.findByText("1 queued")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh twice" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    resolveQueue(jsonResponse({ data: [] }));
+    await waitFor(() => {
+      expect(screen.getByText("0 queued")).toBeVisible();
+    });
   });
 
   it("renders next/previous controls and disables next without upcoming queue item", async () => {
@@ -73,6 +127,7 @@ describe("GlobalPlayer queue behavior", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load A" }));
     fireEvent.click(screen.getByRole("button", { name: "More controls" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect(screen.getByRole("button", { name: "Previous in queue" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next in queue" })).toBeDisabled();

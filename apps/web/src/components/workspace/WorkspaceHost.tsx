@@ -676,15 +676,19 @@ export default function WorkspaceHost() {
       ),
     [paneDescriptors],
   );
+  const currentResourceKeyByPaneIdRef = useRef(currentResourceKeyByPaneId);
+  currentResourceKeyByPaneIdRef.current = currentResourceKeyByPaneId;
+  const secondaryPublicationByPaneIdRef = useRef(secondaryPublicationByPaneId);
+  secondaryPublicationByPaneIdRef.current = secondaryPublicationByPaneId;
 
   const publishPaneLayout = useCallback((input: PaneRuntimeLayoutPublication) => {
-    if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
+    if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
       return;
     }
     setRuntimeLayoutByPaneId((current) =>
       upsertOrDeletePaneLayoutRecord(current, input),
     );
-  }, [currentResourceKeyByPaneId]);
+  }, []);
 
   const publishPaneSecondary = useCallback(
     (input: {
@@ -692,14 +696,14 @@ export default function WorkspaceHost() {
       resourceKey: string;
       publication: PaneSecondaryPublication | null;
     }) => {
-      if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
+      if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
         return;
       }
       setSecondaryPublicationByPaneId((current) =>
         upsertOrDeletePaneSecondaryPublicationRecord(current, input),
       );
     },
-    [currentResourceKeyByPaneId],
+    [],
   );
 
   const publishPaneFixedChrome = useCallback(
@@ -708,14 +712,14 @@ export default function WorkspaceHost() {
       resourceKey: string;
       publication: PaneFixedChromePublication | null;
     }) => {
-      if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
+      if (currentResourceKeyByPaneIdRef.current.get(input.paneId) !== input.resourceKey) {
         return;
       }
       setFixedChromePublicationByPaneId((current) =>
         upsertOrDeletePaneFixedChromePublicationRecord(current, input),
       );
     },
-    [currentResourceKeyByPaneId],
+    [],
   );
 
   const openPaneWithPendingSecondary = useCallback(
@@ -738,7 +742,7 @@ export default function WorkspaceHost() {
           {
             surfaceId: input.secondarySurfaceId,
             targetPaneId:
-              [...currentResourceKeyByPaneId].find(
+              [...currentResourceKeyByPaneIdRef.current].find(
                 ([, currentResourceKey]) => currentResourceKey === resourceKey,
               )?.[0] ?? null,
           },
@@ -751,7 +755,7 @@ export default function WorkspaceHost() {
         titleHint: input.titleHint,
       });
     },
-    [currentResourceKeyByPaneId, openPane],
+    [openPane],
   );
 
   useEffect(() => {
@@ -835,6 +839,8 @@ export default function WorkspaceHost() {
       workspacePrimaryMetrics,
     ]
   );
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
 
   const { canvasRef, onWheel, edges, inViewPaneIds, handleChromeMouseDown, scrollPaneIntoView } =
     usePaneCanvas({ enabled: !isMobile, paneIds: panes.map((pane) => pane.paneId) });
@@ -941,18 +947,18 @@ export default function WorkspaceHost() {
 
   const canUsePublishedSecondarySurface = useCallback(
     (paneId: string, surfaceId: WorkspaceSecondarySurfaceId): boolean => {
-      const resourceKey = currentResourceKeyByPaneId.get(paneId);
+      const resourceKey = currentResourceKeyByPaneIdRef.current.get(paneId);
       if (!resourceKey) {
         return false;
       }
       const publication = getPaneSecondaryPublication(
-        secondaryPublicationByPaneId,
+        secondaryPublicationByPaneIdRef.current,
         paneId,
         resourceKey,
       );
       return secondaryPublicationIncludesSurface(publication, surfaceId);
     },
-    [currentResourceKeyByPaneId, secondaryPublicationByPaneId],
+    [],
   );
 
   const handleRequestSecondarySurface = useCallback(
@@ -967,7 +973,7 @@ export default function WorkspaceHost() {
 
   const handleSetSecondarySurface = useCallback(
     (secondaryPaneId: string, surfaceId: WorkspaceSecondarySurfaceId) => {
-      const pane = panes.find(
+      const pane = panesRef.current.find(
         (item) => item.secondaryPane?.id === secondaryPaneId,
       );
       if (!pane || !canUsePublishedSecondarySurface(pane.paneId, surfaceId)) {
@@ -975,7 +981,7 @@ export default function WorkspaceHost() {
       }
       setSecondarySurface(secondaryPaneId, surfaceId);
     },
-    [canUsePublishedSecondarySurface, panes, setSecondarySurface],
+    [canUsePublishedSecondarySurface, setSecondarySurface],
   );
 
   const visiblePaneCount = primaryPanes.filter((pane) => pane.visibility === "visible").length;

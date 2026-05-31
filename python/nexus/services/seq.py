@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,7 +42,7 @@ def assign_next_message_seq(db: Session, conversation_id: UUID) -> int:
         The sequence number to use for the new message
 
     Raises:
-        ValueError: If the conversation does not exist
+        NotFoundError: If the conversation does not exist
     """
     # Step 1: Lock the conversation row and read current next_seq
     result = db.execute(
@@ -56,7 +57,7 @@ def assign_next_message_seq(db: Session, conversation_id: UUID) -> int:
     row = result.fetchone()
 
     if row is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
     current_seq = row[0]
 
