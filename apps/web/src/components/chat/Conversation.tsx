@@ -1,11 +1,11 @@
 /**
  * Conversation — the unified conversation pane body.
  *
- * Replaces both legacy conversation route bodies. It reads its own id from the
- * pane route (`usePaneParam("id")`, null on the `new` route), drives the shared
- * `useConversation` engine (which owns all lifecycle/messages/branch state), and
- * renders the shared `ChatSurface` view (which owns scroll). This adapter only
- * holds pane CHROME: title, the chrome-override action menu, the
+ * Reads its own id from the pane route (`usePaneParam("id")`, null on the
+ * `new` route), drives the shared `useConversation` engine (which owns all
+ * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
+ * (which owns scroll). This adapter only holds pane CHROME: title, the
+ * chrome-override action menu, the
  * conversation-context secondary panes (references + forks), and the open-resource /
  * reader-source navigation wiring.
  */
@@ -19,10 +19,16 @@ import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationReferencesSurface from "@/components/chat/ConversationReferencesSurface";
 import { useConversation } from "@/components/chat/useConversation";
 import { useConversationReferences } from "@/lib/conversations/useConversationReferences";
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
+import {
+  hrefForReaderTarget,
+  type ReaderSourceTarget,
+} from "@/lib/conversations/readerTarget";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
-import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
+import { resolveObjectRefs } from "@/lib/objectRefs";
+import {
+  parseResourceUri,
+  resourceObjectTypeForScheme,
+} from "@/lib/resources/resourceKind";
 import { apiFetch } from "@/lib/api/client";
 import {
   FeedbackNotice,
@@ -45,18 +51,6 @@ import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 
-const URI_SCHEME_TO_OBJECT_TYPE: Record<string, string> = {
-  media: "media",
-  span: "evidence_span",
-  highlight: "highlight",
-  chunk: "content_chunk",
-  fragment: "fragment",
-  page: "page",
-  note_block: "note_block",
-  conversation: "conversation",
-  message: "message",
-};
-
 export default function Conversation() {
   const conversationId = usePaneParam("id");
   const router = usePaneRouter();
@@ -67,7 +61,7 @@ export default function Conversation() {
   const [deleting, setDeleting] = useState(false);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
-  // The references sidecar is keyed off the engine's resolved id, but the engine
+  // The references secondary surface is keyed off the engine's resolved id, but the engine
   // needs onReferenceAdded before that id exists — break the ordering cycle with
   // a stable callback that reads the live upsert/id through refs.
   const upsertReferenceRef = useRef<
@@ -210,17 +204,17 @@ export default function Conversation() {
 
   const handleOpenResource = useCallback(
     async (uri: string) => {
-      const [scheme, identifier] = uri.split(":");
-      if (!scheme || !identifier) return;
-      if (scheme === "library") {
-        paneRuntime?.openInNewPane(`/libraries/${identifier}`);
+      const parsed = parseResourceUri(uri);
+      if (!parsed) return;
+      if (parsed.scheme === "library") {
+        paneRuntime?.openInNewPane(`/libraries/${parsed.id}`);
         return;
       }
-      const objectType = URI_SCHEME_TO_OBJECT_TYPE[scheme];
-      if (!objectType || !isObjectType(objectType)) return;
+      const objectType = resourceObjectTypeForScheme(parsed.scheme);
+      if (!objectType) return;
       try {
         const [resolved] = await resolveObjectRefs([
-          { objectType, objectId: identifier },
+          { objectType, objectId: parsed.id },
         ]);
         const href = resolved?.route;
         if (!href) return;

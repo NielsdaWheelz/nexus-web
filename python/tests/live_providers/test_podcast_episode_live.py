@@ -118,7 +118,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert sync_response.status_code == 202, sync_response.text
 
-    from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
         sync_result = run_podcast_subscription_sync_now(

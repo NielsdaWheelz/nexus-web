@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import integrity_constraint_name
 from nexus.schemas.contributors import (
     ContributorCreditOut,
     ContributorResolutionStatus,
@@ -915,11 +916,10 @@ def _is_contributor_external_id_conflict(exc: IntegrityError) -> bool:
 
 
 def _integrity_constraint_name(exc: IntegrityError) -> str | None:
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
-    if constraint_name:
-        return str(constraint_name)
-    message = str(orig or exc)
+    name = integrity_constraint_name(exc)
+    if name:
+        return name
+    message = str(getattr(exc, "orig", None) or exc)
     if "uq_contributors_handle" in message:
         return "uq_contributors_handle"
     if "uq_contributor_external_ids_authority_key" in message:

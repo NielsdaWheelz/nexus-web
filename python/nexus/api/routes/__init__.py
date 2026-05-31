@@ -77,6 +77,3 @@ def create_api_router() -> APIRouter:
     api_router.include_router(internal_ingest_router, tags=["internal"])
 
     return api_router
-
-
-__all__ = ["create_api_router"]

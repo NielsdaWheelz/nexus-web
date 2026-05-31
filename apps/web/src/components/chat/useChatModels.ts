@@ -14,7 +14,7 @@ import { apiFetch } from "@/lib/api/client";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { ConversationModel } from "@/lib/conversations/types";
 
-export type ReasoningMode = ChatRunCreateRequest["reasoning"];
+type ReasoningMode = ChatRunCreateRequest["reasoning"];
 
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
 const DEFAULT_REASONING: ReasoningMode = "default";
@@ -28,6 +28,10 @@ export const REASONING_LABELS = {
   high: "High",
   max: "Max",
 } satisfies Record<ReasoningMode, string>;
+
+export function isReasoningMode(value: unknown): value is ReasoningMode {
+  return typeof value === "string" && value in REASONING_LABELS;
+}
 
 let cachedModels: ConversationModel[] | null = null;
 let modelLoadPromise: Promise<ConversationModel[]> | null = null;

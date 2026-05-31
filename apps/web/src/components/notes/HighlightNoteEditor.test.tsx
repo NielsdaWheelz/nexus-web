@@ -42,6 +42,7 @@ describe("HighlightNoteEditor persistence", () => {
           editable
           onSave={onSave}
           onDelete={vi.fn(async () => undefined)}
+          onOpenLink={() => {}}
         />
       </FeedbackProvider>
     );
@@ -113,6 +114,7 @@ describe("HighlightNoteEditor persistence", () => {
           editable
           onSave={onSave}
           onDelete={vi.fn(async () => undefined)}
+          onOpenLink={() => {}}
         />
       </FeedbackProvider>
     );
@@ -180,6 +182,7 @@ describe("HighlightNoteEditor persistence", () => {
           editable
           onSave={onSave}
           onDelete={onDelete}
+          onOpenLink={() => {}}
         />
       </FeedbackProvider>
     );
@@ -206,6 +209,7 @@ describe("HighlightNoteEditor persistence", () => {
           editable
           onSave={onSave}
           onDelete={onDelete}
+          onOpenLink={() => {}}
         />
       </FeedbackProvider>
     );

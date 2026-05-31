@@ -14,13 +14,12 @@ import type {
   ConversationMessage,
   ForkOption,
 } from "@/lib/conversations/types";
-import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { MessageRow } from "./MessageRow";
 import { useChatScroll, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
-export type { ChatScrollHandle } from "./useChatScroll";
-
-export interface ChatSurfaceProps {
+interface ChatSurfaceProps {
   messages: ConversationMessage[];
   composer: ReactNode;
   historyLoading?: boolean;

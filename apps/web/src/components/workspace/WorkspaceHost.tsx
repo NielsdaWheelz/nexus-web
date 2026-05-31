@@ -3,10 +3,8 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
 import {
   PaneRuntimeProvider,
-  usePaneRuntime,
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
 import {
@@ -23,10 +21,8 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
-import type {
-  SurfaceHeaderNavigation,
-  SurfaceHeaderOption,
-} from "@/components/ui/SurfaceHeader";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import {
   paneRouteAllowsSecondarySurface,
@@ -61,6 +57,7 @@ import {
   type WorkspacePaneTitleDescriptor,
 } from "@/lib/workspace/store";
 import { usePaneCanvas } from "./usePaneCanvas";
+import PaneRouteBoundary from "./PaneRouteBoundary";
 import styles from "./WorkspaceHost.module.css";
 
 // ---------------------------------------------------------------------------
@@ -77,7 +74,7 @@ interface WorkspaceHostPane {
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
-  options?: SurfaceHeaderOption[];
+  options?: ActionMenuOption[];
   navigation: SurfaceHeaderNavigation;
   bodyMode: PaneBodyMode;
   sizing: EffectivePaneSizing;
@@ -148,37 +145,6 @@ class PaneRouteErrorBoundary extends Component<
     }
     return this.props.children;
   }
-}
-
-// ---------------------------------------------------------------------------
-// PaneRouteBoundary - intercepts supported internal links anywhere in the pane
-// shell and routes them through the pane runtime router.
-// ---------------------------------------------------------------------------
-
-function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
-  const paneRuntime = usePaneRuntime();
-
-  const handleClickCapture = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      const target = event.target;
-      if (!(target instanceof Element)) {
-        return;
-      }
-      const anchor = target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement)) {
-        return;
-      }
-
-      handlePaneInternalAnchorClick(event, paneRuntime, anchor);
-    },
-    [paneRuntime]
-  );
-
-  return (
-    <div className={styles.paneRouteBoundaryShell} onClickCapture={handleClickCapture}>
-      {children}
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------

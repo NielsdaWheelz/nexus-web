@@ -13,15 +13,13 @@ import { AppList, AppListItem } from "@/components/ui/AppList";
 import type { ConversationSummary } from "@/lib/conversations/types";
 import styles from "./ConversationsPaneBody.module.css";
 
-type Conversation = ConversationSummary;
-
 interface ConversationsResponse {
-  data: Conversation[];
+  data: ConversationSummary[];
   page: { next_cursor: string | null };
 }
 
 export default function ConversationsPaneBody() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -107,7 +105,7 @@ function ConversationListItem({
   conversation,
   onDelete,
 }: {
-  conversation: Conversation;
+  conversation: ConversationSummary;
   onDelete: (conversationId: string) => Promise<void>;
 }) {
   return (

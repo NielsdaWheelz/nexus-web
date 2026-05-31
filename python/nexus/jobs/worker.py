@@ -14,6 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import is_serialization_failure
+from nexus.db.session import use_serializable_if_available
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
@@ -201,6 +203,8 @@ class JobWorker:
                     job_id=str(claimed.id),
                     kind=claimed.kind,
                 )
+        # justify-ignore-error: worker task boundary records failure and applies
+        # retry/dead-letter policy.
         except Exception as exc:
             logger.exception(
                 "worker_job_failed",
@@ -272,10 +276,7 @@ class JobWorker:
         for attempt in range(3):
             try:
                 with self.session_factory() as db:
-                    bind = db.get_bind()
-                    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-                    if not db.in_transaction() and not in_outer_transaction:
-                        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+                    use_serializable_if_available(db)
 
                     now_value = now or db.execute(text("SELECT now()")).scalar_one()
                     inserted = 0
@@ -309,10 +310,8 @@ class JobWorker:
                     db.commit()
                     return inserted
             except OperationalError as exc:
-                if attempt < 2:
-                    sqlstate = getattr(exc.orig, "sqlstate", None)
-                    if sqlstate == "40001" or "could not serialize access" in str(exc.orig).lower():
-                        continue
+                if attempt < 2 and is_serialization_failure(exc):
+                    continue
                 raise
 
         raise AssertionError("Worker scheduler retry loop exhausted")

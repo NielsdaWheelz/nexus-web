@@ -30,6 +30,8 @@ from tests.factories import (
     create_test_media_in_library,
     get_user_default_library,
 )
+from tests.helpers import auth_headers, create_test_user_id
+from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
@@ -131,7 +133,7 @@ def test_add_reference_owner_only_access_blocks_other_users(
         )
 
 
-def test_list_references_returns_added_at_ascending(db_session: Session, bootstrapped_user: UUID):
+def test_list_references_returns_created_at_ascending(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
@@ -182,6 +184,97 @@ def test_remove_reference_unknown_id_raises_not_found(db_session: Session, boots
 
     with pytest.raises(NotFoundError):
         remove_reference(db_session, conversation_id, uuid4(), viewer_id=bootstrapped_user)
+
+
+# =============================================================================
+# API contract
+# =============================================================================
+
+
+def test_reference_api_rejects_unsupported_uri_field(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+    response = auth_client.post(
+        f"/conversations/{conversation_id}/references",
+        headers=auth_headers(user_id),
+        json={"uri": f"media:{uuid4()}"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+def test_reference_api_add_returns_strict_resolved_payload(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+
+    with direct_db.session() as session:
+        library_id = get_user_default_library(session, user_id)
+        assert library_id is not None
+        media_id = create_test_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Reference API Doc",
+        )
+        conversation_id = create_test_conversation(session, user_id)
+
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+    resource_uri = f"media:{media_id}"
+    response = auth_client.post(
+        f"/conversations/{conversation_id}/references",
+        headers=auth_headers(user_id),
+        json={"resource_uri": resource_uri},
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["resource_uri"] == resource_uri
+    assert data["conversation_id"] == str(conversation_id)
+    assert "Reference API Doc" in data["label"]
+    assert "uri" not in data
+    assert {"fetch_hint", "summary", "inline_body", "missing", "created_at"} <= set(data)
+
+    duplicate_response = auth_client.post(
+        f"/conversations/{conversation_id}/references",
+        headers=auth_headers(user_id),
+        json={"resource_uri": resource_uri},
+    )
+
+    assert duplicate_response.status_code == 201, duplicate_response.text
+    assert duplicate_response.json()["data"]["id"] == data["id"]
+    with direct_db.session() as session:
+        row_count = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM conversation_references
+                WHERE conversation_id = :conversation_id
+                  AND resource_uri = :resource_uri
+                """
+            ),
+            {"conversation_id": conversation_id, "resource_uri": resource_uri},
+        ).scalar_one()
+    assert row_count == 1
 
 
 # =============================================================================

@@ -560,10 +560,8 @@ class Settings(BaseSettings):
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
             if not self.podcast_index_api_secret:
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
-            if missing_podcast_provider_settings:
-                if self.real_media_provider_fixtures:
-                    pass
-                elif self.nexus_env in (Environment.STAGING, Environment.PROD):
+            if missing_podcast_provider_settings and not self.real_media_provider_fixtures:
+                if self.nexus_env in (Environment.STAGING, Environment.PROD):
                     raise ValueError(
                         "Podcast features are enabled but provider credentials are missing: "
                         f"{', '.join(missing_podcast_provider_settings)}"

@@ -165,6 +165,25 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     expect(editor).toHaveTextContent("local draft");
     expect(editor).not.toHaveTextContent("server echo");
   });
+
+  it("hides outline handles and indentation in compact mode", async () => {
+    render(
+      <ProseMirrorOutlineEditor
+        resourceKey="highlight:compact"
+        initialDoc={emptyDoc()}
+        compact
+      />
+    );
+
+    await screen.findByRole("textbox", { name: "Notes outline" });
+    const handle = screen.getByLabelText("Open note block", {
+      selector: "button",
+    });
+    const block = screen.getByRole("listitem");
+
+    expect(getComputedStyle(handle).display).toBe("none");
+    expect(getComputedStyle(block).paddingLeft).toBe("0px");
+  });
 });
 
 function noteDoc(objectId: string) {

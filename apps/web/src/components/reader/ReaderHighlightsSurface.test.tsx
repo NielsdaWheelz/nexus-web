@@ -83,6 +83,11 @@ function ReaderHighlightsSurfaceHarness({
   canQuoteToChat = true,
   onQuoteToNewChat = () => {},
   onQuoteToExtantChat = () => {},
+  isEditingBounds = false,
+  onColorChange = async () => {},
+  onDelete = async () => {},
+  onStartEditBounds = () => {},
+  onCancelEditBounds = () => {},
   linkedConversations,
   onOpenConversation = () => {},
 }: {
@@ -91,6 +96,11 @@ function ReaderHighlightsSurfaceHarness({
   canQuoteToChat?: boolean;
   onQuoteToNewChat?: (highlightId: string) => void;
   onQuoteToExtantChat?: (highlightId: string) => void;
+  isEditingBounds?: boolean;
+  onColorChange?: ReaderHighlightsSurfacePropsForTest["onColorChange"];
+  onDelete?: ReaderHighlightsSurfacePropsForTest["onDelete"];
+  onStartEditBounds?: () => void;
+  onCancelEditBounds?: () => void;
   linkedConversations?: NonNullable<AnchoredHighlightRow["linked_conversations"]>;
   onOpenConversation?: (conversationId: string, title: string) => void;
 }) {
@@ -138,14 +148,14 @@ function ReaderHighlightsSurfaceHarness({
           onFocusHighlight={onFocusHighlight}
           measureKey="test"
           isMobile={false}
-          isEditingBounds={false}
+          isEditingBounds={isEditingBounds}
           canQuoteToChat={canQuoteToChat}
           onQuoteToNewChat={onQuoteToNewChat}
           onQuoteToExtantChat={onQuoteToExtantChat}
-          onColorChange={async () => {}}
-          onDelete={async () => {}}
-          onStartEditBounds={() => {}}
-          onCancelEditBounds={() => {}}
+          onColorChange={onColorChange}
+          onDelete={onDelete}
+          onStartEditBounds={onStartEditBounds}
+          onCancelEditBounds={onCancelEditBounds}
           onNoteSave={async (_highlightId, _noteBlockId, createBlockId) => ({
             note_block_id: createBlockId,
             body_text: "",
@@ -153,11 +163,14 @@ function ReaderHighlightsSurfaceHarness({
           })}
           onNoteDelete={async () => {}}
           onOpenConversation={onOpenConversation}
+          onOpenNoteLink={() => {}}
         />
       </FeedbackProvider>
     </div>
   );
 }
+
+type ReaderHighlightsSurfacePropsForTest = Parameters<typeof ReaderHighlightsSurface>[0];
 
 function StableNoteKeyHarness({
   onNoteSave,
@@ -232,6 +245,7 @@ function StableNoteKeyHarness({
           }}
           onNoteDelete={async () => {}}
           onOpenConversation={() => {}}
+          onOpenNoteLink={() => {}}
         />
       </FeedbackProvider>
     </div>
@@ -363,6 +377,56 @@ describe("ReaderHighlightsSurface", () => {
     ).toBeVisible();
   });
 
+  it("applies a new highlight color from the action menu", async () => {
+    const user = userEvent.setup();
+    const onColorChange = vi.fn(async () => undefined);
+    render(<ReaderHighlightsSurfaceHarness onColorChange={onColorChange} />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("button", { name: "Green" }));
+
+    expect(onColorChange).toHaveBeenCalledWith("h1", "green");
+  });
+
+  it("toggles cancel edit bounds from the focused row action menu", async () => {
+    const user = userEvent.setup();
+    const onCancelEditBounds = vi.fn();
+    const onStartEditBounds = vi.fn();
+    render(
+      <ReaderHighlightsSurfaceHarness
+        focusedId="h1"
+        isEditingBounds
+        onCancelEditBounds={onCancelEditBounds}
+        onStartEditBounds={onStartEditBounds}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Cancel edit bounds" }));
+
+    expect(onCancelEditBounds).toHaveBeenCalledTimes(1);
+    expect(onStartEditBounds).not.toHaveBeenCalled();
+  });
+
+  it("deletes a highlight from the danger action", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onDelete = vi.fn(async () => undefined);
+    render(<ReaderHighlightsSurfaceHarness onDelete={onDelete} />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete highlight" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith("Delete this highlight?");
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith("h1");
+    });
+    confirmSpy.mockRestore();
+  });
+
   it("opens a linked conversation from the card disclosure", async () => {
     const user = userEvent.setup();
     const onOpenConversation = vi.fn();
@@ -376,7 +440,7 @@ describe("ReaderHighlightsSurface", () => {
     );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    await user.click(within(row).getByText("1 linked"));
+    await user.click(within(row).getByRole("button", { name: "1 linked chats" }));
     await user.click(within(row).getByRole("button", { name: "Linked chat" }));
     expect(onOpenConversation).toHaveBeenCalledWith("c1", "Linked chat");
   });

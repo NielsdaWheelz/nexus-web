@@ -4,10 +4,9 @@ Routes own HTTP concerns; this module owns retry guards, artifact cleanup, and
 dispatch for failed URL-backed web articles.
 """
 
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -78,15 +77,14 @@ def retry_web_article_for_viewer(
 
     _delete_web_article_artifacts(db, media_id)
 
-    now = datetime.now(UTC)
     media.processing_status = ProcessingStatus.extracting
     media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
+    media.processing_started_at = func.now()
     media.failure_stage = None
     media.last_error_code = None
     media.last_error_message = None
     media.failed_at = None
-    media.updated_at = now
+    media.updated_at = func.now()
     db.flush()
 
     try:

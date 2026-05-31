@@ -38,7 +38,10 @@ export function handlePaneInternalAnchorClick(
     event,
     paneRuntime,
     anchor.getAttribute("href"),
-    anchor.dataset.paneTitleHint || undefined
+    anchor.dataset.paneTitleHint ||
+      (anchor.getAttribute("role") === "menuitem"
+        ? anchor.textContent?.trim() || undefined
+        : undefined)
   );
 }
 

@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer
+from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.extension_sessions import resolve_extension_session_user

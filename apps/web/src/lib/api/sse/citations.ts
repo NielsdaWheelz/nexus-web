@@ -50,7 +50,7 @@ const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>([
   "conversation",
 ]);
 
-export function isRetrievalContextRef(
+function isRetrievalContextRef(
   value: unknown,
 ): value is RetrievalContextRef {
   if (!isRecord(value)) return false;
@@ -103,14 +103,14 @@ type SearchCitationBase<
   selected: boolean;
 };
 
-export type MediaSearchCitationEventData = SearchCitationBase<
+type MediaSearchCitationEventData = SearchCitationBase<
   "media",
   "media",
   null,
   null
 >;
 
-export type PodcastSearchCitationEventData = SearchCitationBase<
+type PodcastSearchCitationEventData = SearchCitationBase<
   "podcast",
   "podcast",
   null,
@@ -119,21 +119,21 @@ export type PodcastSearchCitationEventData = SearchCitationBase<
   contributors: Array<Record<string, unknown>>;
 };
 
-export type EpisodeSearchCitationEventData = SearchCitationBase<
+type EpisodeSearchCitationEventData = SearchCitationBase<
   "episode",
   "media",
   null,
   null
 >;
 
-export type VideoSearchCitationEventData = SearchCitationBase<
+type VideoSearchCitationEventData = SearchCitationBase<
   "video",
   "media",
   null,
   null
 >;
 
-export type ContentChunkSearchCitationEventData = SearchCitationBase<
+type ContentChunkSearchCitationEventData = SearchCitationBase<
   "content_chunk",
   "content_chunk",
   string,
@@ -144,14 +144,14 @@ export type ContentChunkSearchCitationEventData = SearchCitationBase<
   evidence_span_ids: string[];
 };
 
-export type FragmentSearchCitationEventData = SearchCitationBase<
+type FragmentSearchCitationEventData = SearchCitationBase<
   "fragment",
   "fragment",
   string,
   MediaRetrievalLocator
 >;
 
-export type PageSearchCitationEventData = SearchCitationBase<
+type PageSearchCitationEventData = SearchCitationBase<
   "page",
   "page",
   string,
@@ -160,7 +160,7 @@ export type PageSearchCitationEventData = SearchCitationBase<
   description?: string | null;
 };
 
-export type NoteBlockSearchCitationEventData = SearchCitationBase<
+type NoteBlockSearchCitationEventData = SearchCitationBase<
   "note_block",
   "note_block",
   string,
@@ -172,7 +172,7 @@ export type NoteBlockSearchCitationEventData = SearchCitationBase<
   highlight_excerpt?: string | null;
 };
 
-export type HighlightSearchCitationEventData = SearchCitationBase<
+type HighlightSearchCitationEventData = SearchCitationBase<
   "highlight",
   "highlight",
   string,
@@ -182,7 +182,7 @@ export type HighlightSearchCitationEventData = SearchCitationBase<
   exact: string;
 };
 
-export type MessageSearchCitationEventData = SearchCitationBase<
+type MessageSearchCitationEventData = SearchCitationBase<
   "message",
   "message",
   string,
@@ -192,7 +192,7 @@ export type MessageSearchCitationEventData = SearchCitationBase<
   seq: number;
 };
 
-export type ContributorSearchCitationEventData = SearchCitationBase<
+type ContributorSearchCitationEventData = SearchCitationBase<
   "contributor",
   "contributor",
   null,
@@ -201,7 +201,7 @@ export type ContributorSearchCitationEventData = SearchCitationBase<
   contributor_handle: string;
 };
 
-export type EvidenceSpanSearchCitationEventData = SearchCitationBase<
+type EvidenceSpanSearchCitationEventData = SearchCitationBase<
   "evidence_span",
   "evidence_span",
   string,
@@ -212,7 +212,7 @@ export type EvidenceSpanSearchCitationEventData = SearchCitationBase<
   media_id: string;
 };
 
-export type ConversationSearchCitationEventData = SearchCitationBase<
+type ConversationSearchCitationEventData = SearchCitationBase<
   "conversation",
   "conversation",
   null,

@@ -237,6 +237,16 @@ class TestStripeWebhookProcessing:
 
         assert result == {"processed": False}
 
+    def test_invalid_signature_is_rejected(self, db_session: Session):
+        with pytest.raises(ApiError) as exc_info:
+            billing_service.process_stripe_webhook(
+                db_session,
+                raw_body=b'{"id":"evt_bad"}',
+                signature="t=1,v1=invalid",
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_STRIPE_WEBHOOK_INVALID
+
     def test_duplicate_event_is_idempotent(self, db_session: Session):
         user_id = uuid4()
         db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})

@@ -35,25 +35,16 @@ function resolveSource(
   return result.source;
 }
 
-function stringField(
-  record: Record<string, unknown>,
-  ...keys: string[]
-): string {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string") {
-      return value;
-    }
-  }
-  return "";
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
 }
 
 function nullableStringField(
   record: Record<string, unknown>,
-  ...keys: string[]
+  key: string,
 ): string | null {
-  const value = stringField(record, ...keys);
-  return value || null;
+  return stringField(record, key) || null;
 }
 
 function locatorMatchesSearchType(
@@ -79,25 +70,16 @@ function normalizeContributorCredit(value: unknown): ContributorCredit | null {
     return null;
   }
   const credit = value as Record<string, unknown>;
-  const sourceRef = credit.source_ref ?? credit.sourceRef;
-  const contributorHandle = stringField(
-    credit,
-    "contributor_handle",
-    "contributorHandle",
-  );
-  const contributorDisplayName = stringField(
-    credit,
-    "contributor_display_name",
-    "contributorDisplayName",
-  );
-  const creditedName = stringField(credit, "credited_name", "creditedName");
+  const contributorHandle = stringField(credit, "contributor_handle");
+  const contributorDisplayName = stringField(credit, "contributor_display_name");
+  const creditedName = stringField(credit, "credited_name");
   const role = stringField(credit, "role");
   const href = stringField(credit, "href");
   const source = stringField(credit, "source");
   let nestedDisplayName = "";
   if (typeof credit.contributor === "object" && credit.contributor !== null) {
     const contributor = credit.contributor as Record<string, unknown>;
-    nestedDisplayName = stringField(contributor, "display_name", "displayName");
+    nestedDisplayName = stringField(contributor, "display_name");
   }
   const displayName = contributorDisplayName || nestedDisplayName;
   if (
@@ -115,10 +97,10 @@ function normalizeContributorCredit(value: unknown): ContributorCredit | null {
     contributor_display_name: displayName,
     credited_name: creditedName,
     role,
-    raw_role: nullableStringField(credit, "raw_role", "rawRole"),
+    raw_role: nullableStringField(credit, "raw_role"),
     ordinal: typeof credit.ordinal === "number" ? credit.ordinal : null,
     source,
-    source_ref: isRecord(sourceRef) ? sourceRef : null,
+    source_ref: isRecord(credit.source_ref) ? credit.source_ref : null,
     confidence:
       typeof credit.confidence === "string" ||
       typeof credit.confidence === "number"
@@ -261,17 +243,13 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     }
     case "contributor": {
       const contributor = row.contributor as Record<string, unknown> | null;
-      const contributorHandle = stringField(
-        row,
-        "contributor_handle",
-        "contributorHandle",
-      );
+      const contributorHandle = stringField(row, "contributor_handle");
       if (
         !contributorHandle ||
         typeof contributor !== "object" ||
         contributor === null ||
         typeof contributor.handle !== "string" ||
-        !stringField(contributor, "display_name", "displayName") ||
+        !stringField(contributor, "display_name") ||
         base.context_ref.type !== "contributor"
       ) {
         return null;
@@ -282,7 +260,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         contributor_handle: contributorHandle,
         contributor: {
           handle: contributor.handle,
-          display_name: stringField(contributor, "display_name", "displayName"),
+          display_name: stringField(contributor, "display_name"),
           status: nullableStringField(contributor, "status"),
         },
       };

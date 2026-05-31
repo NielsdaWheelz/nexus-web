@@ -56,21 +56,6 @@ def get_contributor_by_handle(
     return _contributor_out(db, contributor)
 
 
-def get_contributor_by_id(
-    db: Session,
-    contributor_id: UUID,
-    viewer_id: UUID | None = None,
-) -> ContributorOut:
-    contributor = (
-        _load_visible_contributor_by_id(db, contributor_id, viewer_id)
-        if viewer_id is not None
-        else db.get(Contributor, contributor_id)
-    )
-    if contributor is None or contributor.status not in ACTIVE_STATUSES:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    return _contributor_out(db, contributor)
-
-
 def list_contributor_works(
     db: Session,
     viewer_id: UUID,
@@ -941,47 +926,6 @@ def _move_selected_object_links(
             link.b_id = target_id
             moved += 1
     return moved
-
-
-def _duplicate_unlocated_object_link_exists(
-    db: Session,
-    link: ObjectLink,
-    *,
-    a_type: str,
-    a_id: UUID,
-    b_type: str,
-    b_id: UUID,
-) -> bool:
-    if link.a_locator_json is not None or link.b_locator_json is not None:
-        return False
-    return (
-        db.scalar(
-            select(ObjectLink.id)
-            .where(
-                ObjectLink.id != link.id,
-                ObjectLink.user_id == link.user_id,
-                ObjectLink.relation_type == link.relation_type,
-                ObjectLink.a_locator_json.is_(None),
-                ObjectLink.b_locator_json.is_(None),
-                or_(
-                    (
-                        (ObjectLink.a_type == a_type)
-                        & (ObjectLink.a_id == a_id)
-                        & (ObjectLink.b_type == b_type)
-                        & (ObjectLink.b_id == b_id)
-                    ),
-                    (
-                        (ObjectLink.a_type == b_type)
-                        & (ObjectLink.a_id == b_id)
-                        & (ObjectLink.b_type == a_type)
-                        & (ObjectLink.b_id == a_id)
-                    ),
-                ),
-            )
-            .limit(1)
-        )
-        is not None
-    )
 
 
 def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:

@@ -203,26 +203,6 @@ describe("SelectionPopover", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not expose the old generic Ask action", () => {
-    render(
-      <SelectionPopover
-        selectionRect={new DOMRect(120, 120, 80, 24)}
-        containerRef={createContainerRef()}
-        onCreateHighlight={vi.fn()}
-        onQuoteToNewChat={vi.fn()}
-        onQuoteToExtantChat={vi.fn()}
-        onDismiss={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Quote to new chat" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Quote to existing chat" })).toBeInTheDocument();
-    expect(screen.queryByText("Ask in new chat")).not.toBeInTheDocument();
-    expect(screen.queryByText("Ask in this document")).not.toBeInTheDocument();
-    expect(screen.queryByText("Ask in library...")).not.toBeInTheDocument();
-  });
-
   it("dismisses on pointerdown outside the popup", async () => {
     const onDismiss = vi.fn();
 

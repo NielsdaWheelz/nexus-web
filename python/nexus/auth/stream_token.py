@@ -1,15 +1,18 @@
 """Stream token auth for direct browser-callable SSE endpoints."""
 
 import base64
+import binascii
 import time
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import jwt
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from nexus.config import get_settings
-from nexus.db.session import get_session_factory
+from nexus.db.errors import integrity_constraint_name, is_serialization_failure
+from nexus.db.session import get_session_factory, transaction, use_serializable_if_available
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.redact import safe_kv
@@ -27,9 +30,9 @@ def _get_signing_key_bytes() -> bytes:
     settings = get_settings()
     key_b64 = settings.effective_stream_token_signing_key
     try:
-        key_bytes = base64.b64decode(key_b64)
-    except Exception as e:
-        raise ValueError(f"STREAM_TOKEN_SIGNING_KEY is not valid base64: {e}") from e
+        key_bytes = base64.b64decode(key_b64, validate=True)
+    except binascii.Error as exc:
+        raise ValueError(f"STREAM_TOKEN_SIGNING_KEY is not valid base64: {exc}") from exc
     if len(key_bytes) < 32:
         raise ValueError(
             f"STREAM_TOKEN_SIGNING_KEY must be at least 32 bytes, got {len(key_bytes)}"
@@ -115,7 +118,13 @@ def verify_stream_token(token: str) -> tuple[UUID, str]:
         )
 
     jti = payload["jti"]
-    user_id = UUID(payload["sub"])
+    try:
+        user_id = UUID(payload["sub"])
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            ApiErrorCode.E_STREAM_TOKEN_INVALID,
+            "Invalid stream token subject",
+        ) from exc
     _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=int(payload["exp"]))
     return user_id, jti
 
@@ -125,13 +134,69 @@ def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
     session_factory = get_session_factory()
     db = session_factory()
     try:
+        for attempt in range(3):
+            use_serializable_if_available(db)
+            try:
+                return _claim_jti_once_transaction(
+                    db, jti=jti, user_id=user_id, expires_at=expires_at
+                )
+            except OperationalError as exc:
+                db.rollback()
+                if not is_serialization_failure(exc):
+                    raise
+                if attempt == 2:
+                    raise AssertionError("stream token JTI claim retry loop exhausted") from exc
+            except IntegrityError as exc:
+                db.rollback()
+                if _is_jti_primary_key_conflict(exc):
+                    logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
+                    raise ApiError(
+                        ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
+                        "Stream token has already been used",
+                    ) from exc
+                raise
+        raise AssertionError("stream token JTI claim retry loop exhausted")
+    except ApiError:
+        raise
+    except SQLAlchemyError as exc:
+        logger.warning("stream_token_jti_claim_failed", error=str(exc))
+        raise ApiError(
+            ApiErrorCode.E_STREAM_TOKEN_INVALID,
+            "Unable to verify stream token",
+        ) from exc
+    finally:
+        db.close()
+
+
+def _claim_jti_once_transaction(
+    db,
+    *,
+    jti: str,
+    user_id: UUID,
+    expires_at: datetime,
+) -> None:
+    with transaction(db):
         db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
-        inserted = db.execute(
+        existing = db.execute(
+            text("SELECT 1 FROM stream_token_jti_claims WHERE jti = :jti"),
+            {"jti": jti},
+        ).first()
+        if existing is not None:
+            logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
+            raise ApiError(
+                ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
+                "Stream token has already been used",
+            )
+        result = db.execute(
             text(
                 """
-                INSERT INTO stream_token_jti_claims (jti, user_id, expires_at, created_at)
+                INSERT INTO stream_token_jti_claims (
+                    jti,
+                    user_id,
+                    expires_at,
+                    created_at
+                )
                 VALUES (:jti, :user_id, :expires_at, now())
-                ON CONFLICT (jti) DO NOTHING
                 """
             ),
             {
@@ -140,22 +205,12 @@ def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
                 "expires_at": expires_at,
             },
         )
-        if inserted.rowcount == 0:
-            logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
-            db.rollback()
-            raise ApiError(
-                ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
-                "Stream token has already been used",
-            )
-        db.commit()
-    except ApiError:
-        raise
-    except Exception as exc:
-        db.rollback()
-        logger.warning("stream_token_jti_claim_failed", error=str(exc))
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Unable to verify stream token",
-        ) from exc
-    finally:
-        db.close()
+        if getattr(result, "rowcount", None) != 1:
+            raise RuntimeError("stream token JTI claim insert affected an unexpected row count")
+
+
+def _is_jti_primary_key_conflict(exc: IntegrityError) -> bool:
+    constraint_name = integrity_constraint_name(exc)
+    if constraint_name:
+        return constraint_name == "stream_token_jti_claims_pkey"
+    return "stream_token_jti_claims_pkey" in str(exc.orig)

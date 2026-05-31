@@ -1,8 +1,6 @@
 """Operational helpers for ingest recovery."""
 
-from datetime import UTC, datetime, timedelta
-
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -27,28 +25,25 @@ def get_stale_ingest_backlog_health(
         if stale_extracting_seconds is not None
         else settings.ingest_stale_extracting_seconds
     )
-    now = datetime.now(UTC)
-    stale_before = now - timedelta(seconds=threshold_seconds)
+    threshold_interval = literal(threshold_seconds) * text("interval '1 second'")
 
-    stale_count, oldest_started_at = db.execute(
+    stale_count, oldest_age_seconds = db.execute(
         select(
             func.count(Media.id),
-            func.min(Media.processing_started_at),
+            func.extract("epoch", func.now() - func.min(Media.processing_started_at)),
         )
         .where(Media.processing_status == ProcessingStatus.extracting)
         .where(Media.kind.in_(("pdf", "epub")))
         .where(Media.processing_started_at.is_not(None))
-        .where(Media.processing_started_at < stale_before)
+        .where(Media.processing_started_at < func.now() - threshold_interval)
     ).one()
 
     stale_count_int = int(stale_count or 0)
-    oldest_age_seconds = (
-        int((now - oldest_started_at).total_seconds()) if oldest_started_at is not None else None
-    )
+    oldest_age_seconds_int = int(oldest_age_seconds) if oldest_age_seconds is not None else None
 
     return {
         "stale_count": stale_count_int,
-        "oldest_stale_age_seconds": oldest_age_seconds,
+        "oldest_stale_age_seconds": oldest_age_seconds_int,
         "stale_threshold_seconds": threshold_seconds,
         "degraded": stale_count_int > 0,
     }

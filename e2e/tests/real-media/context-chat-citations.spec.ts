@@ -40,7 +40,7 @@ async function openConversationReferencesPane(
 
 async function expectConversationTreeReady(page: Page, conversationId: string) {
   const response = await page.request.get(
-    `/api/conversations/${conversationId}/tree?limit=50`,
+    `/api/conversations/${conversationId}/tree`,
   );
   const body = await response.text();
   expect(

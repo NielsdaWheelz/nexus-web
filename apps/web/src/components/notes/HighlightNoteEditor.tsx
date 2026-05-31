@@ -6,7 +6,6 @@ import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { fetchNoteBlock } from "@/lib/notes/api";
 import {
   createOutlineDocFromBlock,
@@ -29,6 +28,7 @@ export default function HighlightNoteEditor({
   onSave,
   onDelete,
   onLocalChange,
+  onOpenLink,
 }: {
   highlightId: string;
   note: HighlightLinkedNoteBlock | null;
@@ -46,9 +46,9 @@ export default function HighlightNoteEditor({
     shouldApply: () => boolean
   ) => Promise<void>;
   onLocalChange?: () => void;
+  onOpenLink: (href: string, options: { newPane: boolean }) => void;
 }) {
   const feedback = useFeedback();
-  const paneRuntime = usePaneRuntime();
   const [editorResetVersion, setEditorResetVersion] = useState(0);
   const [resetDoc, setResetDoc] = useState<ProseMirrorNode | null>(null);
   const [conflictAction, setConflictAction] = useState<"overwrite" | "reload" | null>(null);
@@ -227,11 +227,9 @@ export default function HighlightNoteEditor({
   const openBlock = useCallback(
     (blockId: string, openInNewPane: boolean) => {
       if (!blockId) return;
-      const href = `/notes/${blockId}`;
-      if (openInNewPane) paneRuntime?.openInNewPane(href);
-      else paneRuntime?.router.push(href);
+      onOpenLink(`/notes/${blockId}`, { newPane: openInNewPane });
     },
-    [paneRuntime]
+    [onOpenLink]
   );
 
   const openObject = useCallback(
@@ -246,10 +244,9 @@ export default function HighlightNoteEditor({
         return;
       }
       if (!href) return;
-      if (openInNewPane) paneRuntime?.openInNewPane(href);
-      else paneRuntime?.router.push(href);
+      onOpenLink(href, { newPane: openInNewPane });
     },
-    [feedback, paneRuntime]
+    [feedback, onOpenLink]
   );
 
   return (

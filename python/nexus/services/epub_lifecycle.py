@@ -6,7 +6,6 @@ Non-EPUB kinds delegate to upload-confirm behavior.
 """
 
 import logging
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -18,7 +17,6 @@ from nexus.db.models import (
     EpubNavLocation,
     EpubResource,
     EpubTocNode,
-    FailureStage,
     Fragment,
     FragmentBlock,
     Highlight,
@@ -38,11 +36,10 @@ from nexus.errors import (
 from nexus.jobs.queue import enqueue_job
 from nexus.services import libraries as libraries_service
 from nexus.services.epub_ingest import check_archive_safety
+from nexus.services.file_ingest_validation import validate_file_source_integrity
+from nexus.services.media_processing_state import begin_extraction, mark_failed
 from nexus.services.upload import (
     confirm_ingest as _base_confirm_ingest,
-)
-from nexus.services.upload import (
-    validate_source_integrity,
 )
 from nexus.storage.client import StorageError, get_storage_client
 
@@ -135,12 +132,12 @@ def _confirm_epub_ingest(
 
     media_file = media.media_file
     if not media_file:
-        _mark_epub_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "No media file record",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -165,12 +162,12 @@ def _confirm_epub_ingest(
         ).scalar()
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
-        _mark_epub_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "Stored EPUB object is missing",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="Stored EPUB object is missing",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -204,19 +201,16 @@ def _confirm_epub_ingest(
         )
 
     if safety_err is not None:
-        _mark_epub_failed(db, media, "extract", safety_err.error_code, safety_err.error_message)
+        mark_failed(
+            db,
+            media,
+            stage="extract",
+            error_code=safety_err.error_code,
+            error_message=safety_err.error_message,
+        )
         raise InvalidRequestError(ApiErrorCode.E_ARCHIVE_UNSAFE, safety_err.error_message)
 
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = now
-    db.flush()
+    begin_extraction(db, media)
 
     try:
         enqueue_job(
@@ -299,7 +293,7 @@ def retry_epub_ingest_for_viewer(
         )
 
     storage_client = get_storage_client()
-    validate_source_integrity(
+    validate_file_source_integrity(
         storage_client,
         media_file,
         media.kind,
@@ -308,16 +302,7 @@ def retry_epub_ingest_for_viewer(
 
     storage_paths_to_delete = delete_extraction_artifacts(db, media_id)
 
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = now
-    db.flush()
+    begin_extraction(db, media)
 
     try:
         enqueue_job(
@@ -396,20 +381,3 @@ def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
 
     db.flush()
     return list(storage_paths)
-
-
-def _mark_epub_failed(
-    db: Session,
-    media: Media,
-    stage: str,
-    error_code: str,
-    error_message: str,
-) -> None:
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.failed
-    media.failure_stage = FailureStage(stage)
-    media.last_error_code = error_code
-    media.last_error_message = error_message
-    media.failed_at = now
-    media.updated_at = now
-    db.commit()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -13,13 +13,14 @@ from urllib.parse import urljoin
 from uuid import UUID, uuid4
 
 import httpx
-from lxml import etree
+import lxml.etree as etree
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.config import get_settings, real_media_provider_fixtures_requested
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
@@ -79,6 +80,11 @@ _ITUNES_DURATION_XPATH = (
 )
 _PODCAST_ACTIVE_POLL_MAX_LIMIT = 1000
 _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE = ApiErrorCode.E_INTERNAL.value
+_SYNC_RUNNING_STALE_SQL = """
+COALESCE(sync_started_at, updated_at) < (
+    now() - (CAST(:sync_lease_seconds AS integer) * interval '1 second')
+)
+""".strip()
 PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES = 100_000
 PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
 PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
@@ -121,11 +127,9 @@ def run_scheduled_active_subscription_poll(
         )
 
     run_id = uuid4()
-    now = datetime.now(UTC)
     claimed = _claim_subscription_poll_run_singleton(
         db,
         run_id=run_id,
-        now=now,
         run_limit=effective_limit,
         run_lease_seconds=run_lease_seconds,
         scheduler_identity=scheduler_identity,
@@ -215,16 +219,15 @@ def poll_active_subscriptions_once(
             "Sync lease seconds must be positive",
         )
 
-    running_lease_cutoff = datetime.now(UTC) - timedelta(seconds=sync_lease_seconds)
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT user_id, podcast_id
             FROM podcast_subscriptions
             WHERE status = 'active'
               AND (
                   sync_status <> 'running'
-                  OR COALESCE(sync_started_at, updated_at) < :running_lease_cutoff
+                  OR ({_SYNC_RUNNING_STALE_SQL})
               )
             ORDER BY updated_at ASC, user_id ASC, podcast_id ASC
             LIMIT :limit
@@ -232,7 +235,7 @@ def poll_active_subscriptions_once(
         ),
         {
             "limit": limit,
-            "running_lease_cutoff": running_lease_cutoff,
+            "sync_lease_seconds": sync_lease_seconds,
         },
     ).fetchall()
 
@@ -245,7 +248,7 @@ def poll_active_subscriptions_once(
         with transaction(db):
             queued = db.execute(
                 text(
-                    """
+                    f"""
                     UPDATE podcast_subscriptions
                     SET
                         sync_status = 'pending',
@@ -253,13 +256,13 @@ def poll_active_subscriptions_once(
                         sync_error_message = NULL,
                         sync_started_at = NULL,
                         sync_completed_at = NULL,
-                        updated_at = :updated_at
+                        updated_at = now()
                     WHERE user_id = :user_id
                       AND podcast_id = :podcast_id
                       AND status = 'active'
                       AND (
                           sync_status <> 'running'
-                          OR COALESCE(sync_started_at, updated_at) < :running_lease_cutoff
+                          OR ({_SYNC_RUNNING_STALE_SQL})
                       )
                     RETURNING 1
                     """
@@ -267,8 +270,7 @@ def poll_active_subscriptions_once(
                 {
                     "user_id": user_id,
                     "podcast_id": podcast_id,
-                    "updated_at": datetime.now(UTC),
-                    "running_lease_cutoff": running_lease_cutoff,
+                    "sync_lease_seconds": sync_lease_seconds,
                 },
             ).fetchone()
 
@@ -330,7 +332,7 @@ def _is_singleton_poll_run_integrity_error(exc: IntegrityError) -> bool:
     if sqlstate != "23505":
         return False
 
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "uq_podcast_subscription_poll_runs_singleton_running"
     return "uq_podcast_subscription_poll_runs_singleton_running" in str(exc)
@@ -340,12 +342,10 @@ def _claim_subscription_poll_run_singleton(
     db: Session,
     *,
     run_id: UUID,
-    now: datetime,
     run_limit: int,
     run_lease_seconds: int,
     scheduler_identity: str | None,
 ) -> bool:
-    lease_expires_at = now + timedelta(seconds=run_lease_seconds)
     try:
         with transaction(db):
             db.execute(
@@ -354,16 +354,15 @@ def _claim_subscription_poll_run_singleton(
                     UPDATE podcast_subscription_poll_runs
                     SET
                         status = 'expired',
-                        completed_at = :now,
+                        completed_at = now(),
                         error_code = :error_code,
                         error_message = :error_message,
-                        updated_at = :now
+                        updated_at = now()
                     WHERE status = 'running'
-                      AND lease_expires_at < :now
+                      AND lease_expires_at <= now()
                     """
                 ),
                 {
-                    "now": now,
                     "error_code": _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE,
                     "error_message": "Polling run lease expired before completion",
                 },
@@ -393,14 +392,14 @@ def _claim_subscription_poll_run_singleton(
                         :scheduler_identity,
                         'running',
                         :run_limit,
-                        :started_at,
-                        :lease_expires_at,
+                        now(),
+                        now() + (CAST(:run_lease_seconds AS integer) * interval '1 second'),
                         0,
                         0,
                         0,
                         0,
-                        :created_at,
-                        :updated_at
+                        now(),
+                        now()
                     )
                     """
                 ),
@@ -408,10 +407,7 @@ def _claim_subscription_poll_run_singleton(
                     "id": run_id,
                     "scheduler_identity": scheduler_identity,
                     "run_limit": run_limit,
-                    "started_at": now,
-                    "lease_expires_at": lease_expires_at,
-                    "created_at": now,
-                    "updated_at": now,
+                    "run_lease_seconds": run_lease_seconds,
                 },
             )
     except IntegrityError as exc:
@@ -528,8 +524,7 @@ def run_podcast_subscription_sync_now(
 ) -> dict[str, Any]:
     _ = request_id
     settings = get_settings()
-    now = datetime.now(UTC)
-    lease_expires_before = now - timedelta(seconds=settings.podcast_sync_running_lease_seconds)
+    sync_lease_seconds = settings.podcast_sync_running_lease_seconds
     claimed = False
 
     with transaction(db):
@@ -537,12 +532,11 @@ def run_podcast_subscription_sync_now(
             db,
             user_id=user_id,
             podcast_id=podcast_id,
-            now=now,
-            lease_expires_before=lease_expires_before,
+            sync_lease_seconds=sync_lease_seconds,
         )
 
     if not claimed:
-        snapshot = _get_subscription_sync_snapshot(db, user_id, podcast_id)
+        snapshot = get_subscription_sync_snapshot(db, user_id, podcast_id)
         return {
             "sync_status": snapshot["sync_status"] if snapshot is not None else "skipped",
             "reason": "not_pending",
@@ -1299,18 +1293,19 @@ def refresh_subscription_sync_for_viewer(
     podcast_id: UUID,
 ) -> PodcastSubscriptionSyncRefreshOut:
     settings = get_settings()
-    now = datetime.now(UTC)
-    running_lease_cutoff = now - timedelta(seconds=settings.podcast_sync_running_lease_seconds)
+    sync_lease_seconds = settings.podcast_sync_running_lease_seconds
     should_enqueue = False
 
     with transaction(db):
         row = db.execute(
             text(
-                """
+                f"""
                 SELECT
                     status,
-                    sync_status,
-                    COALESCE(sync_started_at, updated_at)
+                    (
+                        sync_status = 'running'
+                        AND NOT ({_SYNC_RUNNING_STALE_SQL})
+                    ) AS running_and_healthy
                 FROM podcast_subscriptions
                 WHERE user_id = :user_id AND podcast_id = :podcast_id
                 """
@@ -1318,22 +1313,16 @@ def refresh_subscription_sync_for_viewer(
             {
                 "user_id": viewer_id,
                 "podcast_id": podcast_id,
+                "sync_lease_seconds": sync_lease_seconds,
             },
         ).fetchone()
         if row is None or row[0] != "active":
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
 
-        sync_status = str(row[1] or "")
-        sync_started_or_updated_at = row[2]
-        running_and_healthy = sync_status == "running" and (
-            sync_started_or_updated_at is not None
-            and sync_started_or_updated_at >= running_lease_cutoff
-        )
-
-        if not running_and_healthy:
-            db.execute(
+        if not bool(row[1]):
+            updated = db.execute(
                 text(
-                    """
+                    f"""
                     UPDATE podcast_subscriptions
                     SET
                         sync_status = 'pending',
@@ -1341,29 +1330,34 @@ def refresh_subscription_sync_for_viewer(
                         sync_error_message = NULL,
                         sync_started_at = NULL,
                         sync_completed_at = NULL,
-                        updated_at = :updated_at
+                        updated_at = now()
                     WHERE user_id = :user_id
                       AND podcast_id = :podcast_id
                       AND status = 'active'
+                      AND (
+                          sync_status <> 'running'
+                          OR ({_SYNC_RUNNING_STALE_SQL})
+                      )
+                    RETURNING 1
                     """
                 ),
                 {
                     "user_id": viewer_id,
                     "podcast_id": podcast_id,
-                    "updated_at": now,
+                    "sync_lease_seconds": sync_lease_seconds,
                 },
-            )
-            should_enqueue = True
+            ).fetchone()
+            should_enqueue = updated is not None
 
     sync_enqueued = False
     if should_enqueue:
-        sync_enqueued = _enqueue_podcast_subscription_sync(
+        sync_enqueued = enqueue_podcast_subscription_sync(
             db,
             user_id=viewer_id,
             podcast_id=podcast_id,
         )
 
-    snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
+    snapshot = get_subscription_sync_snapshot(db, viewer_id, podcast_id)
     if snapshot is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
 
@@ -1377,7 +1371,7 @@ def refresh_subscription_sync_for_viewer(
     )
 
 
-def _enqueue_podcast_subscription_sync(
+def enqueue_podcast_subscription_sync(
     db: Session,
     *,
     user_id: UUID,
@@ -1405,7 +1399,7 @@ def _enqueue_podcast_subscription_sync(
         raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to enqueue podcast sync job.") from exc
 
 
-def _get_subscription_sync_snapshot(
+def get_subscription_sync_snapshot(
     db: Session,
     user_id: UUID,
     podcast_id: UUID,
@@ -1437,21 +1431,20 @@ def _claim_subscription_sync_pending(
     *,
     user_id: UUID,
     podcast_id: UUID,
-    now: datetime,
-    lease_expires_before: datetime,
+    sync_lease_seconds: int,
 ) -> bool:
     row = db.execute(
         text(
-            """
+            f"""
             UPDATE podcast_subscriptions
             SET
                 sync_status = 'running',
                 sync_error_code = NULL,
                 sync_error_message = NULL,
-                sync_started_at = :now,
+                sync_started_at = now(),
                 sync_completed_at = NULL,
                 sync_attempts = sync_attempts + 1,
-                updated_at = :now
+                updated_at = now()
             WHERE user_id = :user_id
               AND podcast_id = :podcast_id
               AND status = 'active'
@@ -1459,7 +1452,7 @@ def _claim_subscription_sync_pending(
                   sync_status = 'pending'
                   OR (
                       sync_status = 'running'
-                      AND COALESCE(sync_started_at, updated_at) < :lease_expires_before
+                      AND ({_SYNC_RUNNING_STALE_SQL})
                   )
               )
             RETURNING 1
@@ -1468,8 +1461,7 @@ def _claim_subscription_sync_pending(
         {
             "user_id": user_id,
             "podcast_id": podcast_id,
-            "now": now,
-            "lease_expires_before": lease_expires_before,
+            "sync_lease_seconds": sync_lease_seconds,
         },
     ).fetchone()
     return row is not None

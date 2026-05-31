@@ -113,6 +113,7 @@ def encrypt_secretbox(plaintext: bytes, nonce: bytes) -> bytes:
         CryptoError: If encryption fails.
         ValueError: If nonce is wrong size.
     """
+    # justify-service-invariant-check: Python bytes cannot encode SecretBox nonce length.
     if len(nonce) != NONCE_SIZE:
         raise ValueError(f"Nonce must be {NONCE_SIZE} bytes, got {len(nonce)}")
 
@@ -144,6 +145,7 @@ def decrypt_secretbox(ciphertext: bytes, nonce: bytes) -> bytes:
         CryptoError: If decryption fails (wrong key, wrong nonce, or tampered data).
         ValueError: If nonce is wrong size.
     """
+    # justify-service-invariant-check: Python bytes cannot encode SecretBox nonce length.
     if len(nonce) != NONCE_SIZE:
         raise ValueError(f"Nonce must be {NONCE_SIZE} bytes, got {len(nonce)}")
 
@@ -231,6 +233,7 @@ def decrypt_api_key(ciphertext: bytes, nonce: bytes, version: int) -> str:
     Raises:
         CryptoError: If version is unknown or decryption fails.
     """
+    # justify-defect: persisted BYOK key versions must match supported decryptors.
     if version != CURRENT_MASTER_KEY_VERSION:
         raise CryptoError(f"Unknown key version: {version}")
 

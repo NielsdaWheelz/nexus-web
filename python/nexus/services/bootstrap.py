@@ -7,129 +7,120 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from nexus.db.session import transaction
+from nexus.db.errors import is_serialization_failure
+from nexus.db.session import transaction, use_serializable_if_available
 
 logger = logging.getLogger(__name__)
 
-# Default library name (not user-editable in v1)
+# Default library name is not user-editable.
 DEFAULT_LIBRARY_NAME = "My Library"
 
 
 def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | None = None) -> UUID:
     """Ensure user exists, default library exists, and owner membership exists.
 
-    This function is race-safe and idempotent:
-    - Concurrent calls converge to correct state
-    - Uses INSERT ON CONFLICT DO UPDATE for idempotent upsert with email sync
-    - Recovers from partial failures (e.g., library exists but membership missing)
-
-    Args:
-        db: Database session.
-        user_id: The user's ID (from JWT sub claim).
-        email: The user's email (from JWT email claim). Synced on each login.
-
-    Returns:
-        The default library ID.
-
-    Raises:
-        Exception: If bootstrap fails after all recovery attempts.
+    This function is race-safe and idempotent. Concurrent callers converge
+    through SERIALIZABLE retry or unique-constraint recovery.
     """
+    for attempt in range(3):
+        use_serializable_if_available(db)
+        try:
+            return _ensure_user_and_default_library_once(db, user_id, email)
+        except OperationalError as exc:
+            db.rollback()
+            if not is_serialization_failure(exc) or attempt == 2:
+                raise
+        except IntegrityError:
+            db.rollback()
+            if attempt == 2:
+                raise
+    raise AssertionError("default library bootstrap retry loop exhausted")
+
+
+def _ensure_user_and_default_library_once(db: Session, user_id: UUID, email: str | None) -> UUID:
     with transaction(db):
-        # Step 1: Ensure user exists, sync email from JWT on each login
-        db.execute(
-            text("""
-                INSERT INTO users (id, email)
-                VALUES (:user_id, :email)
-                ON CONFLICT (id) DO UPDATE SET email = COALESCE(:email, users.email)
-            """),
-            {"user_id": user_id, "email": email},
-        )
-
-        # Step 2: Check if default library already exists
-        result = db.execute(
-            text("""
-                SELECT id FROM libraries
-                WHERE owner_user_id = :user_id AND is_default = true
-            """),
-            {"user_id": user_id},
-        )
-        row = result.fetchone()
-        default_library_id = row[0] if row else None
-
-        # Step 3: If no default library, create one (catch race)
+        _ensure_user(db, user_id, email)
+        default_library_id = _get_default_library_id(db, user_id)
         if default_library_id is None:
-            try:
-                result = db.execute(
-                    text("""
-                        INSERT INTO libraries (name, owner_user_id, is_default)
-                        VALUES (:name, :user_id, true)
-                        RETURNING id
-                    """),
-                    {"name": DEFAULT_LIBRARY_NAME, "user_id": user_id},
-                )
-                row = result.fetchone()
-                default_library_id = row[0]
-                logger.info("Created default library %s for user %s", default_library_id, user_id)
-            except IntegrityError:
-                # Lost race: another request created it; fetch the existing one
-                db.rollback()  # Rollback the failed insert
-
-                # Re-query for the default library
-                result = db.execute(
-                    text("""
-                        SELECT id FROM libraries
-                        WHERE owner_user_id = :user_id AND is_default = true
-                    """),
-                    {"user_id": user_id},
-                )
-                row = result.fetchone()
-                default_library_id = row[0] if row else None
-
-                if default_library_id is None:
-                    # This should not happen - log and raise
-                    logger.error(
-                        "Failed to find default library after race recovery for user %s", user_id
-                    )
-                    raise RuntimeError(
-                        f"Failed to bootstrap default library for user {user_id}"
-                    ) from None
-
-                logger.info(
-                    "Found existing default library %s for user %s after race",
-                    default_library_id,
-                    user_id,
-                )
-
-        # Step 4: Ensure owner membership exists (idempotent)
-        # Handles edge case: library exists but membership doesn't (partial failure recovery)
-        db.execute(
-            text("""
-                INSERT INTO memberships (library_id, user_id, role)
-                VALUES (:library_id, :user_id, 'admin')
-                ON CONFLICT (library_id, user_id) DO NOTHING
-            """),
-            {"library_id": default_library_id, "user_id": user_id},
-        )
+            default_library_id = _create_default_library(db, user_id)
+        _ensure_default_library_membership(db, default_library_id, user_id)
 
     return default_library_id
 
 
-def create_bootstrap_callback(db: Session):
-    """Create a bootstrap callback function that captures the database session.
+def _ensure_user(db: Session, user_id: UUID, email: str | None) -> None:
+    current = db.execute(
+        text("SELECT email FROM users WHERE id = :user_id"),
+        {"user_id": user_id},
+    ).fetchone()
+    if current is None:
+        db.execute(
+            text("INSERT INTO users (id, email) VALUES (:user_id, :email)"),
+            {"user_id": user_id, "email": email},
+        )
+        return
+    if email is not None and current[0] != email:
+        db.execute(
+            text("UPDATE users SET email = :email WHERE id = :user_id"),
+            {"user_id": user_id, "email": email},
+        )
 
-    This is used to wire up the auth middleware with the bootstrap service.
 
-    Args:
-        db: Database session.
+def _get_default_library_id(db: Session, user_id: UUID) -> UUID | None:
+    row = db.execute(
+        text("""
+            SELECT id FROM libraries
+            WHERE owner_user_id = :user_id AND is_default = true
+        """),
+        {"user_id": user_id},
+    ).fetchone()
+    return row[0] if row else None
 
-    Returns:
-        A callback function that takes user_id and returns default_library_id.
-    """
 
-    def callback(user_id: UUID, email: str | None = None) -> UUID:
-        return ensure_user_and_default_library(db, user_id, email=email)
+def _create_default_library(db: Session, user_id: UUID) -> UUID:
+    row = db.execute(
+        text("""
+            INSERT INTO libraries (name, owner_user_id, is_default)
+            VALUES (:name, :user_id, true)
+            RETURNING id
+        """),
+        {"name": DEFAULT_LIBRARY_NAME, "user_id": user_id},
+    ).fetchone()
+    if row is None:
+        raise AssertionError(
+            "default library insert returned no id"
+        )  # justify-service-invariant-check: INSERT RETURNING id must return one row.
+    logger.info("Created default library %s for user %s", row[0], user_id)
+    return row[0]
 
-    return callback
+
+def _ensure_default_library_membership(
+    db: Session, default_library_id: UUID, user_id: UUID
+) -> None:
+    row = db.execute(
+        text("""
+            SELECT role FROM memberships
+            WHERE library_id = :library_id AND user_id = :user_id
+        """),
+        {"library_id": default_library_id, "user_id": user_id},
+    ).fetchone()
+    if row is None:
+        db.execute(
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:library_id, :user_id, 'admin')
+            """),
+            {"library_id": default_library_id, "user_id": user_id},
+        )
+    elif row[0] != "admin":
+        db.execute(
+            text("""
+                UPDATE memberships
+                SET role = 'admin'
+                WHERE library_id = :library_id AND user_id = :user_id
+            """),
+            {"library_id": default_library_id, "user_id": user_id},
+        )

@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import ChatSurface, {
-  type ChatScrollHandle,
-} from "@/components/chat/ChatSurface";
+import ChatSurface from "@/components/chat/ChatSurface";
+import type { ChatScrollHandle } from "@/components/chat/useChatScroll";
 import type { ConversationMessage, ForkOption } from "@/lib/conversations/types";
 
 const baseMessage = {
@@ -313,6 +312,63 @@ describe("ChatSurface", () => {
     });
   });
 
+  it("keeps a pinned question fixed while the assistant answer grows", async () => {
+    const sent: ConversationMessage[] = [
+      userMessage("user-1", 1, "Pinned streaming question"),
+      assistantMessage("assistant-1", 2, "Short answer", "user-1"),
+    ];
+
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface messages={sent} composer={<textarea aria-label="Message" />} />
+      </div>,
+    );
+
+    const anchor = screen.getByText("Pinned streaming question");
+    await waitFor(() => {
+      expect(isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport)).toBe(
+        true,
+      );
+    });
+    const topBefore = topOffsetWithin(anchor, scrollport);
+    const scrollTopBefore = scrollport.scrollTop;
+
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={[
+            sent[0],
+            assistantMessage(
+              "assistant-1",
+              2,
+              `Grown answer ${"streamed token ".repeat(90)}`,
+              "user-1",
+            ),
+          ]}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Grown answer/)).toBeInTheDocument();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      Math.abs(topOffsetWithin(anchor, scrollport) - topBefore),
+    ).toBeLessThanOrEqual(3);
+    expect(Math.abs(scrollport.scrollTop - scrollTopBefore)).toBeLessThanOrEqual(
+      3,
+    );
+  });
+
   it("releases the pin on a manual scroll so later growth does not re-pin", async () => {
     const sent: ConversationMessage[] = [
       userMessage("user-1", 1, "Pinned question"),
@@ -486,5 +542,42 @@ describe("ChatSurface", () => {
 
     fireEvent.click(latest);
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+  });
+
+  it("jumps Latest to the bottom when the newest assistant answer is taller than the viewport", async () => {
+    const messages: ConversationMessage[] = [
+      userMessage("user-1", 1, "Newest tall-answer question"),
+      assistantMessage(
+        "assistant-1",
+        2,
+        `Tall answer ${"long streamed answer body ".repeat(220)}`,
+        "user-1",
+      ),
+    ];
+
+    render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          messages={messages}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+
+    act(() => {
+      scrollport.scrollTop = 0;
+    });
+    fireEvent.scroll(scrollport);
+    const latest = await screen.findByTestId("chat-scroll-latest");
+
+    fireEvent.click(latest);
+
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
   });
 });

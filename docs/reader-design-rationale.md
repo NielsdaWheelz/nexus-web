@@ -1,7 +1,6 @@
-# reader experience research -> implementation
+# Reader Design Rationale
 
-this document captures the reading constraints we chose to ship and the
-system shape they imply.
+This document records the reader constraints we ship and the system shape they imply.
 
 ## objectives
 
@@ -145,7 +144,7 @@ changes.
 - `section_id` is path-encoded and may contain `/`
 - `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
   remains the pane-local active-section URL state
-- the reader no longer depends on legacy chapter manifests or toc fetches
+- the reader no longer depends on removed chapter manifests or toc fetches
 
 ## regression strategy
 
@@ -162,7 +161,7 @@ required automated coverage includes:
 ## validation commands
 
 ```bash
-make verify
-make test-e2e
-make test-e2e-ui
+cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx
+make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
 ```

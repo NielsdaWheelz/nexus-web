@@ -21,8 +21,6 @@ export interface PaletteCommand {
     scopeBoost?: number;
   };
   shortcutLabel?: string;
-  disabled?: { reason: string };
-  danger?: boolean;
   pin?: "last";
   trailingAction?: { actionId: string; ariaLabel: string };
 }

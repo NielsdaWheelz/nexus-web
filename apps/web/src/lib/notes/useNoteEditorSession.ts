@@ -111,6 +111,9 @@ export function useNoteEditorSession({
 
       const saveResourceKey = resourceKeyRef.current;
       const saveGeneration = generationRef.current;
+      const isStaleSave = () =>
+        generationRef.current !== saveGeneration ||
+        resourceKeyRef.current !== saveResourceKey;
       const clientMutationId = createClientMutationId(saveResourceKey, sequence);
       saveInFlightRef.current = true;
       setMountedStatus("saving");
@@ -122,10 +125,7 @@ export function useNoteEditorSession({
           clientMutationId,
         })
         .then(() => {
-          if (
-            generationRef.current !== saveGeneration ||
-            resourceKeyRef.current !== saveResourceKey
-          ) {
+          if (isStaleSave()) {
             return;
           }
 
@@ -142,10 +142,7 @@ export function useNoteEditorSession({
           setMountedStatus("dirty");
         })
         .catch((error: unknown) => {
-          if (
-            generationRef.current !== saveGeneration ||
-            resourceKeyRef.current !== saveResourceKey
-          ) {
+          if (isStaleSave()) {
             return;
           }
 
@@ -173,10 +170,7 @@ export function useNoteEditorSession({
           setMountedStatus("dirty");
         })
         .finally(() => {
-          if (
-            generationRef.current !== saveGeneration ||
-            resourceKeyRef.current !== saveResourceKey
-          ) {
+          if (isStaleSave()) {
             return;
           }
 

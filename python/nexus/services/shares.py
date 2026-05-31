@@ -7,10 +7,9 @@ Sharing rules:
 - Default libraries cannot be share targets.
 """
 
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation
@@ -141,7 +140,7 @@ def set_conversation_shares_for_owner(
             db.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation_id)
-                .values(sharing="private", updated_at=datetime.now(UTC))
+                .values(sharing="private", updated_at=func.now())
             )
     else:
         # Replace shares atomically
@@ -154,7 +153,7 @@ def set_conversation_shares_for_owner(
         db.execute(
             update(Conversation)
             .where(Conversation.id == conversation_id)
-            .values(sharing="library", updated_at=datetime.now(UTC))
+            .values(sharing="library", updated_at=func.now())
         )
 
     db.flush()

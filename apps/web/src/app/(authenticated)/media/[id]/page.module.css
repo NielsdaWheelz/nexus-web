@@ -187,7 +187,7 @@
   margin: 0 auto;
 }
 
-/* === Reader scope (preserved literal hex per spec §5 rule 14) === */
+/* Reader themes intentionally keep literal palette tokens scoped to the reader. */
 .readerThemeLight {
   --reader-bg: #faf8f3;
   --reader-bg-secondary: #f3efe6;
@@ -297,7 +297,7 @@
 }
 
 /*
- * Reader-dark highlight overrides (preserved literal rgba per spec §5 rule 14).
+ * Reader-dark highlight overrides keep literal rgba values scoped to reader themes.
  * These tune the highlight inks for the dark reader theme specifically;
  * the global `--highlight-*` tokens are theme-invariant defaults.
  */

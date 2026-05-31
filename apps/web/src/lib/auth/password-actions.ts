@@ -10,6 +10,7 @@ import {
   toPublicAuthErrorMessage,
 } from "@/lib/auth/messages";
 import {
+  findSupabaseIdentityForLinkedIdentity,
   findEmailIdentity,
   mayUnlinkIdentity,
   normalizeLinkedIdentities,
@@ -105,11 +106,14 @@ export async function removePasswordAction(): Promise<
   if (!mayUnlinkIdentity(identities, emailIdentity.id)) {
     return { ok: false, error: KEEP_ONE_SIGN_IN_METHOD_MESSAGE };
   }
-  const unlinkPayload = {
-    identity_id: emailIdentity.id,
-    provider: emailIdentity.provider,
-  } as Parameters<typeof supabase.auth.unlinkIdentity>[0];
-  const { error } = await supabase.auth.unlinkIdentity(unlinkPayload);
+  const supabaseIdentity = findSupabaseIdentityForLinkedIdentity(
+    data,
+    emailIdentity
+  );
+  if (!supabaseIdentity) {
+    return { ok: false, error: PASSWORD_REMOVE_FAILURE_MESSAGE };
+  }
+  const { error } = await supabase.auth.unlinkIdentity(supabaseIdentity);
   if (error) {
     return {
       ok: false,

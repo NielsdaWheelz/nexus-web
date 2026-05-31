@@ -1,8 +1,7 @@
 "use client";
 
 import Button from "@/components/ui/Button";
-import ReferenceChatList from "@/components/chat/ReferenceChatList";
-import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
+import ResourceChatTab from "@/components/chat/ResourceChatTab";
 import styles from "./DocChatTab.module.css";
 
 interface DocChatTabProps {
@@ -25,10 +24,18 @@ export default function DocChatTab({
   onPendingQuoteResolved,
 }: DocChatTabProps) {
   const resourceUri = `media:${mediaId}`;
-  const { conversations, isLoading } = useChatsByReference(resourceUri);
 
   return (
-    <div className={styles.tab}>
+    <ResourceChatTab
+      className={styles.tab}
+      density="compact"
+      emptyActionLabel="Start new chat about this document"
+      emptyMessage="No chats reference this document yet."
+      listClassName={styles.scrollArea}
+      resourceUri={resourceUri}
+      onOpenChat={onOpenChat}
+      onStartNewChat={onStartNewChat}
+    >
       {pendingQuoteUri ? (
         <div className={styles.quoteBanner}>
           <span className={styles.quoteBannerText}>
@@ -43,16 +50,6 @@ export default function DocChatTab({
           </Button>
         </div>
       ) : null}
-      <ReferenceChatList
-        className={styles.scrollArea}
-        conversations={conversations}
-        density="compact"
-        emptyActionLabel="Start new chat about this document"
-        emptyMessage="No chats reference this document yet."
-        isLoading={isLoading}
-        onOpenChat={onOpenChat}
-        onStartNewChat={onStartNewChat}
-      />
-    </div>
+    </ResourceChatTab>
   );
 }

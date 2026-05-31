@@ -58,6 +58,7 @@ def get_task_contract_version() -> str:
 
 def periodic_slot_start(*, now: datetime, interval_seconds: int) -> datetime:
     """Return UTC schedule bucket start for a periodic interval."""
+    # justify-service-invariant-check: registry schedule config is runtime data.
     if interval_seconds <= 0:
         raise ValueError("periodic interval must be positive")
     if now.tzinfo is None:

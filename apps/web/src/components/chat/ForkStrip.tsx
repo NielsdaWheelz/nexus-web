@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { GitBranch } from "lucide-react";
 import { truncateText } from "@/lib/conversations/display";
 import type { ForkOption } from "@/lib/conversations/types";
+import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./ForkStrip.module.css";
 
 export default function ForkStrip({
@@ -36,11 +37,6 @@ export default function ForkStrip({
     buttonRefs.current[index]?.focus();
   };
 
-  const moveFocus = (index: number) => {
-    const nextIndex = Math.max(0, Math.min(visibleForks.length - 1, index));
-    focusButton(nextIndex);
-  };
-
   return (
     <section className={styles.strip} aria-label="Forks from this answer">
       <div className={styles.header}>
@@ -66,28 +62,20 @@ export default function ForkStrip({
               tabIndex={index === focusedIndex ? 0 : -1}
               onFocus={() => setFocusedIndex(index)}
               onKeyDown={(event) => {
-                switch (event.key) {
-                  case "ArrowLeft":
-                    event.preventDefault();
-                    moveFocus(index - 1);
-                    break;
-                  case "ArrowRight":
-                    event.preventDefault();
-                    moveFocus(index + 1);
-                    break;
-                  case "Home":
-                    event.preventDefault();
-                    focusButton(0);
-                    break;
-                  case "End":
-                    event.preventDefault();
-                    focusButton(visibleForks.length - 1);
-                    break;
-                  case "Enter":
-                  case " ":
-                    event.preventDefault();
-                    onSelectFork(fork);
-                    break;
+                const nextIndex = nextRovingIndexForKey({
+                  key: event.key,
+                  currentIndex: index,
+                  itemCount: visibleForks.length,
+                  orientation: "horizontal",
+                });
+                if (nextIndex !== null) {
+                  event.preventDefault();
+                  focusButton(nextIndex);
+                  return;
+                }
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectFork(fork);
                 }
               }}
               onClick={() => onSelectFork(fork)}

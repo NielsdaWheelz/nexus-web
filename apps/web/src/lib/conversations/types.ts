@@ -97,8 +97,6 @@ export type MessageEvidenceRetrievalStatus =
   | "excluded_by_scope"
   | "web_result";
 
-export type MessageEvidenceLocator = RetrievalLocator;
-
 export interface MessageToolCall {
   id?: string;
   conversation_id?: string;
@@ -203,7 +201,10 @@ export function conversationMessageText(
 
 export interface ConversationMessagesResponse {
   data: ConversationMessage[];
-  page: { next_cursor: string | null };
+  page: {
+    next_cursor?: string | null;
+    before_cursor?: string | null;
+  };
 }
 
 type BranchAnchorKind =

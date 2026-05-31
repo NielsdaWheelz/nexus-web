@@ -24,7 +24,7 @@ export type PodcastSummary = {
   updated_at: string;
 };
 
-export type PodcastVisibleLibrary = {
+type PodcastVisibleLibrary = {
   id: string;
   name: string;
   color: string | null;
@@ -45,7 +45,7 @@ export type PodcastSubscriptionRecord = {
   updated_at: string;
 };
 
-export type PodcastSubscriptionDetail = PodcastSubscriptionRecord & {
+type PodcastSubscriptionDetail = PodcastSubscriptionRecord & {
   user_id: string;
 };
 
@@ -81,7 +81,7 @@ type PodcastSubscriptionSettingsFields = Pick<
   "default_playback_speed" | "auto_queue"
 >;
 
-export type PodcastSubscriptionSettingsDraft = {
+type PodcastSubscriptionSettingsDraft = {
   defaultSpeed: string;
   autoQueue: boolean;
 };
@@ -102,7 +102,7 @@ export type PodcastSubscriptionSyncRefreshResult = {
   sync_enqueued: boolean;
 };
 
-export type PodcastSubscribeInput = {
+type PodcastSubscribeInput = {
   provider_podcast_id: string;
   title: string;
   contributors: ContributorCredit[];

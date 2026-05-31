@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
+import { isRecord } from "@/lib/validation";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
 
@@ -24,12 +25,33 @@ export function dispatchReaderPulse(target: ReaderPulseTarget): void {
   );
 }
 
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.mediaId === "string" &&
+    isOptionalString(value.highlightId) &&
+    isOptionalString(value.evidenceSpanId) &&
+    isRetrievalLocator(value.locator) &&
+    (typeof value.snippet === "string" || value.snippet === null) &&
+    typeof value.sourceVersion === "string" &&
+    value.highlightBehavior === "pulse" &&
+    value.focusBehavior === "scroll_into_view"
+  );
+}
+
 export function useReaderPulseHighlight(
   handler: (target: ReaderPulseTarget) => void,
 ): void {
   useEffect(() => {
     function listener(event: Event) {
-      handler((event as CustomEvent<ReaderPulseTarget>).detail);
+      if (!(event instanceof CustomEvent) || !isReaderPulseTarget(event.detail)) {
+        return;
+      }
+      handler(event.detail);
     }
     window.addEventListener(READER_PULSE_HIGHLIGHT, listener);
     return () => window.removeEventListener(READER_PULSE_HIGHLIGHT, listener);

@@ -25,8 +25,9 @@ def is_pdf_quote_text_ready(db: Session, media_id: UUID) -> bool:
     2. media.page_count is present and >= 1
     3. pdf_page_text_spans row count == page_count (coverage check)
 
-    Uses lightweight fail-closed check. If data is in an impossible state,
-    returns False with observability logging.
+    Uses a lightweight fail-closed check. A span-count mismatch means quote
+    text cannot be safely matched yet, so the predicate returns False with
+    observability logging.
     """
     result = db.execute(
         text("""

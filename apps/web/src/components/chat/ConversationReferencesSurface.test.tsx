@@ -42,7 +42,7 @@ describe("ConversationReferencesSurface", () => {
       />,
     );
 
-    expect(screen.getByText("Annual report (unavailable)")).toBeVisible();
+    expect(screen.getByText("Annual report")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(screen.getByRole("menuitem", { name: "Open" })).toBeDisabled();
@@ -61,6 +61,25 @@ describe("ConversationReferencesSurface", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Remove" }));
     expect(removeReference).toHaveBeenCalledWith("ref-1");
+  });
+
+  it("opens a reference from the body and actions menu", async () => {
+    const user = userEvent.setup();
+    const onOpenResource = vi.fn();
+    render(
+      <ConversationReferencesSurface
+        references={[reference()]}
+        removeReference={async () => {}}
+        onOpenResource={onOpenResource}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Annual report" }));
+    expect(onOpenResource).toHaveBeenCalledWith("media:m1");
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Open" }));
+    expect(onOpenResource).toHaveBeenCalledTimes(2);
   });
 
   it("shows the empty state with no references", () => {

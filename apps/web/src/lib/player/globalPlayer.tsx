@@ -60,6 +60,8 @@ const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
 const SPEED_MIN = 0.25;
 const SPEED_MAX = 3.0;
 
+type AudioWindow = Window & { webkitAudioContext?: typeof AudioContext };
+
 export interface GlobalPlayerPlaybackError {
   code: number;
   message: string;
@@ -179,6 +181,17 @@ function mapPlaybackErrorMessage(code: number): string {
   return "Playback failed. Please retry.";
 }
 
+function getAudioContextConstructor(): typeof AudioContext | undefined {
+  const audioWindow: AudioWindow = window;
+  return window.AudioContext ?? audioWindow.webkitAudioContext;
+}
+
+function isSubscriptionPlaybackSpeedOption(
+  value: number,
+): value is SubscriptionPlaybackSpeedOption {
+  return SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.some((option) => option === value);
+}
+
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [track, setTrackState] = useState<GlobalPlayerTrack | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -215,7 +228,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const silenceTrimFrameIdRef = useRef<number | null>(null);
   const silenceTrimLastTimestampRef = useRef<number | null>(null);
   const silenceBelowThresholdMsRef = useRef(0);
-  const silenceAnalyserBufferRef = useRef<Float32Array | null>(null);
+  const silenceAnalyserBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
 
   // Mirror state into refs so async callbacks (audio events, RAF loops) read
   // the latest values without re-binding listeners on every render. Direct
@@ -341,9 +354,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const AudioContextCtor =
-      window.AudioContext ??
-      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const AudioContextCtor = getAudioContextConstructor();
     if (typeof AudioContextCtor !== "function") {
       markAudioEffectsUnavailable();
       return null;
@@ -424,7 +435,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         silenceAnalyserBufferRef.current = new Float32Array(analyserNode.fftSize);
       }
       const frame = silenceAnalyserBufferRef.current;
-      analyserNode.getFloatTimeDomainData(frame as unknown as Float32Array<ArrayBuffer>);
+      analyserNode.getFloatTimeDomainData(frame);
       const levelDb = calculateRmsDb(frame);
 
       const previousTimestamp = silenceTrimLastTimestampRef.current ?? timestampMs;
@@ -840,8 +851,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [durationSeconds, track?.chapters]);
 
   const selectedPlaybackRateOption = useMemo<SubscriptionPlaybackSpeedOption>(() => {
-    if (SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.includes(playbackRate as SubscriptionPlaybackSpeedOption)) {
-      return playbackRate as SubscriptionPlaybackSpeedOption;
+    if (isSubscriptionPlaybackSpeedOption(playbackRate)) {
+      return playbackRate;
     }
     return 1;
   }, [playbackRate]);

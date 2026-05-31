@@ -152,8 +152,9 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
             return response
 
+        # justify-ignore-error: middleware observability boundary logs context
+        # and re-raises for the global unhandled-exception handler.
         except Exception:
-            # Log and re-raise - unhandled_exception_handler will catch this
             logger.exception("http.request.failed")
             raise
 

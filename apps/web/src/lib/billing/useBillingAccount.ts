@@ -5,9 +5,9 @@ import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
-export type BillingEntitlementSource = "free" | "subscription" | "internal_grant";
+type BillingEntitlementSource = "free" | "subscription" | "internal_grant";
 
-export interface BillingUsageSnapshot {
+interface BillingUsageSnapshot {
   used: number;
   reserved: number;
   limit: number | null;
@@ -16,7 +16,7 @@ export interface BillingUsageSnapshot {
   period_end: string;
 }
 
-export interface BillingAccount {
+interface BillingAccount {
   billing_enabled: boolean;
   billing_plan_tier: BillingPlanTier;
   billing_status: string;

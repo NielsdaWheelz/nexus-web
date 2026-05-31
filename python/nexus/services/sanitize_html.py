@@ -1,6 +1,6 @@
 """HTML sanitization for web article content.
 
-Sanitizes HTML from Readability extraction per the constitution and s2_spec:
+Sanitizes HTML from extracted article content:
 - Allowlisted tags only
 - Allowlisted attributes only
 - No event handlers (on*)
@@ -15,11 +15,11 @@ This module uses lxml for robust HTML parsing and transformation.
 import re
 from urllib.parse import quote, urljoin, urlparse
 
+from lxml.etree import ParserError
 from lxml.html import HtmlElement, document_fromstring, tostring
 
 from nexus.services.html_tree import remove_element, unwrap_element
 
-# Allowed tags per s2_spec.md §5.2
 ALLOWED_TAGS = frozenset(
     {
         "p",
@@ -120,7 +120,7 @@ def sanitize_html(
     try:
         # Parse HTML - lxml handles malformed HTML gracefully
         doc = document_fromstring(html)
-    except Exception as e:
+    except ParserError as e:
         raise ValueError(f"Failed to parse HTML: {e}") from e
 
     # Get body element - this is where content lives

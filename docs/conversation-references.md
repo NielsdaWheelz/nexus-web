@@ -1,20 +1,20 @@
-# Conversation References Cutover
+# Conversation References Contract
 
 ## Status
 
-This is the canonical post-cutover contract for conversation references,
+This is the canonical current contract for conversation references,
 reader-backed chats, citation write-through, chat-run tailing, and the `/tree`
 read path.
 
-The cutover is strict:
+The contract is strict:
 
 - No singleton chat API.
 - No `scope_*` conversation columns.
 - No `message_context_items`.
 - No `/api/conversations/resolve`.
 - No `/api/chat-references/*`.
-- No legacy payload aliases.
-- No fallback compatibility path.
+- No removed payload aliases.
+- No alternate path for removed payloads.
 
 Any code path that still depends on those concepts is wrong and should be
 deleted, not adapted.
@@ -43,7 +43,7 @@ That split created concrete failures:
 - Exhausted background jobs could become dead without finalizing the associated
   chat run.
 
-The correct fix is one hard cutover to the reference contract below.
+The correct fix is one strict reference contract.
 
 ## Goals
 
@@ -76,7 +76,7 @@ The correct fix is one hard cutover to the reference contract below.
 
 ## Design Rules
 
-The database rules in `docs/rules/database.md` govern this cutover:
+The database rules in `docs/rules/database.md` govern this feature:
 
 - Every table uses `id` plus `created_at`.
 - Foreign keys use the database default non-cascading behavior.
@@ -275,7 +275,7 @@ The reference API returns the resolved payload shape:
 }
 ```
 
-The field is `resource_uri`. `uri` is not accepted as a compatibility alias.
+The field is `resource_uri`. `uri` is not accepted as a alias.
 
 ### Deleted APIs
 
@@ -408,7 +408,7 @@ Each conversation pane owns one reference state source:
 - `removeReference(referenceId)` deletes from server and local state.
 - The conversation references surface is prop-driven and has no hidden hook.
   Target desktop placement is a workspace secondary pane under
-  `docs/workspace-pane-system-consolidation-cutover.md`.
+  `docs/workspace-pane-system.md`.
 
 Reader, new-conversation, full-conversation, library, and podcast chat entry
 points all compose with the same reference state.
@@ -483,8 +483,11 @@ Frontend:
 - `apps/web/src/lib/api/sse/events.ts`
 - `apps/web/src/components/chat/ConversationReferencesSurface.tsx`
 - `apps/web/src/components/chat/useChatRunTail.ts`
-- `apps/web/src/app/(authenticated)/conversations/[id]/ConversationPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.tsx`
+- `apps/web/src/components/chat/Conversation.tsx`
+- `apps/web/src/components/chat/ReaderChatDetail.tsx`
+- `apps/web/src/components/chat/DocChatTab.tsx`
+- `apps/web/src/components/chat/LibraryChatTab.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/libraries/LibrariesPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
@@ -516,7 +519,7 @@ Schema:
 - `conversation_references` has `created_at`, not `added_at`.
 - The `conversation_references` FK does not cascade.
 - The read-path index on `(conversation_id, created_at)` exists.
-- Legacy `conversation_state_snapshots` and prompt-assembly memory/snapshot
+- Removed `conversation_state_snapshots` and prompt-assembly memory/snapshot
   columns are gone.
 - No new migration uses `ON DELETE CASCADE` for this feature.
 - No feature code uses `INSERT ... ON CONFLICT` for reference insertion.
@@ -587,4 +590,4 @@ Every other layer composes from that:
 - Queue dead letters no longer leave chat runs stuck in non-terminal states.
 
 That is the production contract. Reintroducing older singleton, scope, or BFF
-compatibility paths violates the cutover.
+alias paths violates this contract.

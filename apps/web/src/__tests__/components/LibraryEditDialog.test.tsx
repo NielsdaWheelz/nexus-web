@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
+import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import type {
-  LibraryForEdit,
   LibraryInvite,
   LibraryMember,
-} from "@/components/LibraryEditDialog";
+} from "@/lib/libraries/sharing";
 
 const baseLibrary: LibraryForEdit = {
   id: "lib-1",

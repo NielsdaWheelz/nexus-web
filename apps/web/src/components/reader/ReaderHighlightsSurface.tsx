@@ -67,6 +67,7 @@ interface ReaderHighlightsSurfaceProps {
     shouldApply: () => boolean
   ) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
+  onOpenNoteLink: (href: string, options: { newPane: boolean }) => void;
 }
 
 export default function ReaderHighlightsSurface({
@@ -90,6 +91,7 @@ export default function ReaderHighlightsSurface({
   onNoteSave,
   onNoteDelete,
   onOpenConversation,
+  onOpenNoteLink,
 }: ReaderHighlightsSurfaceProps) {
   const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -621,10 +623,12 @@ export default function ReaderHighlightsSurface({
           key={highlight.id}
           content={{
             kind: "highlight",
-            prefix: highlight.prefix,
-            exact: highlight.exact,
-            suffix: highlight.suffix,
-            color: highlight.color,
+            snippet: {
+              prefix: highlight.prefix,
+              exact: highlight.exact,
+              suffix: highlight.suffix,
+              color: highlight.color,
+            },
           }}
           actions={actions.length ? actions : undefined}
           note={notesToRender.map((note) => {
@@ -642,6 +646,7 @@ export default function ReaderHighlightsSurface({
                   onSave={handleNoteSave}
                   onDelete={onNoteDelete}
                   onLocalChange={scheduleNoteLayoutMeasure}
+                  onOpenLink={onOpenNoteLink}
                 />
               </div>
             );
@@ -656,6 +661,11 @@ export default function ReaderHighlightsSurface({
                 conversation.title,
               ),
           }))}
+          linkedItemsSummary={
+            highlight.linked_conversations?.length
+              ? `${highlight.linked_conversations.length} linked chats`
+              : undefined
+          }
           meta={
             isFocused && isEditingBounds
               ? "Select new text in the reader to replace this highlight."
@@ -691,6 +701,7 @@ export default function ReaderHighlightsSurface({
       onFocusHighlight,
       onNoteDelete,
       onOpenConversation,
+      onOpenNoteLink,
       onQuoteToNewChat,
       onQuoteToExtantChat,
       onStartEditBounds,

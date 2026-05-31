@@ -8,6 +8,8 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
+  type SyntheticEvent,
 } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -176,6 +178,129 @@ function filterLibraries(
   );
 }
 
+function LibraryOption({
+  library,
+  checked,
+  busy,
+  onToggle,
+}: {
+  library: LibrarySummary;
+  checked: boolean;
+  busy?: boolean;
+  onToggle: (id: string) => void;
+}) {
+  const activate = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onToggle(library.id);
+  };
+  return (
+    <div
+      className="lib-multi-item"
+      role="option"
+      aria-selected={checked}
+      aria-disabled={busy || undefined}
+      tabIndex={busy ? -1 : 0}
+      style={ITEM_STYLE}
+      onClick={activate}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        activate(event);
+      }}
+    >
+      <span style={{ display: "flex", minWidth: 0 }}>
+        <span style={ITEM_NAME_STYLE}>
+          {library.color ? (
+            <span
+              style={{ ...COLOR_DOT_STYLE, backgroundColor: library.color }}
+              aria-hidden="true"
+            />
+          ) : null}
+          {library.name}
+        </span>
+      </span>
+      <span
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={library.name}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 18,
+          height: 18,
+          border: `1px solid ${checked ? "var(--accent)" : "var(--edge)"}`,
+          borderRadius: "var(--radius-sm)",
+          background: checked ? "var(--accent)" : "transparent",
+          color: checked ? "var(--on-accent, white)" : "transparent",
+          flexShrink: 0,
+        }}
+      >
+        {checked ? <Check size={12} aria-hidden="true" /> : null}
+      </span>
+    </div>
+  );
+}
+
+function LibraryOptionList({
+  libraries,
+  query,
+  onQueryChange,
+  selectedIds,
+  onToggle,
+  busy,
+  inputRef,
+}: {
+  libraries: LibrarySummary[];
+  query: string;
+  onQueryChange: (next: string) => void;
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  busy?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
+}) {
+  const showSearch = libraries.length > SEARCH_THRESHOLD;
+  const filtered = showSearch ? filterLibraries(libraries, query) : libraries;
+  return (
+    <>
+      {showSearch ? (
+        <div style={{ display: "flex" }}>
+          <Input
+            ref={inputRef}
+            type="search"
+            value={query}
+            className="lib-multi-search-input"
+            placeholder="Search libraries..."
+            aria-label="Search libraries"
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </div>
+      ) : null}
+
+      <div
+        style={LIST_STYLE}
+        role="listbox"
+        aria-multiselectable="true"
+        aria-label="Libraries"
+      >
+        {filtered.length === 0 ? (
+          <div style={EMPTY_STATE_STYLE}>No libraries match.</div>
+        ) : (
+          filtered.map((library) => (
+            <LibraryOption
+              key={library.id}
+              library={library}
+              checked={selectedIds.has(library.id)}
+              busy={busy}
+              onToggle={onToggle}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function LibraryMultiSelectPicker(props: Props) {
   if (props.mode === "modal") {
     return <ModalPicker {...props} />;
@@ -198,11 +323,6 @@ function DropdownPicker(props: DropdownProps) {
   const panelId = useId();
 
   const showSearch = libraries.length > SEARCH_THRESHOLD;
-  const filtered = useMemo(
-    () => (showSearch ? filterLibraries(libraries, query) : libraries),
-    [libraries, query, showSearch]
-  );
-
   const chipLabel = computeChipLabel(selectedLibraryIds, libraries);
   const selectedSet = useMemo(
     () => new Set(selectedLibraryIds),
@@ -276,99 +396,14 @@ function DropdownPicker(props: DropdownProps) {
               width: `${panelStyle.width}px`,
             }}
           >
-            {showSearch ? (
-              <div style={{ display: "flex" }}>
-                <Input
-                  ref={inputRef}
-                  type="search"
-                  value={query}
-                  className="lib-multi-search-input"
-                  placeholder="Search libraries..."
-                  aria-label="Search libraries"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </div>
-            ) : null}
-
-            <div
-              style={LIST_STYLE}
-              role="listbox"
-              aria-multiselectable="true"
-              aria-label="Libraries"
-            >
-              {filtered.length === 0 ? (
-                <div style={EMPTY_STATE_STYLE}>No libraries match.</div>
-              ) : (
-                filtered.map((library) => {
-                  const checked = selectedSet.has(library.id);
-                  return (
-                    <div
-                      key={library.id}
-                      className="lib-multi-item"
-                      role="option"
-                      aria-selected={checked}
-                      tabIndex={0}
-                      style={ITEM_STYLE}
-                      onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggle(library.id);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggle(library.id);
-                      }}
-                    >
-                      <span style={{ display: "flex", minWidth: 0 }}>
-                        <span style={ITEM_NAME_STYLE}>
-                          {library.color ? (
-                            <span
-                              style={{
-                                ...COLOR_DOT_STYLE,
-                                backgroundColor: library.color,
-                              }}
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          {library.name}
-                        </span>
-                      </span>
-                      <span
-                        role="checkbox"
-                        aria-checked={checked}
-                        aria-label={library.name}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 18,
-                          height: 18,
-                          border: `1px solid ${
-                            checked ? "var(--accent)" : "var(--edge)"
-                          }`,
-                          borderRadius: "var(--radius-sm)",
-                          background: checked
-                            ? "var(--accent)"
-                            : "transparent",
-                          color: checked
-                            ? "var(--on-accent, white)"
-                            : "transparent",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {checked ? (
-                          <Check size={12} aria-hidden="true" />
-                        ) : null}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+            <LibraryOptionList
+              libraries={libraries}
+              query={query}
+              onQueryChange={setQuery}
+              selectedIds={selectedSet}
+              onToggle={toggle}
+              inputRef={inputRef}
+            />
           </div>,
           document.body
         )
@@ -423,12 +458,6 @@ function ModalPicker(props: ModalProps) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const showSearch = libraries.length > SEARCH_THRESHOLD;
-  const filtered = useMemo(
-    () => (showSearch ? filterLibraries(libraries, query) : libraries),
-    [libraries, query, showSearch]
-  );
-
   const selectedSet = useMemo(
     () => new Set(selectedLibraryIds),
     [selectedLibraryIds]
@@ -470,101 +499,14 @@ function ModalPicker(props: ModalProps) {
         {isEmpty ? (
           <div style={EMPTY_STATE_STYLE}>{EMPTY_TOOLTIP}</div>
         ) : (
-          <>
-            {showSearch ? (
-              <div style={{ display: "flex" }}>
-                <Input
-                  type="search"
-                  value={query}
-                  className="lib-multi-search-input"
-                  placeholder="Search libraries..."
-                  aria-label="Search libraries"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </div>
-            ) : null}
-
-            <div
-              style={LIST_STYLE}
-              role="listbox"
-              aria-multiselectable="true"
-              aria-label="Libraries"
-            >
-              {filtered.length === 0 ? (
-                <div style={EMPTY_STATE_STYLE}>No libraries match.</div>
-              ) : (
-                filtered.map((library) => {
-                  const checked = selectedSet.has(library.id);
-                  return (
-                    <div
-                      key={library.id}
-                      className="lib-multi-item"
-                      role="option"
-                      aria-selected={checked}
-                      aria-disabled={busy || undefined}
-                      tabIndex={busy ? -1 : 0}
-                      style={ITEM_STYLE}
-                      onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggle(library.id);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggle(library.id);
-                      }}
-                    >
-                      <span style={{ display: "flex", minWidth: 0 }}>
-                        <span style={ITEM_NAME_STYLE}>
-                          {library.color ? (
-                            <span
-                              style={{
-                                ...COLOR_DOT_STYLE,
-                                backgroundColor: library.color,
-                              }}
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          {library.name}
-                        </span>
-                      </span>
-                      <span
-                        role="checkbox"
-                        aria-checked={checked}
-                        aria-label={library.name}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 18,
-                          height: 18,
-                          border: `1px solid ${
-                            checked ? "var(--accent)" : "var(--edge)"
-                          }`,
-                          borderRadius: "var(--radius-sm)",
-                          background: checked
-                            ? "var(--accent)"
-                            : "transparent",
-                          color: checked
-                            ? "var(--on-accent, white)"
-                            : "transparent",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {checked ? (
-                          <Check size={12} aria-hidden="true" />
-                        ) : null}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </>
+          <LibraryOptionList
+            libraries={libraries}
+            query={query}
+            onQueryChange={setQuery}
+            selectedIds={selectedSet}
+            onToggle={toggle}
+            busy={busy}
+          />
         )}
 
         <div style={MODAL_FOOTER_STYLE}>

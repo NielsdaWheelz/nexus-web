@@ -118,6 +118,16 @@ class TestPodcastProviderConfiguration:
         )
         assert settings.podcasts_enabled is False
 
+    def test_fixture_mode_allows_missing_podcast_index_credentials(self):
+        settings = _make_settings(
+            PODCASTS_ENABLED=True,
+            REAL_MEDIA_PROVIDER_FIXTURES=True,
+            REAL_MEDIA_FIXTURE_DIR="/tmp/nexus-fixtures",
+            PODCAST_INDEX_API_KEY="",
+            PODCAST_INDEX_API_SECRET="",
+        )
+        assert settings.podcasts_enabled is True
+
     def test_podcasts_enabled_accepts_valid_podcast_index_credentials(self):
         settings = _make_settings(
             PODCASTS_ENABLED=True,

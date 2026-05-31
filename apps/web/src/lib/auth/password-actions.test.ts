@@ -29,6 +29,12 @@ vi.mock("next/navigation", () => ({
 }));
 
 const mockCreateClient = vi.mocked(createClient);
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+type SupabaseAuthMock = Partial<SupabaseServerClient["auth"]>;
+
+function mockSupabaseAuth(auth: SupabaseAuthMock) {
+  mockCreateClient.mockResolvedValue({ auth } as SupabaseServerClient);
+}
 
 beforeEach(() => {
   mockCreateClient.mockReset();
@@ -40,14 +46,12 @@ afterEach(() => {
 
 describe("signInWithPasswordAction", () => {
   it("maps an unknown upstream error to PASSWORD_SIGN_IN_FAILURE_MESSAGE", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi.fn().mockResolvedValue({
           data: null,
           error: { message: "unrecognized upstream failure" },
         }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await signInWithPasswordAction({
       email: "user@example.com",
@@ -61,14 +65,12 @@ describe("signInWithPasswordAction", () => {
   });
 
   it("maps 'invalid login credentials' upstream error to PASSWORD_SIGN_IN_FAILURE_MESSAGE", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi.fn().mockResolvedValue({
           data: null,
           error: { message: "Invalid login credentials" },
         }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await signInWithPasswordAction({
       email: "user@example.com",
@@ -82,13 +84,11 @@ describe("signInWithPasswordAction", () => {
   });
 
   it("redirects to a safe nextPath on success", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi
           .fn()
           .mockResolvedValue({ data: { session: {} }, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     let thrown: unknown = null;
     try {
@@ -105,13 +105,11 @@ describe("signInWithPasswordAction", () => {
   });
 
   it("redirects to /libraries when nextPath is missing", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi
           .fn()
           .mockResolvedValue({ data: { session: {} }, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     let thrown: unknown = null;
     try {
@@ -126,13 +124,11 @@ describe("signInWithPasswordAction", () => {
   });
 
   it("ignores an unsafe protocol-relative nextPath and redirects to /libraries", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi
           .fn()
           .mockResolvedValue({ data: { session: {} }, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     let thrown: unknown = null;
     try {
@@ -148,13 +144,11 @@ describe("signInWithPasswordAction", () => {
   });
 
   it("ignores an unsafe absolute-URL nextPath and redirects to /libraries", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signInWithPassword: vi
           .fn()
           .mockResolvedValue({ data: { session: {} }, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     let thrown: unknown = null;
     try {
@@ -173,9 +167,7 @@ describe("signInWithPasswordAction", () => {
 describe("signUpWithPasswordAction", () => {
   it("returns PASSWORD_TOO_SHORT_MESSAGE for a password under 12 chars and never calls Supabase", async () => {
     const signUp = vi.fn();
-    mockCreateClient.mockResolvedValue({
-      auth: { signUp },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    mockSupabaseAuth({ signUp });
 
     const result = await signUpWithPasswordAction({
       email: "user@example.com",
@@ -189,9 +181,7 @@ describe("signUpWithPasswordAction", () => {
 
   it("returns DISPLAY_NAME_CHANGE_FAILURE_MESSAGE when the trimmed displayName is empty and never calls Supabase", async () => {
     const signUp = vi.fn();
-    mockCreateClient.mockResolvedValue({
-      auth: { signUp },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    mockSupabaseAuth({ signUp });
 
     const result = await signUpWithPasswordAction({
       email: "user@example.com",
@@ -207,14 +197,12 @@ describe("signUpWithPasswordAction", () => {
   });
 
   it("maps 'User already registered' upstream error to PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
-        signUp: vi.fn().mockResolvedValue({
-          data: { session: null },
-          error: { message: "User already registered" },
-        }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    mockSupabaseAuth({
+      signUp: vi.fn().mockResolvedValue({
+        data: { session: null },
+        error: { message: "User already registered" },
+      }),
+    });
 
     const result = await signUpWithPasswordAction({
       email: "user@example.com",
@@ -229,13 +217,11 @@ describe("signUpWithPasswordAction", () => {
   });
 
   it("returns PASSWORD_SIGN_UP_FAILURE_MESSAGE when signUp succeeds but the session is null", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signUp: vi
           .fn()
           .mockResolvedValue({ data: { session: null }, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await signUpWithPasswordAction({
       email: "user@example.com",
@@ -250,14 +236,12 @@ describe("signUpWithPasswordAction", () => {
   });
 
   it("calls FastAPI PATCH /me with the bearer token and redirects to /libraries on success", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signUp: vi.fn().mockResolvedValue({
           data: { session: { access_token: "the-access-token" } },
           error: null,
         }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(null, { status: 200 }));
@@ -284,14 +268,12 @@ describe("signUpWithPasswordAction", () => {
   });
 
   it("returns PASSWORD_SIGN_UP_FAILURE_MESSAGE when FastAPI PATCH /me returns 500", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         signUp: vi.fn().mockResolvedValue({
           data: { session: { access_token: "the-access-token" } },
           error: null,
         }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 500 })
     );
@@ -312,9 +294,7 @@ describe("signUpWithPasswordAction", () => {
 describe("setPasswordAction", () => {
   it("returns PASSWORD_TOO_SHORT_MESSAGE for a password under 12 chars", async () => {
     const updateUser = vi.fn();
-    mockCreateClient.mockResolvedValue({
-      auth: { updateUser },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    mockSupabaseAuth({ updateUser });
 
     const result = await setPasswordAction({ password: "shortpw" });
 
@@ -323,13 +303,11 @@ describe("setPasswordAction", () => {
   });
 
   it("maps an updateUser error to PASSWORD_CHANGE_FAILURE_MESSAGE", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
-        updateUser: vi
-          .fn()
-          .mockResolvedValue({ data: null, error: { message: "boom" } }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    mockSupabaseAuth({
+      updateUser: vi
+        .fn()
+        .mockResolvedValue({ data: null, error: { message: "boom" } }),
+    });
 
     const result = await setPasswordAction({
       password: "correcthorsebattery",
@@ -342,13 +320,11 @@ describe("setPasswordAction", () => {
   });
 
   it("returns { ok: true } on success", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         updateUser: vi
           .fn()
           .mockResolvedValue({ data: {}, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await setPasswordAction({
       password: "correcthorsebattery",
@@ -362,13 +338,11 @@ describe("setPasswordAction", () => {
 // happy path once to guard against accidental divergence.
 describe("changePasswordAction", () => {
   it("returns { ok: true } on success", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         updateUser: vi
           .fn()
           .mockResolvedValue({ data: {}, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await changePasswordAction({
       password: "correcthorsebattery",
@@ -380,8 +354,7 @@ describe("changePasswordAction", () => {
 
 describe("removePasswordAction", () => {
   it("returns PASSWORD_REMOVE_FAILURE_MESSAGE when no email identity exists", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         getUserIdentities: vi.fn().mockResolvedValue({
           data: {
             identities: [
@@ -396,8 +369,7 @@ describe("removePasswordAction", () => {
           error: null,
         }),
         unlinkIdentity: vi.fn(),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await removePasswordAction();
 
@@ -408,8 +380,7 @@ describe("removePasswordAction", () => {
   });
 
   it("returns KEEP_ONE_SIGN_IN_METHOD_MESSAGE when only the email identity remains", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         getUserIdentities: vi.fn().mockResolvedValue({
           data: {
             identities: [
@@ -424,8 +395,7 @@ describe("removePasswordAction", () => {
           error: null,
         }),
         unlinkIdentity: vi.fn(),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await removePasswordAction();
 
@@ -436,8 +406,7 @@ describe("removePasswordAction", () => {
   });
 
   it("maps an unlinkIdentity error to PASSWORD_REMOVE_FAILURE_MESSAGE", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         getUserIdentities: vi.fn().mockResolvedValue({
           data: {
             identities: [
@@ -460,8 +429,7 @@ describe("removePasswordAction", () => {
         unlinkIdentity: vi
           .fn()
           .mockResolvedValue({ data: null, error: { message: "boom" } }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await removePasswordAction();
 
@@ -472,8 +440,7 @@ describe("removePasswordAction", () => {
   });
 
   it("returns { ok: true } when unlinkIdentity succeeds", async () => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
+    mockSupabaseAuth({
         getUserIdentities: vi.fn().mockResolvedValue({
           data: {
             identities: [
@@ -496,8 +463,7 @@ describe("removePasswordAction", () => {
         unlinkIdentity: vi
           .fn()
           .mockResolvedValue({ data: {}, error: null }),
-      },
-    } as unknown as Awaited<ReturnType<typeof createClient>>);
+    });
 
     const result = await removePasswordAction();
 

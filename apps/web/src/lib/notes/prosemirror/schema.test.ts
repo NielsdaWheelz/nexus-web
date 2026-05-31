@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { noteBlocksToOutlineDoc, outlineSchema } from "./schema";
+import { firstOutlineBlockFromDoc, noteBlocksToOutlineDoc, outlineSchema } from "./schema";
 import type { NoteBlock } from "@/lib/notes/api";
 
 describe("notes ProseMirror schema", () => {
@@ -50,5 +50,29 @@ describe("notes ProseMirror schema", () => {
       }),
       "Embedded page",
     ]);
+  });
+
+  it("serializes the first outline block body as object JSON", () => {
+    const doc = noteBlocksToOutlineDoc([
+      {
+        id: "block-1",
+        pageId: "page-1",
+        parentBlockId: null,
+        orderKey: "a",
+        blockKind: "bullet",
+        bodyPmJson: { type: "paragraph", content: [{ type: "text", text: "Hello" }] },
+        bodyMarkdown: "Hello",
+        bodyText: "Hello",
+        collapsed: false,
+        revision: 1,
+        children: [],
+      },
+    ]);
+
+    expect(firstOutlineBlockFromDoc(doc)).toMatchObject({
+      id: "block-1",
+      bodyPmJson: { type: "paragraph", content: [{ type: "text", text: "Hello" }] },
+      bodyText: "Hello",
+    });
   });
 });

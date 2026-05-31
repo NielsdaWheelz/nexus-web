@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   OPEN_ADD_CONTENT_EVENT,
+  isAddContentMode,
   type AddContentMode,
 } from "@/components/addContentEvents";
 import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
@@ -23,7 +24,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import QuickNotePanel from "@/components/QuickNotePanel";
-import { apiFetch } from "@/lib/api/client";
+import OpmlImportPanel from "@/components/OpmlImportPanel";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
 import {
@@ -57,17 +58,6 @@ type QueueItem = {
   autoOpen: boolean;
 };
 
-type PodcastOpmlImportResult = {
-  total: number;
-  imported: number;
-  skipped_already_subscribed: number;
-  skipped_invalid: number;
-  errors: Array<{
-    feed_url: string | null;
-    error: string;
-  }>;
-};
-
 const MAX_ACTIVE_UPLOADS = 2;
 
 function dragHasSupportedData(event: DragEvent): boolean {
@@ -83,17 +73,12 @@ export default function AddContentTray() {
   const [urlError, setUrlError] = useState<string | null>(null);
   const libraryPicker = useNonDefaultLibraries();
   const [batchLibraryIds, setBatchLibraryIds] = useState<string[]>([]);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<FeedbackContent | null>(null);
-  const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteFeedback, setNoteFeedback] = useState<FeedbackContent | null>(null);
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const opmlInputRef = useRef<HTMLInputElement>(null);
   const trayRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
 
@@ -211,41 +196,6 @@ export default function AddContentTray() {
     })();
   }, []);
 
-  const handleImportOpml = useCallback(async () => {
-    if (!importFile) {
-      setImportError({
-        severity: "error",
-        title: "Select an OPML/XML file to import.",
-      });
-      return;
-    }
-    setImportBusy(true);
-    setImportError(null);
-    setImportResult(null);
-    try {
-      const opmlText = await importFile.text();
-      const responseBody = await apiFetch<{ data?: PodcastOpmlImportResult }>(
-        "/api/podcasts/import/opml",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            opml: opmlText,
-            default_library_ids: batchLibraryIds,
-            per_feed_library_ids: {},
-          }),
-        }
-      );
-      if (!responseBody?.data) {
-        throw new Error("Import response missing summary payload");
-      }
-      setImportResult(responseBody.data);
-    } catch (error) {
-      setImportError(toFeedback(error, { fallback: "Failed to import OPML file" }));
-    } finally {
-      setImportBusy(false);
-    }
-  }, [batchLibraryIds, importFile]);
-
   useEffect(() => {
     const available = MAX_ACTIVE_UPLOADS - activeIdsRef.current.size;
     if (available <= 0) {
@@ -259,23 +209,18 @@ export default function AddContentTray() {
   useEffect(() => {
     const openHandler = (event: Event) => {
       const requestedMode =
-        event instanceof CustomEvent
-          ? ((event as CustomEvent<{ mode?: AddContentMode }>).detail?.mode ?? "content")
+        event instanceof CustomEvent && isAddContentMode(event.detail?.mode)
+          ? event.detail.mode
           : "content";
-      setMode(requestedMode === "opml" || requestedMode === "quick-note" ? requestedMode : "content");
-      if (requestedMode === "opml") {
-        setImportError(null);
-        setImportResult(null);
-        setImportFile(null);
-      }
+      setMode(requestedMode);
       if (requestedMode === "quick-note") {
         setNoteFeedback(null);
       }
       setOpen(true);
     };
-    window.addEventListener(OPEN_ADD_CONTENT_EVENT, openHandler as EventListener);
+    window.addEventListener(OPEN_ADD_CONTENT_EVENT, openHandler);
     return () => {
-      window.removeEventListener(OPEN_ADD_CONTENT_EVENT, openHandler as EventListener);
+      window.removeEventListener(OPEN_ADD_CONTENT_EVENT, openHandler);
     };
   }, []);
 
@@ -485,7 +430,9 @@ export default function AddContentTray() {
         <Tabs
           variant="tabs"
           value={mode}
-          onValueChange={(next) => setMode(next as AddContentMode)}
+          onValueChange={(next) => {
+            if (isAddContentMode(next)) setMode(next);
+          }}
           className={styles.modeTabs}
         >
           <TabsList aria-label="Add content mode">
@@ -705,76 +652,7 @@ export default function AddContentTray() {
           ) : mode === "quick-note" ? (
             <QuickNotePanel onClose={() => setOpen(false)} />
           ) : (
-            <>
-              <div className={styles.opmlFieldset}>
-                <label className={styles.libraryLabel} htmlFor="opml-file-input">
-                  OPML file
-                </label>
-                <div className={styles.opmlFileRow}>
-                  <input
-                    id="opml-file-input"
-                    ref={opmlInputRef}
-                    type="file"
-                    accept=".opml,.xml,text/xml,application/xml,application/octet-stream"
-                    className={styles.fileInput}
-                    aria-label="Import OPML file"
-                    onChange={(event) => {
-                      setImportFile(event.target.files?.[0] ?? null);
-                      setImportError(null);
-                      setImportResult(null);
-                    }}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    onClick={() => opmlInputRef.current?.click()}
-                  >
-                    Choose file
-                  </Button>
-                  <span className={styles.opmlInputLabel}>
-                    {importFile?.name ?? "No file selected"}
-                  </span>
-                </div>
-                <small className={styles.opmlHelper}>
-                  Import podcast subscriptions from another app as one explicit add action.
-                </small>
-              </div>
-
-              <div className={styles.importActions}>
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={handleImportOpml}
-                  disabled={importBusy}
-                >
-                  {importBusy ? "Importing..." : "Import OPML"}
-                </Button>
-              </div>
-
-              {importError ? <FeedbackNotice feedback={importError} /> : null}
-
-              {importResult ? (
-                <div className={styles.importSummary}>
-                  <h3 className={styles.importSummaryTitle}>Import summary</h3>
-                  <div className={styles.importStats}>
-                    <span>Total: {importResult.total}</span>
-                    <span>Imported: {importResult.imported}</span>
-                    <span>Already followed: {importResult.skipped_already_subscribed}</span>
-                    <span>Invalid: {importResult.skipped_invalid}</span>
-                  </div>
-                  {importResult.errors.length > 0 ? (
-                    <div className={styles.importErrors}>
-                      {importResult.errors.map((error, index) => (
-                        <div key={`${error.feed_url ?? "missing"}-${index}`}>
-                          {error.feed_url ? `${error.feed_url}: ` : ""}
-                          {error.error}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
+            <OpmlImportPanel defaultLibraryIds={batchLibraryIds} />
           )}
         </div>
       </section>

@@ -623,7 +623,7 @@ describe("fetchSearchResultPage", () => {
     });
   });
 
-  it("accepts backend alias contributor fields on contributor and credit rows", async () => {
+  it("adapts contributor rows and normalizes credit fields", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         results: [
@@ -641,10 +641,10 @@ describe("fetchSearchResultPage", () => {
               type: "contributor",
               id: "11111111-1111-4111-8111-111111111111",
             },
-            contributorHandle: "ursula-le-guin",
+            contributor_handle: "ursula-le-guin",
             contributor: {
               handle: "ursula-le-guin",
-              displayName: "Ursula K. Le Guin",
+              display_name: "Ursula K. Le Guin",
               status: "verified",
             },
           },
@@ -661,9 +661,9 @@ describe("fetchSearchResultPage", () => {
             context_ref: { type: "podcast", id: "podcast-2" },
             contributors: [
               {
-                contributorHandle: "ursula-le-guin",
-                contributorDisplayName: "Ursula K. Le Guin",
-                creditedName: "U. K. Le Guin",
+                contributor_handle: "ursula-le-guin",
+                contributor_display_name: "Ursula K. Le Guin",
+                credited_name: "U. K. Le Guin",
                 role: "guest",
                 source: "test",
                 href: "/authors/ursula-le-guin",

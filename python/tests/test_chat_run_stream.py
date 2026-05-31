@@ -308,6 +308,72 @@ class TestStreamTokenVerify:
         assert uid == user_id
         assert isinstance(jti, str) and jti
 
+    def test_replay_rejected(self, direct_db: DirectSessionManager):
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            session.commit()
+        token = mint_stream_token(user_id)["token"]
+        _, jti = verify_stream_token(token)
+        direct_db.register_cleanup("stream_token_jti_claims", "jti", jti)
+
+        with pytest.raises(ApiError) as exc:
+            verify_stream_token(token)
+
+        assert exc.value.code == ApiErrorCode.E_STREAM_TOKEN_REPLAYED
+
+    def test_expired_claim_allows_fresh_token_with_same_jti(
+        self,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = uuid4()
+        jti = str(uuid4())
+        direct_db.register_cleanup("stream_token_jti_claims", "jti", jti)
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO stream_token_jti_claims (jti, user_id, expires_at)
+                    VALUES (:jti, :user_id, now() - interval '1 second')
+                    """
+                ),
+                {"jti": jti, "user_id": user_id},
+            )
+            session.commit()
+
+        now = int(time.time())
+        token = jwt.encode(
+            {
+                "iss": STREAM_TOKEN_ISSUER,
+                "aud": STREAM_TOKEN_AUDIENCE,
+                "sub": str(user_id),
+                "exp": now + STREAM_TOKEN_TTL_SECONDS,
+                "iat": now,
+                "jti": jti,
+                "scope": STREAM_TOKEN_SCOPE,
+            },
+            _get_signing_key_bytes(),
+            algorithm="HS256",
+        )
+
+        uid, claimed_jti = verify_stream_token(token)
+
+        assert uid == user_id
+        assert claimed_jti == jti
+        with direct_db.session() as session:
+            active_claims = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM stream_token_jti_claims
+                    WHERE jti = :jti AND expires_at > now()
+                    """
+                ),
+                {"jti": jti},
+            ).scalar_one()
+        assert active_claims == 1
+
     def test_expired_token_rejected(self):
         user_id = uuid4()
         key = _get_signing_key_bytes()
@@ -375,6 +441,56 @@ class TestChatRunEventStream:
             "error_code": None,
             "final_chars": None,
         }
+
+    def test_replays_strict_reference_added_payload(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = uuid4()
+        run_id, conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
+        reference_id = uuid4()
+        resource_uri = f"chunk:{uuid4()}"
+        created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        reference_payload = {
+            "reference_id": str(reference_id),
+            "conversation_id": str(conversation_id),
+            "resource_uri": resource_uri,
+            "label": "Chunk evidence",
+            "summary": "A cited chunk.",
+            "inline_body": "Quoted body.",
+            "fetch_hint": "inline",
+            "missing": False,
+            "created_at": created_at,
+        }
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE chat_run_events
+                    SET event_type = 'reference_added',
+                        payload = CAST(:payload AS jsonb)
+                    WHERE run_id = :run_id AND seq = 2
+                    """
+                ),
+                {"run_id": run_id, "payload": json.dumps(reference_payload)},
+            )
+            session.commit()
+
+        stream_token = mint_stream_token(user_id)["token"]
+
+        response = auth_client.get(
+            f"/chat-runs/{run_id}/events?after=1",
+            headers={"Authorization": f"Bearer {stream_token}"},
+        )
+
+        assert response.status_code == 200, (
+            f"Expected stream replay to succeed, got {response.status_code}: {response.text}"
+        )
+        events = _parse_sse_events(response.text)
+        assert [(event["id"], event["event"]) for event in events] == [
+            ("2", "reference_added"),
+            ("3", "done"),
+        ]
+        assert events[0]["data"] == reference_payload
 
     def test_replays_events_after_last_event_id_header(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

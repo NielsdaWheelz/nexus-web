@@ -1,4 +1,4 @@
-"""Integration tests for web article ingestion per s2_pr04.md spec.
+"""Integration tests for web article ingestion.
 
 Tests cover:
 - Full ingestion pipeline (fetch → sanitize → canonicalize → persist)
@@ -248,6 +248,12 @@ class TestDeduplication:
             canonical_url = httpserver.url_for("/canonical")
             result2 = create_provisional_web_article(db_session, user_id, canonical_url)
             media_id2 = result2.media_id
+            loser_fragment_id = _seed_duplicate_loser_child_rows(
+                db_session,
+                user_id=user_id,
+                winner_media_id=media_id1,
+                loser_media_id=media_id2,
+            )
 
             # Ingest second media - should detect duplicate
             ingest_result = run_ingest_sync(db_session, media_id2, user_id)
@@ -258,6 +264,11 @@ class TestDeduplication:
                 db_session.expire_all()
                 loser = _get_media(db_session, media_id2)
                 assert loser is None, "Loser media should be deleted"
+                _assert_duplicate_loser_child_rows_deleted(
+                    db_session,
+                    media_id=media_id2,
+                    fragment_id=loser_fragment_id,
+                )
 
 
 class TestFragmentPersistence:
@@ -477,6 +488,174 @@ def _get_fragment_blocks(db: Session, fragment_id: UUID) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def _seed_duplicate_loser_child_rows(
+    db: Session,
+    *,
+    user_id: UUID,
+    winner_media_id: UUID,
+    loser_media_id: UUID,
+) -> UUID:
+    default_library_id = db.execute(
+        text("""
+            SELECT id
+            FROM libraries
+            WHERE owner_user_id = :user_id AND is_default = true
+        """),
+        {"user_id": user_id},
+    ).scalar_one()
+    source_library_id = uuid4()
+    fragment_id = uuid4()
+
+    db.execute(
+        text("""
+            INSERT INTO libraries (id, owner_user_id, name, is_default)
+            VALUES (:id, :user_id, 'Source Library', false)
+        """),
+        {"id": source_library_id, "user_id": user_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, 'admin')
+        """),
+        {"library_id": source_library_id, "user_id": user_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO library_entries (library_id, media_id, position)
+            VALUES (:library_id, :media_id, 0)
+        """),
+        {"library_id": source_library_id, "media_id": loser_media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO default_library_closure_edges (
+                default_library_id,
+                media_id,
+                source_library_id
+            )
+            VALUES (:default_library_id, :media_id, :source_library_id)
+        """),
+        {
+            "default_library_id": default_library_id,
+            "media_id": loser_media_id,
+            "source_library_id": source_library_id,
+        },
+    )
+    db.execute(
+        text("""
+            INSERT INTO user_media_deletions (user_id, media_id)
+            VALUES (:user_id, :media_id)
+        """),
+        {"user_id": user_id, "media_id": loser_media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+            VALUES (:media_id, :storage_path, 'text/html', 42)
+        """),
+        {
+            "media_id": loser_media_id,
+            "storage_path": f"test/web-article/{loser_media_id}.html",
+        },
+    )
+    db.execute(
+        text("""
+            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+            VALUES (:id, :media_id, 0, '<p>Loser</p>', 'Loser')
+        """),
+        {"id": fragment_id, "media_id": loser_media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO fragment_blocks (
+                fragment_id,
+                block_idx,
+                start_offset,
+                end_offset,
+                block_type
+            )
+            VALUES (:fragment_id, 0, 0, 5, 'paragraph')
+        """),
+        {"fragment_id": fragment_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO media_content_index_states (media_id, status, status_reason)
+            VALUES (:media_id, 'failed', 'test_duplicate_cleanup')
+        """),
+        {"media_id": loser_media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO object_links (
+                user_id,
+                relation_type,
+                a_type,
+                a_id,
+                b_type,
+                b_id
+            )
+            VALUES (:user_id, 'references', 'media', :loser_id, 'media', :winner_id)
+        """),
+        {
+            "user_id": user_id,
+            "loser_id": loser_media_id,
+            "winner_id": winner_media_id,
+        },
+    )
+    db.commit()
+    return fragment_id
+
+
+def _assert_duplicate_loser_child_rows_deleted(
+    db: Session,
+    *,
+    media_id: UUID,
+    fragment_id: UUID,
+) -> None:
+    assert _count_rows(db, "media", "id = :media_id", media_id=media_id) == 0
+    assert _count_rows(db, "library_entries", "media_id = :media_id", media_id=media_id) == 0
+    assert (
+        _count_rows(db, "default_library_intrinsics", "media_id = :media_id", media_id=media_id)
+        == 0
+    )
+    assert (
+        _count_rows(
+            db,
+            "default_library_closure_edges",
+            "media_id = :media_id",
+            media_id=media_id,
+        )
+        == 0
+    )
+    assert _count_rows(db, "user_media_deletions", "media_id = :media_id", media_id=media_id) == 0
+    assert _count_rows(db, "media_file", "media_id = :media_id", media_id=media_id) == 0
+    assert _count_rows(db, "fragments", "media_id = :media_id", media_id=media_id) == 0
+    assert (
+        _count_rows(db, "fragment_blocks", "fragment_id = :fragment_id", fragment_id=fragment_id)
+        == 0
+    )
+    assert (
+        _count_rows(db, "media_content_index_states", "media_id = :media_id", media_id=media_id)
+        == 0
+    )
+    object_links = db.execute(
+        text("""
+            SELECT COUNT(*)
+            FROM object_links
+            WHERE (a_type = 'media' AND a_id = :media_id)
+               OR (b_type = 'media' AND b_id = :media_id)
+        """),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert int(object_links) == 0
+
+
+def _count_rows(db: Session, table: str, where: str, **params: object) -> int:
+    return int(db.execute(text(f"SELECT COUNT(*) FROM {table} WHERE {where}"), params).scalar_one())
 
 
 # =============================================================================

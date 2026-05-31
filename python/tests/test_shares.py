@@ -101,11 +101,22 @@ def _create_non_default_library(session: Session, owner_user_id: UUID) -> UUID:
 
 
 def _add_member(session: Session, library_id: UUID, user_id: UUID) -> None:
+    existing = session.execute(
+        text("""
+            SELECT 1
+            FROM memberships
+            WHERE library_id = :library_id AND user_id = :user_id
+        """),
+        {"library_id": library_id, "user_id": user_id},
+    ).scalar_one_or_none()
+    if existing is not None:
+        session.commit()
+        return
+
     session.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             VALUES (:library_id, :user_id, 'member')
-            ON CONFLICT DO NOTHING
         """),
         {"library_id": library_id, "user_id": user_id},
     )
@@ -113,16 +124,25 @@ def _add_member(session: Session, library_id: UUID, user_id: UUID) -> None:
 
 
 def _share_conv(session: Session, conv_id: UUID, lib_id: UUID) -> None:
-    session.execute(
+    existing = session.execute(
         text("""
-            INSERT INTO conversation_shares (conversation_id, library_id)
-            VALUES (:conversation_id, :library_id)
-            ON CONFLICT DO NOTHING
+            SELECT 1
+            FROM conversation_shares
+            WHERE conversation_id = :conversation_id AND library_id = :library_id
         """),
         {"conversation_id": conv_id, "library_id": lib_id},
-    )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.execute(
+            text("""
+                INSERT INTO conversation_shares (conversation_id, library_id)
+                VALUES (:conversation_id, :library_id)
+            """),
+            {"conversation_id": conv_id, "library_id": lib_id},
+        )
+
     session.execute(
-        text("UPDATE conversations SET sharing = 'library' WHERE id = :id"),
+        text("UPDATE conversations SET sharing = 'library', updated_at = now() WHERE id = :id"),
         {"id": conv_id},
     )
     session.commit()

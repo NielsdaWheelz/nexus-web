@@ -16,8 +16,7 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-
-_READABLE_STATUSES = frozenset({"ready_for_reading", "embedding", "ready"})
+from nexus.services.capabilities import READABLE_PROCESSING_STATUSES
 
 
 def _enforce_epub_read_guards(
@@ -39,7 +38,7 @@ def _enforce_epub_read_guards(
     kind, status = row[0], row[1]
     if kind != "epub":
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media")
-    if status not in _READABLE_STATUSES:
+    if status not in READABLE_PROCESSING_STATUSES:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
 

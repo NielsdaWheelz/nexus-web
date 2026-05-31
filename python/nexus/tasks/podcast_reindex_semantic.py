@@ -60,6 +60,7 @@ def podcast_reindex_semantic_job(
             task_id=resolved_task_id,
         )
         return result
+    # justify-ignore-error: semantic repair boundary records failed job state.
     except Exception as exc:
         db.rollback()
         logger.exception(

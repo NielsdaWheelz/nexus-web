@@ -9,6 +9,6 @@ export function isAbortError(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("name" in error)) {
     return false;
   }
-  const name = (error as { name?: unknown }).name;
+  const name = error.name;
   return name === "AbortError" || name === "ResponseAborted";
 }

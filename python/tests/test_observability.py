@@ -62,6 +62,20 @@ class TestSafeKv:
             with pytest.raises(ValueError):
                 safe_kv(**{key: "some value"})
 
+    def test_redacts_forbidden_values_outside_dev_and_test(self, monkeypatch, log_sink):
+        """Prod-like environments warn without returning raw sensitive values."""
+        monkeypatch.setenv("NEXUS_ENV", "staging")
+
+        result = safe_kv(prompt="secret prompt", provider="openai")
+
+        assert result == {"prompt": "[REDACTED]", "provider": "openai"}
+        assert log_sink == [
+            {
+                "event": "safe_kv_violation",
+                "forbidden_keys": ["prompt"],
+            }
+        ]
+
 
 # ─── ContextVar Tests ────────────────────────────────────────────────
 

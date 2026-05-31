@@ -2,56 +2,76 @@
 
 from __future__ import annotations
 
-from typing import cast
+from dataclasses import dataclass
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import case, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import ObjectLink
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
     OBJECT_LINK_RELATIONS,
     OBJECT_TYPES,
-    CreateObjectLinkRequest,
     ObjectLinkOut,
     ObjectRef,
-    UpdateObjectLinkRequest,
 )
 from nexus.services.object_refs import hydrate_object_ref
+
+
+@dataclass(frozen=True)
+class CreateObjectLinkInput:
+    relation_type: str
+    a: ObjectRef
+    b: ObjectRef
+    a_locator: dict[str, Any] | None = None
+    b_locator: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class UpdateObjectLinkPatch:
+    relation_type: str | None = None
+    a_order_key: str | None = None
+    b_order_key: str | None = None
+    metadata: dict[str, Any] | None = None
+    set_a_order_key: bool = False
+    set_b_order_key: bool = False
 
 
 def create_object_link(
     db: Session,
     viewer_id: UUID,
-    request: CreateObjectLinkRequest,
+    link_input: CreateObjectLinkInput,
 ) -> ObjectLinkOut:
-    hydrate_object_ref(db, viewer_id, ObjectRef(object_type=request.a_type, object_id=request.a_id))
-    hydrate_object_ref(db, viewer_id, ObjectRef(object_type=request.b_type, object_id=request.b_id))
-    if request.a_locator is None and request.b_locator is None:
+    hydrate_object_ref(db, viewer_id, link_input.a)
+    hydrate_object_ref(db, viewer_id, link_input.b)
+    if link_input.a_locator is None and link_input.b_locator is None:
         if _duplicate_unlocated_link_id(
             db,
             viewer_id,
-            relation_type=request.relation_type,
-            a_type=request.a_type,
-            a_id=request.a_id,
-            b_type=request.b_type,
-            b_id=request.b_id,
+            relation_type=link_input.relation_type,
+            a_type=link_input.a.object_type,
+            a_id=link_input.a.object_id,
+            b_type=link_input.b.object_type,
+            b_id=link_input.b.object_id,
         ):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object link already exists")
     link = ObjectLink(
         user_id=viewer_id,
-        relation_type=request.relation_type,
-        a_type=request.a_type,
-        a_id=request.a_id,
-        b_type=request.b_type,
-        b_id=request.b_id,
+        relation_type=link_input.relation_type,
+        a_type=link_input.a.object_type,
+        a_id=link_input.a.object_id,
+        b_type=link_input.b.object_type,
+        b_id=link_input.b.object_id,
         a_order_key=None,
         b_order_key=None,
-        a_locator_json=request.a_locator,
-        b_locator_json=request.b_locator,
-        metadata_json=request.metadata or {},
+        a_locator_json=link_input.a_locator,
+        b_locator_json=link_input.b_locator,
+        metadata_json=link_input.metadata or {},
     )
     db.add(link)
     _commit_object_link(db)
@@ -125,19 +145,19 @@ def update_object_link(
     db: Session,
     viewer_id: UUID,
     link_id: UUID,
-    request: UpdateObjectLinkRequest,
+    patch: UpdateObjectLinkPatch,
 ) -> ObjectLinkOut:
     link = db.get(ObjectLink, link_id)
     if link is None or link.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object link not found")
-    if request.relation_type is not None:
-        link.relation_type = request.relation_type
-    if "a_order_key" in request.model_fields_set:
-        link.a_order_key = request.a_order_key
-    if "b_order_key" in request.model_fields_set:
-        link.b_order_key = request.b_order_key
-    if request.metadata is not None:
-        link.metadata_json = request.metadata
+    if patch.relation_type is not None:
+        link.relation_type = patch.relation_type
+    if patch.set_a_order_key:
+        link.a_order_key = patch.a_order_key
+    if patch.set_b_order_key:
+        link.b_order_key = patch.b_order_key
+    if patch.metadata is not None:
+        link.metadata_json = patch.metadata
     if link.a_locator_json is None and link.b_locator_json is None:
         with db.no_autoflush:
             duplicate_id = _duplicate_unlocated_link_id(
@@ -207,7 +227,7 @@ def _commit_object_link(db: Session) -> None:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        constraint_name = integrity_constraint_name(exc)
         if constraint_name == "uix_object_links_unlocated_pair" or (
             constraint_name is None and "uix_object_links_unlocated_pair" in str(exc.orig)
         ):

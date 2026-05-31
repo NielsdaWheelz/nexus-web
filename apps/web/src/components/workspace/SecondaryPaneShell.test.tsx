@@ -8,6 +8,7 @@ const publication = {
   surfaces: [
     { id: "reader-highlights" as const, body: <div>Highlights body</div> },
     { id: "reader-doc-chat" as const, body: <div>Chat body</div> },
+    { id: "reader-contents" as const, body: <div>Contents body</div> },
   ],
 };
 
@@ -39,6 +40,7 @@ describe("SecondaryPaneShell", () => {
 
     const highlightsTab = screen.getByRole("tab", { name: "Highlights" });
     const chatTab = screen.getByRole("tab", { name: "Document chat" });
+    expect(screen.getByRole("tab", { name: "Contents" })).toBeInTheDocument();
     expect(highlightsTab.id).not.toBe(chatTab.id);
     expect(highlightsTab.getAttribute("aria-controls")).not.toBe(
       chatTab.getAttribute("aria-controls"),

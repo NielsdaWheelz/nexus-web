@@ -16,6 +16,7 @@ import { usePaneParam, usePaneRuntime, useSetPaneTitle } from "@/lib/panes/paneR
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
+import { isRecord } from "@/lib/validation";
 import {
   createEmptyOutlineDoc,
   noteBlocksToOutlineDoc,
@@ -26,6 +27,7 @@ import {
   fetchNotePage,
   updateNotePage,
   saveNotePageDocument,
+  isNoteBlockKind,
   type NoteBlock,
   type NoteBlockKind,
   type NotePage,
@@ -513,6 +515,18 @@ function saveLabelForStatus(status: NoteEditorSessionStatus): string {
   return "Saved";
 }
 
+function draftBlockKind(value: unknown): NoteBlockKind {
+  return isNoteBlockKind(value) ? value : "bullet";
+}
+
+function nodeJsonRecord(node: ProseMirrorNode): Record<string, unknown> {
+  const json = node.toJSON();
+  if (!isRecord(json)) {
+    throw new Error("ProseMirror node JSON must be an object");
+  }
+  return json;
+}
+
 export function readDraftBlocksForPersistence(
   doc: ProseMirrorNode,
   topLevelParentBlockId: string | null = null
@@ -532,8 +546,8 @@ export function readDraftBlocksForPersistence(
         beforeBlockId:
           index === 0 && siblings[index + 1] ? String(siblings[index + 1]!.attrs.id) : null,
         afterBlockId: index > 0 ? String(siblings[index - 1]!.attrs.id) : null,
-        blockKind: (node.attrs.kind ?? "bullet") as NoteBlockKind,
-        bodyPmJson: paragraph.toJSON() as Record<string, unknown>,
+        blockKind: draftBlockKind(node.attrs.kind),
+        bodyPmJson: nodeJsonRecord(paragraph),
         collapsed: Boolean(node.attrs.collapsed),
       });
       readSiblings(node, String(node.attrs.id));

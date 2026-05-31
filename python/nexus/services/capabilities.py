@@ -3,11 +3,13 @@
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.media import CapabilitiesOut
 
-_READY_PROCESSING_STATUSES = {
-    ProcessingStatus.ready_for_reading.value,
-    ProcessingStatus.embedding.value,
-    ProcessingStatus.ready.value,
-}
+READABLE_PROCESSING_STATUSES = frozenset(
+    {
+        ProcessingStatus.ready_for_reading.value,
+        ProcessingStatus.embedding.value,
+        ProcessingStatus.ready.value,
+    }
+)
 _REFRESHABLE_PROCESSING_STATUSES = {
     ProcessingStatus.ready_for_reading.value,
     ProcessingStatus.embedding.value,
@@ -87,7 +89,7 @@ def derive_capabilities(
     is_document = kind in _DOCUMENT_MEDIA_KINDS
     is_transcript_media = kind in _TRANSCRIPT_MEDIA_KINDS
 
-    status_ready_for_reading = processing_status in _READY_PROCESSING_STATUSES
+    status_ready_for_reading = processing_status in READABLE_PROCESSING_STATUSES
     is_transcript_unavailable = False
     transcript_ready = False
 
@@ -157,7 +159,7 @@ def derive_capabilities(
         and source_refresh_available
         and processing_status in _REFRESHABLE_PROCESSING_STATUSES
     )
-    can_retry_metadata = is_creator and processing_status in _READY_PROCESSING_STATUSES
+    can_retry_metadata = is_creator and processing_status in READABLE_PROCESSING_STATUSES
 
     return CapabilitiesOut(
         can_read=can_read,

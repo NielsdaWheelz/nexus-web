@@ -11,7 +11,7 @@ import hashlib
 import json
 import posixpath
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -24,12 +24,12 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.config import get_settings
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     FailureStage,
     Fragment,
@@ -39,7 +39,7 @@ from nexus.db.models import (
     PodcastListeningState,
     ProcessingStatus,
 )
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_session_factory, transaction
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
     ApiError,
@@ -56,9 +56,7 @@ from nexus.schemas.media import (
     ArticleCaptureResponse,
     FragmentOut,
     FromUrlResponse,
-    ListeningStateBatchUpsertRequest,
     ListeningStateOut,
-    ListeningStateUpsertRequest,
     MediaOut,
     PodcastEpisodeChapterOut,
 )
@@ -74,6 +72,10 @@ from nexus.services.contributor_credits import (
     replace_media_contributor_credits,
 )
 from nexus.services.epub_lifecycle import delete_extraction_artifacts
+from nexus.services.file_ingest_validation import (
+    has_valid_file_signature,
+    validate_file_ingest_request,
+)
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.pdf_ingest import (
     delete_pdf_text_artifacts,
@@ -81,6 +83,7 @@ from nexus.services.pdf_ingest import (
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.podcasts.transcripts import requeue_podcast_transcription_for_source_refresh
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.services.x_api import (
@@ -183,6 +186,33 @@ _MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:
+    ordered: list[UUID] = []
+    seen: set[UUID] = set()
+    for value in values:
+        normalized = UUID(str(value))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+@dataclass(frozen=True)
+class _PreparedXFragment:
+    fragment: Fragment
+    fragment_blocks: list[FragmentBlockSpec]
+
+
+@dataclass(frozen=True)
+class _WebArticleIndexTarget:
+    media_id: UUID
+    fragment_id: UUID
+    fragments: list[Fragment]
+    reason: str
+    language: str | None
+
+
 def _media_select_projection_sql(*, include_listening_state: bool) -> str:
     columns = list(_MEDIA_BASE_SELECT_COLUMNS)
     if include_listening_state:
@@ -241,14 +271,7 @@ def list_media_for_viewer_by_ids(
     if not media_ids:
         return []
 
-    ordered_media_ids: list[UUID] = []
-    seen_media_ids: set[UUID] = set()
-    for media_id in media_ids:
-        normalized_media_id = UUID(str(media_id))
-        if normalized_media_id in seen_media_ids:
-            continue
-        seen_media_ids.add(normalized_media_id)
-        ordered_media_ids.append(normalized_media_id)
+    ordered_media_ids = _dedupe_uuid_order(media_ids)
 
     media_rows = (
         db.execute(
@@ -574,113 +597,11 @@ def refresh_source_for_viewer(
             },
         )
     else:
-        now = datetime.now(UTC)
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_jobs (
-                    media_id,
-                    requested_by_user_id,
-                    request_reason,
-                    reserved_minutes,
-                    reservation_usage_date,
-                    status,
-                    error_code,
-                    attempts,
-                    started_at,
-                    completed_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :viewer_id,
-                    'operator_requeue',
-                    0,
-                    NULL,
-                    'pending',
-                    NULL,
-                    0,
-                    NULL,
-                    NULL,
-                    :now,
-                    :now
-                )
-                ON CONFLICT (media_id) DO UPDATE
-                SET
-                    requested_by_user_id = EXCLUDED.requested_by_user_id,
-                    request_reason = EXCLUDED.request_reason,
-                    reserved_minutes = 0,
-                    reservation_usage_date = NULL,
-                    status = 'pending',
-                    error_code = NULL,
-                    started_at = NULL,
-                    completed_at = NULL,
-                    updated_at = EXCLUDED.updated_at
-                """
-            ),
-            {"media_id": media.id, "viewer_id": viewer_id, "now": now},
-        )
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'extracting',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_started_at = :now,
-                    processing_completed_at = NULL,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {"media_id": media.id, "now": now},
-        )
-        db.execute(
-            text(
-                """
-                INSERT INTO media_transcript_states (
-                    media_id,
-                    transcript_state,
-                    transcript_coverage,
-                    semantic_status,
-                    last_request_reason,
-                    last_error_code,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    'queued',
-                    'none',
-                    'none',
-                    'operator_requeue',
-                    NULL,
-                    :now
-                )
-                ON CONFLICT (media_id) DO UPDATE
-                SET
-                    transcript_state = 'queued',
-                    transcript_coverage = 'none',
-                    semantic_status = 'none',
-                    active_transcript_version_id = NULL,
-                    last_request_reason = 'operator_requeue',
-                    last_error_code = NULL,
-                    updated_at = EXCLUDED.updated_at
-                """
-            ),
-            {"media_id": media.id, "now": now},
-        )
-        enqueue_job(
+        requeue_podcast_transcription_for_source_refresh(
             db,
-            kind="podcast_transcribe_episode_job",
-            payload={
-                "media_id": str(media.id),
-                "requested_by_user_id": str(viewer_id),
-                "request_id": request_id,
-            },
+            media_id=media.id,
+            requested_by_user_id=viewer_id,
+            request_id=request_id,
         )
 
     db.commit()
@@ -718,153 +639,152 @@ def upsert_listening_state_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-    body: ListeningStateUpsertRequest,
+    *,
+    position_ms: int | None = None,
+    duration_ms: int | None = None,
+    playback_speed: float | None = None,
+    is_completed: bool | None = None,
 ) -> None:
     """Upsert listener state for one media item scoped to the viewer."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    existing_state = (
-        db.query(PodcastListeningState)
-        .filter(
-            PodcastListeningState.user_id == viewer_id,
-            PodcastListeningState.media_id == media_id,
+    if (
+        position_ms is None
+        and duration_ms is None
+        and playback_speed is None
+        and is_completed is None
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "At least one listening-state field is required",
         )
-        .one_or_none()
-    )
-    current_position_ms = int(existing_state.position_ms) if existing_state is not None else 0
-    current_duration_ms = (
-        int(existing_state.duration_ms)
-        if existing_state is not None and existing_state.duration_ms is not None
-        else None
-    )
-    current_playback_speed = (
-        float(existing_state.playback_speed) if existing_state is not None else 1.0
-    )
-    current_is_completed = (
-        bool(existing_state.is_completed) if existing_state is not None else False
-    )
 
-    next_position_ms = (
-        int(body.position_ms) if body.position_ms is not None else current_position_ms
-    )
-    next_duration_ms = (
-        int(body.duration_ms) if body.duration_ms is not None else current_duration_ms
-    )
-    next_playback_speed = (
-        float(body.playback_speed) if body.playback_speed is not None else current_playback_speed
-    )
+    with transaction(db):
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    if body.is_completed is not None:
-        next_is_completed = bool(body.is_completed)
-    elif body.position_ms is not None:
-        next_is_completed = current_is_completed or _position_meets_completion_threshold(
-            next_position_ms, next_duration_ms
+        existing_state = (
+            db.query(PodcastListeningState)
+            .filter(
+                PodcastListeningState.user_id == viewer_id,
+                PodcastListeningState.media_id == media_id,
+            )
+            .one_or_none()
         )
-    else:
-        next_is_completed = current_is_completed
-
-    insert_values = {
-        "user_id": viewer_id,
-        "media_id": media_id,
-        "position_ms": next_position_ms,
-        "duration_ms": next_duration_ms,
-        "playback_speed": next_playback_speed,
-        "is_completed": next_is_completed,
-    }
-    update_values = {
-        "position_ms": next_position_ms,
-        "duration_ms": next_duration_ms,
-        "playback_speed": next_playback_speed,
-        "is_completed": next_is_completed,
-        "updated_at": datetime.now(UTC),
-    }
-
-    db.execute(
-        pg_insert(PodcastListeningState)
-        .values(**insert_values)
-        .on_conflict_do_update(
-            index_elements=[
-                PodcastListeningState.user_id,
-                PodcastListeningState.media_id,
-            ],
-            set_=update_values,
+        current_position_ms = int(existing_state.position_ms) if existing_state is not None else 0
+        current_duration_ms = (
+            int(existing_state.duration_ms)
+            if existing_state is not None and existing_state.duration_ms is not None
+            else None
         )
-    )
-    db.commit()
+        current_playback_speed = (
+            float(existing_state.playback_speed) if existing_state is not None else 1.0
+        )
+        current_is_completed = (
+            bool(existing_state.is_completed) if existing_state is not None else False
+        )
+
+        next_position_ms = int(position_ms) if position_ms is not None else current_position_ms
+        next_duration_ms = int(duration_ms) if duration_ms is not None else current_duration_ms
+        next_playback_speed = (
+            float(playback_speed) if playback_speed is not None else current_playback_speed
+        )
+
+        if is_completed is not None:
+            next_is_completed = bool(is_completed)
+        elif position_ms is not None:
+            next_is_completed = current_is_completed or _position_meets_completion_threshold(
+                next_position_ms, next_duration_ms
+            )
+        else:
+            next_is_completed = current_is_completed
+
+        if existing_state is None:
+            db.add(
+                PodcastListeningState(
+                    user_id=viewer_id,
+                    media_id=media_id,
+                    position_ms=next_position_ms,
+                    duration_ms=next_duration_ms,
+                    playback_speed=next_playback_speed,
+                    is_completed=next_is_completed,
+                )
+            )
+            return
+
+        existing_state.position_ms = next_position_ms
+        existing_state.duration_ms = next_duration_ms
+        existing_state.playback_speed = next_playback_speed
+        existing_state.is_completed = next_is_completed
+        existing_state.updated_at = db.execute(text("SELECT now()")).scalar_one()
 
 
 def batch_mark_listening_state_for_viewer(
     db: Session,
     viewer_id: UUID,
-    body: ListeningStateBatchUpsertRequest,
+    *,
+    media_ids: list[UUID],
+    is_completed: bool,
 ) -> None:
     """Batch mark many visible podcast episodes as played/unplayed."""
-    deduped_media_ids: list[UUID] = []
-    seen_media_ids: set[UUID] = set()
-    for media_id in body.media_ids:
-        normalized_media_id = UUID(str(media_id))
-        if normalized_media_id in seen_media_ids:
-            continue
-        seen_media_ids.add(normalized_media_id)
-        deduped_media_ids.append(normalized_media_id)
-
-    visible_rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            )
-            SELECT m.id, m.kind
-            FROM media m
-            JOIN visible_media vm ON vm.media_id = m.id
-            WHERE m.id = ANY(:media_ids)
-            """
-        ),
-        {"viewer_id": viewer_id, "media_ids": deduped_media_ids},
-    ).fetchall()
-    if len(visible_rows) != len(deduped_media_ids):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    invalid_kind_media_ids = [
-        row[0] for row in visible_rows if row[1] != MediaKind.podcast_episode.value
-    ]
-    if invalid_kind_media_ids:
+    deduped_media_ids = _dedupe_uuid_order(media_ids)
+    if not deduped_media_ids:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Batch listening-state updates are only supported for podcast episodes",
+            ApiErrorCode.E_INVALID_REQUEST,
+            "At least one media_id is required",
         )
 
-    now = datetime.now(UTC)
-    for media_id in deduped_media_ids:
-        insert_values = {
-            "user_id": viewer_id,
-            "media_id": media_id,
-            "position_ms": 0,
-            "duration_ms": None,
-            "playback_speed": 1.0,
-            "is_completed": bool(body.is_completed),
-        }
-        update_values: dict[str, object] = {
-            "is_completed": bool(body.is_completed),
-            "updated_at": now,
-        }
-        if not body.is_completed:
-            update_values["position_ms"] = 0
+    with transaction(db):
+        visible_rows = db.execute(
+            text(
+                f"""
+                WITH visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                )
+                SELECT m.id, m.kind
+                FROM media m
+                JOIN visible_media vm ON vm.media_id = m.id
+                WHERE m.id = ANY(:media_ids)
+                """
+            ),
+            {"viewer_id": viewer_id, "media_ids": deduped_media_ids},
+        ).fetchall()
+        if len(visible_rows) != len(deduped_media_ids):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-        db.execute(
-            pg_insert(PodcastListeningState)
-            .values(**insert_values)
-            .on_conflict_do_update(
-                index_elements=[
-                    PodcastListeningState.user_id,
-                    PodcastListeningState.media_id,
-                ],
-                set_=update_values,
+        invalid_kind_media_ids = [
+            row[0] for row in visible_rows if row[1] != MediaKind.podcast_episode.value
+        ]
+        if invalid_kind_media_ids:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Batch listening-state updates are only supported for podcast episodes",
             )
-        )
 
-    db.commit()
+        now = db.execute(text("SELECT now()")).scalar_one()
+        for media_id in deduped_media_ids:
+            existing_state = (
+                db.query(PodcastListeningState)
+                .filter(
+                    PodcastListeningState.user_id == viewer_id,
+                    PodcastListeningState.media_id == media_id,
+                )
+                .one_or_none()
+            )
+            if existing_state is None:
+                db.add(
+                    PodcastListeningState(
+                        user_id=viewer_id,
+                        media_id=media_id,
+                        position_ms=0,
+                        duration_ms=None,
+                        playback_speed=1.0,
+                        is_completed=is_completed,
+                    )
+                )
+                continue
+            existing_state.is_completed = is_completed
+            existing_state.updated_at = now
+            if not is_completed:
+                existing_state.position_ms = 0
 
 
 def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
@@ -1046,7 +966,6 @@ def _download_remote_file(url: str, kind: str) -> tuple[bytes, str]:
         validate_dns_resolution,
         validate_url,
     )
-    from nexus.services.upload import _validate_magic_bytes
 
     max_bytes = get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
     current_url = url
@@ -1105,7 +1024,7 @@ def _download_remote_file(url: str, kind: str) -> tuple[bytes, str]:
                             )
 
                     payload = bytes(data)
-                    if not _validate_magic_bytes(payload, kind):
+                    if not has_valid_file_signature(payload, kind):
                         raise InvalidRequestError(
                             ApiErrorCode.E_INVALID_FILE_TYPE,
                             f"Remote URL did not return a valid {kind.upper()} file.",
@@ -1137,13 +1056,12 @@ def _create_file_media_from_remote_url(
     request_id: str | None = None,
 ) -> FromUrlResponse:
     from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
-    from nexus.services.upload import _ensure_in_default_library, _validate_upload_request
 
     if kind not in _REMOTE_FILE_CONTENT_TYPES:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Remote URL must be a PDF or EPUB.")
 
     payload, content_type = _download_remote_file(url, kind)
-    _validate_upload_request(kind, content_type, len(payload))
+    validate_file_ingest_request(kind, content_type, len(payload))
 
     media_id = uuid4()
     storage_path = build_upload_staging_storage_path(media_id, get_file_extension(kind))
@@ -1176,7 +1094,7 @@ def _create_file_media_from_remote_url(
         db.add(media)
         db.add(media_file)
         db.flush()
-        _ensure_in_default_library(db, viewer_id, media_id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
     except Exception:
         db.rollback()
@@ -1223,8 +1141,6 @@ def create_captured_web_article(
     published_time: str | None = None,
 ) -> ArticleCaptureResponse:
     """Persist a browser-rendered article capture as readable media."""
-    from nexus.services.upload import _ensure_in_default_library
-
     libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
     validate_requested_url(url)
 
@@ -1305,7 +1221,7 @@ def create_captured_web_article(
                     )
             replace_media_contributor_credits(db, media_id=media.id, credits=credits)
 
-        _ensure_in_default_library(db, viewer_id, media.id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
         fragment_id = fragment.id
         media_id = media.id
         media_language = media.language
@@ -1314,42 +1230,15 @@ def create_captured_web_article(
         db.rollback()
         raise
 
-    try:
-        rebuild_fragment_content_index(
-            db,
-            media_id=media_id,
-            source_kind="web_article",
-            artifact_ref=f"fragments:{fragment_id}",
-            fragments=[fragment],
-            reason="web_article_capture",
-            language=media_language,
-        )
-        db.commit()
-    except (SQLAlchemyError, ApiError) as exc:
-        db.rollback()
-        logger.exception(
-            "captured_web_article_content_index_failed",
-            media_id=str(media_id),
-            error=str(exc),
-        )
-        media = db.get(Media, media_id)
-        if media is not None:
-            now = datetime.now(UTC)
-            error_code = (
-                exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
-            )
-            media.failure_stage = FailureStage.embed
-            media.last_error_code = error_code
-            media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
-            media.failed_at = now
-            media.updated_at = now
-            mark_content_index_failed(
-                db,
-                media_id=media_id,
-                failure_code=error_code,
-                failure_message=media.last_error_message,
-            )
-            db.commit()
+    _rebuild_web_article_index_or_mark_failed(
+        db,
+        media_id=media_id,
+        fragment_id=fragment_id,
+        fragments=[fragment],
+        reason="web_article_capture",
+        language=media_language,
+        log_event="captured_web_article_content_index_failed",
+    )
 
     _try_enrich_dispatch(str(media.id), None)
 
@@ -1374,11 +1263,6 @@ def create_captured_file(
 ) -> FromUrlResponse:
     """Persist a browser-fetched PDF/EPUB and run the existing file ingest lifecycle."""
     from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
-    from nexus.services.upload import (
-        _ensure_in_default_library,
-        _validate_magic_bytes,
-        _validate_upload_request,
-    )
 
     libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
     cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
@@ -1404,8 +1288,8 @@ def create_captured_file(
     if not payload:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Captured file is empty.")
 
-    _validate_upload_request(kind, normalized_content_type, len(payload))
-    if not _validate_magic_bytes(payload, kind):
+    validate_file_ingest_request(kind, normalized_content_type, len(payload))
+    if not has_valid_file_signature(payload, kind):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_FILE_TYPE,
             f"Captured file is not a valid {kind.upper()}.",
@@ -1454,7 +1338,7 @@ def create_captured_file(
         db.add(media)
         db.add(media_file)
         db.flush()
-        _ensure_in_default_library(db, viewer_id, media_id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
     except Exception:
         db.rollback()
@@ -1523,9 +1407,6 @@ def create_provisional_web_article(
         InvalidRequestError: If URL validation fails.
         NotFoundError: If user's default library doesn't exist.
     """
-    # Import here to avoid circular dependency
-    from nexus.services.upload import _ensure_in_default_library
-
     # Validate URL (raises InvalidRequestError on failure)
     validate_requested_url(url)
 
@@ -1552,8 +1433,7 @@ def create_provisional_web_article(
     db.add(media)
     db.flush()  # Get the generated ID
 
-    # Attach to viewer's default library
-    _ensure_in_default_library(db, viewer_id, media.id)
+    libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
 
     ingest_enqueued = False
     try:
@@ -1684,7 +1564,7 @@ def create_or_reuse_x_author_thread_article(
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
 
     now = datetime.now(UTC)
-    created_index_targets: list[tuple[UUID, UUID, Fragment, str, str | None]] = []
+    created_index_targets: list[_WebArticleIndexTarget] = []
     quoted_media_ids: dict[str, UUID] = {}
     for quoted_id, quoted_post in snapshot.quoted_posts.items():
         quote_media, quote_fragment, quote_created = _create_or_reuse_x_snapshot_post_media(
@@ -1698,12 +1578,12 @@ def create_or_reuse_x_author_thread_article(
         quoted_media_ids[quoted_id] = quote_media.id
         if quote_created and quote_fragment is not None:
             created_index_targets.append(
-                (
-                    quote_media.id,
-                    quote_fragment.id,
-                    quote_fragment,
-                    "x_api_quoted_post",
-                    quote_media.language,
+                _WebArticleIndexTarget(
+                    media_id=quote_media.id,
+                    fragment_id=quote_fragment.fragment.id,
+                    fragments=[quote_fragment.fragment],
+                    reason="x_api_quoted_post",
+                    language=quote_media.language,
                 )
             )
 
@@ -1712,17 +1592,19 @@ def create_or_reuse_x_author_thread_article(
         quoted_media_ids=quoted_media_ids,
         app_public_url=get_settings().app_public_url,
     )
-    fragments: list[Fragment] = []
+    prepared_fragments: list[_PreparedXFragment] = []
     for idx, (post, fragment_html) in enumerate(rendered_fragments):
-        fragment = _build_x_fragment(
-            media_id=None,
-            idx=idx,
-            html=fragment_html,
-            base_url=post.permalink,
-            created_at=now,
+        prepared_fragments.append(
+            _build_x_fragment(
+                media_id=None,
+                idx=idx,
+                html=fragment_html,
+                base_url=post.permalink,
+                created_at=now,
+            )
         )
-        fragments.append(fragment)
 
+    fragments = [prepared.fragment for prepared in prepared_fragments]
     canonical_text = "\n\n".join(fragment.canonical_text for fragment in fragments)
     if not canonical_text.strip():
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X thread has no readable text")
@@ -1749,12 +1631,16 @@ def create_or_reuse_x_author_thread_article(
         db.add(media)
         db.flush()
         created = True
-        for fragment in fragments:
-            fragment.media_id = media.id
-            db.add(fragment)
+        for prepared_fragment in prepared_fragments:
+            prepared_fragment.fragment.media_id = media.id
+            db.add(prepared_fragment.fragment)
         db.flush()
-        for fragment in fragments:
-            insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
+        for prepared_fragment in prepared_fragments:
+            insert_fragment_blocks(
+                db,
+                prepared_fragment.fragment.id,
+                prepared_fragment.fragment_blocks,
+            )
         replace_media_contributor_credits(
             db,
             media_id=media.id,
@@ -1794,25 +1680,25 @@ def create_or_reuse_x_author_thread_article(
         fragment_ids = [fragment.id for fragment in fragments]
         if fragment_ids:
             created_index_targets.append(
-                (
-                    media.id,
-                    fragment_ids[0],
-                    fragments[0],
-                    "x_api_author_thread",
-                    media.language,
+                _WebArticleIndexTarget(
+                    media_id=media.id,
+                    fragment_id=fragment_ids[0],
+                    fragments=fragments,
+                    reason="x_api_author_thread",
+                    language=media.language,
                 )
             )
-        for target_media_id, fragment_id, fragment, reason, language in created_index_targets:
+        for target in created_index_targets:
             _rebuild_web_article_index_or_mark_failed(
                 db,
-                media_id=target_media_id,
-                fragment_id=fragment_id,
-                fragments=[fragment] if target_media_id != media.id else fragments,
-                reason=reason,
-                language=language,
-                log_event=f"{reason}_content_index_failed",
+                media_id=target.media_id,
+                fragment_id=target.fragment_id,
+                fragments=target.fragments,
+                reason=target.reason,
+                language=target.language,
+                log_event=f"{target.reason}_content_index_failed",
             )
-            _try_enrich_dispatch_with_session(db, str(target_media_id), None)
+            _try_enrich_dispatch_with_session(db, str(target.media_id), None)
 
     return FromUrlResponse(
         media_id=media.id,
@@ -1889,7 +1775,7 @@ def _refresh_x_author_thread_media_for_viewer(
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
 
     now = datetime.now(UTC)
-    created_index_targets: list[tuple[UUID, UUID, Fragment, str, str | None]] = []
+    created_index_targets: list[_WebArticleIndexTarget] = []
     quoted_media_ids: dict[str, UUID] = {}
     for quoted_id, quoted_post in snapshot.quoted_posts.items():
         quote_media, quote_fragment, quote_created = _create_or_reuse_x_snapshot_post_media(
@@ -1903,16 +1789,16 @@ def _refresh_x_author_thread_media_for_viewer(
         quoted_media_ids[quoted_id] = quote_media.id
         if quote_created and quote_fragment is not None:
             created_index_targets.append(
-                (
-                    quote_media.id,
-                    quote_fragment.id,
-                    quote_fragment,
-                    "x_api_quoted_post",
-                    quote_media.language,
+                _WebArticleIndexTarget(
+                    media_id=quote_media.id,
+                    fragment_id=quote_fragment.fragment.id,
+                    fragments=[quote_fragment.fragment],
+                    reason="x_api_quoted_post",
+                    language=quote_media.language,
                 )
             )
 
-    fragments: list[Fragment] = []
+    prepared_fragments: list[_PreparedXFragment] = []
     for idx, (post, fragment_html) in enumerate(
         render_author_thread_fragment_html(
             snapshot,
@@ -1920,7 +1806,7 @@ def _refresh_x_author_thread_media_for_viewer(
             app_public_url=get_settings().app_public_url,
         )
     ):
-        fragments.append(
+        prepared_fragments.append(
             _build_x_fragment(
                 media_id=media.id,
                 idx=idx,
@@ -1930,6 +1816,7 @@ def _refresh_x_author_thread_media_for_viewer(
             )
         )
 
+    fragments = [prepared.fragment for prepared in prepared_fragments]
     canonical_text = "\n\n".join(fragment.canonical_text for fragment in fragments)
     if not canonical_text.strip():
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X thread has no readable text")
@@ -1952,11 +1839,15 @@ def _refresh_x_author_thread_media_for_viewer(
     media.publisher = "X"
     media.description = thread_description(snapshot)
 
-    for fragment in fragments:
-        db.add(fragment)
+    for prepared_fragment in prepared_fragments:
+        db.add(prepared_fragment.fragment)
     db.flush()
-    for fragment in fragments:
-        insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
+    for prepared_fragment in prepared_fragments:
+        insert_fragment_blocks(
+            db,
+            prepared_fragment.fragment.id,
+            prepared_fragment.fragment_blocks,
+        )
     replace_media_contributor_credits(
         db,
         media_id=media.id,
@@ -1973,25 +1864,25 @@ def _refresh_x_author_thread_media_for_viewer(
     db.commit()
 
     created_index_targets.append(
-        (
-            media.id,
-            fragments[0].id,
-            fragments[0],
-            "x_api_author_thread_refresh",
-            media.language,
+        _WebArticleIndexTarget(
+            media_id=media.id,
+            fragment_id=fragments[0].id,
+            fragments=fragments,
+            reason="x_api_author_thread_refresh",
+            language=media.language,
         )
     )
-    for target_media_id, fragment_id, fragment, reason, language in created_index_targets:
+    for target in created_index_targets:
         _rebuild_web_article_index_or_mark_failed(
             db,
-            media_id=target_media_id,
-            fragment_id=fragment_id,
-            fragments=[fragment] if target_media_id != media.id else fragments,
-            reason=reason,
-            language=language,
-            log_event=f"{reason}_content_index_failed",
+            media_id=target.media_id,
+            fragment_id=target.fragment_id,
+            fragments=target.fragments,
+            reason=target.reason,
+            language=target.language,
+            log_event=f"{target.reason}_content_index_failed",
         )
-        _try_enrich_dispatch_with_session(db, str(target_media_id), request_id)
+        _try_enrich_dispatch_with_session(db, str(target.media_id), request_id)
 
     return {
         "media_id": str(media.id),
@@ -2054,7 +1945,7 @@ def _create_or_reuse_x_snapshot_post_media(
     snapshot: XAuthorThreadSnapshot,
     library_ids: list[UUID],
     now: datetime,
-) -> tuple[Media, Fragment | None, bool]:
+) -> tuple[Media, _PreparedXFragment | None, bool]:
     media = (
         db.query(Media)
         .filter(Media.provider == "x", Media.provider_id == post.id)
@@ -2065,7 +1956,7 @@ def _create_or_reuse_x_snapshot_post_media(
         libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
         return media, None, False
 
-    fragment = _build_x_fragment(
+    prepared_fragment = _build_x_fragment(
         media_id=None,
         idx=0,
         html=render_single_post_html(post, users=snapshot.users, media=snapshot.media),
@@ -2090,10 +1981,14 @@ def _create_or_reuse_x_snapshot_post_media(
     )
     db.add(media)
     db.flush()
-    fragment.media_id = media.id
-    db.add(fragment)
+    prepared_fragment.fragment.media_id = media.id
+    db.add(prepared_fragment.fragment)
     db.flush()
-    insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
+    insert_fragment_blocks(
+        db,
+        prepared_fragment.fragment.id,
+        prepared_fragment.fragment_blocks,
+    )
     author = snapshot.users.get(post.author_id)
     if author is not None:
         replace_media_contributor_credits(
@@ -2110,7 +2005,7 @@ def _create_or_reuse_x_snapshot_post_media(
             ],
         )
     libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
-    return media, fragment, True
+    return media, prepared_fragment, True
 
 
 def _build_x_fragment(
@@ -2120,7 +2015,7 @@ def _build_x_fragment(
     html: str,
     base_url: str,
     created_at: datetime,
-) -> Fragment:
+) -> _PreparedXFragment:
     if len(html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X thread HTML is too large")
     try:
@@ -2144,15 +2039,7 @@ def _build_x_fragment(
         canonical_text=canonical_text,
         created_at=created_at,
     )
-    fragment._prepared_fragment_blocks = prepared.fragment_blocks  # type: ignore[attr-defined]
-    return fragment
-
-
-def _prepared_fragment_blocks(fragment: Fragment) -> list[FragmentBlockSpec]:
-    blocks = getattr(fragment, "_prepared_fragment_blocks", None)
-    if blocks is None:
-        raise AssertionError("web article fragment was not prepared through web_article_structure")
-    return blocks
+    return _PreparedXFragment(fragment=fragment, fragment_blocks=prepared.fragment_blocks)
 
 
 def _rebuild_web_article_index_or_mark_failed(
@@ -2205,8 +2092,6 @@ def create_or_reuse_x_oembed_article(
     url: str,
 ) -> FromUrlResponse:
     """Create-or-reuse a public X post from official oEmbed HTML."""
-    from nexus.services.upload import _ensure_in_default_library
-
     validate_requested_url(url)
     identity = classify_x_url(url)
     if identity is None:
@@ -2222,7 +2107,7 @@ def create_or_reuse_x_oembed_article(
         .one_or_none()
     )
     if media is not None:
-        _ensure_in_default_library(db, viewer_id, media.id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
         db.commit()
         return FromUrlResponse(
             media_id=media.id,
@@ -2334,7 +2219,7 @@ def create_or_reuse_x_oembed_article(
                 ],
             )
 
-        _ensure_in_default_library(db, viewer_id, media.id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
         fragment_id = fragment.id
         media_id = media.id
         media_language = media.language
@@ -2353,51 +2238,22 @@ def create_or_reuse_x_oembed_article(
         )
         if media is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Unable to resolve canonical X post") from exc
-        _ensure_in_default_library(db, viewer_id, media.id)
+        libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
         db.commit()
     except Exception:
         db.rollback()
         raise
 
     if created:
-        try:
-            rebuild_fragment_content_index(
-                db,
-                media_id=media_id,
-                source_kind="web_article",
-                artifact_ref=f"fragments:{fragment_id}",
-                fragments=[fragment],
-                reason="x_oembed_article",
-                language=media_language,
-            )
-            db.commit()
-        except (SQLAlchemyError, ApiError) as exc:
-            db.rollback()
-            logger.exception(
-                "x_oembed_content_index_failed",
-                media_id=str(media_id),
-                error=str(exc),
-            )
-            media = db.get(Media, media_id)
-            if media is not None:
-                now = datetime.now(UTC)
-                error_code = (
-                    exc.code.value
-                    if isinstance(exc, ApiError)
-                    else ApiErrorCode.E_INGEST_FAILED.value
-                )
-                media.failure_stage = FailureStage.embed
-                media.last_error_code = error_code
-                media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
-                media.failed_at = now
-                media.updated_at = now
-                mark_content_index_failed(
-                    db,
-                    media_id=media_id,
-                    failure_code=error_code,
-                    failure_message=media.last_error_message,
-                )
-                db.commit()
+        _rebuild_web_article_index_or_mark_failed(
+            db,
+            media_id=media_id,
+            fragment_id=fragment_id,
+            fragments=[fragment],
+            reason="x_oembed_article",
+            language=media_language,
+            log_event="x_oembed_content_index_failed",
+        )
 
     _try_enrich_dispatch(str(media.id), None)
 
@@ -2422,8 +2278,6 @@ def create_or_reuse_youtube_video(
     Global idempotency is anchored by canonical watch URL derived from
     provider identity (YouTube video ID).
     """
-    from nexus.services.upload import _ensure_in_default_library
-
     validate_requested_url(url)
     identity = classify_youtube_url(url)
     if identity is None:
@@ -2479,7 +2333,7 @@ def create_or_reuse_youtube_video(
             media.canonical_source_url = identity.watch_url
         media.updated_at = now
 
-    _ensure_in_default_library(db, viewer_id, media.id)
+    libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
 
     ingest_enqueued = False
     try:
@@ -2612,8 +2466,7 @@ def _enqueue_youtube_ingest_task(
 
 def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:
     """Return True when IntegrityError is media canonical-url uniqueness conflict."""
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "uix_media_canonical_url"
     return "uix_media_canonical_url" in str(exc)
@@ -2621,8 +2474,7 @@ def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:
 
 def _is_media_provider_conflict(exc: IntegrityError) -> bool:
     """Return True when IntegrityError is media provider uniqueness conflict."""
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "uix_media_x_provider_id"
     return "uix_media_x_provider_id" in str(exc)

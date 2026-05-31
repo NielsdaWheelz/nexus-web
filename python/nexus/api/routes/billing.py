@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.schemas.billing import BillingCheckoutRequest, BillingSessionOut
 from nexus.services import billing as billing_service

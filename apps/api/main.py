@@ -9,10 +9,9 @@ environment variables to be configured.
 """
 
 from nexus.app import add_request_id_middleware, create_app
+from nexus.logging import configure_logging
 
-# Create the application instance
+configure_logging()
+
 app = create_app()
-# Add request-id middleware LAST so it runs FIRST (outermost)
 add_request_id_middleware(app)
-
-__all__ = ["app"]

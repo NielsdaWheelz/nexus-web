@@ -5,6 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
+import {
+  usePaneSecondary,
+  type PaneSecondaryPublication,
+} from "@/components/workspace/PaneSecondary";
+import type {
+  WorkspaceSecondaryGroupId,
+  WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
@@ -12,6 +20,12 @@ const hostMocks = vi.hoisted(() => ({
   unmountedBodyIds: [] as number[],
   runtimeLayout: null as PaneRuntimeLayout | null,
   fixedChromeWidthPx: null as number | null,
+  secondaryPublication: null as PaneSecondaryPublication | null,
+  openInNewPaneRequest: null as {
+    href: string;
+    titleHint?: string;
+    surfaceId: WorkspaceSecondarySurfaceId;
+  } | null,
   store: {
     state: {
       primaryPaneOrder: ["pane-1"],
@@ -20,12 +34,22 @@ const hostMocks = vi.hoisted(() => ({
           id: "pane-1",
           href: "/media/media-1",
           primaryWidthPx: 640,
-          attachedSecondaryPaneId: null,
+          attachedSecondaryPaneId: null as string | null,
           visibility: "visible" as const,
           history: { back: [], forward: [] } as { back: string[]; forward: string[] },
         },
       },
-      secondaryPanesById: {},
+      secondaryPanesById: {} as Record<
+        string,
+        {
+          id: string;
+          parentPrimaryPaneId: string;
+          groupId: WorkspaceSecondaryGroupId;
+          activeSurfaceId: WorkspaceSecondarySurfaceId;
+          widthPx: number;
+          visibility: "visible" | "collapsed";
+        }
+      >,
       activePrimaryPaneId: "pane-1",
     },
     workspacePrimaryMetrics: {
@@ -73,6 +97,7 @@ function mediaRoute(href: string) {
 function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
+  const didOpenInNewPaneRef = useRef(false);
   usePaneFixedChrome(
     hostMocks.fixedChromeWidthPx === null
       ? null
@@ -82,6 +107,7 @@ function TestPaneBody() {
           body: <div>Fixed chrome</div>,
         },
   );
+  usePaneSecondary(hostMocks.secondaryPublication);
   useEffect(() => {
     const id = instanceId.current;
     hostMocks.mountedBodyIds.push(id);
@@ -94,8 +120,20 @@ function TestPaneBody() {
       paneRuntime?.setPaneLayout(hostMocks.runtimeLayout);
     }
   }, [paneRuntime]);
+  useEffect(() => {
+    const request = hostMocks.openInNewPaneRequest;
+    if (!request || !paneRuntime || didOpenInNewPaneRef.current) {
+      return;
+    }
+    didOpenInNewPaneRef.current = true;
+    paneRuntime.openInNewPane(request.href, request.titleHint, request.surfaceId);
+  }, [paneRuntime]);
   return (
-    <div data-testid="route-body" data-instance-id={instanceId.current}>
+    <div
+      data-testid="route-body"
+      data-instance-id={instanceId.current}
+      data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
+    >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
       <a href="/authors/body-author" data-pane-title-hint="Body Author">
         Body Author
@@ -108,32 +146,43 @@ vi.mock("@/lib/panes/paneRouteRegistry", () => ({
   resolvePaneRoute: (href: string) => mediaRoute(href),
 }));
 
-vi.mock("@/lib/workspace/store", () => ({
-  useWorkspaceHostStore: () => hostMocks.store,
-  resolveWorkspacePaneTitle: (pane: { href: string }) => {
-    const route = mediaRoute(pane.href);
-    return {
-      chrome: null,
-      resourceKey: route.resourceRef ? `${route.id}:${route.resourceRef}` : route.pathname,
-      route,
-      title: "Media",
-      titleState: "pending",
-      titleSource: "fallback",
-    };
-  },
-}));
+vi.mock("@/lib/workspace/store", async () => {
+  // Use the real route-identity resolver so the descriptor resourceKey matches
+  // the key the host computes via resolvePaneRouteIdentity for pending
+  // cross-pane secondary requests. Mocking it to a different shape would let the
+  // pending-request tests pass for the wrong reason (key mismatch, not policy).
+  const { resolvePaneRouteIdentity } = await import("@/lib/panes/paneIdentity");
+  return {
+    useWorkspaceHostStore: () => hostMocks.store,
+    resolveWorkspacePaneTitle: (pane: { href: string }) => {
+      const route = mediaRoute(pane.href);
+      return {
+        chrome: null,
+        resourceKey: resolvePaneRouteIdentity(pane.href).resourceKey,
+        route,
+        title: "Media",
+        titleState: "pending",
+        titleSource: "fallback",
+      };
+    },
+  };
+});
 
 vi.mock("@/components/workspace/PaneShell", () => ({
   default: ({
     children,
     sizing,
+    secondaryPane,
     secondarySizing,
+    secondaryPublication,
     fixedChromePublication,
     navigation,
   }: {
     children: ReactNode;
     sizing: { primaryMinWidthPx: number };
+    secondaryPane: { id: string } | null;
     secondarySizing: { widthPx: number } | null;
+    secondaryPublication: { surfaces: readonly { id: string }[] } | null;
     fixedChromePublication: { widthPx: number } | null;
     navigation: {
       canGoBack: boolean;
@@ -147,6 +196,12 @@ vi.mock("@/components/workspace/PaneShell", () => ({
       data-min-width-px={sizing.primaryMinWidthPx}
       data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
       data-secondary-width-px={secondarySizing?.widthPx ?? 0}
+      data-secondary-pane-id={secondaryPane?.id ?? "none"}
+      data-secondary-surfaces={
+        secondaryPublication
+          ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
+          : "none"
+      }
     >
       <nav aria-label="Mock pane chrome">
         <button
@@ -231,6 +286,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.unmountedBodyIds = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
+    hostMocks.secondaryPublication = null;
+    hostMocks.openInNewPaneRequest = null;
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
     hostMocks.store.navigatePane.mockReset();
@@ -369,5 +426,198 @@ describe("WorkspaceHost pane route lifecycle", () => {
       titleHint: "Chrome Author",
     });
     expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
+  });
+});
+
+const READER_TOOLS_HIGHLIGHTS_ONLY: PaneSecondaryPublication = {
+  groupId: "reader-tools",
+  defaultSurfaceId: "reader-highlights",
+  surfaces: [{ id: "reader-highlights", body: <div>Highlights</div> }],
+};
+
+const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
+  groupId: "reader-tools",
+  defaultSurfaceId: "reader-highlights",
+  surfaces: [
+    { id: "reader-highlights", body: <div>Highlights</div> },
+    { id: "reader-doc-chat", body: <div>Document chat</div> },
+  ],
+};
+
+const CONVERSATION_CONTEXT_PUBLICATION: PaneSecondaryPublication = {
+  groupId: "conversation-context",
+  defaultSurfaceId: "conversation-references",
+  surfaces: [{ id: "conversation-references", body: <div>References</div> }],
+};
+
+function setPaneWithSecondary(secondary: {
+  groupId: WorkspaceSecondaryGroupId;
+  activeSurfaceId: WorkspaceSecondarySurfaceId;
+  widthPx?: number;
+  visibility?: "visible" | "collapsed";
+}) {
+  hostMocks.store.state = {
+    primaryPaneOrder: ["pane-1"],
+    primaryPanesById: {
+      "pane-1": {
+        id: "pane-1",
+        href: "/media/media-1",
+        primaryWidthPx: 640,
+        attachedSecondaryPaneId: "secondary-1",
+        visibility: "visible",
+        history: { back: [], forward: [] },
+      },
+    },
+    secondaryPanesById: {
+      "secondary-1": {
+        id: "secondary-1",
+        parentPrimaryPaneId: "pane-1",
+        groupId: secondary.groupId,
+        activeSurfaceId: secondary.activeSurfaceId,
+        widthPx: secondary.widthPx ?? 360,
+        visibility: secondary.visibility ?? "visible",
+      },
+    },
+    activePrimaryPaneId: "pane-1",
+  };
+}
+
+describe("WorkspaceHost secondary publication validation", () => {
+  beforeEach(() => {
+    hostMocks.bodyInstanceId = 0;
+    hostMocks.mountedBodyIds = [];
+    hostMocks.unmountedBodyIds = [];
+    hostMocks.runtimeLayout = null;
+    hostMocks.fixedChromeWidthPx = null;
+    hostMocks.secondaryPublication = null;
+    hostMocks.openInNewPaneRequest = null;
+    hostMocks.store.openPane.mockReset();
+    hostMocks.store.requestSecondarySurface.mockReset();
+    hostMocks.store.dropSecondaryPane.mockReset();
+    hostMocks.store.setSecondarySurface.mockReset();
+    setPaneHref("/media/media-1");
+  });
+
+  it("does not render or expose a visible secondary without a matching publication", () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = null;
+
+    render(<WorkspaceHost />);
+
+    const shell = screen.getByTestId("pane-shell");
+    expect(shell).toHaveAttribute("data-secondary-pane-id", "none");
+    expect(shell).toHaveAttribute("data-secondary-width-px", "0");
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-secondary-id",
+      "none",
+    );
+    expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("renders and exposes a visible secondary backed by a matching publication", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-pane-id",
+        "secondary-1",
+      );
+    });
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-width-px",
+      "360",
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-secondary-id",
+      "secondary-1",
+    );
+    expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("drops a persisted secondary when the publication group no longer matches", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = CONVERSATION_CONTEXT_PUBLICATION;
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.dropSecondaryPane).toHaveBeenCalledWith("secondary-1");
+    });
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-pane-id",
+      "none",
+    );
+    expect(hostMocks.store.setSecondarySurface).not.toHaveBeenCalled();
+  });
+
+  it("repairs a persisted secondary surface to the published default when the active surface is unpublished", async () => {
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-doc-chat",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.setSecondarySurface).toHaveBeenCalledWith(
+        "secondary-1",
+        "reader-highlights",
+      );
+    });
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-pane-id",
+      "none",
+    );
+    expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
+    hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
+    hostMocks.openInNewPaneRequest = {
+      href: "/media/media-1",
+      titleHint: "Doc chat",
+      surfaceId: "reader-doc-chat",
+    };
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "reader-doc-chat",
+      );
+    });
+  });
+
+  it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.openInNewPaneRequest = {
+      href: "/media/media-1",
+      titleHint: "Doc chat",
+      surfaceId: "reader-doc-chat",
+    };
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-surfaces",
+        "reader-highlights",
+      );
+    });
+    expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
   });
 });

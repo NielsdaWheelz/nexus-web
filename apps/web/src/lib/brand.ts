@@ -10,6 +10,5 @@ export const ASTERISM_DOTS = [
 ] as const;
 
 export const BRAND_FG_ON_DARK = "#c4a472";
-export const BRAND_FG_ON_LIGHT = "#7d5e35";
 export const BRAND_BG_DARK = "#15140f";
 export const BRAND_BG_LIGHT = "#faf8f3";

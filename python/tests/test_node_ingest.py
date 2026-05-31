@@ -12,11 +12,13 @@ No database required.
 """
 
 import time
+from pathlib import Path
 
 import pytest
 from werkzeug import Request, Response
 
 from nexus.errors import ApiErrorCode
+from nexus.services import node_ingest
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
 
 pytestmark = pytest.mark.integration
@@ -523,6 +525,51 @@ class TestNodeIngestEncoding:
             "Expected accented text in content_html after UTF-8 fallback, "
             f"got (first 500 chars): {result.content_html[:500]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Subprocess error output tests
+# ---------------------------------------------------------------------------
+
+
+class _FailedNodeProcess:
+    pid = 12345
+    returncode = node_ingest.EXIT_FETCH_FAILED
+
+    def __init__(self, stderr: bytes):
+        self._stderr = stderr
+
+    def communicate(self, input: bytes, timeout: int):
+        return b"", self._stderr
+
+
+def _install_failed_node_process(monkeypatch: pytest.MonkeyPatch, stderr: bytes) -> None:
+    monkeypatch.setattr(node_ingest, "NODE_INGEST_SCRIPT", Path(__file__))
+    monkeypatch.setattr(
+        node_ingest.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FailedNodeProcess(stderr),
+    )
+
+
+class TestNodeIngestSubprocessErrors:
+    def test_malformed_json_stderr_falls_back_to_raw_message(self, monkeypatch):
+        _install_failed_node_process(monkeypatch, b"plain fetch failure")
+
+        result = run_node_ingest("https://example.com/article")
+
+        assert isinstance(result, IngestError)
+        assert result.error_code == ApiErrorCode.E_INGEST_FAILED
+        assert result.message == "plain fetch failure"
+
+    def test_invalid_json_error_shape_falls_back_to_raw_message(self, monkeypatch):
+        _install_failed_node_process(monkeypatch, b'{"error": 503}')
+
+        result = run_node_ingest("https://example.com/article")
+
+        assert isinstance(result, IngestError)
+        assert result.error_code == ApiErrorCode.E_INGEST_FAILED
+        assert result.message == '{"error": 503}'
 
 
 # ---------------------------------------------------------------------------

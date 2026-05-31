@@ -3,23 +3,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/conversations/display";
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
+import type {
+  ReaderCitationColor,
+  ReaderCitationPreview,
+} from "@/lib/conversations/readerCitation";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import styles from "./ReaderCitation.module.css";
-
-export type ReaderCitationColor =
-  | "yellow"
-  | "green"
-  | "blue"
-  | "pink"
-  | "purple"
-  | "neutral";
-
-export interface ReaderCitationPreview {
-  title?: string;
-  excerpt?: string;
-  meta?: string[];
-  copyText?: string;
-}
 
 const colorClass = {
   yellow: styles.yellow,
@@ -37,7 +26,6 @@ export default function ReaderCitation({
   target,
   href,
   onActivate,
-  ariaLabel,
 }: {
   index: number;
   color: ReaderCitationColor;
@@ -45,7 +33,6 @@ export default function ReaderCitation({
   target: ReaderSourceTarget | null;
   href?: string | null;
   onActivate: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
-  ariaLabel?: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -147,7 +134,8 @@ export default function ReaderCitation({
     activationTarget || href ? "" : styles.unavailable
   }`.trim();
 
-  const label = ariaLabel ?? (activationTarget || href ? `Open citation ${index}` : `Citation ${index}`);
+  const label =
+    activationTarget || href ? `Open citation ${index}` : `Citation ${index}`;
   const previewNode =
     showPreview && anchor && previewBody ? (
       <HoverPreview anchor={anchor} onClose={closePreview}>

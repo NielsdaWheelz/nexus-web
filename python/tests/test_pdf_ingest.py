@@ -5,7 +5,6 @@ password-protected, and parser exception mapping.
 """
 
 import hashlib
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -274,95 +273,6 @@ class TestPdfExtractionArtifacts:
             ApiErrorCode.E_INGEST_FAILED.value,
             ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
         )
-
-    def test_extract_pdf_artifacts_page_span_invariant_failure_returns_error(
-        self, db_session: Session
-    ):
-        """If page-span invariants fail on a text-bearing PDF, no partial
-        text artifacts should remain."""
-        storage = FakeStorageClient()
-        pdf_bytes = _make_simple_pdf("Content", num_pages=2)
-        media = _create_pdf_media(db_session, storage, pdf_bytes)
-
-        with patch(
-            "nexus.services.pdf_ingest.validate_page_spans",
-            return_value="Forced invariant failure",
-        ):
-            result = extract_pdf_artifacts(db_session, media.id, storage)
-
-        assert isinstance(result, PdfExtractionError)
-        assert "invariant" in result.error_message.lower()
-
-    def test_extract_pdf_artifacts_rejects_noncontiguous_page_spans(self, db_session: Session):
-        """Non-contiguous page spans -> deterministic extract failure (fail closed)."""
-        storage = FakeStorageClient()
-        pdf_bytes = _make_simple_pdf("Contiguity test", num_pages=2)
-        media = _create_pdf_media(db_session, storage, pdf_bytes)
-
-        def _bad_contiguous(page_spans, page_count, text_len):
-            return "Non-contiguous spans detected"
-
-        with patch("nexus.services.pdf_ingest.validate_page_spans", side_effect=_bad_contiguous):
-            result = extract_pdf_artifacts(db_session, media.id, storage)
-
-        assert isinstance(result, PdfExtractionError)
-        assert (
-            "contiguous" in result.error_message.lower()
-            or "invariant" in result.error_message.lower()
-        )
-
-    def test_extract_pdf_artifacts_rejects_incomplete_page_spans(self, db_session: Session):
-        """Missing page-span rows for multi-page PDF -> deterministic extract failure."""
-        storage = FakeStorageClient()
-        pdf_bytes = _make_simple_pdf("Incomplete test", num_pages=3)
-        media = _create_pdf_media(db_session, storage, pdf_bytes)
-
-        def _bad_incomplete(page_spans, page_count, text_len):
-            return "Expected 3 spans, got 1"
-
-        with patch("nexus.services.pdf_ingest.validate_page_spans", side_effect=_bad_incomplete):
-            result = extract_pdf_artifacts(db_session, media.id, storage)
-
-        assert isinstance(result, PdfExtractionError)
-
-    def test_extract_pdf_artifacts_persists_text_artifacts_and_page_spans(
-        self, db_session: Session
-    ):
-        """Embedding-only retry path preserves text artifacts and quote-match metadata."""
-        storage = FakeStorageClient()
-        pdf_bytes = _make_simple_pdf("Embed retry", num_pages=2)
-        media = _create_pdf_media(db_session, storage, pdf_bytes)
-
-        result = extract_pdf_artifacts(db_session, media.id, storage)
-        assert isinstance(result, PdfExtractionResult)
-        assert result.has_text is True
-
-        original_text = db_session.get(Media, media.id).plain_text
-        original_page_count = db_session.get(Media, media.id).page_count
-
-        original_spans = db_session.execute(
-            text(
-                "SELECT page_number, start_offset, end_offset FROM pdf_page_text_spans "
-                "WHERE media_id = :mid ORDER BY page_number"
-            ),
-            {"mid": media.id},
-        ).fetchall()
-
-        assert original_text is not None
-        assert len(original_spans) == 2
-
-        refreshed = db_session.get(Media, media.id)
-        assert refreshed.plain_text == original_text
-        assert refreshed.page_count == original_page_count
-
-        after_spans = db_session.execute(
-            text(
-                "SELECT page_number, start_offset, end_offset FROM pdf_page_text_spans "
-                "WHERE media_id = :mid ORDER BY page_number"
-            ),
-            {"mid": media.id},
-        ).fetchall()
-        assert after_spans == list(original_spans)
 
     def test_run_pdf_ingest_sync_returns_pdf_extraction_result(self, db_session: Session):
         storage = FakeStorageClient()

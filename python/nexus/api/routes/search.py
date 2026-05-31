@@ -16,8 +16,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
+from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.schemas.search import (
     SearchResponse,
 )
@@ -109,38 +110,15 @@ def search(
     Returns 404 for unauthorized scope (prevents existence leakage).
     Returns 200 with empty results for short or all-stopword queries.
     """
-    # Parse types from comma-separated string
-    type_list = None
-    if types is not None:
-        type_list = [t.strip() for t in types.split(",") if t.strip()]
-
-    contributor_handle_list = None
-    if contributor_handles is not None:
-        contributor_handle_list = [
-            handle.strip() for handle in contributor_handles.split(",") if handle.strip()
-        ]
-
-    role_list = None
-    if roles is not None:
-        role_list = [role.strip() for role in roles.split(",") if role.strip()]
-
-    content_kind_list = None
-    if content_kinds is not None:
-        content_kind_list = [
-            content_kind.strip()
-            for content_kind in content_kinds.split(",")
-            if content_kind.strip()
-        ]
-
     result = search_service.search(
         db=db,
         viewer_id=viewer.user_id,
         q=q,
         scope=scope,
-        types=type_list,
-        contributor_handles=contributor_handle_list,
-        roles=role_list,
-        content_kinds=content_kind_list,
+        types=parse_comma_list(types),
+        contributor_handles=parse_comma_list(contributor_handles),
+        roles=parse_comma_list(roles),
+        content_kinds=parse_comma_list(content_kinds),
         semantic=semantic,
         cursor=cursor,
         limit=limit,

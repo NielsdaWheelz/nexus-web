@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import type { ContributorCredit, ContributorSummary } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
+import { contributorAuthorHref } from "@/lib/contributors/routes";
 import { cx } from "@/lib/ui/cx";
 
 interface ContributorChipProps {
@@ -32,10 +33,6 @@ const roleStyle: CSSProperties = {
   color: "var(--ink-muted)",
 };
 
-function contributorHref(handle: string): string {
-  return `/authors/${encodeURIComponent(handle)}`;
-}
-
 export default function ContributorChip({
   credit,
   contributor,
@@ -57,7 +54,6 @@ export default function ContributorChip({
   const creditedName = credit?.credited_name?.trim();
   const displayName =
     credit?.contributor_display_name?.trim() ||
-    credit?.display_name?.trim() ||
     contributor?.display_name?.trim() ||
     "";
   const label = creditedName || displayName;
@@ -92,7 +88,7 @@ export default function ContributorChip({
     }
     return null;
   }
-  const href = suppliedHref || contributorHref(handle);
+  const href = suppliedHref || contributorAuthorHref(handle);
 
   return (
     <a

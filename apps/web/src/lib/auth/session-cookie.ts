@@ -1,4 +1,5 @@
 import type { NextResponse } from "next/server";
+import { isRecord } from "@/lib/validation";
 
 // A token within this many seconds of expiry is classified `refreshable` so a
 // request never races its own access-token expiry.
@@ -22,6 +23,13 @@ export type SessionState =
 export interface CookieValue {
   name: string;
   value: string;
+}
+
+interface SupabaseSessionPayload {
+  accessToken: string;
+  expiresAt: number;
+  tokenType: string;
+  refreshToken: string | null;
 }
 
 function getSupabaseAuthCookieName(): string | null {
@@ -96,6 +104,32 @@ export function parseCookieHeader(header: string | null): CookieValue[] {
     });
 }
 
+function parseSupabaseSessionPayload(value: unknown): SupabaseSessionPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const accessToken = value.access_token;
+  const expiresAt = value.expires_at;
+  const tokenType = value.token_type;
+  const refreshToken = value.refresh_token;
+
+  if (
+    typeof accessToken !== "string" ||
+    accessToken.length === 0 ||
+    typeof expiresAt !== "number" ||
+    typeof tokenType !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    accessToken,
+    expiresAt,
+    tokenType,
+    refreshToken: typeof refreshToken === "string" ? refreshToken : null,
+  };
+}
+
 export function readSupabaseSessionCookie(
   cookies: readonly CookieValue[],
   nowMs: number = Date.now()
@@ -165,33 +199,25 @@ export function readSupabaseSessionCookie(
     return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
-  if (!parsed || typeof parsed !== "object") {
+  const session = parseSupabaseSessionPayload(parsed);
+  if (!session) {
     return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
-  const accessToken = (parsed as { access_token?: unknown }).access_token;
-  const expiresAt = (parsed as { expires_at?: unknown }).expires_at;
-  const tokenType = (parsed as { token_type?: unknown }).token_type;
-  const refreshToken = (parsed as { refresh_token?: unknown }).refresh_token;
-
-  if (
-    typeof accessToken !== "string" ||
-    accessToken.length === 0 ||
-    typeof expiresAt !== "number" ||
-    typeof tokenType !== "string"
-  ) {
-    return { state: "anonymous", reason: "malformed", cookieNames };
-  }
-
-  if (tokenType.toLowerCase() !== "bearer") {
+  if (session.tokenType.toLowerCase() !== "bearer") {
     return { state: "anonymous", reason: "non_bearer", cookieNames };
   }
 
-  if (expiresAt * 1000 > nowMs + REFRESH_MARGIN_SECONDS * 1000) {
-    return { state: "active", accessToken, expiresAt, cookieNames };
+  if (session.expiresAt * 1000 > nowMs + REFRESH_MARGIN_SECONDS * 1000) {
+    return {
+      state: "active",
+      accessToken: session.accessToken,
+      expiresAt: session.expiresAt,
+      cookieNames,
+    };
   }
 
-  if (typeof refreshToken === "string" && refreshToken.length > 0) {
+  if (session.refreshToken) {
     return { state: "refreshable", cookieNames };
   }
 

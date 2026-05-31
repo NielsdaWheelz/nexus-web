@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -100,6 +101,52 @@ def _sid(name: str) -> UUID:
 
 def _exists(db: Session, model: type, id_val: UUID) -> bool:
     return db.get(model, id_val) is not None
+
+
+def _seed_conversation(
+    db: Session,
+    *,
+    user_id: UUID,
+    conv_key: str,
+    msg_prefix: str,
+    title: str,
+    media_id: UUID,
+    messages: list[tuple[int, str, str]],
+    track: Callable[[str, bool], None],
+) -> None:
+    """Idempotently seed one conversation, its messages, and a media link."""
+    label = f"conversation: {title}"
+    conv_id = _sid(conv_key)
+    if _exists(db, Conversation, conv_id):
+        track(label, False)
+        return
+    now = datetime.now(UTC)
+    db.add(
+        Conversation(
+            id=conv_id,
+            owner_user_id=user_id,
+            title=title,
+            sharing="private",
+            next_seq=len(messages) + 1,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.flush()
+    for seq, role, content in messages:
+        db.add(
+            Message(
+                id=_sid(f"{msg_prefix}:{seq}"),
+                conversation_id=conv_id,
+                seq=seq,
+                role=role,
+                content=content,
+                status="complete",
+            )
+        )
+    db.add(ConversationMedia(conversation_id=conv_id, media_id=media_id))
+    db.flush()
+    track(f"{label} ({len(messages)} messages)", True)
 
 
 def _ensure_supabase_auth_user(supabase_url: str, service_key: str) -> UUID:
@@ -992,22 +1039,14 @@ def main() -> None:
             track("highlight: Zarathustra green + annotation", False)
 
         # ── Conversations + messages ──────────────────────────────────
-        conv1_id = _sid("conv:paul-graham")
-        if not _exists(db, Conversation, conv1_id):
-            now = datetime.now(UTC)
-            db.add(
-                Conversation(
-                    id=conv1_id,
-                    owner_user_id=user_id,
-                    title="Notes on Beating the Averages",
-                    sharing="private",
-                    next_seq=5,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            db.flush()
-            for seq, role, content in [
+        _seed_conversation(
+            db,
+            user_id=user_id,
+            conv_key="conv:paul-graham",
+            msg_prefix="msg:pg",
+            title="Notes on Beating the Averages",
+            media_id=pg_media_id,
+            messages=[
                 (1, "user", "What's the main argument in this essay?"),
                 (
                     2,
@@ -1028,44 +1067,17 @@ def main() -> None:
                     "months of development. Today you might see this play out with choices like "
                     "TypeScript vs plain JavaScript, or Rust vs C++ for systems work.",
                 ),
-            ]:
-                db.add(
-                    Message(
-                        id=_sid(f"msg:pg:{seq}"),
-                        conversation_id=conv1_id,
-                        seq=seq,
-                        role=role,
-                        content=content,
-                        status="complete",
-                    )
-                )
-            db.add(
-                ConversationMedia(
-                    conversation_id=conv1_id,
-                    media_id=pg_media_id,
-                )
-            )
-            db.flush()
-            track("conversation: Notes on Beating the Averages (4 messages)", True)
-        else:
-            track("conversation: Notes on Beating the Averages", False)
-
-        conv2_id = _sid("conv:attention")
-        if not _exists(db, Conversation, conv2_id):
-            now = datetime.now(UTC)
-            db.add(
-                Conversation(
-                    id=conv2_id,
-                    owner_user_id=user_id,
-                    title="Research ideas",
-                    sharing="private",
-                    next_seq=3,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            db.flush()
-            for seq, role, content in [
+            ],
+            track=track,
+        )
+        _seed_conversation(
+            db,
+            user_id=user_id,
+            conv_key="conv:attention",
+            msg_prefix="msg:attn",
+            title="Research ideas",
+            media_id=pdf_media_id,
+            messages=[
                 (1, "user", "Summarize the key innovation in the Attention paper."),
                 (
                     2,
@@ -1077,27 +1089,9 @@ def main() -> None:
                     "long-range dependencies. The 'multi-head' aspect lets different heads learn different "
                     "types of relationships — positional, syntactic, semantic — from the same input.",
                 ),
-            ]:
-                db.add(
-                    Message(
-                        id=_sid(f"msg:attn:{seq}"),
-                        conversation_id=conv2_id,
-                        seq=seq,
-                        role=role,
-                        content=content,
-                        status="complete",
-                    )
-                )
-            db.add(
-                ConversationMedia(
-                    conversation_id=conv2_id,
-                    media_id=pdf_media_id,
-                )
-            )
-            db.flush()
-            track("conversation: Research ideas (2 messages)", True)
-        else:
-            track("conversation: Research ideas", False)
+            ],
+            track=track,
+        )
 
         # ── Commit ────────────────────────────────────────────────────
         db.commit()

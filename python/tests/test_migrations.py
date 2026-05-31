@@ -7250,15 +7250,35 @@ class TestConversationReferencesCutoverMigration0121:
                     )
                 ).fetchall()
             }
+            fk_delete_actions = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT confdeltype
+                        FROM pg_constraint
+                        WHERE conrelid = 'conversation_references'::regclass
+                          AND contype = 'f'
+                        """
+                    )
+                ).fetchall()
+            }
 
         for required in ("id", "conversation_id", "resource_uri", "created_at"):
             assert required in columns, (
                 f"conversation_references must have column '{required}'; got {set(columns)}"
             )
+        assert "added_at" not in columns, (
+            "conversation_references must use created_at, not the legacy added_at name"
+        )
         for col in ("id", "conversation_id", "resource_uri", "created_at"):
             assert columns[col][1] == "NO", (
                 f"conversation_references.{col} must be NOT NULL; got {columns[col]}"
             )
+        assert fk_delete_actions == {"a"}, (
+            "conversation_references FK must not cascade on conversation delete; "
+            f"got delete actions {fk_delete_actions}"
+        )
         assert "uq_conversation_references_conversation_uri" in constraints, (
             "conversation_references must declare UNIQUE on (conversation_id, resource_uri); "
             f"got {constraints}"

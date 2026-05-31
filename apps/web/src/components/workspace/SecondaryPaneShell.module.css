@@ -20,38 +20,6 @@
   background: var(--surface-2);
 }
 
-.tabs {
-  display: flex;
-  min-width: 0;
-  gap: var(--space-2);
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-
-.tab:hover {
-  color: var(--accent-hover);
-}
-
-.tab[data-active="true"] {
-  background: var(--accent-muted);
-  color: var(--accent);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
 .body {
   display: flex;
   flex-direction: column;

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Model, UserApiKey
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.llm_catalog import is_provider_enabled, platform_key_for_provider
 from nexus.logging import get_logger
 from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.user_keys import decrypt_user_api_key_material
@@ -38,20 +39,6 @@ class ResolvedKey:
     mode: Literal["platform", "byok"]
     provider: str
     user_key_id: str | None = None  # Set if BYOK
-
-
-def is_provider_enabled(provider: str) -> bool:
-    """Return whether a provider is enabled for serving user requests."""
-    settings = get_settings()
-    if provider == "openai":
-        return settings.enable_openai
-    if provider == "anthropic":
-        return settings.enable_anthropic
-    if provider == "gemini":
-        return settings.enable_gemini
-    if provider == "deepseek":
-        return settings.enable_deepseek
-    return False
 
 
 def resolve_api_key(
@@ -81,24 +68,13 @@ def resolve_api_key(
     """
     settings = get_settings()
 
-    if not is_provider_enabled(provider):
+    if not is_provider_enabled(provider, settings):
         raise ApiError(
             ApiErrorCode.E_MODEL_NOT_AVAILABLE,
             f"Provider is disabled: {provider}",
         )
 
-    # Get platform key if exists
-    platform_key = None
-    if provider == "openai":
-        platform_key = settings.openai_api_key
-    elif provider == "anthropic":
-        platform_key = settings.anthropic_api_key
-    elif provider == "gemini":
-        platform_key = settings.gemini_api_key
-    elif provider == "deepseek":
-        platform_key = settings.deepseek_api_key
-    if settings.real_media_provider_fixtures and is_provider_enabled(provider):
-        platform_key = "real-media-fixture"
+    platform_key = platform_key_for_provider(provider, settings)
 
     # Get user BYOK if exists and usable
     user_key = None
@@ -199,9 +175,7 @@ def update_user_key_status(
         return
 
     try:
-        from uuid import UUID as UUIDType
-
-        key = db.get(UserApiKey, UUIDType(user_key_id))
+        key = db.get(UserApiKey, UUID(user_key_id))
         if key and key.status not in ("revoked",):
             now = datetime.now(UTC)
             key.status = status

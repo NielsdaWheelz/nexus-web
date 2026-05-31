@@ -21,6 +21,19 @@ const secondary = {
   visibility: "visible" as const,
 };
 
+const readerPublication = {
+  groupId: "reader-tools" as const,
+  defaultSurfaceId: "reader-contents" as const,
+  surfaces: [{ id: "reader-contents" as const, body: <div>Contents body</div> }],
+};
+
+const readerSecondary = {
+  groupId: "reader-tools" as const,
+  activeSurfaceId: "reader-contents" as const,
+  widthPx: 360,
+  visibility: "visible" as const,
+};
+
 describe("MobileSecondaryPaneHost", () => {
   afterEach(() => {
     document.body.style.overflow = "";
@@ -102,5 +115,20 @@ describe("MobileSecondaryPaneHost", () => {
       "secondary-1",
       "conversation-forks",
     );
+  });
+
+  it("renders reader Contents with the mobile secondary icon map", () => {
+    render(
+      <MobileSecondaryPaneHost
+        secondaryPaneId="secondary-1"
+        secondary={readerSecondary}
+        publication={readerPublication}
+        onClose={vi.fn()}
+        onActiveSurfaceChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Contents" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Contents" })).toBeInTheDocument();
   });
 });

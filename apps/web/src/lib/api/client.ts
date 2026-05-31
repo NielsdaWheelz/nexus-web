@@ -6,6 +6,7 @@
  */
 
 import { isAbortError } from "@/lib/errors";
+import { isRecord } from "@/lib/validation";
 
 /**
  * API error with status code and message.
@@ -47,10 +48,11 @@ interface ErrorResponse {
  */
 function isErrorResponse(body: unknown): body is ErrorResponse {
   return (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof (body as ErrorResponse).error === "object"
+    isRecord(body) &&
+    isRecord(body.error) &&
+    typeof body.error.code === "string" &&
+    typeof body.error.message === "string" &&
+    (body.error.request_id === undefined || typeof body.error.request_id === "string")
   );
 }
 

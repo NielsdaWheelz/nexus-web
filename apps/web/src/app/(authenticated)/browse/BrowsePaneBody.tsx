@@ -14,6 +14,7 @@ import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
   usePaneRouter,
@@ -25,7 +26,6 @@ import {
   toPodcastContributorInputs,
 } from "../podcasts/podcastSubscriptions";
 import {
-  BROWSE_TYPES,
   TYPE_LABELS,
   buildBrowseHref,
   emptySections,
@@ -53,6 +53,7 @@ import {
 } from "./browseState";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
+import BrowseTypeFilters from "./BrowseTypeFilters";
 import styles from "./page.module.css";
 
 export default function BrowsePaneBody() {
@@ -340,7 +341,6 @@ export default function BrowsePaneBody() {
   const visibleSections = visibleTypes.filter(
     (type) => sections[type].results.length > 0,
   );
-  const selectedTypeSet = new Set(visibleTypes);
 
   return (
     <SectionCard>
@@ -376,34 +376,7 @@ export default function BrowsePaneBody() {
             </Button>
           </div>
 
-          <div
-            className={styles.filters}
-            aria-label="Browse visible result types"
-          >
-            {BROWSE_TYPES.map((type) => (
-              <label key={type} className={styles.filterOption}>
-                <input
-                  type="checkbox"
-                  checked={selectedTypeSet.has(type)}
-                  onChange={(event) => {
-                    if (event.target.checked) {
-                      updateVisibleTypes(
-                        [...visibleTypes, type].filter(
-                          (value, index, values) =>
-                            values.indexOf(value) === index,
-                        ),
-                      );
-                      return;
-                    }
-                    updateVisibleTypes(
-                      visibleTypes.filter((value) => value !== type),
-                    );
-                  }}
-                />
-                <span>{TYPE_LABELS[type]}</span>
-              </label>
-            ))}
-          </div>
+          <BrowseTypeFilters visibleTypes={visibleTypes} onChange={updateVisibleTypes} />
         </form>
 
         {error ? <FeedbackNotice feedback={error} /> : null}
@@ -541,7 +514,7 @@ export default function BrowsePaneBody() {
                         <div className={styles.leading}>
                           {result.thumbnail_url ? (
                             <Image
-                              src={`/api/media/image?url=${encodeURIComponent(result.thumbnail_url)}`}
+                              src={buildMediaImageProxySrc(result.thumbnail_url)}
                               alt=""
                               width={56}
                               height={56}
@@ -632,7 +605,7 @@ export default function BrowsePaneBody() {
                         <div className={styles.leading}>
                           {result.image_url ? (
                             <Image
-                              src={`/api/media/image?url=${encodeURIComponent(result.image_url)}`}
+                              src={buildMediaImageProxySrc(result.image_url)}
                               alt=""
                               width={56}
                               height={56}
@@ -726,7 +699,7 @@ export default function BrowsePaneBody() {
                       <div className={styles.leading}>
                         {result.podcast_image_url ? (
                           <Image
-                            src={`/api/media/image?url=${encodeURIComponent(result.podcast_image_url)}`}
+                            src={buildMediaImageProxySrc(result.podcast_image_url)}
                             alt=""
                             width={56}
                             height={56}

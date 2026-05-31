@@ -9,7 +9,7 @@ import type { ForkOption } from "@/lib/conversations/types";
 import ForkNodeRow from "./ForkNodeRow";
 import styles from "./ConversationForksPanel.module.css";
 
-export interface ForkTreeViewProps {
+interface ForkTreeViewProps {
   nodes: ConversationForkNode[];
   focusedId: string | null;
   expandedIds: Set<string>;

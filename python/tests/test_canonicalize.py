@@ -1,4 +1,4 @@
-"""Tests for canonical text generation per s2_pr04.md spec.
+"""Tests for canonical text generation.
 
 Canonicalization tests:
 - Block boundary newlines

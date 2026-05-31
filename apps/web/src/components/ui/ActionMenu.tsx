@@ -8,12 +8,9 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { handlePaneInternalHrefClick } from "@/lib/panes/paneLinkNavigation";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./ActionMenu.module.css";
 
@@ -41,6 +38,17 @@ interface ActionMenuProps {
   onOpenChange?: (open: boolean) => void;
 }
 
+const MENU_ITEM_SELECTOR =
+  '[role="menuitem"]:not([aria-disabled="true"]):not([disabled])';
+const TABBABLE_SELECTOR = [
+  'a[href]:not([aria-disabled="true"])',
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "textarea:not([disabled])",
+  "select:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 export default function ActionMenu({
   options,
   label = "Actions",
@@ -52,17 +60,21 @@ export default function ActionMenu({
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
-  const paneRuntime = usePaneRuntime();
   const triggerId = useId();
   const menuId = useId();
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
-  const getFocusableItems = useCallback((): HTMLElement[] => {
+  const getMenuItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
     return Array.from(
-      menuRef.current.querySelectorAll<HTMLElement>(
-        '[role="menuitem"]:not([aria-disabled="true"]):not([disabled])'
-      )
+      menuRef.current.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR),
+    );
+  }, []);
+
+  const getTabbableItems = useCallback((): HTMLElement[] => {
+    if (!menuRef.current) return [];
+    return Array.from(menuRef.current.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)).filter(
+      (item) => item.tabIndex >= 0,
     );
   }, []);
 
@@ -117,27 +129,25 @@ export default function ActionMenu({
     if (!menuOpen || !menuPos) return;
 
     requestAnimationFrame(() => {
-      const focusable = getFocusableItems();
+      const menuItems = getMenuItems();
+      const tabbableItems = getTabbableItems();
+      const focusable = menuItems.length ? menuItems : tabbableItems;
       const target =
         initialFocus === "last"
           ? focusable[focusable.length - 1]
           : focusable[0];
       target?.focus();
     });
-  }, [getFocusableItems, initialFocus, menuOpen, menuPos]);
+  }, [getMenuItems, getTabbableItems, initialFocus, menuOpen, menuPos]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();
-    const focusable = getFocusableItems();
-    if (focusable.length === 0) return;
-
-    const activeIndex = focusable.findIndex(
-      (item) => item === document.activeElement
-    );
 
     if (event.key === "Tab") {
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
+      const tabbableItems = getTabbableItems();
+      if (tabbableItems.length === 0) return;
+      const first = tabbableItems[0];
+      const last = tabbableItems[tabbableItems.length - 1];
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -148,10 +158,23 @@ export default function ActionMenu({
       return;
     }
 
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMenu();
+      return;
+    }
+
+    const menuItems = getMenuItems();
+    if (menuItems.length === 0) return;
+
+    const activeIndex = menuItems.findIndex(
+      (item) => item === document.activeElement
+    );
+
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      const next = activeIndex < 0 ? 0 : (activeIndex + 1) % focusable.length;
-      focusable[next]?.focus();
+      const next = activeIndex < 0 ? 0 : (activeIndex + 1) % menuItems.length;
+      menuItems[next]?.focus();
       return;
     }
 
@@ -159,21 +182,21 @@ export default function ActionMenu({
       event.preventDefault();
       const prev =
         activeIndex < 0
-          ? focusable.length - 1
-          : (activeIndex - 1 + focusable.length) % focusable.length;
-      focusable[prev]?.focus();
+          ? menuItems.length - 1
+          : (activeIndex - 1 + menuItems.length) % menuItems.length;
+      menuItems[prev]?.focus();
       return;
     }
 
     if (event.key === "Home") {
       event.preventDefault();
-      focusable[0]?.focus();
+      menuItems[0]?.focus();
       return;
     }
 
     if (event.key === "End") {
       event.preventDefault();
-      focusable[focusable.length - 1]?.focus();
+      menuItems[menuItems.length - 1]?.focus();
       return;
     }
 
@@ -186,8 +209,8 @@ export default function ActionMenu({
       const prefix = event.key.toLocaleLowerCase();
       const startIndex = activeIndex < 0 ? 0 : activeIndex + 1;
       const orderedItems = [
-        ...focusable.slice(startIndex),
-        ...focusable.slice(0, startIndex),
+        ...menuItems.slice(startIndex),
+        ...menuItems.slice(0, startIndex),
       ];
       const next = orderedItems.find((item) =>
         item.textContent?.trim().toLocaleLowerCase().startsWith(prefix)
@@ -197,11 +220,6 @@ export default function ActionMenu({
         next.focus();
       }
       return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeMenu();
     }
   };
 
@@ -241,60 +259,54 @@ export default function ActionMenu({
                   </div>
                 </li>
               ) : (
-              <li role="none">
-                {optionHref ? (
-                  <a
-                    href={optionHref}
-                    role="menuitem"
-                    className={`${styles.menuItem} ${
-                      option.tone === "danger" ? styles.menuItemDanger : ""
-                    }`}
-                    aria-disabled={option.disabled || undefined}
-                    tabIndex={option.disabled ? -1 : undefined}
-                    onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
-                      if (
-                        option.disabled &&
-                        (event.key === "Enter" || event.key === " ")
-                      ) {
-                        event.preventDefault();
-                      }
-                    }}
-                    onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                      event.stopPropagation();
-                      if (option.disabled) {
-                        event.preventDefault();
-                        return;
-                      }
-                      handlePaneInternalHrefClick(
-                        event,
-                        paneRuntime,
-                        optionHref,
-                        option.label
-                      );
-                      option.onSelect?.({ triggerEl: toggleRef.current });
-                      closeMenu(option.restoreFocusOnClose !== false);
-                    }}
-                  >
-                    {option.label}
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`${styles.menuItem} ${
-                      option.tone === "danger" ? styles.menuItemDanger : ""
-                    }`}
-                    disabled={option.disabled}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      option.onSelect?.({ triggerEl: toggleRef.current });
-                      closeMenu(option.restoreFocusOnClose !== false);
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                )}
-              </li>
+                <li role="none">
+                  {optionHref ? (
+                    <a
+                      href={optionHref}
+                      role="menuitem"
+                      className={`${styles.menuItem} ${
+                        option.tone === "danger" ? styles.menuItemDanger : ""
+                      }`}
+                      aria-disabled={option.disabled || undefined}
+                      tabIndex={option.disabled ? -1 : undefined}
+                      onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+                        if (
+                          option.disabled &&
+                          (event.key === "Enter" || event.key === " ")
+                        ) {
+                          event.preventDefault();
+                        }
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (option.disabled) {
+                          event.preventDefault();
+                          return;
+                        }
+                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        closeMenu(option.restoreFocusOnClose !== false);
+                      }}
+                    >
+                      {option.label}
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`${styles.menuItem} ${
+                        option.tone === "danger" ? styles.menuItemDanger : ""
+                      }`}
+                      disabled={option.disabled}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        closeMenu(option.restoreFocusOnClose !== false);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  )}
+                </li>
               )}
             </Fragment>
           );

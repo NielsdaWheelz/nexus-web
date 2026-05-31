@@ -55,8 +55,6 @@ export function buildPaletteView({
       if (currentWorkspaceHref && command.target.kind === "href" && command.target.href === currentWorkspaceHref) {
         score += 250;
       }
-      if (command.danger) score -= 250;
-      if (command.disabled) score -= 10000;
 
       return { command, score, index };
     })

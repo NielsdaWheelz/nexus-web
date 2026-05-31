@@ -1,7 +1,7 @@
 """Conversation references API routes.
 
 Routes for the polymorphic conversation_references table (see
-``docs/conversation-references-cutover.md``). Each reference is an opaque
+``docs/conversation-references.md``). Each reference is an opaque
 ``<scheme>:<uuid>`` URI; resolution happens in the service layer via
 ``nexus.services.resource_resolver``.
 
@@ -18,8 +18,8 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.services import conversation_references as references_service
 
@@ -65,7 +65,6 @@ def add_conversation_reference(
     row = references_service.add_reference(
         db, conversation_id, body.resource_uri, viewer_id=viewer.user_id
     )
-    db.commit()
     return success_response(references_service.reference_to_api_payload(row))
 
 

@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
+from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.ingest import IngestReconcileEnqueueOut, IngestRecoveryHealthOut

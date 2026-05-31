@@ -10,7 +10,7 @@ import type {
 import type { ForkOption } from "@/lib/conversations/types";
 import { treeItemDomId, toForkOption } from "./ForkNodeRow";
 
-export interface UseForkTreeKeyNav {
+interface UseForkTreeKeyNav {
   handleTreeKeyDown: (event: KeyboardEvent<HTMLElement>, row: VisibleForkRow) => void;
 }
 

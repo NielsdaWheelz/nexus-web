@@ -18,7 +18,7 @@ def library_intelligence_build_job(build_id: str) -> dict[str, object]:
     db = session_factory()
     try:
         return run_library_intelligence_build(db, build_uuid)
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: worker boundary records failure before retry.
         db.rollback()
         mark_library_intelligence_build_failed(
             db,

@@ -31,7 +31,6 @@ describe("SearchResultRow", () => {
     ).toHaveAttribute("href", "/notes/note-1");
     expect(screen.getByText("note_block")).toBeInTheDocument();
     expect(screen.getByText("Deep Work Notes")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
   it("uses linked highlight quote as the note row link title", () => {
@@ -95,10 +94,9 @@ describe("SearchResultRow", () => {
     const emphasized = screen.getByText("match");
     expect(emphasized.tagName).toBe("MARK");
     expect(screen.getByText("p. 12")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
-  it("renders web results as external evidence without object-ref ask attachments", () => {
+  it("renders web results as external evidence", () => {
     const row: SearchResultRowViewModel = {
       key: "web_result-result-1",
       href: "https://example.com/report",
@@ -126,7 +124,6 @@ describe("SearchResultRow", () => {
     );
     expect(screen.getByText("web")).toBeInTheDocument();
     expect(screen.getByText("example.com")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
   it("renders message metadata without duplicate score text", () => {

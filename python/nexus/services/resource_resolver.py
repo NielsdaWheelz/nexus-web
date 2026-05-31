@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -22,9 +23,49 @@ from nexus.auth.permissions import (
     can_read_media,
     is_library_member,
 )
-from nexus.coerce import parse_uuid
 
 INLINE_THRESHOLD_CHARS = 1500
+ResourceUriScheme = Literal[
+    "media",
+    "library",
+    "span",
+    "chunk",
+    "highlight",
+    "page",
+    "note_block",
+    "fragment",
+    "conversation",
+    "message",
+]
+RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = (
+    "media",
+    "library",
+    "span",
+    "chunk",
+    "highlight",
+    "page",
+    "note_block",
+    "fragment",
+    "conversation",
+    "message",
+)
+SEARCH_SCOPE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = ("media", "library")
+READABLE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = tuple(
+    scheme for scheme in RESOURCE_URI_SCHEMES if scheme not in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
+)
+
+
+@dataclass(frozen=True)
+class ParsedResourceUri:
+    raw: str
+    scheme: ResourceUriScheme
+    resource_id: UUID
+
+
+@dataclass(frozen=True)
+class ResourceUriParseFailure:
+    raw: str
+    reason: Literal["invalid_format", "unsupported_scheme"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +76,29 @@ class ResolvedResource:
     inline_body: str | None
     fetch_hint: str
     missing: bool = False
+
+
+def parse_resource_uri(raw: str) -> ParsedResourceUri | ResourceUriParseFailure:
+    scheme, sep, ident = raw.partition(":")
+    if not sep:
+        return ResourceUriParseFailure(raw=raw, reason="invalid_format")
+    if scheme not in RESOURCE_URI_SCHEMES:
+        return ResourceUriParseFailure(raw=raw, reason="unsupported_scheme")
+    try:
+        resource_id = UUID(ident)
+    except ValueError:
+        return ResourceUriParseFailure(raw=raw, reason="invalid_format")
+    if str(resource_id) != ident:
+        return ResourceUriParseFailure(raw=raw, reason="invalid_format")
+    return ParsedResourceUri(
+        raw=raw,
+        scheme=cast(ResourceUriScheme, scheme),
+        resource_id=resource_id,
+    )
+
+
+def format_resource_uri(scheme: ResourceUriScheme, resource_id: UUID) -> str:
+    return f"{scheme}:{resource_id}"
 
 
 def resolve(db: Session, uri: str, *, viewer_id: UUID) -> ResolvedResource:
@@ -52,12 +116,11 @@ def resolve_batch(
     for uri in uris:
         if uri in results:
             continue
-        scheme, sep, ident = uri.partition(":")
-        resource_id = parse_uuid(ident) if sep else None
-        if resource_id is None:
+        parsed = parse_resource_uri(uri)
+        if isinstance(parsed, ResourceUriParseFailure):
             results[uri] = _missing(uri)
             continue
-        by_scheme[scheme].append((uri, resource_id))
+        by_scheme[parsed.scheme].append((uri, parsed.resource_id))
 
     for scheme, items in by_scheme.items():
         if scheme == "media":

@@ -47,10 +47,12 @@ from nexus.schemas.conversation import (
     ConversationOut,
     MessageDocument,
     MessageOut,
+    MessagePageInfo,
     MessageRerankLedgerOut,
     MessageRetrievalCandidateLedgerOut,
     PageInfo,
 )
+from nexus.services import conversation_references as conversation_references_service
 
 logger = get_logger(__name__)
 
@@ -263,15 +265,21 @@ def retryable_assistant_message_ids(
 # =============================================================================
 
 
-def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
+def create_conversation(
+    db: Session,
+    viewer_id: UUID,
+    initial_references: Sequence[str] | None = None,
+) -> ConversationOut:
     """Create a new empty private conversation.
 
-    The caller commits the surrounding transaction. This lets callers compose
-    creation with additional inserts inside a single SERIALIZABLE transaction.
+    Initial references are validated and inserted in the same transaction as the
+    conversation row. Any validation or visibility failure leaves no partial
+    conversation behind.
 
     Args:
         db: Database session.
         viewer_id: The ID of the user creating the conversation.
+        initial_references: Optional resource URIs to attach immediately.
 
     Returns:
         The created conversation with message_count=0.
@@ -286,7 +294,19 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
     db.add(conversation)
     db.flush()
 
-    return conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
+    result = conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
+
+    if initial_references:
+        for resource_uri in initial_references:
+            conversation_references_service.add_reference_without_commit(
+                db=db,
+                conversation_id=conversation.id,
+                resource_uri=resource_uri,
+                viewer_id=viewer_id,
+            )
+
+    db.commit()
+    return result
 
 
 def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> ConversationOut:
@@ -511,7 +531,9 @@ def list_messages(
     conversation_id: UUID,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
-) -> tuple[list[MessageOut], PageInfo]:
+    before_cursor: str | None = None,
+    window: str = "start",
+) -> tuple[list[MessageOut], MessagePageInfo]:
     """List messages in a conversation.
 
     Args:
@@ -519,7 +541,9 @@ def list_messages(
         viewer_id: The ID of the viewer.
         conversation_id: The ID of the conversation.
         limit: Maximum number of results (clamped to 1-100).
-        cursor: Opaque pagination cursor.
+        cursor: Opaque forward pagination cursor.
+        before_cursor: Opaque older-history pagination cursor.
+        window: "start" for the oldest page, or "latest" for the newest window.
 
     Returns:
         Tuple of (messages, page_info).
@@ -539,10 +563,26 @@ def list_messages(
         cursor_seq, cursor_id = decode_message_cursor(cursor)
         rows = [row for row in rows if (row[1], row[0]) > (cursor_seq, cursor_id)]
 
-    # Check if there are more results
-    has_more = len(rows) > limit
-    if has_more:
-        rows = rows[:limit]
+    next_cursor = None
+    before_cursor_out = None
+    if before_cursor:
+        cursor_seq, cursor_id = decode_message_cursor(before_cursor)
+        rows = [row for row in rows if (row[1], row[0]) < (cursor_seq, cursor_id)]
+        has_older = len(rows) > limit
+        if has_older:
+            rows = rows[-limit:]
+    elif window == "latest":
+        has_older = len(rows) > limit
+        if has_older:
+            rows = rows[-limit:]
+    else:
+        # Existing forward-pagination mode for callers that page oldest → newest.
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_message_cursor(last[1], last[0])
 
     message_ids = [row[0] for row in rows]
     retryable_message_ids = retryable_assistant_message_ids(
@@ -569,13 +609,15 @@ def list_messages(
         for row in rows
     ]
 
-    # Build next_cursor from last item
-    next_cursor = None
-    if has_more and messages:
-        last = messages[-1]
-        next_cursor = encode_message_cursor(last.seq, last.id)
+    if before_cursor or window == "latest":
+        if has_older and messages:
+            first = messages[0]
+            before_cursor_out = encode_message_cursor(first.seq, first.id)
 
-    return messages, PageInfo(next_cursor=next_cursor)
+    return messages, MessagePageInfo(
+        next_cursor=next_cursor,
+        before_cursor=before_cursor_out,
+    )
 
 
 def _get_message_for_visible_read_or_404(

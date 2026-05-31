@@ -6,16 +6,18 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ChatRun, Message
 from nexus.jobs.queue import enqueue_job, fail_job
 from nexus.jobs.registry import JobDefinition
 from nexus.jobs.worker import JobWorker
+from tests.factories import create_test_conversation, create_test_message, create_test_model
 from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -241,6 +243,113 @@ def test_worker_runs_dead_letter_handler_for_exhausted_expired_lease(
     row = _fetch_job_row(db_session, job.id)
     assert row["status"] == "dead"
     assert handled == [(str(job.id), "E_JOB_LEASE_EXPIRED")]
+
+
+def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    model_id = create_test_model(db_session)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Start a response",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+        model_id=model_id,
+        parent_message_id=user_message_id,
+    )
+    run_id = uuid4()
+    db_session.add(
+        ChatRun(
+            id=run_id,
+            owner_user_id=bootstrapped_user,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key=f"dead-letter-{uuid4()}",
+            payload_hash="dead-letter-payload",
+            status="running",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+        )
+    )
+    db_session.commit()
+
+    job = enqueue_job(
+        db_session,
+        kind="chat_run",
+        payload={"run_id": str(run_id)},
+        max_attempts=1,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db_session.commit()
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-chat-run-dead-letter",
+        allowed_kinds=("chat_run",),
+    )
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "dead"
+    assert row["error_code"] == "E_JOB_LEASE_EXPIRED"
+
+    run = db_session.get(ChatRun, run_id)
+    assert run is not None
+    assert run.status == "error"
+    assert run.error_code == "E_JOB_LEASE_EXPIRED"
+
+    assistant_message = db_session.get(Message, assistant_message_id)
+    assert assistant_message is not None
+    assert assistant_message.status == "error"
+    assert assistant_message.error_code == "E_JOB_LEASE_EXPIRED"
+    assert "exhausted its attempts" in assistant_message.content
+
+    done_payload = db_session.execute(
+        text(
+            """
+            SELECT payload
+            FROM chat_run_events
+            WHERE run_id = :run_id AND event_type = 'done'
+            ORDER BY seq DESC
+            LIMIT 1
+            """
+        ),
+        {"run_id": run_id},
+    ).scalar_one()
+    assert done_payload == {
+        "status": "error",
+        "usage": None,
+        "error_code": "E_JOB_LEASE_EXPIRED",
+        "final_chars": None,
+    }
 
 
 def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(

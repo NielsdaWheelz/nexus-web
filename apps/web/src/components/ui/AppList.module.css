@@ -107,19 +107,3 @@
 .item:focus-within .actionMenu {
   opacity: 1;
 }
-
-.item[data-status="info"] .icon {
-  color: var(--accent);
-}
-
-.item[data-status="warning"] .icon {
-  color: var(--warning);
-}
-
-.item[data-status="success"] .icon {
-  color: var(--success);
-}
-
-.item[data-status="error"] .icon {
-  color: var(--danger);
-}

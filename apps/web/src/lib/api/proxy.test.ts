@@ -112,11 +112,30 @@ function readSessionFromCookie(request: Request): SessionState {
   );
 }
 
+function mockBackendFetch(
+  implementation: typeof fetch = async () =>
+    Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+) {
+  return vi.fn<typeof fetch>(implementation);
+}
+
+function firstFetchCall(
+  fetchMock: ReturnType<typeof mockBackendFetch>
+): [RequestInfo | URL, RequestInit] {
+  const call = fetchMock.mock.calls[0];
+  if (!call) {
+    throw new Error("Expected backend fetch to be called");
+  }
+  const [url, init] = call;
+  if (!init) {
+    throw new Error("Expected backend fetch options");
+  }
+  return [url, init];
+}
+
 function deps({
   readSession = readSessionFromCookie,
-  backendFetch = vi.fn(async () =>
-    Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
-  ) as unknown as typeof fetch,
+  backendFetch = mockBackendFetch(),
   internalSecret = "internal-secret",
   fastApiBaseUrl = "http://api.local",
 }: {
@@ -163,12 +182,12 @@ describe("proxyToFastAPI", () => {
   });
 
   it("returns a JSON 401 when the browser has no Supabase auth cookie", async () => {
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries"),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     await expectUnauthenticated(response);
@@ -176,7 +195,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("returns a JSON 401 and clears cookies for an ended session", async () => {
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries", {
@@ -188,7 +207,7 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     await expectUnauthenticated(response);
@@ -197,7 +216,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("returns a JSON 401 for a malformed Supabase auth cookie", async () => {
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries", {
@@ -206,7 +225,7 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     await expectUnauthenticated(response);
@@ -271,7 +290,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("forwards an active session to FastAPI with the server-read bearer token", async () => {
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
     );
 
@@ -282,15 +301,12 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(200);
     expect(backendFetch).toHaveBeenCalledTimes(1);
-    const [url, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [url, init] = firstFetchCall(backendFetch);
     expect(url).toBe("http://api.local/libraries?view=mine");
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer cookie-token"
@@ -298,7 +314,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("forwards only server-owned auth headers to FastAPI", async () => {
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
     );
 
@@ -316,15 +332,12 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(200);
     expect(backendFetch).toHaveBeenCalledTimes(1);
-    const [url, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [url, init] = firstFetchCall(backendFetch);
     const headers = new Headers(init.headers);
 
     expect(url).toBe("http://api.local/libraries?view=mine");
@@ -335,7 +348,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("rejects spoofed request IDs that do not match the request ID grammar", async () => {
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json(
         { data: [] },
         { headers: { "x-request-id": "generated-request" } }
@@ -350,20 +363,17 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
-    const [, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [, init] = firstFetchCall(backendFetch);
     expect(new Headers(init.headers).get("x-request-id")).toBe(
       "generated-request"
     );
   });
 
   it("does not reflect invalid backend request IDs", async () => {
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json(
         { data: [] },
         { headers: { "x-request-id": "bad request id" } }
@@ -378,7 +388,7 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.headers.get("x-request-id")).toBe("request-1");
@@ -394,14 +404,14 @@ describe("proxyToFastAPI", () => {
       }),
       "/libraries",
       deps({
-        backendFetch: vi.fn(
+        backendFetch: mockBackendFetch(
           (_input, init) =>
             new Promise<Response>((_resolve, reject) => {
               init?.signal?.addEventListener("abort", () => {
                 reject(new DOMException("aborted", "AbortError"));
               });
             })
-        ) as unknown as typeof fetch,
+        ),
       })
     );
 
@@ -421,7 +431,7 @@ describe("proxyToFastAPI", () => {
   it("does not call Supabase session APIs on the default BFF path", async () => {
     vi.stubEnv("FASTAPI_BASE_URL", "http://api.local");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "internal-secret");
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
     );
     vi.stubGlobal("fetch", backendFetch);
@@ -437,10 +447,7 @@ describe("proxyToFastAPI", () => {
 
     expect(response.status).toBe(200);
     expect(createClient).not.toHaveBeenCalled();
-    const [, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [, init] = firstFetchCall(backendFetch);
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer default-cookie-token"
     );
@@ -455,7 +462,7 @@ describe("proxyToFastAPI", () => {
     cookieStore.getAll.mockReturnValue(parseCookieHeader(refreshableCookie));
     refreshOutcomes.push({ cookiesToSet: rotatedAuthCookie("fresh-token") });
 
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
     );
 
@@ -464,15 +471,12 @@ describe("proxyToFastAPI", () => {
         headers: { cookie: refreshableCookie },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(200);
     expect(backendFetch).toHaveBeenCalledTimes(1);
-    const [, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [, init] = firstFetchCall(backendFetch);
     // The forwarded bearer token is the rotated one parsed from the new cookie.
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer fresh-token"
@@ -492,14 +496,14 @@ describe("proxyToFastAPI", () => {
       error: { code: "refresh_token_not_found", message: "Not Found" },
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries", {
         headers: { cookie: refreshableCookie },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     await expectUnauthenticated(response);
@@ -507,7 +511,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("rejects a state-changing request from a disallowed Origin", async () => {
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries", {
@@ -518,7 +522,7 @@ describe("proxyToFastAPI", () => {
         },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(403);
@@ -533,7 +537,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("rejects a state-changing request with no Origin header", async () => {
-    const backendFetch = vi.fn();
+    const backendFetch = mockBackendFetch();
 
     const response = await proxyToFastAPIWithDeps(
       new Request("http://localhost:3000/api/libraries", {
@@ -541,7 +545,7 @@ describe("proxyToFastAPI", () => {
         headers: { cookie: sessionCookie() },
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(403);
@@ -549,7 +553,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("forwards a state-changing request from the app's own Origin", async () => {
-    const backendFetch = vi.fn(async () =>
+    const backendFetch = mockBackendFetch(async () =>
       Response.json({ ok: true }, { headers: { "x-request-id": "request-1" } })
     );
 
@@ -564,15 +568,12 @@ describe("proxyToFastAPI", () => {
         body: JSON.stringify({ name: "lib" }),
       }),
       "/libraries",
-      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+      deps({ backendFetch })
     );
 
     expect(response.status).toBe(200);
     expect(backendFetch).toHaveBeenCalledTimes(1);
-    const [, init] = backendFetch.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
+    const [, init] = firstFetchCall(backendFetch);
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer cookie-token"

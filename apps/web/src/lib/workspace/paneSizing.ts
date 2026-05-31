@@ -1,5 +1,3 @@
-"use client";
-
 import type { PaneWidthContract } from "@/lib/panes/paneRouteModel";
 
 export interface WorkspacePrimaryMetrics {

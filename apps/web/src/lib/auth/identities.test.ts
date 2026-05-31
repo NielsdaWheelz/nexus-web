@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findSupabaseIdentityForLinkedIdentity,
   getConnectableProviders,
   mayRemovePassword,
   mayUnlinkIdentity,
@@ -93,6 +94,29 @@ describe("auth identity helpers", () => {
       false
     );
     expect(mayUnlinkIdentity(identities, "missing-id")).toBe(false);
+  });
+
+  it("finds the raw Supabase identity that backs a linked identity", () => {
+    const githubIdentity = {
+      identity_id: "github-id",
+      provider: "github",
+      created_at: "2026-03-21T00:00:00Z",
+      identity_data: { email: "owner+github@example.com" },
+      provider_id: "provider-owned-value",
+    };
+
+    expect(
+      findSupabaseIdentityForLinkedIdentity(
+        { identities: [githubIdentity] },
+        { id: "github-id", provider: "github" }
+      )
+    ).toBe(githubIdentity);
+    expect(
+      findSupabaseIdentityForLinkedIdentity(
+        { identities: [githubIdentity] },
+        { id: "github-id", provider: "google" }
+      )
+    ).toBeNull();
   });
 });
 

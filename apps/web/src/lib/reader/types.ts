@@ -13,6 +13,18 @@ export type ReaderFontFamily = "serif" | "sans";
 export type ReaderFocusMode = "off" | "distraction_free" | "paragraph" | "sentence";
 export type ReaderHyphenation = "auto" | "off";
 
+export const READER_THEMES = ["light", "dark"] as const satisfies readonly ReaderTheme[];
+export const READER_FONT_FAMILIES = [
+  "serif",
+  "sans",
+] as const satisfies readonly ReaderFontFamily[];
+export const READER_FOCUS_MODES = [
+  "off",
+  "distraction_free",
+  "paragraph",
+  "sentence",
+] as const satisfies readonly ReaderFocusMode[];
+
 export interface ReaderProfile {
   theme: ReaderTheme;
   font_family: ReaderFontFamily;
@@ -32,6 +44,22 @@ export const DEFAULT_READER_PROFILE: ReaderProfile = {
   focus_mode: "off",
   hyphenation: "auto",
 };
+
+const READER_THEME_SET: ReadonlySet<string> = new Set(READER_THEMES);
+const READER_FONT_FAMILY_SET: ReadonlySet<string> = new Set(READER_FONT_FAMILIES);
+const READER_FOCUS_MODE_SET: ReadonlySet<string> = new Set(READER_FOCUS_MODES);
+
+export function isReaderTheme(value: unknown): value is ReaderTheme {
+  return typeof value === "string" && READER_THEME_SET.has(value);
+}
+
+export function isReaderFontFamily(value: unknown): value is ReaderFontFamily {
+  return typeof value === "string" && READER_FONT_FAMILY_SET.has(value);
+}
+
+export function isReaderFocusMode(value: unknown): value is ReaderFocusMode {
+  return typeof value === "string" && READER_FOCUS_MODE_SET.has(value);
+}
 
 export interface ReaderResumeLocations {
   text_offset: number | null;
@@ -98,6 +126,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -139,28 +171,27 @@ function parseNullableNumberField(
 }
 
 function parseLocations(value: unknown): ReaderResumeLocations | null {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return null;
   }
 
-  const record = value as Record<string, unknown>;
-  if (!hasExactKeys(record, ["text_offset", "progression", "total_progression", "position"])) {
+  if (!hasExactKeys(value, ["text_offset", "progression", "total_progression", "position"])) {
     return null;
   }
   const textOffset = parseNullableNumberField(
-    record.text_offset,
+    value.text_offset,
     (candidate) => Number.isInteger(candidate) && candidate >= 0
   );
   const progression = parseNullableNumberField(
-    record.progression,
+    value.progression,
     (candidate) => candidate >= 0 && candidate <= 1
   );
   const totalProgression = parseNullableNumberField(
-    record.total_progression,
+    value.total_progression,
     (candidate) => candidate >= 0 && candidate <= 1
   );
   const position = parseNullableNumberField(
-    record.position,
+    value.position,
     (candidate) => Number.isInteger(candidate) && candidate >= 1
   );
   if (!textOffset.ok || !progression.ok || !totalProgression.ok || !position.ok) {
@@ -176,17 +207,16 @@ function parseLocations(value: unknown): ReaderResumeLocations | null {
 }
 
 function parseTextContext(value: unknown): ReaderResumeTextContext | null {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return null;
   }
 
-  const record = value as Record<string, unknown>;
-  if (!hasExactKeys(record, ["quote", "quote_prefix", "quote_suffix"])) {
+  if (!hasExactKeys(value, ["quote", "quote_prefix", "quote_suffix"])) {
     return null;
   }
-  const quote = parseNullableStringField(record.quote);
-  const quotePrefix = parseNullableStringField(record.quote_prefix);
-  const quoteSuffix = parseNullableStringField(record.quote_suffix);
+  const quote = parseNullableStringField(value.quote);
+  const quotePrefix = parseNullableStringField(value.quote_prefix);
+  const quoteSuffix = parseNullableStringField(value.quote_suffix);
   if (!quote.ok || !quotePrefix.ok || !quoteSuffix.ok) {
     return null;
   }
@@ -219,34 +249,33 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
   if (value === null) {
     return null;
   }
-  if (typeof value !== "object") {
+  if (!isRecord(value)) {
     throw new Error("Invalid reader state payload");
   }
 
-  const record = value as Record<string, unknown>;
-  const kind = normalizeString(record.kind);
+  const kind = normalizeString(value.kind);
   if (kind === null) {
     throw new Error("Invalid reader state payload");
   }
 
   if (kind === "pdf") {
-    if (!hasExactKeys(record, ["kind", "page", "page_progression", "zoom", "position"])) {
+    if (!hasExactKeys(value, ["kind", "page", "page_progression", "zoom", "position"])) {
       throw new Error("Invalid reader state payload");
     }
     const page = parseNullableNumberField(
-      record.page,
+      value.page,
       (candidate) => Number.isInteger(candidate) && candidate >= 1
     );
     const pageProgression = parseNullableNumberField(
-      record.page_progression,
+      value.page_progression,
       (candidate) => candidate >= 0 && candidate <= 1
     );
     const zoom = parseNullableNumberField(
-      record.zoom,
+      value.zoom,
       (candidate) => candidate >= 0.25 && candidate <= 4
     );
     const position = parseNullableNumberField(
-      record.position,
+      value.position,
       (candidate) => Number.isInteger(candidate) && candidate >= 1
     );
     if (!page.ok || page.value === null || !pageProgression.ok || !zoom.ok || !position.ok) {
@@ -261,22 +290,21 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
     };
   }
 
-  const target = record.target;
-  const locations = parseLocations(record.locations);
-  const text = parseTextContext(record.text);
-  if (typeof target !== "object" || target === null || locations === null || text === null) {
+  const target = value.target;
+  const locations = parseLocations(value.locations);
+  const text = parseTextContext(value.text);
+  if (!isRecord(target) || locations === null || text === null) {
     throw new Error("Invalid reader state payload");
   }
 
-  const targetRecord = target as Record<string, unknown>;
   if (kind === "web" || kind === "transcript") {
-    if (!hasExactKeys(record, ["kind", "target", "locations", "text"])) {
+    if (!hasExactKeys(value, ["kind", "target", "locations", "text"])) {
       throw new Error("Invalid reader state payload");
     }
-    if (!hasExactKeys(targetRecord, ["fragment_id"])) {
+    if (!hasExactKeys(target, ["fragment_id"])) {
       throw new Error("Invalid reader state payload");
     }
-    const fragmentId = parseRequiredStringField(targetRecord.fragment_id);
+    const fragmentId = parseRequiredStringField(target.fragment_id);
     if (!fragmentId.ok || fragmentId.value === null) {
       throw new Error("Invalid reader state payload");
     }
@@ -289,15 +317,15 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
   }
 
   if (kind === "epub") {
-    if (!hasExactKeys(record, ["kind", "target", "locations", "text"])) {
+    if (!hasExactKeys(value, ["kind", "target", "locations", "text"])) {
       throw new Error("Invalid reader state payload");
     }
-    if (!hasExactKeys(targetRecord, ["section_id", "href_path", "anchor_id"])) {
+    if (!hasExactKeys(target, ["section_id", "href_path", "anchor_id"])) {
       throw new Error("Invalid reader state payload");
     }
-    const sectionId = parseRequiredStringField(targetRecord.section_id);
-    const hrefPath = parseRequiredStringField(targetRecord.href_path);
-    const anchorId = parseNullableStringField(targetRecord.anchor_id);
+    const sectionId = parseRequiredStringField(target.section_id);
+    const hrefPath = parseRequiredStringField(target.href_path);
+    const anchorId = parseNullableStringField(target.anchor_id);
     if (
       !sectionId.ok ||
       sectionId.value === null ||
@@ -363,8 +391,8 @@ export function readerResumeStatesEqual(
       left.position === right.position
     );
   }
-  return reflowableReaderResumeStatesEqual(
-    left as ReflowableReaderResumeState,
-    right as ReflowableReaderResumeState
-  );
+  if (isReflowableReaderResumeState(left) && isReflowableReaderResumeState(right)) {
+    return reflowableReaderResumeStatesEqual(left, right);
+  }
+  return false;
 }

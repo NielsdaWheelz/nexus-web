@@ -152,7 +152,6 @@ ${dotLines}
 ] as const;
 
 export const BRAND_FG_ON_DARK = "${FG_GOLD}";
-export const BRAND_FG_ON_LIGHT = "${FG_ONLIGHT}";
 export const BRAND_BG_DARK = "${BG_DARK}";
 export const BRAND_BG_LIGHT = "${BG_LIGHT}";
 `;

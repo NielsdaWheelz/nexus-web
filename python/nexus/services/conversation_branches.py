@@ -1097,19 +1097,6 @@ def _fork_status(
     raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid assistant status")
 
 
-def _graph_node_status(
-    db: Session,
-    message: Message,
-    child_messages: Sequence[Message],
-) -> Literal["complete", "pending", "error", "cancelled"]:
-    if message.role == "assistant":
-        return _fork_status(db, message)
-    assistant_child = next((child for child in child_messages if child.role == "assistant"), None)
-    if assistant_child is not None:
-        return _fork_status(db, assistant_child)
-    return "complete"
-
-
 def _message_outs_by_id(
     db: Session,
     viewer_id: UUID,

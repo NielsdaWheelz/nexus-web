@@ -594,66 +594,15 @@ def visible_conversation_ids_cte_sql() -> str:
     """
 
 
-def media_contributor_credits_rollup_cte_sql() -> str:
-    """Return SQL for CTE that pre-aggregates contributor credits per media row."""
-    return """
-        SELECT
-            cc.media_id,
-            jsonb_agg(
-                jsonb_build_object(
-                    'id', cc.id,
-                    'credited_name', cc.credited_name,
-                    'role', cc.role,
-                    'raw_role', cc.raw_role,
-                    'ordinal', cc.ordinal,
-                    'source', cc.source,
-                    'contributor_handle', c.handle,
-                    'contributor_display_name', c.display_name,
-                    'href', '/authors/' || c.handle,
-                    'contributor', jsonb_build_object(
-                        'handle', c.handle,
-                        'display_name', c.display_name,
-                        'sort_name', c.sort_name,
-                        'kind', c.kind,
-                        'status', c.status,
-                        'disambiguation', c.disambiguation
-                    )
-                )
-                ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
-            ) AS contributor_credits,
-            string_agg(
-                concat_ws(
-                    ' ',
-                    cc.credited_name,
-                    c.display_name,
-                    COALESCE(alias_text.aliases, ''),
-                    COALESCE(external_id_text.external_ids, '')
-                ),
-                ' '
-            ) AS contributor_search_text
-        FROM contributor_credits cc
-        JOIN contributors c ON c.id = cc.contributor_id
-        LEFT JOIN (
-            SELECT contributor_id, string_agg(alias, ' ') AS aliases
-            FROM contributor_aliases
-            GROUP BY contributor_id
-        ) alias_text ON alias_text.contributor_id = c.id
-        LEFT JOIN (
-            SELECT contributor_id, string_agg(external_key, ' ') AS external_ids
-            FROM contributor_external_ids
-            GROUP BY contributor_id
-        ) external_id_text ON external_id_text.contributor_id = c.id
-        WHERE cc.media_id IS NOT NULL
-          AND c.status NOT IN ('merged', 'tombstoned')
-        GROUP BY cc.media_id
+def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
+    """Return SQL for a CTE that pre-aggregates contributor credits per owner row.
+
+    owner_column selects the `contributor_credits` foreign key to group by. It is a
+    fixed internal literal, never user input, so interpolating it into SQL is safe.
     """
-
-
-def podcast_contributor_credits_rollup_cte_sql() -> str:
-    """Return SQL for CTE that pre-aggregates contributor credits per podcast row."""
-    return """
+    return f"""
         SELECT
-            cc.podcast_id,
+            cc.{owner_column},
             jsonb_agg(
                 jsonb_build_object(
                     'id', cc.id,
@@ -698,9 +647,9 @@ def podcast_contributor_credits_rollup_cte_sql() -> str:
             FROM contributor_external_ids
             GROUP BY contributor_id
         ) external_id_text ON external_id_text.contributor_id = c.id
-        WHERE cc.podcast_id IS NOT NULL
+        WHERE cc.{owner_column} IS NOT NULL
           AND c.status NOT IN ('merged', 'tombstoned')
-        GROUP BY cc.podcast_id
+        GROUP BY cc.{owner_column}
     """
 
 
@@ -885,7 +834,7 @@ def get_search_result(
                 f"""
                 WITH
                     visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT m.id, m.title, m.kind, m.published_date, mcc.contributor_credits
                 FROM media m
                 JOIN visible_media vm ON vm.media_id = m.id
@@ -935,7 +884,7 @@ def get_search_result(
                                           AND m.user_id = :viewer_id
                         WHERE le.podcast_id IS NOT NULL
                     ),
-                    podcast_contributor_credits AS ({podcast_contributor_credits_rollup_cte_sql()})
+                    podcast_contributor_credits AS ({contributor_credits_rollup_cte_sql("podcast_id")})
                 SELECT p.id, p.title, pcc.contributor_credits
                 FROM podcasts p
                 JOIN visible_podcasts vp ON vp.podcast_id = p.id
@@ -982,7 +931,7 @@ def get_search_result(
                 f"""
                 WITH
                     visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     cc.id,
                     cc.media_id,
@@ -1047,7 +996,7 @@ def get_search_result(
                 f"""
                 WITH
                     visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     f.id,
                     f.idx,
@@ -1187,7 +1136,7 @@ def get_search_result(
                 f"""
                 WITH
                     visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     h.id,
                     h.exact,
@@ -1462,7 +1411,7 @@ def get_search_result(
         row = db.execute(
             text(
                 f"""
-                WITH media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                WITH media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     es.id,
                     es.media_id,
@@ -1725,7 +1674,7 @@ def _search_media(
     query = f"""
         WITH
             visible_media AS ({visible_media_ids_cte_sql()}),
-            media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+            media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
         SELECT
             m.id,
             m.title,
@@ -1872,7 +1821,7 @@ def _search_podcasts(
                               AND m.user_id = :viewer_id
             WHERE le.podcast_id IS NOT NULL
         ),
-        podcast_contributor_credits AS ({podcast_contributor_credits_rollup_cte_sql()})
+        podcast_contributor_credits AS ({contributor_credits_rollup_cte_sql("podcast_id")})
         SELECT
             p.id,
             p.title,
@@ -2026,7 +1975,7 @@ def _search_content_chunks(
         query = f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()}),
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")}),
                 query_embedding AS (
                     SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
                 ),
@@ -2171,7 +2120,7 @@ def _search_content_chunks(
         query = f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()}),
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")}),
                 lexical_candidates AS (
                     SELECT
                         cc.id,
@@ -2713,7 +2662,7 @@ def _search_fragments(
             f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT
                 f.id,
                 f.idx,
@@ -2837,7 +2786,7 @@ def _search_highlights(
             f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT
                 h.id,
                 h.exact,
@@ -3182,7 +3131,7 @@ def _search_evidence_spans(
             f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()})
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT
                 es.id,
                 es.media_id,

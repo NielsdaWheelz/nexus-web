@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BranchDraft } from "@/lib/conversations/types";
 
-export interface UseChatDraft {
+interface UseChatDraft {
   content: string;
   setContent: (value: string) => void;
   activeDraftKey: string;

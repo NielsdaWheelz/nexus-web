@@ -17,6 +17,7 @@ import HoverPreview, {
 } from "@/components/ui/HoverPreview";
 import { clamp } from "@/lib/clamp";
 import { cx } from "@/lib/ui/cx";
+import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import { type PositionedHighlight } from "./overviewPositions";
 import { findScrollParent } from "./useAnchoredHighlightProjection";
 import styles from "./ReaderOverviewRuler.module.css";
@@ -211,20 +212,18 @@ export default function ReaderOverviewRuler({
       if (clusters.length === 0) {
         return;
       }
-      let next = activeIndex;
-      if (event.key === "ArrowDown") {
-        next = Math.min(activeIndex + 1, clusters.length - 1);
-      } else if (event.key === "ArrowUp") {
-        next = Math.max(activeIndex - 1, 0);
-      } else if (event.key === "Home") {
-        next = 0;
-      } else if (event.key === "End") {
-        next = clusters.length - 1;
-      } else if (event.key === "Enter" || event.key === " ") {
+      if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         activate(activeIndex);
         return;
-      } else {
+      }
+      const next = nextRovingIndexForKey({
+        key: event.key,
+        currentIndex: activeIndex,
+        itemCount: clusters.length,
+        orientation: "vertical",
+      });
+      if (next === null) {
         return;
       }
       event.preventDefault();

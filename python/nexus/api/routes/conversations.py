@@ -17,13 +17,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Header, Query, Response
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import release_connection
-from nexus.errors import ApiErrorCode
+from nexus.db.session import get_db, release_connection
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
     MessageRerankLedgerListResponse,
@@ -90,8 +88,6 @@ def list_conversations(
     # Explicit app-level scope validation (no framework enum/422 leakage)
     effective_scope = scope if scope is not None else "mine"
     if effective_scope not in ("mine", "all", "shared"):
-        from nexus.errors import InvalidRequestError
-
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
@@ -135,20 +131,12 @@ def create_conversation(
 
     Returns 201 Created with the conversation object.
     """
+    initial_references = body.initial_references if body is not None else None
     result = conversations_service.create_conversation(
         db=db,
         viewer_id=viewer.user_id,
+        initial_references=initial_references,
     )
-    initial_references = body.initial_references if body is not None else None
-    if initial_references:
-        for uri in initial_references:
-            conversation_references_service.add_reference(
-                db=db,
-                conversation_id=result.id,
-                resource_uri=uri,
-                viewer_id=viewer.user_id,
-            )
-    db.commit()
     return success_response(result.model_dump(mode="json"))
 
 
@@ -261,18 +249,12 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Cascades to conversation_references, messages, conversation_media,
-    conversation_shares, and chat runs.
+    Explicitly deletes conversation_references, messages, conversation_media,
+    conversation_shares, and chat runs in the service layer.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
     """
-    # Per docs/rules/database.md the DB has no ON DELETE CASCADE; clean
-    # conversation_references rows explicitly inside the request transaction.
-    db.execute(
-        text("DELETE FROM conversation_references WHERE conversation_id = :cid"),
-        {"cid": conversation_id},
-    )
     conversations_service.delete_conversation(
         db=db,
         viewer_id=viewer.user_id,
@@ -346,22 +328,46 @@ def list_messages(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results (1-100)"),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
+    before_cursor: str | None = Query(default=None, description="Older-history cursor"),
+    window: str | None = Query(
+        default=None,
+        description="Message window: start (oldest page) or latest (newest page)",
+    ),
 ) -> dict:
     """List messages in a conversation.
 
     Returns messages ordered by seq ASC, id ASC (oldest first, chat order).
-    Supports cursor-based pagination.
+    Supports forward cursor pagination and latest-window older-history pagination.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
+    if cursor is not None and before_cursor is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "cursor and before_cursor cannot be used together",
+        )
+    effective_window = window if window is not None else "start"
+    if effective_window not in ("start", "latest"):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "window must be one of: start, latest",
+        )
+    if cursor is not None and effective_window == "latest":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "window=latest cannot be used with cursor",
+        )
+
     messages, page = conversations_service.list_messages(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
         limit=limit,
         cursor=cursor,
+        before_cursor=before_cursor,
+        window=effective_window,
     )
     return {
         "data": [m.model_dump(mode="json") for m in messages],

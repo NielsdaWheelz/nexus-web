@@ -8,9 +8,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.models import WorkspaceSession
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
@@ -103,7 +103,12 @@ def post_palette_selection(
     result = command_palette_service.record_selection_for_viewer(
         db,
         viewer.user_id,
-        body,
+        query=body.query,
+        target_key=body.target_key,
+        target_kind=body.target_kind,
+        target_href=body.target_href,
+        title_snapshot=body.title_snapshot,
+        source=body.source,
     )
     return success_response(result.model_dump(mode="json"))
 

@@ -14,6 +14,7 @@ from lxml.html import HtmlElement, fragment_fromstring, tostring
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.fragment_blocks import FragmentBlockSpec
 from nexus.services.sanitize_html import sanitize_html
+from nexus.text import normalize_whitespace
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
@@ -182,7 +183,7 @@ def _headings(
     media_title: str | None,
 ) -> list[tuple[int, _Heading]]:
     root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
-    title = _plain(media_title or "")
+    title = normalize_whitespace(media_title or "")
     seen_first = False
     cursor = 0
     headings: list[tuple[int, _Heading]] = []
@@ -201,7 +202,7 @@ def _headings(
             continue
         start, end = match
         slug = _slug(label)
-        visible = not (not seen_first and title and _plain(label) == title)
+        visible = not (not seen_first and title and normalize_whitespace(label) == title)
         headings.append(
             (
                 start,
@@ -265,16 +266,12 @@ def _find_line(canonical_text: str, label: str, cursor: int) -> tuple[int, int] 
 
 
 def _label(html: str) -> str:
-    return _plain(generate_canonical_text(html))
+    return normalize_whitespace(generate_canonical_text(html))
 
 
 def _element_html(element: HtmlElement) -> str:
     html = tostring(element, encoding="unicode", method="html")
     return html if isinstance(html, str) else html.decode()
-
-
-def _plain(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", value)).strip()
 
 
 def _slug(value: str) -> str:

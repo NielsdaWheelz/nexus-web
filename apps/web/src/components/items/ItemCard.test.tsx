@@ -9,10 +9,12 @@ describe("ItemCard", () => {
       <ItemCard
         content={{
           kind: "highlight",
-          prefix: "Before ",
-          exact: "selected text",
-          suffix: " after",
-          color: "yellow",
+          snippet: {
+            prefix: "Before ",
+            exact: "selected text",
+            suffix: " after",
+            color: "yellow",
+          },
         }}
       />,
     );
@@ -26,9 +28,13 @@ describe("ItemCard", () => {
     const onLinkedActivate = vi.fn();
     render(
       <ItemCard
-        content={{ kind: "highlight", exact: "selected text", color: "green" }}
+        content={{
+          kind: "highlight",
+          snippet: { exact: "selected text", color: "green" },
+        }}
         actions={[{ id: "del", label: "Delete", onSelect: () => {} }]}
         linkedItems={[{ id: "c1", label: "First chat", onActivate: onLinkedActivate }]}
+        linkedItemsSummary="1 linked chat"
         onActivate={onActivate}
       />,
     );
@@ -39,7 +45,7 @@ describe("ItemCard", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(onActivate).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByText("1 linked"));
+    await user.click(screen.getByRole("button", { name: "1 linked chat" }));
     await user.click(screen.getByRole("button", { name: "First chat" }));
     expect(onLinkedActivate).toHaveBeenCalledTimes(1);
     expect(onActivate).toHaveBeenCalledTimes(1);
@@ -50,7 +56,10 @@ describe("ItemCard", () => {
     const onLinkedActivate = vi.fn();
     render(
       <ItemCard
-        content={{ kind: "highlight", exact: "selected text", color: "blue" }}
+        content={{
+          kind: "highlight",
+          snippet: { exact: "selected text", color: "blue" },
+        }}
         linkedItems={[
           { id: "c1", label: "First chat", onActivate: onLinkedActivate },
           { id: "c2", label: "Second chat", onActivate: () => {} },
@@ -58,10 +67,12 @@ describe("ItemCard", () => {
       />,
     );
 
-    const summary = screen.getByText("2 linked");
-    expect(summary.tagName).toBe("SUMMARY");
+    const summary = screen.getByRole("button", { name: "2 linked" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(summary).toHaveAttribute("aria-controls");
 
     await user.click(summary);
+    expect(summary).toHaveAttribute("aria-expanded", "true");
     await user.click(screen.getByRole("button", { name: "First chat" }));
     expect(onLinkedActivate).toHaveBeenCalledTimes(1);
   });
@@ -70,5 +81,12 @@ describe("ItemCard", () => {
     render(<ItemCard content={{ kind: "resource", title: "Some document" }} />);
 
     expect(screen.getByText("Some document")).toBeVisible();
+  });
+
+  it("does not render an inert body button when activation is omitted", () => {
+    render(<ItemCard content={{ kind: "resource", title: "Static document" }} />);
+
+    expect(screen.queryByRole("button", { name: "Static document" })).toBeNull();
+    expect(screen.getByText("Static document")).toBeVisible();
   });
 });

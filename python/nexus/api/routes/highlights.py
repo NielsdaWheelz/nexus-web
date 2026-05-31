@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.highlights import (

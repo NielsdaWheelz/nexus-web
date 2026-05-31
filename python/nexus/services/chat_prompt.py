@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from llm_calling.types import LLMRequest, ReasoningEffort, Turn
 
+from nexus.hashing import stable_json_hash
 from nexus.services.prompt_budget import (
     ContextBudgetError,
     PromptBlock,
@@ -68,17 +67,20 @@ def render_system_prompt_block() -> str:
 
     return (
         "You are a reading assistant for the user's saved articles, books, podcasts, "
-        "and PDFs. Pinned sources and tool results are numbered with an n attribute. "
-        "When you use information from a pinned source or tool result, cite it as [N] "
+        "and PDFs. Referenced resources appear in a <resources> block, and tool "
+        "results are numbered with an n attribute. "
+        "When you use information from a resource or tool result, cite it as [N] "
         "using its exact n. Never invent an [N]: only use values that appear as n "
         "attributes in this turn. Cite distinct sources separately and adjacently when "
         "a claim draws on more than one (e.g. [2][4]); do not concatenate numbers. "
-        "Cite only pinned-source or tool-result facts, not world knowledge. "
+        "Cite only resource or tool-result facts, not world knowledge. "
         "Any <reader_selection> block is the exact passage the user is currently looking "
         'at and asking about; treat pronouns like "this", "it", or "the quote" as '
         "referring to that selection unless the user clearly means something else. "
-        "When you need more text from the pinned media beyond what's already shown, "
-        "call app_search with a bare query — it defaults to the pinned scope."
+        "When you need the full body of a referenced resource, call read_resource(uri). "
+        "When you need to search referenced media or libraries, call "
+        "app_search(query=..., scopes=[...]); omit scopes to search this conversation's "
+        "referenced media and libraries."
     )
 
 
@@ -105,14 +107,14 @@ def build_prompt_plan(
     turns.extend(PromptTurn(role=block.role, blocks=(block,)) for block in history)
     turns.append(PromptTurn(role="user", blocks=(current_user_block,)))
 
-    stable_prefix_hash = _hash_json(
+    stable_prefix_hash = stable_json_hash(
         {
             "version": PROMPT_PLAN_VERSION,
             "cache_identity": dict(cache_identity),
             "block_hashes": [block.stable_hash for block in stable],
         }
     )
-    provider_request_hash = _hash_json(
+    provider_request_hash = stable_json_hash(
         {
             "version": PROMPT_PLAN_VERSION,
             "stable_prefix_hash": stable_prefix_hash,
@@ -192,8 +194,3 @@ def validate_prompt_size(plan: PromptPlan, max_chars: int = MAX_PROMPT_CHARS) ->
     total = plan.text_char_count()
     if total > max_chars:
         raise PromptTooLargeError(total, max_chars)
-
-
-def _hash_json(value: Mapping[str, object]) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

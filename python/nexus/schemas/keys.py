@@ -15,16 +15,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# Valid providers - must match DB constraint
-VALID_PROVIDERS = {"openai", "anthropic", "gemini", "deepseek"}
-LLMProvider = Literal["openai", "anthropic", "gemini", "deepseek"]
-ModelTier = Literal["sota", "light"]
-ReasoningMode = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
+from nexus.llm_catalog import (
+    VALID_PROVIDERS,
+    LLMProvider,
+    ModelAvailableVia,
+    ModelTier,
+    ReasoningMode,
+)
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]
 KeyProviderStateStatus = Literal["missing", "untested", "valid", "invalid", "revoked"]
-ModelAvailableVia = Literal["byok", "platform", "both"]
 
 
 # =============================================================================

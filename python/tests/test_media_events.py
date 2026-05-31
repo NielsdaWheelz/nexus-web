@@ -58,8 +58,8 @@ async def test_media_events_emits_state_on_open_and_changes_then_done(
 ) -> None:
     """Stream opens with current state, emits each change, terminates on ready.
 
-    Push-driven: each committed ``media`` UPDATE fires the migration-0122
-    trigger's NOTIFY, which wakes the tail's LISTEN connection immediately.
+    Push-driven: each committed ``media`` UPDATE fires NOTIFY, which wakes the
+    tail's LISTEN connection immediately.
     """
     user_id = uuid4()
     with direct_db.session() as session:

@@ -61,14 +61,17 @@
   width: 100%;
   min-height: 42px;
   padding: 8px 10px;
+  border: 0;
   border-radius: var(--radius-lg);
+  appearance: none;
   background: transparent;
   color: var(--ink);
   cursor: pointer;
+  font: inherit;
   text-align: left;
 }
 
-.item:hover {
+.item:not(:disabled):hover {
   background: var(--surface-hover);
 }
 
@@ -77,7 +80,7 @@
   outline-offset: 2px;
 }
 
-.item[aria-disabled="true"] {
+.item:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }

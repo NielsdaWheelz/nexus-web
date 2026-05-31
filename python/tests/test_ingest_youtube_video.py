@@ -37,7 +37,7 @@ class TestIngestYoutubeVideo:
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
-            "_fetch_youtube_transcript",
+            "fetch_youtube_transcript",
             lambda _provider_id: {
                 "status": "completed",
                 "segments": [
@@ -128,7 +128,7 @@ class TestIngestYoutubeVideo:
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
-            "_fetch_youtube_transcript",
+            "fetch_youtube_transcript",
             lambda _provider_id: {
                 "status": "failed",
                 "error_code": "E_TRANSCRIPT_UNAVAILABLE",
@@ -186,7 +186,7 @@ class TestIngestYoutubeVideo:
         )
         monkeypatch.setattr(
             _youtube_ingest_module(),
-            "_fetch_youtube_transcript",
+            "fetch_youtube_transcript",
             lambda _provider_id: {
                 "status": "completed",
                 "segments": [
@@ -279,7 +279,7 @@ class TestIngestYoutubeVideo:
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
-            "_fetch_youtube_transcript",
+            "fetch_youtube_transcript",
             _fake_transcript,
         )
 

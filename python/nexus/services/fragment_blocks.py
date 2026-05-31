@@ -107,17 +107,22 @@ def parse_fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
             current_start = end_offset
             block_idx += 1
 
-    # Validation: ensure invariants hold
+    # justify-service-invariant-check: offset coverage is derived from delimiter scanning.
+    # justify-defect: any violation means this parser emitted corrupt block coverage.
     if blocks:
-        assert blocks[0].start_offset == 0, "First block must start at 0"
-        assert blocks[-1].end_offset == text_len, "Last block must end at text length"
+        if blocks[0].start_offset != 0:
+            raise RuntimeError("First fragment block must start at 0")
+        if blocks[-1].end_offset != text_len:
+            raise RuntimeError("Last fragment block must end at text length")
 
         # Check contiguity
         for i in range(1, len(blocks)):
-            assert blocks[i].start_offset == blocks[i - 1].end_offset, (
-                f"Blocks must be contiguous: block {i - 1} ends at {blocks[i - 1].end_offset}, "
-                f"block {i} starts at {blocks[i].start_offset}"
-            )
+            if blocks[i].start_offset != blocks[i - 1].end_offset:
+                raise RuntimeError(
+                    f"Fragment blocks must be contiguous: "
+                    f"block {i - 1} ends at {blocks[i - 1].end_offset}, "
+                    f"block {i} starts at {blocks[i].start_offset}"
+                )
 
     logger.debug(
         "parsed_fragment_blocks",

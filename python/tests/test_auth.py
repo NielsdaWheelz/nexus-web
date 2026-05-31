@@ -486,6 +486,53 @@ class TestBootstrap:
             assert row is not None
             assert row[0] == "admin"
 
+    def test_default_library_owner_role_repaired(self, engine, direct_db: DirectSessionManager):
+        """Bootstrap repairs a downgraded default-library owner membership."""
+        user_id = create_test_user_id()
+
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(
+                text("INSERT INTO users (id) VALUES (:user_id)"),
+                {"user_id": user_id},
+            )
+            library_id = session.execute(
+                text("""
+                    INSERT INTO libraries (name, owner_user_id, is_default)
+                    VALUES ('My Library', :user_id, true)
+                    RETURNING id
+                """),
+                {"user_id": user_id},
+            ).scalar_one()
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'member')
+                """),
+                {"library_id": library_id, "user_id": user_id},
+            )
+            session.commit()
+
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            default_library_id = ensure_user_and_default_library(session, user_id)
+
+        assert default_library_id == library_id, (
+            f"Expected bootstrap to reuse default library {library_id}, got {default_library_id}"
+        )
+        with direct_db.session() as session:
+            role = session.execute(
+                text("""
+                    SELECT role FROM memberships
+                    WHERE library_id = :library_id AND user_id = :user_id
+                """),
+                {"library_id": library_id, "user_id": user_id},
+            ).scalar_one()
+        assert role == "admin", f"Expected bootstrap to repair owner role, got {role!r}"
+
 
 class TestGetMe:
     """Tests for GET /me endpoint."""

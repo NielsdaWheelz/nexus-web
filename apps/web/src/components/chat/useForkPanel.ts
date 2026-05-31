@@ -16,7 +16,7 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 
-export interface UseForkPanel {
+interface UseForkPanel {
   nodes: ConversationForkNode[];
   loading: boolean;
   error: string | null;
@@ -126,13 +126,19 @@ export function useForkPanel(input: {
   const saveRename = useCallback(
     async (fork: ConversationForkNode) => {
       const title = editingTitle.trim();
-      await apiFetch(`/api/conversations/${conversationId}/forks/${fork.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ title: title || null }),
-      });
-      setNodes((prev) => updateNode(prev, fork.id, { title: title || null }));
-      setEditingId(null);
-      onForksChanged?.();
+      try {
+        await apiFetch(`/api/conversations/${conversationId}/forks/${fork.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: title || null }),
+        });
+        setNodes((prev) => updateNode(prev, fork.id, { title: title || null }));
+        setEditingId(null);
+        setError(null);
+        onForksChanged?.();
+      } catch (err) {
+        console.error("Failed to rename fork:", err);
+        setError("Fork rename failed.");
+      }
     },
     [conversationId, editingTitle, onForksChanged],
   );

@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ProjectGutenbergCatalogEntry
+from nexus.db.session import transaction
 from nexus.services.contributor_credits import replace_gutenberg_contributor_credits
 
 _CATALOG_FEED_URLS: tuple[str, ...] = (
@@ -22,7 +23,7 @@ _CATALOG_FEED_URLS: tuple[str, ...] = (
     "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv",
 )
 _CATALOG_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
-_UPSERT_BATCH_SIZE = 1000
+_INSERT_BATCH_SIZE = 1000
 
 
 def sync_project_gutenberg_catalog(
@@ -36,7 +37,7 @@ def sync_project_gutenberg_catalog(
     synced_at = datetime.now(UTC)
     rows = parse_project_gutenberg_catalog_feed(payload, synced_at=synced_at)
 
-    try:
+    with transaction(db):
         db.execute(
             text(
                 """
@@ -46,8 +47,8 @@ def sync_project_gutenberg_catalog(
             )
         )
         db.execute(delete(ProjectGutenbergCatalogEntry))
-        for start in range(0, len(rows), _UPSERT_BATCH_SIZE):
-            batch = rows[start : start + _UPSERT_BATCH_SIZE]
+        for start in range(0, len(rows), _INSERT_BATCH_SIZE):
+            batch = rows[start : start + _INSERT_BATCH_SIZE]
             if not batch:
                 continue
             db.execute(insert(ProjectGutenbergCatalogEntry), batch)
@@ -58,10 +59,6 @@ def sync_project_gutenberg_catalog(
                 credits=_gutenberg_author_credits(row),
                 source="project_gutenberg_catalog",
             )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
 
     return {
         "source_url": source_url,

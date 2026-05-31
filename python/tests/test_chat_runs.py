@@ -11,6 +11,10 @@ from sqlalchemy.engine import Engine
 from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.chat_runs import (
+    _app_search_scopes_from_tool_args,
+    _retrieval_row_to_uri,
+)
 from nexus.services.conversation_branches import persist_active_leaf
 from tests.factories import (
     create_test_conversation,
@@ -991,6 +995,13 @@ class TestChatRunRequestSchema:
 class TestChatRunTooling:
     """Tooling and prompt-input contracts for POST /chat-runs."""
 
+    def test_app_search_tool_schema_rejects_legacy_scope_alias(self):
+        from nexus.services.agent_tools.app_search import APP_SEARCH_TOOL_DEFINITION
+        from nexus.services.agent_tools.read_resource import READ_RESOURCE_TOOL_DEFINITION
+
+        assert APP_SEARCH_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+        assert READ_RESOURCE_TOOL_DEFINITION["parameters"]["additionalProperties"] is False
+
     def test_chat_run_tools_always_registered(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -1024,6 +1035,107 @@ class TestChatRunTooling:
                     "results": [],
                 }
             )
+
+    def test_app_search_singular_scope_is_always_tool_error(self):
+        scopes, forced_error = _app_search_scopes_from_tool_args(
+            {"query": "needle", "scope": "media:legacy", "scopes": ["media:current"]}
+        )
+
+        assert scopes == []
+        assert forced_error is not None
+        assert "singular scope field is invalid" in forced_error
+
+    def test_app_search_scopes_must_be_array_of_strings(self):
+        scopes, forced_error = _app_search_scopes_from_tool_args(
+            {"query": "needle", "scopes": "media:not-an-array"}
+        )
+
+        assert scopes == []
+        assert forced_error == "app_search scopes must be an array of URI strings"
+
+        scopes, forced_error = _app_search_scopes_from_tool_args(
+            {"query": "needle", "scopes": ["media:ok", 123]}
+        )
+
+        assert scopes == []
+        assert forced_error == "app_search scopes must be an array of URI strings"
+
+        scopes, forced_error = _app_search_scopes_from_tool_args(
+            {"query": "needle", "scopes": ["  "]}
+        )
+
+        assert scopes == []
+        assert forced_error == "app_search scopes must be non-empty URI strings"
+
+    def test_app_search_scopes_accepts_array_of_strings(self):
+        scopes, forced_error = _app_search_scopes_from_tool_args(
+            {"query": "needle", "scopes": ["media:one", "library:two"]}
+        )
+
+        assert scopes == ["media:one", "library:two"]
+        assert forced_error is None
+
+    def test_retrieval_row_to_uri_uses_canonical_resource_uri_formatter(self):
+        span_id = uuid4()
+        media_id = uuid4()
+        chunk_id = uuid4()
+
+        assert (
+            _retrieval_row_to_uri(
+                result_type="evidence_span",
+                evidence_span_id=span_id,
+                media_id=None,
+                result_ref={},
+            )
+            == f"span:{span_id}"
+        )
+        assert (
+            _retrieval_row_to_uri(
+                result_type="media",
+                evidence_span_id=None,
+                media_id=media_id,
+                result_ref={},
+            )
+            == f"media:{media_id}"
+        )
+        assert (
+            _retrieval_row_to_uri(
+                result_type="content_chunk",
+                evidence_span_id=None,
+                media_id=None,
+                result_ref={"id": str(chunk_id)},
+            )
+            == f"chunk:{chunk_id}"
+        )
+
+    def test_retrieval_row_to_uri_requires_canonical_uuid_result_ref(self):
+        assert (
+            _retrieval_row_to_uri(
+                result_type="content_chunk",
+                evidence_span_id=None,
+                media_id=None,
+                result_ref={"id": "not-a-uuid"},
+            )
+            is None
+        )
+        assert (
+            _retrieval_row_to_uri(
+                result_type="content_chunk",
+                evidence_span_id=None,
+                media_id=None,
+                result_ref={"id": str(uuid4()).upper()},
+            )
+            is None
+        )
+        assert (
+            _retrieval_row_to_uri(
+                result_type="content_chunk",
+                evidence_span_id=None,
+                media_id=None,
+                result_ref={},
+            )
+            is None
+        )
 
     def test_chat_run_reader_context_passes_to_prompt(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

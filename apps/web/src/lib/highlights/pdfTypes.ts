@@ -9,6 +9,10 @@ export interface PdfHighlightQuad {
   y4: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 interface RectLike {
   left: number;
   right: number;
@@ -57,11 +61,10 @@ export function parseRawPdfQuads(value: unknown): PdfHighlightQuad[] {
     return [];
   }
   return value.flatMap((entry) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    if (!isRecord(entry)) {
       return [];
     }
-    const quad = entry as Record<string, unknown>;
-    const { x1, y1, x2, y2, x3, y3, x4, y4 } = quad;
+    const { x1, y1, x2, y2, x3, y3, x4, y4 } = entry;
     if (
       typeof x1 !== "number" ||
       typeof y1 !== "number" ||

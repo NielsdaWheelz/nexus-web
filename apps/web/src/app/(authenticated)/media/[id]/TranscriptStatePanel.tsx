@@ -13,7 +13,7 @@ import {
   type TranscriptCoverage,
   type TranscriptRequestForecast,
   type TranscriptState,
-} from "./transcriptView";
+} from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;

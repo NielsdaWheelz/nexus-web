@@ -7,7 +7,6 @@ import {
   createNoteBlock,
   deleteNoteBlock,
   updateNoteBlock,
-  type NoteBlock,
 } from "@/lib/notes/api";
 
 export interface HighlightLinkedNoteBlock {
@@ -181,19 +180,6 @@ export async function saveHighlightNote(
         linkedObject: { objectType: "highlight", objectId: highlightId },
         relationType: "note_about",
       });
-  return noteBlockToHighlightLinkedNoteBlock(noteBlock);
-}
-
-export async function deleteHighlightNote(
-  noteBlockId: string,
-  baseRevision: number,
-): Promise<void> {
-  await deleteNoteBlock(noteBlockId, { baseRevision });
-}
-
-export function noteBlockToHighlightLinkedNoteBlock(
-  noteBlock: NoteBlock,
-): HighlightLinkedNoteBlock {
   return {
     note_block_id: noteBlock.id,
     body_pm_json: noteBlock.bodyPmJson,
@@ -201,6 +187,13 @@ export function noteBlockToHighlightLinkedNoteBlock(
     body_text: noteBlock.bodyText,
     revision: requiredRevision(noteBlock.revision),
   };
+}
+
+export async function deleteHighlightNote(
+  noteBlockId: string,
+  baseRevision: number,
+): Promise<void> {
+  await deleteNoteBlock(noteBlockId, { baseRevision });
 }
 
 function requiredRevision(revision: number | null | undefined): number {

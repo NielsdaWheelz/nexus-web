@@ -1,6 +1,7 @@
 import { apiFetch } from "@/lib/api/client";
 import { todayLocalDate } from "@/lib/localDate";
 import type { ObjectRef } from "@/lib/objectRefs";
+import { isRecord } from "@/lib/validation";
 
 export type NoteBlockKind =
   | "bullet"
@@ -10,6 +11,16 @@ export type NoteBlockKind =
   | "code"
   | "image"
   | "embed";
+
+const NOTE_BLOCK_KINDS = new Set<string>([
+  "bullet",
+  "heading",
+  "todo",
+  "quote",
+  "code",
+  "image",
+  "embed",
+]);
 
 export interface NoteBlock {
   id: string;
@@ -40,32 +51,23 @@ export interface NotePage extends NotePageSummary {
 }
 
 interface NotePagesResponse {
-  data: {
-    pages: NotePageSummary[];
-  };
+  data: unknown;
 }
 
 interface NotePageResponse {
-  data: NotePage;
+  data: unknown;
 }
 
 interface DailyNotePageResponse {
-  data: {
-    localDate?: string;
-    local_date?: string;
-    page: NotePage;
-  };
+  data: unknown;
 }
 
 interface NoteBlockResponse {
-  data: NoteBlock;
+  data: unknown;
 }
 
 interface NotePageDocumentResponse {
-  data: {
-    page: NotePage;
-    clientMutationId: string;
-  };
+  data: unknown;
 }
 
 export interface SaveNotePageDocumentBlock {
@@ -102,6 +104,24 @@ function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`Notes API response is missing ${label}`);
+  }
+  return value;
+}
+
+export function isNoteBlockKind(value: unknown): value is NoteBlockKind {
+  return typeof value === "string" && NOTE_BLOCK_KINDS.has(value);
+}
+
+function normalizeBlockKind(value: unknown): NoteBlockKind {
+  if (!isNoteBlockKind(value)) {
+    throw new Error("Notes API response has invalid note block kind");
+  }
+  return value;
+}
+
 function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
   return {
     id: String(raw.id ?? ""),
@@ -113,19 +133,21 @@ function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
           ? raw.parent_block_id
           : null,
     orderKey: String(raw.orderKey ?? raw.order_key ?? ""),
-    blockKind: (raw.blockKind ?? raw.block_kind ?? "bullet") as NoteBlockKind,
+    blockKind: normalizeBlockKind(raw.blockKind ?? raw.block_kind ?? "bullet"),
     bodyPmJson:
-      typeof raw.bodyPmJson === "object" && raw.bodyPmJson !== null
-        ? (raw.bodyPmJson as Record<string, unknown>)
-        : typeof raw.body_pm_json === "object" && raw.body_pm_json !== null
-          ? (raw.body_pm_json as Record<string, unknown>)
+      isRecord(raw.bodyPmJson)
+        ? raw.bodyPmJson
+        : isRecord(raw.body_pm_json)
+          ? raw.body_pm_json
           : { type: "paragraph" },
     bodyMarkdown: String(raw.bodyMarkdown ?? raw.body_markdown ?? ""),
     bodyText: String(raw.bodyText ?? raw.body_text ?? ""),
     collapsed: Boolean(raw.collapsed),
     revision: requiredNumber(raw.revision, "note block revision"),
     children: Array.isArray(raw.children)
-      ? raw.children.map((child) => normalizeBlock(child as Record<string, unknown>))
+      ? raw.children.map((child) =>
+          normalizeBlock(requiredRecord(child, "note block child"))
+        )
       : [],
     createdAt:
       typeof raw.createdAt === "string"
@@ -142,7 +164,7 @@ function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
   };
 }
 
-function normalizePage(raw: Record<string, unknown>): NotePage {
+function normalizePageSummary(raw: Record<string, unknown>): NotePageSummary {
   return {
     id: String(raw.id ?? ""),
     title: String(raw.title ?? "Untitled"),
@@ -157,8 +179,16 @@ function normalizePage(raw: Record<string, unknown>): NotePage {
         : typeof raw.updated_at === "string"
           ? raw.updated_at
           : undefined,
+  };
+}
+
+function normalizePage(raw: Record<string, unknown>): NotePage {
+  return {
+    ...normalizePageSummary(raw),
     blocks: Array.isArray(raw.blocks)
-      ? raw.blocks.map((block) => normalizeBlock(block as Record<string, unknown>))
+      ? raw.blocks.map((block) =>
+          normalizeBlock(requiredRecord(block, "note page block"))
+        )
       : [],
   };
 }
@@ -183,7 +213,13 @@ export async function fetchNotePages(): Promise<NotePageSummary[]> {
   const response = await apiFetch<NotePagesResponse>("/api/notes/pages", {
     cache: "no-store",
   });
-  return response.data.pages;
+  const data = requiredRecord(response.data, "note pages response");
+  if (!Array.isArray(data.pages)) {
+    throw new Error("Notes API response is missing note pages");
+  }
+  return data.pages.map((page) =>
+    normalizePageSummary(requiredRecord(page, "note page summary"))
+  );
 }
 
 export async function createNotePage(input: {
@@ -197,7 +233,7 @@ export async function createNotePage(input: {
       description: input.description ?? null,
     }),
   });
-  return normalizePage(response.data as unknown as Record<string, unknown>);
+  return normalizePage(requiredRecord(response.data, "note page"));
 }
 
 export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<NotePage> {
@@ -206,7 +242,8 @@ export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<
     `/api/notes/daily/${localDate}?${params.toString()}`,
     { cache: "no-store" }
   );
-  return normalizePage(response.data.page as unknown as Record<string, unknown>);
+  const data = requiredRecord(response.data, "daily note response");
+  return normalizePage(requiredRecord(data.page, "daily note page"));
 }
 
 export async function quickCaptureDailyNote(input: {
@@ -224,14 +261,14 @@ export async function quickCaptureDailyNote(input: {
       }),
     }
   );
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
+  return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function fetchNotePage(pageId: string): Promise<NotePage> {
   const response = await apiFetch<NotePageResponse>(`/api/notes/pages/${pageId}`, {
     cache: "no-store",
   });
-  return normalizePage(response.data as unknown as Record<string, unknown>);
+  return normalizePage(requiredRecord(response.data, "note page"));
 }
 
 export async function updateNotePage(
@@ -242,7 +279,7 @@ export async function updateNotePage(
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  return normalizePage(response.data as unknown as Record<string, unknown>);
+  return normalizePage(requiredRecord(response.data, "note page"));
 }
 
 export async function saveNotePageDocument(
@@ -275,12 +312,9 @@ export async function saveNotePageDocument(
       }),
     }
   );
-  const data = response.data as unknown as Record<string, unknown>;
-  if (typeof data.page !== "object" || data.page === null) {
-    throw new Error("Notes API response is missing document page");
-  }
+  const data = requiredRecord(response.data, "note document response");
   return {
-    page: normalizePage(data.page as Record<string, unknown>),
+    page: normalizePage(requiredRecord(data.page, "document page")),
     clientMutationId: requiredString(data.clientMutationId, "document client mutation id"),
   };
 }
@@ -289,7 +323,7 @@ export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
   const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
     cache: "no-store",
   });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
+  return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function createNoteBlock(input: {
@@ -322,7 +356,7 @@ export async function createNoteBlock(input: {
         : null,
     }),
   });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
+  return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function updateNoteBlock(
@@ -343,7 +377,7 @@ export async function updateNoteBlock(
       collapsed: updates.collapsed,
     }),
   });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
+  return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
 export async function deleteNoteBlock(

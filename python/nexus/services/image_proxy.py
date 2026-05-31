@@ -493,53 +493,6 @@ def _create_http_client() -> httpx.Client:
     )
 
 
-def _fetch_url(url: str, client: httpx.Client) -> tuple[bytes, str | None]:
-    """Fetch URL with streaming and size limit.
-
-    Returns:
-        Tuple of (bytes, content_type)
-
-    Raises:
-        ApiError: On fetch failure, timeout, or size limit.
-    """
-    try:
-        with client.stream(
-            "GET", url, headers={"User-Agent": USER_AGENT, "Accept": "image/*,*/*;q=0.8"}
-        ) as response:
-            # Check for error status
-            if response.status_code >= 400:
-                raise ApiError(
-                    ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                    f"Upstream returned status {response.status_code}",
-                )
-
-            content_type = response.headers.get("content-type")
-
-            # Stream and enforce size limit
-            chunks = []
-            total_bytes = 0
-
-            for chunk in response.iter_bytes(chunk_size=8192):
-                total_bytes += len(chunk)
-                if total_bytes > MAX_IMAGE_BYTES:
-                    raise ApiError(
-                        ApiErrorCode.E_IMAGE_TOO_LARGE,
-                        f"Image exceeds maximum size of {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
-                    )
-                chunks.append(chunk)
-
-            return b"".join(chunks), content_type
-
-    except httpx.TimeoutException as e:
-        raise ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out") from e
-    except httpx.RequestError as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
-    except ApiError:
-        raise
-    except httpx.HTTPError as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
-
-
 def fetch_with_redirect(
     url: str,
     hostname: str,

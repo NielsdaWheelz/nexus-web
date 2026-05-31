@@ -50,6 +50,11 @@
   --radius-2xl: 16px;
   --radius-full: 999px;
 
+  /* Strokes */
+  --stroke-hairline: 1px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
   /* Spacing */
   --space-0: 0;
   --space-1: 0.25rem;

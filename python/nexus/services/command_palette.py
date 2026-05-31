@@ -14,7 +14,6 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.command_palette import (
     CommandPaletteHistoryOut,
     CommandPaletteHistoryRecentOut,
-    CommandPaletteSelectionRecordRequest,
     CommandPaletteUsageOut,
 )
 
@@ -87,13 +86,19 @@ def get_history_for_viewer(
 def record_selection_for_viewer(
     db: Session,
     viewer_id: UUID,
-    body: CommandPaletteSelectionRecordRequest,
+    *,
+    query: str | None,
+    target_key: str,
+    target_kind: str,
+    target_href: str | None,
+    title_snapshot: str,
+    source: str,
 ) -> CommandPaletteUsageOut:
     """Record one accepted command palette selection for the current viewer."""
-    query_normalized = _normalize_query(body.query)
-    target_href = _normalize_target_href(body.target_kind, body.target_href)
-    target_key = _normalize_target_key(body.target_kind, body.target_key, target_href)
-    title_snapshot = _normalize_title_snapshot(body.title_snapshot)
+    query_normalized = _normalize_query(query)
+    normalized_target_href = _normalize_target_href(target_kind, target_href)
+    normalized_target_key = _normalize_target_key(target_kind, target_key, normalized_target_href)
+    normalized_title_snapshot = _normalize_title_snapshot(title_snapshot)
 
     row: CommandPaletteUsage | None = None
     try:
@@ -101,22 +106,22 @@ def record_selection_for_viewer(
             db,
             viewer_id,
             query_normalized=query_normalized,
-            target_key=target_key,
-            target_kind=body.target_kind,
-            target_href=target_href,
-            title_snapshot=title_snapshot,
-            source=body.source,
+            target_key=normalized_target_key,
+            target_kind=target_kind,
+            target_href=normalized_target_href,
+            title_snapshot=normalized_title_snapshot,
+            source=source,
         )
     except IntegrityError:
         row = _record_selection_once(
             db,
             viewer_id,
             query_normalized=query_normalized,
-            target_key=target_key,
-            target_kind=body.target_kind,
-            target_href=target_href,
-            title_snapshot=title_snapshot,
-            source=body.source,
+            target_key=normalized_target_key,
+            target_kind=target_kind,
+            target_href=normalized_target_href,
+            title_snapshot=normalized_title_snapshot,
+            source=source,
         )
 
     return CommandPaletteUsageOut.model_validate(row)

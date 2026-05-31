@@ -604,7 +604,7 @@ class ExternalUrlLocator(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-TypedRetrievalLocator = Annotated[
+RetrievalLocator = Annotated[
     WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
     | NoteBlockOffsetsLocator
@@ -617,16 +617,29 @@ TypedRetrievalLocator = Annotated[
     Field(discriminator="type"),
 ]
 
-RetrievalLocator = TypedRetrievalLocator
+LocatorBackedResultType = Literal[
+    "content_chunk",
+    "fragment",
+    "highlight",
+    "evidence_span",
+    "note_block",
+    "message",
+    "web_result",
+]
+RetrievalLocatorType = Literal[
+    "web_text_offsets",
+    "epub_fragment_offsets",
+    "pdf_page_geometry",
+    "transcript_time_range",
+    "audio_time_range",
+    "video_time_range",
+    "note_block_offsets",
+    "message_offsets",
+    "external_url",
+]
 
-
-_CONTEXT_REF_ADAPTER = TypeAdapter(RetrievalContextRef)
-_RESULT_REF_ADAPTER = TypeAdapter(RetrievalResultRef)
-_LOCATOR_ADAPTER = TypeAdapter(RetrievalLocator)
-
-
-def validate_locator_for_result_type(result_type: str, locator: RetrievalLocator) -> None:
-    source_locator_types = {
+_SOURCE_LOCATOR_TYPES = frozenset[RetrievalLocatorType](
+    {
         "web_text_offsets",
         "epub_fragment_offsets",
         "pdf_page_geometry",
@@ -634,17 +647,28 @@ def validate_locator_for_result_type(result_type: str, locator: RetrievalLocator
         "audio_time_range",
         "video_time_range",
     }
-    match result_type:
-        case "content_chunk" | "fragment" | "highlight" | "evidence_span":
-            expected = source_locator_types
-        case "note_block":
-            expected = {"note_block_offsets"}
-        case "message":
-            expected = {"message_offsets"}
-        case "web_result":
-            expected = {"external_url"}
-        case _:
-            raise ValueError(f"{result_type} locator is not supported")
+)
+_LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[RetrievalLocatorType]] = {
+    "content_chunk": _SOURCE_LOCATOR_TYPES,
+    "fragment": _SOURCE_LOCATOR_TYPES,
+    "highlight": _SOURCE_LOCATOR_TYPES,
+    "evidence_span": _SOURCE_LOCATOR_TYPES,
+    "note_block": frozenset({"note_block_offsets"}),
+    "message": frozenset({"message_offsets"}),
+    "web_result": frozenset({"external_url"}),
+}
+
+
+_CONTEXT_REF_ADAPTER = TypeAdapter(RetrievalContextRef)
+_RESULT_REF_ADAPTER = TypeAdapter(RetrievalResultRef)
+_LOCATOR_ADAPTER = TypeAdapter(RetrievalLocator)
+
+
+def validate_locator_for_result_type(
+    result_type: LocatorBackedResultType,
+    locator: RetrievalLocator,
+) -> None:
+    expected = _LOCATOR_TYPES_BY_RESULT_TYPE[result_type]
     if locator.type not in expected:
         raise ValueError(f"{result_type} locator type is invalid")
 

@@ -54,8 +54,6 @@ import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identitie
 import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody";
 import { isAndroidShell } from "@/lib/androidShell";
 
-export type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
-
 export interface PaneChromeDescriptor {
   title: string;
   subtitle?: ReactNode;

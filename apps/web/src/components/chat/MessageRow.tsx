@@ -2,30 +2,15 @@
 
 import { useCallback } from "react";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type {
   BranchDraft,
   ConversationMessage,
   ForkOption,
-  MessageEvidenceLocator,
 } from "@/lib/conversations/types";
 import AssistantMessage from "./AssistantMessage";
 import SystemMessage from "./SystemMessage";
 import UserMessage from "./UserMessage";
-
-export interface ReaderSourceTarget {
-  source: "message_retrieval";
-  media_id: string;
-  locator: MessageEvidenceLocator;
-  snippet: string | null;
-  source_version: string;
-  highlight_behavior: "pulse";
-  focus_behavior: "scroll_into_view";
-  status: string;
-  label?: string;
-  href?: string | null;
-  evidence_span_id?: string | null;
-  evidence_id?: string;
-}
 
 interface MessageRowProps {
   message: ConversationMessage;

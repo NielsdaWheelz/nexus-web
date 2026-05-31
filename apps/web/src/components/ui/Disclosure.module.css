@@ -1,0 +1,54 @@
+.root {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.summary:hover {
+  color: var(--ink);
+}
+
+.summary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+.summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chevron {
+  flex: 0 0 auto;
+  transition: transform var(--duration-fast) var(--ease-snap);
+}
+
+.chevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+.region {
+  display: grid;
+  gap: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

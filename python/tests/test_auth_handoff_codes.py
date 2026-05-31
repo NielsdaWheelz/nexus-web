@@ -35,7 +35,6 @@ class TestAuthHandoffCodeService:
         self, db_session: Session, bootstrapped_user: UUID
     ):
         challenge = _sha256(VERIFIER).upper()
-        before = datetime.now(UTC)
 
         code = create_auth_handoff_code(
             db_session,
@@ -60,8 +59,9 @@ class TestAuthHandoffCodeService:
         )
         assert row.access_token == ACCESS_TOKEN
         assert row.refresh_token == REFRESH_TOKEN
-        assert row.expires_at > before, (
-            f"Expected expires_at in the future. expires_at={row.expires_at}, before={before}"
+        ttl = row.expires_at - row.created_at
+        assert timedelta(seconds=89) <= ttl <= timedelta(seconds=91), (
+            f"Expected DB-time handoff expiry near 90 seconds after creation, got {ttl}"
         )
 
     def test_consume_with_matching_code_and_verifier_returns_tokens_and_burns_row(

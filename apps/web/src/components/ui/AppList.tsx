@@ -21,7 +21,6 @@ interface AppListItemProps {
   trailing?: ReactNode;
   actions?: ReactNode;
   options?: ActionMenuOption[];
-  status?: "success" | "info" | "warning" | "error" | "neutral";
 }
 
 export function AppList({ children }: AppListProps) {
@@ -40,7 +39,6 @@ export function AppListItem({
   trailing,
   actions,
   options,
-  status,
 }: AppListItemProps) {
   const resolvedPaneTitleHint =
     paneTitleHint ?? (typeof title === "string" ? title : undefined);
@@ -79,7 +77,7 @@ export function AppListItem({
   );
 
   return (
-    <li className={styles.item} data-status={status}>
+    <li className={styles.item}>
       {primaryContent}
     </li>
   );

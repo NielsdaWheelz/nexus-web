@@ -1,7 +1,5 @@
 """Canonical text generation from sanitized HTML.
 
-Produces fragment.canonical_text from fragment.html_sanitized per constitution §7.
-
 Canonicalization runs on a browser-equivalent HTML5 fragment parse so the
 persisted canonical_text matches the frontend DOM walk exactly.
 
@@ -75,7 +73,7 @@ def generate_canonical_text(html_sanitized: str) -> str:
     """Generate canonical text from sanitized HTML.
 
     This function extracts text content from HTML following the
-    canonicalization rules in the constitution.
+    canonicalization rules above.
 
     Args:
         html_sanitized: The sanitized HTML from the sanitizer.
@@ -83,20 +81,15 @@ def generate_canonical_text(html_sanitized: str) -> str:
     Returns:
         Canonical text string with proper block boundaries.
 
-    Raises:
-        ValueError: If HTML cannot be parsed.
     """
     if not html_sanitized or not html_sanitized.strip():
         return ""
 
-    try:
-        fragment = html5lib.parseFragment(
-            f"<div>{html_sanitized}</div>",
-            treebuilder="dom",
-            namespaceHTMLElements=False,
-        )
-    except Exception as e:
-        raise ValueError(f"Failed to parse HTML: {e}") from e
+    fragment = html5lib.parseFragment(
+        f"<div>{html_sanitized}</div>",
+        treebuilder="dom",
+        namespaceHTMLElements=False,
+    )
 
     root = None
     for child in fragment.childNodes:

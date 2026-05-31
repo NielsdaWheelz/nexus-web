@@ -19,7 +19,7 @@ import {
 } from "@/lib/auth/password-actions";
 import styles from "./page.module.css";
 
-export type AuthMode = "signin" | "create";
+type AuthMode = "signin" | "create";
 
 interface LoginPageClientProps {
   initialFeedback?: FeedbackContent | null;

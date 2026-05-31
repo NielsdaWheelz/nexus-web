@@ -108,6 +108,98 @@ def _insert_stale_pending_upload(
     return media_id, storage_path, final_storage_path
 
 
+def _seed_stale_pending_upload_child_rows(db: Session, media_id: UUID) -> None:
+    user_id = db.execute(
+        text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    default_library_id = uuid4()
+    db.execute(
+        text("""
+            INSERT INTO libraries (id, owner_user_id, name, is_default)
+            VALUES (:library_id, :user_id, 'Abandoned Uploads', true)
+        """),
+        {"library_id": default_library_id, "user_id": user_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, 'admin')
+        """),
+        {"library_id": default_library_id, "user_id": user_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO library_entries (library_id, media_id, position)
+            VALUES (:library_id, :media_id, 0)
+        """),
+        {"library_id": default_library_id, "media_id": media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO default_library_intrinsics (default_library_id, media_id)
+            VALUES (:library_id, :media_id)
+        """),
+        {"library_id": default_library_id, "media_id": media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO user_media_deletions (user_id, media_id)
+            VALUES (:user_id, :media_id)
+        """),
+        {"user_id": user_id, "media_id": media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO media_content_index_states (media_id, status, status_reason)
+            VALUES (:media_id, 'failed', 'test_abandoned_upload_cleanup')
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO object_links (
+                user_id,
+                relation_type,
+                a_type,
+                a_id,
+                b_type,
+                b_id
+            )
+            VALUES (:user_id, 'references', 'media', :media_id, 'media', :other_id)
+        """),
+        {"user_id": user_id, "media_id": media_id, "other_id": uuid4()},
+    )
+
+
+def _assert_stale_pending_upload_child_rows_deleted(db: Session, media_id: UUID) -> None:
+    assert _count_rows(db, "library_entries", "media_id = :media_id", media_id=media_id) == 0
+    assert (
+        _count_rows(db, "default_library_intrinsics", "media_id = :media_id", media_id=media_id)
+        == 0
+    )
+    assert _count_rows(db, "user_media_deletions", "media_id = :media_id", media_id=media_id) == 0
+    assert _count_rows(db, "media_file", "media_id = :media_id", media_id=media_id) == 0
+    assert (
+        _count_rows(db, "media_content_index_states", "media_id = :media_id", media_id=media_id)
+        == 0
+    )
+    object_links = db.execute(
+        text("""
+            SELECT COUNT(*)
+            FROM object_links
+            WHERE (a_type = 'media' AND a_id = :media_id)
+               OR (b_type = 'media' AND b_id = :media_id)
+        """),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert int(object_links) == 0
+
+
+def _count_rows(db: Session, table: str, where: str, **params: object) -> int:
+    return int(db.execute(text(f"SELECT COUNT(*) FROM {table} WHERE {where}"), params).scalar_one())
+
+
 def _recovery_settings(
     *,
     stale_seconds: int = 60,
@@ -604,6 +696,7 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
 
 def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: Session):
     media_id, storage_path, final_storage_path = _insert_stale_pending_upload(db_session)
+    _seed_stale_pending_upload_child_rows(db_session, media_id)
     db_session.commit()
     storage = FakeStorageClient()
     storage.put_object(storage_path, b"%PDF-stale", "application/pdf")
@@ -635,6 +728,7 @@ def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: 
         {"media_id": media_id},
     ).scalar_one()
     assert remaining == 0
+    _assert_stale_pending_upload_child_rows_deleted(db_session, media_id)
 
 
 def test_reconciler_keeps_pending_upload_with_active_confirmation_claim(

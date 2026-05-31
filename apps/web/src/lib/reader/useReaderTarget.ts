@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import {
+  isReaderPulseTarget,
   READER_PULSE_HIGHLIGHT,
   type ReaderPulseTarget,
 } from "./pulseEvent";
@@ -62,7 +63,10 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
 
   useEffect(() => {
     function listener(event: Event) {
-      const detail = (event as CustomEvent<ReaderPulseTarget>).detail;
+      if (!(event instanceof CustomEvent) || !isReaderPulseTarget(event.detail)) {
+        return;
+      }
+      const detail = event.detail;
       if (detail.mediaId !== mediaId) return;
       const next = targetFromPulse(detail);
       if (!next) return;

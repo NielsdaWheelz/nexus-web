@@ -45,6 +45,7 @@ export interface WorkspaceAttachedSecondaryPaneState {
   activeSurfaceId:
     | "reader-highlights"
     | "reader-doc-chat"
+    | "reader-contents"
     | "conversation-references"
     | "conversation-forks"
     | "library-chat"

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -10,6 +11,15 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
+
+ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
+
+
+@dataclass(frozen=True)
+class LocatorResolution:
+    params: dict[str, str]
+    status: ResolverStatus
+    highlight: dict[str, Any] | None
 
 
 def resolve_evidence_span(
@@ -62,130 +72,60 @@ def resolve_evidence_span(
     exact = str(text_quote.get("exact") or row["span_text"] or "")
     prefix = str(text_quote.get("prefix") or "")
     suffix = str(text_quote.get("suffix") or "")
+    text_quote_out = {"exact": exact, "prefix": prefix, "suffix": suffix}
     snapshot_text_matches = _evidence_span_snapshot_matches(
         db,
         evidence_span_id=evidence_span_id,
         exact=exact,
     )
-    status = "unresolved"
-    highlight: dict[str, Any] | None = None
 
     if resolver_kind == "web":
-        fragment_id = selector.get("fragment_id")
-        start_offset = selector.get("start_offset")
-        end_offset = selector.get("end_offset")
-        if isinstance(fragment_id, str):
-            params["fragment"] = fragment_id
-        if (
-            isinstance(fragment_id, str)
-            and isinstance(start_offset, int)
-            and isinstance(end_offset, int)
-            and snapshot_text_matches
-        ):
-            status = "resolved"
-            highlight = {
-                "kind": "web_text",
-                "evidence_span_id": str(evidence_span_id),
-                "fragment_id": fragment_id,
-                "start_offset": start_offset,
-                "end_offset": end_offset,
-                "text_quote": {"exact": exact, "prefix": prefix, "suffix": suffix},
-            }
+        resolution = _resolve_web_selector(
+            selector,
+            evidence_span_id=evidence_span_id,
+            text_quote=text_quote_out,
+            snapshot_text_matches=snapshot_text_matches,
+        )
 
     elif resolver_kind == "epub":
-        section_id = selector.get("section_id")
-        fragment_id = selector.get("fragment_id")
-        start_offset = selector.get("start_offset")
-        end_offset = selector.get("end_offset")
-        if isinstance(section_id, str):
-            params["loc"] = section_id
-        if isinstance(fragment_id, str):
-            params["fragment"] = fragment_id
-        if (
-            isinstance(fragment_id, str)
-            and isinstance(start_offset, int)
-            and isinstance(end_offset, int)
-            and snapshot_text_matches
-        ):
-            status = "resolved"
-            highlight = {
-                "kind": "epub_text",
-                "evidence_span_id": str(evidence_span_id),
-                "fragment_id": fragment_id,
-                "section_id": section_id if isinstance(section_id, str) else None,
-                "start_offset": start_offset,
-                "end_offset": end_offset,
-                "text_quote": {"exact": exact, "prefix": prefix, "suffix": suffix},
-            }
+        resolution = _resolve_epub_selector(
+            selector,
+            evidence_span_id=evidence_span_id,
+            text_quote=text_quote_out,
+            snapshot_text_matches=snapshot_text_matches,
+        )
 
     elif resolver_kind == "pdf":
-        page_number = selector.get("page_number")
-        if isinstance(page_number, int) and page_number >= 1:
-            params["page"] = str(page_number)
-        raw_geometry = selector.get("geometry")
-        geometry: dict[str, Any] = raw_geometry if isinstance(raw_geometry, dict) else {}
-        raw_geometry_quads = geometry.get("quads")
-        raw_quads = raw_geometry_quads if isinstance(raw_geometry_quads, list) else []
-        quads: list[dict[str, float]] = []
-        for raw_quad in raw_quads:
-            if not isinstance(raw_quad, dict):
-                continue
-            quad: dict[str, float] = {}
-            for key in ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"):
-                value = raw_quad.get(key)
-                if not isinstance(value, int | float):
-                    quad = {}
-                    break
-                quad[key] = float(value)
-            if quad:
-                quads.append(quad)
-        pdf_selector_matches = (
-            _pdf_selector_snapshot_matches(
-                selector=selector,
-                snapshot_source_fingerprint=row["source_fingerprint"],
-            )
-            and snapshot_text_matches
+        resolution = _resolve_pdf_selector(
+            selector,
+            evidence_span_id=evidence_span_id,
+            text_quote=text_quote_out,
+            selector_matches=(
+                _pdf_selector_snapshot_matches(
+                    selector=selector,
+                    snapshot_source_fingerprint=row["source_fingerprint"],
+                )
+                and snapshot_text_matches
+            ),
         )
-        if isinstance(page_number, int) and page_number >= 1 and pdf_selector_matches:
-            status = "resolved" if quads else "no_geometry"
-            highlight = {
-                "kind": "pdf_text",
-                "evidence_span_id": str(evidence_span_id),
-                "page_number": page_number,
-                "page_label": selector.get("page_label")
-                if isinstance(selector.get("page_label"), str)
-                else None,
-                "source_fingerprint": (
-                    selector.get("source_fingerprint")
-                    if isinstance(selector.get("source_fingerprint"), str)
-                    else None
-                ),
-                "text_quote": {"exact": exact, "prefix": prefix, "suffix": suffix},
-                "geometry": {**geometry, "quads": quads} if quads else None,
-            }
 
     elif resolver_kind == "transcript":
-        t_start_ms = selector.get("t_start_ms")
-        t_end_ms = selector.get("t_end_ms")
-        if isinstance(t_start_ms, int) and t_start_ms >= 0:
-            params["t_start_ms"] = str(t_start_ms)
-        if (
-            _transcript_selector_snapshot_matches(
-                selector=selector,
-                snapshot_metadata=row["snapshot_metadata"],
-            )
-            and snapshot_text_matches
-        ):
-            status = "resolved"
-            highlight = {
-                "kind": "transcript_time_text",
-                "evidence_span_id": str(evidence_span_id),
-                "t_start_ms": t_start_ms if isinstance(t_start_ms, int) else None,
-                "t_end_ms": t_end_ms if isinstance(t_end_ms, int) else None,
-                "text_quote": {"exact": exact, "prefix": prefix, "suffix": suffix},
-            }
+        resolution = _resolve_transcript_selector(
+            selector,
+            evidence_span_id=evidence_span_id,
+            text_quote=text_quote_out,
+            selector_matches=(
+                _transcript_selector_snapshot_matches(
+                    selector=selector,
+                    snapshot_metadata=row["snapshot_metadata"],
+                )
+                and snapshot_text_matches
+            ),
+        )
     else:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
+
+    params.update(resolution.params)
 
     return {
         "evidence_span_id": str(evidence_span_id),
@@ -197,11 +137,166 @@ def resolve_evidence_span(
             "kind": resolver_kind,
             "route": f"/media/{media_id}",
             "params": params,
-            "status": status,
+            "status": resolution.status,
             "selector": selector,
-            "highlight": highlight,
+            "highlight": resolution.highlight,
         },
     }
+
+
+def _resolve_web_selector(
+    selector: dict[str, Any],
+    *,
+    evidence_span_id: UUID,
+    text_quote: dict[str, str],
+    snapshot_text_matches: bool,
+) -> LocatorResolution:
+    params: dict[str, str] = {}
+    fragment_id = selector.get("fragment_id")
+    start_offset = selector.get("start_offset")
+    end_offset = selector.get("end_offset")
+    if isinstance(fragment_id, str):
+        params["fragment"] = fragment_id
+    if (
+        isinstance(fragment_id, str)
+        and isinstance(start_offset, int)
+        and isinstance(end_offset, int)
+        and snapshot_text_matches
+    ):
+        return LocatorResolution(
+            params=params,
+            status="resolved",
+            highlight={
+                "kind": "web_text",
+                "evidence_span_id": str(evidence_span_id),
+                "fragment_id": fragment_id,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "text_quote": text_quote,
+            },
+        )
+    return LocatorResolution(params=params, status="unresolved", highlight=None)
+
+
+def _resolve_epub_selector(
+    selector: dict[str, Any],
+    *,
+    evidence_span_id: UUID,
+    text_quote: dict[str, str],
+    snapshot_text_matches: bool,
+) -> LocatorResolution:
+    params: dict[str, str] = {}
+    section_id = selector.get("section_id")
+    fragment_id = selector.get("fragment_id")
+    start_offset = selector.get("start_offset")
+    end_offset = selector.get("end_offset")
+    if isinstance(section_id, str):
+        params["loc"] = section_id
+    if isinstance(fragment_id, str):
+        params["fragment"] = fragment_id
+    if (
+        isinstance(fragment_id, str)
+        and isinstance(start_offset, int)
+        and isinstance(end_offset, int)
+        and snapshot_text_matches
+    ):
+        return LocatorResolution(
+            params=params,
+            status="resolved",
+            highlight={
+                "kind": "epub_text",
+                "evidence_span_id": str(evidence_span_id),
+                "fragment_id": fragment_id,
+                "section_id": section_id if isinstance(section_id, str) else None,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "text_quote": text_quote,
+            },
+        )
+    return LocatorResolution(params=params, status="unresolved", highlight=None)
+
+
+def _resolve_pdf_selector(
+    selector: dict[str, Any],
+    *,
+    evidence_span_id: UUID,
+    text_quote: dict[str, str],
+    selector_matches: bool,
+) -> LocatorResolution:
+    params: dict[str, str] = {}
+    page_number = selector.get("page_number")
+    if isinstance(page_number, int) and page_number >= 1:
+        params["page"] = str(page_number)
+    raw_geometry = selector.get("geometry")
+    geometry: dict[str, Any] = raw_geometry if isinstance(raw_geometry, dict) else {}
+    quads = _pdf_quads_from_geometry(geometry)
+    if isinstance(page_number, int) and page_number >= 1 and selector_matches:
+        return LocatorResolution(
+            params=params,
+            status="resolved" if quads else "no_geometry",
+            highlight={
+                "kind": "pdf_text",
+                "evidence_span_id": str(evidence_span_id),
+                "page_number": page_number,
+                "page_label": selector.get("page_label")
+                if isinstance(selector.get("page_label"), str)
+                else None,
+                "source_fingerprint": (
+                    selector.get("source_fingerprint")
+                    if isinstance(selector.get("source_fingerprint"), str)
+                    else None
+                ),
+                "text_quote": text_quote,
+                "geometry": {**geometry, "quads": quads} if quads else None,
+            },
+        )
+    return LocatorResolution(params=params, status="unresolved", highlight=None)
+
+
+def _pdf_quads_from_geometry(geometry: dict[str, Any]) -> list[dict[str, float]]:
+    raw_geometry_quads = geometry.get("quads")
+    raw_quads = raw_geometry_quads if isinstance(raw_geometry_quads, list) else []
+    quads: list[dict[str, float]] = []
+    for raw_quad in raw_quads:
+        if not isinstance(raw_quad, dict):
+            continue
+        quad: dict[str, float] = {}
+        for key in ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"):
+            value = raw_quad.get(key)
+            if not isinstance(value, int | float):
+                quad = {}
+                break
+            quad[key] = float(value)
+        if quad:
+            quads.append(quad)
+    return quads
+
+
+def _resolve_transcript_selector(
+    selector: dict[str, Any],
+    *,
+    evidence_span_id: UUID,
+    text_quote: dict[str, str],
+    selector_matches: bool,
+) -> LocatorResolution:
+    params: dict[str, str] = {}
+    t_start_ms = selector.get("t_start_ms")
+    t_end_ms = selector.get("t_end_ms")
+    if isinstance(t_start_ms, int) and t_start_ms >= 0:
+        params["t_start_ms"] = str(t_start_ms)
+    if selector_matches:
+        return LocatorResolution(
+            params=params,
+            status="resolved",
+            highlight={
+                "kind": "transcript_time_text",
+                "evidence_span_id": str(evidence_span_id),
+                "t_start_ms": t_start_ms if isinstance(t_start_ms, int) else None,
+                "t_end_ms": t_end_ms if isinstance(t_end_ms, int) else None,
+                "text_quote": text_quote,
+            },
+        )
+    return LocatorResolution(params=params, status="unresolved", highlight=None)
 
 
 def _evidence_span_snapshot_matches(

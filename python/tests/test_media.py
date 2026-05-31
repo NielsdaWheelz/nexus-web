@@ -6,7 +6,7 @@ Tests cover:
 - 404 masking for unreadable media
 - Timestamp serialization
 
-Tests scenarios from s0_spec.md:
+Core scenarios:
 - #12: Non-member cannot read media
 - #19: GET /media/{id} enforces visibility
 - #20: GET /media/{id}/fragments returns content
@@ -2901,6 +2901,368 @@ class TestRetryMetadataEndpoint:
 # =============================================================================
 # Refresh Endpoint Tests — PDF and EPUB broadening
 # =============================================================================
+
+
+def _create_podcast_media_for_refresh(
+    session,
+    *,
+    user_id: UUID,
+    processing_status: str = "ready_for_reading",
+    external_playback_url: str | None = "https://cdn.example.com/episode.mp3",
+    failure_stage: str | None = None,
+    last_error_code: str | None = None,
+) -> tuple[UUID, UUID]:
+    media_id = uuid4()
+    podcast_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+            VALUES (:podcast_id, 'test', :provider_podcast_id, 'Refresh Podcast', :feed_url)
+            """
+        ),
+        {
+            "podcast_id": podcast_id,
+            "provider_podcast_id": f"refresh-podcast-{podcast_id}",
+            "feed_url": f"https://example.com/podcasts/{podcast_id}.xml",
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO media (
+                id,
+                kind,
+                title,
+                processing_status,
+                created_by_user_id,
+                external_playback_url,
+                failure_stage,
+                last_error_code
+            )
+            VALUES (
+                :media_id,
+                'podcast_episode',
+                'Refresh Episode',
+                :processing_status,
+                :user_id,
+                :external_playback_url,
+                :failure_stage,
+                :last_error_code
+            )
+            """
+        ),
+        {
+            "media_id": media_id,
+            "processing_status": processing_status,
+            "user_id": user_id,
+            "external_playback_url": external_playback_url,
+            "failure_stage": failure_stage,
+            "last_error_code": last_error_code,
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO podcast_episodes (
+                media_id,
+                podcast_id,
+                provider_episode_id,
+                fallback_identity,
+                duration_seconds
+            )
+            VALUES (
+                :media_id,
+                :podcast_id,
+                :provider_episode_id,
+                :fallback_identity,
+                1800
+            )
+            """
+        ),
+        {
+            "media_id": media_id,
+            "podcast_id": podcast_id,
+            "provider_episode_id": f"episode-{media_id}",
+            "fallback_identity": f"fallback-{media_id}",
+        },
+    )
+    session.commit()
+    return media_id, podcast_id
+
+
+def _register_podcast_refresh_cleanup(
+    direct_db: DirectSessionManager,
+    *,
+    media_id: UUID,
+    podcast_id: UUID,
+) -> None:
+    direct_db.register_cleanup("podcasts", "id", podcast_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+    direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
+    direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+    direct_db.register_cleanup("podcast_transcription_jobs", "media_id", media_id)
+    direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
+
+
+class TestRefreshSourceForPodcastMedia:
+    def test_refresh_podcast_without_existing_rows_resets_transcription_state(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            media_id, podcast_id = _create_podcast_media_for_refresh(
+                session,
+                user_id=user_id,
+            )
+        _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["refresh_enqueued"] is True
+        assert data["processing_status"] == "extracting"
+        assert (
+            _count_jobs_for_media(
+                direct_db,
+                kind="podcast_transcribe_episode_job",
+                media_id=media_id,
+            )
+            == 1
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT
+                        j.status,
+                        j.request_reason,
+                        j.reserved_minutes,
+                        j.reservation_usage_date,
+                        mts.transcript_state,
+                        mts.transcript_coverage,
+                        mts.semantic_status,
+                        mts.active_transcript_version_id,
+                        m.processing_status
+                    FROM media m
+                    JOIN podcast_transcription_jobs j ON j.media_id = m.id
+                    JOIN media_transcript_states mts ON mts.media_id = m.id
+                    WHERE m.id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+        assert row == (
+            "pending",
+            "operator_requeue",
+            0,
+            None,
+            "queued",
+            "none",
+            "none",
+            None,
+            "extracting",
+        )
+
+    def test_refresh_podcast_resets_existing_job_and_clears_active_transcript(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        transcript_version_id = uuid4()
+        with direct_db.session() as session:
+            media_id, podcast_id = _create_podcast_media_for_refresh(
+                session,
+                user_id=user_id,
+                processing_status="failed",
+                failure_stage="transcribe",
+                last_error_code="E_TRANSCRIPT_PROVIDER",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcription_jobs (
+                        media_id,
+                        requested_by_user_id,
+                        request_reason,
+                        reserved_minutes,
+                        reservation_usage_date,
+                        status,
+                        error_code,
+                        attempts,
+                        started_at,
+                        completed_at
+                    )
+                    VALUES (
+                        :media_id,
+                        :user_id,
+                        'search',
+                        15,
+                        CURRENT_DATE,
+                        'completed',
+                        'E_OLD',
+                        7,
+                        now(),
+                        now()
+                    )
+                    """
+                ),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_versions (
+                        id,
+                        media_id,
+                        version_no,
+                        transcript_coverage,
+                        is_active,
+                        request_reason,
+                        created_by_user_id
+                    )
+                    VALUES (:version_id, :media_id, 1, 'full', true, 'search', :user_id)
+                    """
+                ),
+                {
+                    "version_id": transcript_version_id,
+                    "media_id": media_id,
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        active_transcript_version_id,
+                        last_request_reason,
+                        last_error_code
+                    )
+                    VALUES (
+                        :media_id,
+                        'ready',
+                        'full',
+                        'ready',
+                        :version_id,
+                        'search',
+                        'E_OLD'
+                    )
+                    """
+                ),
+                {"media_id": media_id, "version_id": transcript_version_id},
+            )
+            session.commit()
+        _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 202, resp.text
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT
+                        j.status,
+                        j.request_reason,
+                        j.reserved_minutes,
+                        j.reservation_usage_date,
+                        j.error_code,
+                        j.attempts,
+                        j.started_at,
+                        j.completed_at,
+                        mts.transcript_state,
+                        mts.transcript_coverage,
+                        mts.semantic_status,
+                        mts.active_transcript_version_id,
+                        mts.last_request_reason,
+                        mts.last_error_code,
+                        m.processing_status,
+                        m.failure_stage,
+                        m.last_error_code
+                    FROM media m
+                    JOIN podcast_transcription_jobs j ON j.media_id = m.id
+                    JOIN media_transcript_states mts ON mts.media_id = m.id
+                    WHERE m.id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+        assert row == (
+            "pending",
+            "operator_requeue",
+            0,
+            None,
+            None,
+            7,
+            None,
+            None,
+            "queued",
+            "none",
+            "none",
+            None,
+            "operator_requeue",
+            None,
+            "extracting",
+            None,
+            None,
+        )
+
+    def test_refresh_podcast_without_audio_source_does_not_create_transcription_rows(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            media_id, podcast_id = _create_podcast_media_for_refresh(
+                session,
+                user_id=user_id,
+                external_playback_url=None,
+            )
+        _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+        with direct_db.session() as session:
+            counts = session.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM podcast_transcription_jobs WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM media_transcript_states WHERE media_id = :media_id)
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+        assert counts == (0, 0)
 
 
 class TestRefreshSourceForFileBackedMedia:

@@ -255,7 +255,7 @@ def create_nasa_podcast_episode(
     for job_id in job_ids:
         direct_db.register_cleanup("background_jobs", "id", job_id)
 
-    from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
         sync_result = run_podcast_subscription_sync_now(

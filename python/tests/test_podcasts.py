@@ -7,8 +7,8 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import httpx
+import lxml.etree as etree
 import pytest
-from lxml import etree
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache, get_settings
@@ -426,7 +426,7 @@ def _set_plan(
         )
         clear_settings_cache()
 
-    from nexus.api.deps import get_db
+    from nexus.db.session import get_db
 
     db_override = auth_client.app.dependency_overrides[get_db]
     db_iter = db_override()
@@ -548,8 +548,8 @@ def _run_subscription_sync(
     stub_enqueue: bool = True,
 ) -> dict:
     from nexus.services.podcasts import transcripts as podcast_transcript_service
+    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
     from nexus.services.podcasts.transcripts import run_podcast_transcription_now
-    from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
 
     original_enqueue = podcast_transcript_service._enqueue_podcast_transcription_job
 
@@ -1310,7 +1310,7 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # Data-plane worker path should ingest episodes and transition pending -> complete.
-        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -1412,7 +1412,7 @@ class TestPodcastSubscriptionSyncLifecycle:
     def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
         self, auth_client, monkeypatch, direct_db
     ):
-        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
         opted_in_user = create_test_user_id()
         opted_out_user = create_test_user_id()
@@ -1522,7 +1522,7 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # If provider result appears capped and feed has no next-page path, surface source_limited.
-        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -4813,6 +4813,81 @@ class TestPodcastPollingOrchestration:
                 )
                 session.commit()
 
+    def test_scheduled_poll_keeps_db_clock_active_singleton_when_app_clock_fast(
+        self, monkeypatch, direct_db
+    ):
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_poll_runs (
+                        id,
+                        orchestration_source,
+                        scheduler_identity,
+                        status,
+                        run_limit,
+                        started_at,
+                        lease_expires_at,
+                        processed_count,
+                        failed_count,
+                        skipped_count,
+                        scanned_count,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        'scheduled',
+                        'db-clock-owner',
+                        'running',
+                        100,
+                        now(),
+                        now() + interval '10 minutes',
+                        0,
+                        0,
+                        0,
+                        0,
+                        now(),
+                        now()
+                    )
+                    """
+                ),
+                {"id": uuid4()},
+            )
+            session.commit()
+
+        class FutureDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: ANN001
+                return datetime(2099, 1, 1, tzinfo=UTC)
+
+        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FutureDateTime)
+
+        try:
+            result = _run_scheduled_active_subscription_poll(
+                direct_db,
+                limit=10,
+                scheduler_identity="pytest-fast-clock-contender",
+            )
+            assert result["status"] == "skipped_singleton", (
+                "active poll leases must be judged by the DB clock, "
+                f"not a fast app-server clock, got {result}"
+            )
+        finally:
+            with direct_db.session() as session:
+                session.execute(
+                    text(
+                        """
+                        UPDATE podcast_subscription_poll_runs
+                        SET status = 'expired',
+                            completed_at = now(),
+                            updated_at = now()
+                        WHERE status = 'running'
+                        """
+                    )
+                )
+                session.commit()
+
     def test_poll_reclaims_expired_running_sync_claim(self, auth_client, monkeypatch, direct_db):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -4889,6 +4964,90 @@ class TestPodcastPollingOrchestration:
         status_data = status_response.json()["data"]
         assert status_data["sync_status"] in {"complete", "source_limited"}
         assert status_data["last_synced_at"] is not None
+
+    def test_poll_keeps_db_clock_healthy_running_sync_claim(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"healthy-running-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Healthy Running Claim Podcast")
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET status = 'unsubscribed',
+                        updated_at = now()
+                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET
+                        sync_status = 'running',
+                        sync_started_at = now(),
+                        sync_completed_at = NULL,
+                        updated_at = now()
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                },
+            )
+            session.commit()
+
+        class FutureDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: ANN001
+                return datetime(2099, 1, 1, tzinfo=UTC)
+
+        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FutureDateTime)
+
+        result = _run_active_subscription_poll(direct_db, limit=100)
+        assert result["scanned_count"] == 0, (
+            "running syncs that are healthy by the DB clock must not be reclaimed "
+            f"by an app server with a skewed clock, got {result}"
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT sync_status, sync_attempts
+                    FROM podcast_subscriptions
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                },
+            ).one()
+
+        assert row[0] == "running"
+        assert row[1] == 0
 
     def test_scheduled_poll_is_bounded_by_explicit_run_limit(
         self, auth_client, monkeypatch, direct_db
@@ -7611,6 +7770,166 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert job_row[2] is not None
         assert job_row[3] is not None
 
+    def test_manual_transcription_worker_keeps_db_clock_live_running_job(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_transcription_jobs
+                    SET
+                        status = 'running',
+                        started_at = now(),
+                        updated_at = now(),
+                        completed_at = NULL
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        class FutureDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: ANN001
+                return datetime(2099, 1, 1, tzinfo=UTC)
+
+        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FutureDateTime)
+        monkeypatch.setattr(
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
+            lambda _audio_url: pytest.fail("live DB-clock job must not be reclaimed"),
+        )
+
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+
+        with direct_db.session() as session:
+            result = run_podcast_transcription_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "not_pending"
+        assert result["job_status"] == "running"
+
+        with direct_db.session() as session:
+            attempts = session.execute(
+                text(
+                    """
+                    SELECT attempts
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar()
+        assert attempts == 0
+
+    def test_manual_transcription_worker_uses_db_clock_for_claim_lifecycle_timestamps(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+
+        class FutureDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: ANN001
+                return datetime(2099, 1, 1, tzinfo=UTC)
+
+        transcribe_started = threading.Event()
+        release_transcribe = threading.Event()
+        worker_result: dict[str, object] = {}
+        worker_errors: list[Exception] = []
+
+        def slow_transcribe(_audio_url: str) -> dict[str, object]:
+            transcribe_started.set()
+            assert release_transcribe.wait(timeout=8), (
+                "worker should stay in-flight while claim timestamps are inspected"
+            )
+            return {
+                "status": "completed",
+                "segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "db clock claim"}],
+            }
+
+        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FutureDateTime)
+        monkeypatch.setattr(
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio", slow_transcribe
+        )
+
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+
+        def run_worker() -> None:
+            try:
+                with direct_db.session() as session:
+                    result = run_podcast_transcription_now(
+                        session,
+                        media_id=media_id,
+                        requested_by_user_id=user_id,
+                    )
+                    session.commit()
+                worker_result["value"] = result
+            except Exception as exc:  # pragma: no cover - surfaced via assertion below
+                worker_errors.append(exc)
+
+        worker_thread = threading.Thread(target=run_worker, daemon=True)
+        try:
+            worker_thread.start()
+            assert transcribe_started.wait(timeout=3), (
+                "worker should begin provider transcription before timestamp inspection"
+            )
+
+            with direct_db.session() as session:
+                row = session.execute(
+                    text(
+                        """
+                        SELECT
+                            job.started_at,
+                            job.updated_at,
+                            media.processing_started_at,
+                            state.updated_at,
+                            now()
+                        FROM podcast_transcription_jobs job
+                        JOIN media ON media.id = job.media_id
+                        JOIN media_transcript_states state ON state.media_id = job.media_id
+                        WHERE job.media_id = :media_id
+                        """
+                    ),
+                    {"media_id": media_id},
+                ).one()
+
+            db_now = row[4]
+            for observed in row[:4]:
+                assert observed is not None
+                assert abs((observed - db_now).total_seconds()) < 10, (
+                    "running claim lifecycle timestamps must come from DB now(), "
+                    f"got observed={observed} db_now={db_now}"
+                )
+        finally:
+            release_transcribe.set()
+            worker_thread.join(timeout=8)
+
+        assert not worker_errors, f"worker failed unexpectedly: {worker_errors}"
+        assert worker_thread.is_alive() is False, "worker should finish after release"
+        assert worker_result["value"]["status"] == "completed"
+
     def test_manual_transcription_worker_does_not_reclaim_live_running_job_with_heartbeat(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -9070,7 +9389,7 @@ class TestSubscribeWithLibraryIds:
         self, auth_client, monkeypatch, direct_db
     ):
         """Initial sync backfills existing episodes into the subscription's libraries."""
-        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -9165,7 +9484,7 @@ class TestSubscribeWithLibraryIds:
         self, auth_client, monkeypatch, direct_db
     ):
         """New episodes synced into an existing subscription inherit its library set."""
-        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)

@@ -1,4 +1,5 @@
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import { isRecord } from "@/lib/validation";
 
 type MenuSelectDetail = { triggerEl: HTMLButtonElement | null };
 
@@ -6,7 +7,32 @@ interface MediaActionSubject {
   id: string;
   title: string;
   canonical_source_url: string | null;
-  capabilities?: object | null;
+  capabilities?: unknown;
+}
+
+interface MediaActionCapabilities {
+  can_delete: boolean;
+  can_retry: boolean;
+  can_refresh_source: boolean;
+  can_retry_metadata: boolean;
+}
+
+function normalizeMediaActionCapabilities(value: unknown): MediaActionCapabilities {
+  if (!isRecord(value)) {
+    return {
+      can_delete: false,
+      can_retry: false,
+      can_refresh_source: false,
+      can_retry_metadata: false,
+    };
+  }
+
+  return {
+    can_delete: value.can_delete === true,
+    can_retry: value.can_retry === true,
+    can_refresh_source: value.can_refresh_source === true,
+    can_retry_metadata: value.can_retry_metadata === true,
+  };
 }
 
 export function mediaResourceOptions(input: {
@@ -26,12 +52,7 @@ export function mediaResourceOptions(input: {
   const media = input.media;
   if (!media) return [];
 
-  const capabilities = media.capabilities as {
-    can_delete?: unknown;
-    can_retry?: unknown;
-    can_refresh_source?: unknown;
-    can_retry_metadata?: unknown;
-  } | null | undefined;
+  const capabilities = normalizeMediaActionCapabilities(media.capabilities);
   const options: ActionMenuOption[] = [];
 
   if (media.canonical_source_url) {
@@ -42,7 +63,7 @@ export function mediaResourceOptions(input: {
     });
   }
 
-  if (capabilities?.can_retry === true && input.onRetry) {
+  if (capabilities.can_retry && input.onRetry) {
     options.push({
       id: "retry-processing",
       label: input.retryBusy ? "Retrying..." : "Retry processing",
@@ -51,7 +72,7 @@ export function mediaResourceOptions(input: {
     });
   }
 
-  if (capabilities?.can_refresh_source === true && input.onRefreshSource) {
+  if (capabilities.can_refresh_source && input.onRefreshSource) {
     options.push({
       id: "refresh-source",
       label: input.refreshBusy ? "Refreshing..." : "Refresh source",
@@ -60,7 +81,7 @@ export function mediaResourceOptions(input: {
     });
   }
 
-  if (capabilities?.can_retry_metadata === true && input.onRetryMetadata) {
+  if (capabilities.can_retry_metadata && input.onRetryMetadata) {
     options.push({
       id: "re-enrich-metadata",
       label: input.retryMetadataBusy ? "Re-enriching..." : "Re-enrich metadata",
@@ -86,7 +107,7 @@ export function mediaResourceOptions(input: {
     });
   }
 
-  if (capabilities?.can_delete === true && input.onDelete) {
+  if (capabilities.can_delete && input.onDelete) {
     options.push({
       id: "delete-media",
       label: "Delete document",

@@ -115,6 +115,87 @@ const initialState = (): ReadingState => ({
   cursor: 0,
 });
 
+function stringPayloadValue(
+  payload: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = payload[key];
+  return typeof value === "string" ? value : null;
+}
+
+function nullableStringPayloadValue(
+  payload: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  const value = payload[key];
+  if (value === null) return null;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isPhase(value: unknown): value is Phase {
+  return value === "descent" || value === "ordeal" || value === "ascent";
+}
+
+function parseImagePayload(payload: Record<string, unknown>): ImagePayload | null {
+  const sourceUrl = stringPayloadValue(payload, "source_url");
+  const attributionText = stringPayloadValue(payload, "attribution_text");
+  const artist = stringPayloadValue(payload, "artist");
+  const workTitle = stringPayloadValue(payload, "work_title");
+  const year = nullableStringPayloadValue(payload, "year");
+  const width = payload.width;
+  const height = payload.height;
+  if (
+    sourceUrl === null ||
+    attributionText === null ||
+    artist === null ||
+    workTitle === null ||
+    year === undefined ||
+    typeof width !== "number" ||
+    typeof height !== "number"
+  ) {
+    return null;
+  }
+  return {
+    source_url: sourceUrl,
+    attribution_text: attributionText,
+    artist,
+    work_title: workTitle,
+    year,
+    width,
+    height,
+  };
+}
+
+function parsePassagePayload(payload: Record<string, unknown>): PassagePayload | null {
+  const phase = payload.phase;
+  const sourceKind = payload.source_kind;
+  const exactSnippet = stringPayloadValue(payload, "exact_snippet");
+  const locatorLabel = stringPayloadValue(payload, "locator_label");
+  const attributionText = stringPayloadValue(payload, "attribution_text");
+  const marginaliaText = stringPayloadValue(payload, "marginalia_text");
+  const deepLink = nullableStringPayloadValue(payload, "deep_link");
+  if (
+    !isPhase(phase) ||
+    (sourceKind !== "user_media" && sourceKind !== "public_domain") ||
+    exactSnippet === null ||
+    locatorLabel === null ||
+    attributionText === null ||
+    marginaliaText === null ||
+    deepLink === undefined
+  ) {
+    return null;
+  }
+  return {
+    phase,
+    source_kind: sourceKind,
+    exact_snippet: exactSnippet,
+    locator_label: locatorLabel,
+    attribution_text: attributionText,
+    marginalia_text: marginaliaText,
+    deep_link: deepLink,
+  };
+}
+
 function stateFromDetail(detail: ReadingDetail): ReadingState {
   let next: ReadingState = {
     ...initialState(),
@@ -167,10 +248,13 @@ function applyEvent(
       };
     case "argument":
       return { ...state, cursor, argument: String(event.payload.text ?? "") };
-    case "plate":
-      return { ...state, cursor, image: event.payload as unknown as ImagePayload };
+    case "plate": {
+      const image = parseImagePayload(event.payload);
+      return image === null ? { ...state, cursor } : { ...state, cursor, image };
+    }
     case "passage": {
-      const incoming = event.payload as unknown as PassagePayload;
+      const incoming = parsePassagePayload(event.payload);
+      if (incoming === null) return { ...state, cursor };
       const next = state.passages
         .filter((p) => p.phase !== incoming.phase)
         .concat(incoming);
@@ -181,7 +265,7 @@ function applyEvent(
       return { ...state, cursor, delta: String(event.payload.text ?? "") };
     case "omens": {
       const lines = Array.isArray(event.payload.lines)
-        ? (event.payload.lines as string[])
+        ? event.payload.lines.filter((line) => typeof line === "string")
         : [];
       return { ...state, cursor, omens: lines };
     }

@@ -18,9 +18,9 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => mockCookieStore),
 }));
 
-// Scripted Supabase Auth outcomes — one getUserIdentities result per load
-// (mount, then post-unlink reload), so the test drives the server action
-// through the real @supabase/ssr boundary without mocking internal modules.
+// Scripted Supabase Auth outcomes — one getUserIdentities result per server
+// read, so tests drive Server Actions through the real @supabase/ssr boundary
+// without mocking internal modules.
 type IdentitiesOutcome = {
   identities?: IdentityRecord[];
   error?: { message: string };
@@ -119,9 +119,9 @@ describe("LinkedIdentitiesPage", () => {
 
   it("unlinks one provider identity while keeping another", async () => {
     const user = userEvent.setup();
-    getUserIdentitiesOutcomes.push({
-      identities: [identity("github"), identity("google")],
-    });
+    const beforeUnlink = [identity("github"), identity("google")];
+    getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
+    getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     getUserIdentitiesOutcomes.push({ identities: [identity("google")] });
 
     render(<LinkedIdentitiesPage />);
@@ -144,9 +144,9 @@ describe("LinkedIdentitiesPage", () => {
 
   it("shows an error notice when unlinking fails", async () => {
     const user = userEvent.setup();
-    getUserIdentitiesOutcomes.push({
-      identities: [identity("github"), identity("google")],
-    });
+    const beforeUnlink = [identity("github"), identity("google")];
+    getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
+    getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     unlinkOutcome = { error: { message: "unlink failed" } };
 
     render(<LinkedIdentitiesPage />);

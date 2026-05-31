@@ -57,28 +57,36 @@ def create_media_and_fragment(
     media_id = media_id or uuid4()
     fragment_id = fragment_id or uuid4()
 
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status)
-            VALUES (:media_id, 'web_article', 'Test Article', :status)
-            ON CONFLICT (id) DO NOTHING
-        """),
-        {"media_id": media_id, "status": processing_status},
-    )
+    media_exists = session.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).first()
+    if media_exists is None:
+        session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status)
+                VALUES (:media_id, 'web_article', 'Test Article', :status)
+            """),
+            {"media_id": media_id, "status": processing_status},
+        )
 
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-            VALUES (:fragment_id, :media_id, 0, :html, :text)
-            ON CONFLICT (id) DO NOTHING
-        """),
-        {
-            "fragment_id": fragment_id,
-            "media_id": media_id,
-            "html": html_sanitized,
-            "text": canonical_text,
-        },
-    )
+    fragment_exists = session.execute(
+        text("SELECT 1 FROM fragments WHERE id = :fragment_id"),
+        {"fragment_id": fragment_id},
+    ).first()
+    if fragment_exists is None:
+        session.execute(
+            text("""
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:fragment_id, :media_id, 0, :html, :text)
+            """),
+            {
+                "fragment_id": fragment_id,
+                "media_id": media_id,
+                "html": html_sanitized,
+                "text": canonical_text,
+            },
+        )
 
     session.commit()
     return media_id, fragment_id
@@ -990,27 +998,40 @@ def create_shared_library_with_media(
         {"id": lib_id, "owner_id": owner_id},
     )
     # Owner is admin member
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:lib_id, :user_id, 'admin')
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib_id": lib_id, "user_id": owner_id},
-    )
+    add_membership_if_absent(session, lib_id, owner_id, "admin")
     # Other user is member
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:lib_id, :user_id, 'member')
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib_id": lib_id, "user_id": member_id},
-    )
+    add_membership_if_absent(session, lib_id, member_id, "member")
     # Add media to shared library
     add_media_entry_to_library(session, lib_id, media_id)
     session.commit()
     return lib_id
+
+
+def add_membership_if_absent(
+    session: Session,
+    library_id: UUID,
+    user_id: UUID,
+    role: str,
+) -> None:
+    existing = session.execute(
+        text("""
+            SELECT 1
+            FROM memberships
+            WHERE library_id = :lib_id
+              AND user_id = :user_id
+        """),
+        {"lib_id": library_id, "user_id": user_id},
+    ).first()
+    if existing is not None:
+        return
+
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:lib_id, :user_id, :role)
+        """),
+        {"lib_id": library_id, "user_id": user_id, "role": role},
+    )
 
 
 class TestHighlightSharedRead:

@@ -36,6 +36,11 @@ from nexus.schemas.retrieval import (
 from nexus.schemas.search import SearchResultOut
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
+from nexus.services.resource_resolver import (
+    SEARCH_SCOPE_RESOURCE_URI_SCHEMES,
+    ResourceUriParseFailure,
+    parse_resource_uri,
+)
 from nexus.services.search import hash_query, parse_scope, search
 from nexus.timestamps import format_timestamp_ms
 
@@ -69,6 +74,7 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
             },
         },
         "required": ["query"],
+        "additionalProperties": False,
     },
 }
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
@@ -475,23 +481,35 @@ def _resolve_scope_uris(
     reference_uris = {row[0] for row in reference_rows}
 
     if not scopes:
-        return [
-            uri for uri in reference_uris if uri.startswith("media:") or uri.startswith("library:")
-        ]
+        return [uri for uri in reference_uris if _is_search_scope_uri(uri)]
 
     resolved: list[str] = []
     seen: set[str] = set()
     for raw in scopes:
         uri = str(raw).strip()
-        if not uri or uri in seen:
+        if not uri:
+            raise InvalidScopeError("app_search scopes must be non-empty URI strings")
+        if uri in seen:
             continue
-        if not (uri.startswith("media:") or uri.startswith("library:")):
+        parsed = parse_resource_uri(uri)
+        if (
+            isinstance(parsed, ResourceUriParseFailure)
+            or parsed.scheme not in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
+        ):
             raise InvalidScopeError(f"scope must be 'media:UUID' or 'library:UUID': {uri}")
         if uri not in reference_uris:
             raise InvalidScopeError(f"scope must be in conversation references: {uri}")
         seen.add(uri)
         resolved.append(uri)
     return resolved
+
+
+def _is_search_scope_uri(uri: str) -> bool:
+    parsed = parse_resource_uri(uri)
+    return (
+        not isinstance(parsed, ResourceUriParseFailure)
+        and parsed.scheme in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
+    )
 
 
 def _search_across_scopes(

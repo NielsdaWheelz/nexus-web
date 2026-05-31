@@ -21,7 +21,7 @@ type HighlightMetadata = Pick<
   | "linked_conversations"
 >;
 
-export interface TextAnchorFragmentTiming {
+interface TextAnchorFragmentTiming {
   t_start_ms?: number | null;
   t_end_ms?: number | null;
 }

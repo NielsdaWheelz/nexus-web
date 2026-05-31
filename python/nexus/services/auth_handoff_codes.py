@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, insert, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import AuthHandoffCode
 
 _CODE_PREFIX = "nx_hand_"
+_CODE_TTL_INTERVAL = text("interval '90 seconds'")
 
 
 def create_auth_handoff_code(
@@ -23,16 +23,16 @@ def create_auth_handoff_code(
     challenge: str,
 ) -> str:
     code = f"{_CODE_PREFIX}{secrets.token_urlsafe(32)}"
-    row = AuthHandoffCode(
-        user_id=user_id,
-        code_hash=_hash(code),
-        challenge=challenge.lower(),
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_at=datetime.now(UTC) + timedelta(seconds=90),  # 90s — bounds the handoff window
+    db.execute(
+        insert(AuthHandoffCode).values(
+            user_id=user_id,
+            code_hash=_hash(code),
+            challenge=challenge.lower(),
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=func.now() + _CODE_TTL_INTERVAL,
+        )
     )
-    db.add(row)
-    db.flush()
     db.commit()
     return code
 
@@ -57,9 +57,17 @@ def consume_auth_handoff_code(db: Session, code: str, verifier: str) -> tuple[st
 
 
 def purge_expired_auth_handoff_codes(db: Session) -> int:
-    result = db.execute(delete(AuthHandoffCode).where(AuthHandoffCode.expires_at <= func.now()))
+    deleted_ids = (
+        db.execute(
+            delete(AuthHandoffCode)
+            .where(AuthHandoffCode.expires_at <= func.now())
+            .returning(AuthHandoffCode.id)
+        )
+        .scalars()
+        .all()
+    )
     db.commit()
-    return result.rowcount or 0
+    return len(deleted_ids)
 
 
 def _hash(value: str) -> str:

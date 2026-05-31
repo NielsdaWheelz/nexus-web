@@ -296,7 +296,7 @@ def _batch_linked_note_blocks(
     }
 
 
-def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
+def project_highlight(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
     """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
     _require_typed_highlight_or_404(highlight)
 
@@ -348,6 +348,29 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
+
+
+def project_highlights_with_links(
+    db: Session, viewer_id: UUID, highlights: list[Highlight]
+) -> list[TypedHighlightOut]:
+    highlight_ids = [highlight.id for highlight in highlights]
+    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
+    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
+    return [
+        project_highlight(highlight, viewer_id).model_copy(
+            update={
+                "linked_conversations": conv_map.get(highlight.id, []),
+                "linked_note_blocks": note_map.get(highlight.id, []),
+            }
+        )
+        for highlight in highlights
+    ]
+
+
+def project_highlight_with_links(
+    db: Session, viewer_id: UUID, highlight: Highlight
+) -> TypedHighlightOut:
+    return project_highlights_with_links(db, viewer_id, [highlight])[0]
 
 
 def _fragment_highlight_span_conflict_exists(
@@ -458,7 +481,7 @@ def create_highlight_for_fragment(
         raise map_integrity_error(e) from e
 
     db.refresh(highlight)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return project_highlight(highlight, viewer_id)
 
 
 def list_highlights_for_fragment(
@@ -503,18 +526,7 @@ def list_highlights_for_fragment(
         Highlight.id.asc(),
     ).all()
 
-    highlight_ids = [h.id for h in highlights]
-    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
-    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
-    return [
-        _highlight_to_typed_out(h, viewer_id).model_copy(
-            update={
-                "linked_conversations": conv_map.get(h.id, []),
-                "linked_note_blocks": note_map.get(h.id, []),
-            }
-        )
-        for h in highlights
-    ]
+    return project_highlights_with_links(db, viewer_id, highlights)
 
 
 def list_highlights_for_media(
@@ -584,18 +596,7 @@ def list_highlights_for_media(
 
     highlights = query.order_by(*order_by).all()
 
-    highlight_ids = [h.id for h in highlights]
-    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
-    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
-    return [
-        _highlight_to_typed_out(h, viewer_id).model_copy(
-            update={
-                "linked_conversations": conv_map.get(h.id, []),
-                "linked_note_blocks": note_map.get(h.id, []),
-            }
-        )
-        for h in highlights
-    ]
+    return project_highlights_with_links(db, viewer_id, highlights)
 
 
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:
@@ -608,16 +609,7 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
         TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return _highlight_to_typed_out(highlight, viewer_id).model_copy(
-        update={
-            "linked_conversations": _batch_linked_conversations(db, [highlight.id], viewer_id).get(
-                highlight.id, []
-            ),
-            "linked_note_blocks": _batch_linked_note_blocks(db, [highlight.id], viewer_id).get(
-                highlight.id, []
-            ),
-        }
-    )
+    return project_highlight_with_links(db, viewer_id, highlight)
 
 
 def update_highlight(
@@ -670,7 +662,7 @@ def update_highlight(
             db.flush()
             db.commit()
             db.refresh(highlight)
-        return _highlight_to_typed_out(highlight, viewer_id)
+        return project_highlight(highlight, viewer_id)
 
     fragment_anchor = _require_fragment_highlight_or_404(highlight)
 
@@ -686,7 +678,7 @@ def update_highlight(
     color_changed = final_color != highlight.color
 
     if not offsets_changed and not color_changed:
-        return _highlight_to_typed_out(highlight, viewer_id)
+        return project_highlight(highlight, viewer_id)
 
     update_values: dict = {"updated_at": func.now()}
 
@@ -735,7 +727,7 @@ def update_highlight(
         raise map_integrity_error(e) from e
 
     db.refresh(highlight)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return project_highlight(highlight, viewer_id)
 
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:

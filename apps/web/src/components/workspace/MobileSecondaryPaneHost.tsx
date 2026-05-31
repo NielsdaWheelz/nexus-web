@@ -1,22 +1,15 @@
 "use client";
 
-import {
-  BarChart3,
-  FileText,
-  GitBranch,
-  Highlighter,
-  Link2,
-  ListTree,
-  MessageSquare,
-  X,
-} from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
-import type { ComponentType } from "react";
 import Button from "@/components/ui/Button";
+import SecondarySurfaceTabs, {
+  secondarySurfacePanelId,
+  secondarySurfaceTabId,
+} from "@/components/workspace/SecondarySurfaceTabs";
 import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
 import {
   getSecondarySurfaceDefinition,
-  type PaneSecondaryIconId,
   type WorkspaceSecondaryState,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -24,19 +17,6 @@ import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./MobileSecondaryPaneHost.module.css";
-
-const SECONDARY_ICONS: Record<
-  PaneSecondaryIconId,
-  ComponentType<{ size?: number; "aria-hidden"?: "true" }>
-> = {
-  "bar-chart-3": BarChart3,
-  "file-text": FileText,
-  "git-branch": GitBranch,
-  highlighter: Highlighter,
-  "link-2": Link2,
-  "list-tree": ListTree,
-  "message-square": MessageSquare,
-};
 
 interface MobileSecondaryPaneHostProps {
   secondaryPaneId: string;
@@ -58,7 +38,6 @@ export default function MobileSecondaryPaneHost({
 }: MobileSecondaryPaneHostProps) {
   const baseId = useId();
   const sheetRef = useRef<HTMLElement>(null);
-  const tabRefs = useRef(new Map<WorkspaceSecondarySurfaceId, HTMLButtonElement>());
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const activeSurface =
     publication?.surfaces.find((surface) => surface.id === secondary?.activeSurfaceId) ??
@@ -97,7 +76,9 @@ export default function MobileSecondaryPaneHost({
       return;
     }
     const frame = window.requestAnimationFrame(() => {
-      const tab = activeSurfaceId ? tabRefs.current.get(activeSurfaceId) : null;
+      const tab = sheetRef.current?.querySelector<HTMLElement>(
+        '[role="tab"][aria-selected="true"]',
+      );
       const firstFocusable = getFocusableElements(sheetRef.current!)[0];
       (tab ?? firstFocusable ?? sheetRef.current)?.focus();
     });
@@ -123,14 +104,6 @@ export default function MobileSecondaryPaneHost({
   }
 
   const activeSurfaceDefinition = getSecondarySurfaceDefinition(activeSurface.id);
-  const tabId = (surfaceId: WorkspaceSecondarySurfaceId) =>
-    `${baseId}-${surfaceId}-tab`;
-  const panelId = (surfaceId: WorkspaceSecondarySurfaceId) =>
-    `${baseId}-${surfaceId}-panel`;
-  const selectSurface = (surfaceId: WorkspaceSecondarySurfaceId) => {
-    onActiveSurfaceChange(secondaryPaneId, surfaceId);
-    window.requestAnimationFrame(() => tabRefs.current.get(surfaceId)?.focus());
-  };
 
   return (
     <div
@@ -149,64 +122,12 @@ export default function MobileSecondaryPaneHost({
         onClick={(event) => event.stopPropagation()}
       >
         <header className={styles.header}>
-          <div className={styles.tabs} role="tablist" aria-label="Secondary surfaces">
-            {publication.surfaces.map((surface, index) => {
-              const surfaceDefinition = getSecondarySurfaceDefinition(surface.id);
-              const Icon = SECONDARY_ICONS[surfaceDefinition.iconId];
-              const selected = surface.id === activeSurface.id;
-              return (
-                <button
-                  key={surface.id}
-                  ref={(element) => {
-                    if (element) {
-                      tabRefs.current.set(surface.id, element);
-                    } else {
-                      tabRefs.current.delete(surface.id);
-                    }
-                  }}
-                  id={tabId(surface.id)}
-                  type="button"
-                  role="tab"
-                  aria-controls={panelId(surface.id)}
-                  aria-selected={selected}
-                  aria-label={surfaceDefinition.title}
-                  title={surfaceDefinition.title}
-                  tabIndex={selected ? 0 : -1}
-                  className={styles.tab}
-                  data-active={selected ? "true" : "false"}
-                  onClick={() => selectSurface(surface.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-                      event.preventDefault();
-                      const direction = event.key === "ArrowRight" ? 1 : -1;
-                      const nextIndex =
-                        (index + direction + publication.surfaces.length) %
-                        publication.surfaces.length;
-                      const nextSurface = publication.surfaces[nextIndex];
-                      if (nextSurface) {
-                        selectSurface(nextSurface.id);
-                      }
-                    } else if (event.key === "Home") {
-                      event.preventDefault();
-                      const firstSurface = publication.surfaces[0];
-                      if (firstSurface) {
-                        selectSurface(firstSurface.id);
-                      }
-                    } else if (event.key === "End") {
-                      event.preventDefault();
-                      const lastSurface =
-                        publication.surfaces[publication.surfaces.length - 1];
-                      if (lastSurface) {
-                        selectSurface(lastSurface.id);
-                      }
-                    }
-                  }}
-                >
-                  <Icon size={18} aria-hidden="true" />
-                </button>
-              );
-            })}
-          </div>
+          <SecondarySurfaceTabs
+            baseId={baseId}
+            surfaces={publication.surfaces}
+            activeSurfaceId={activeSurface.id}
+            onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
+          />
           <Button
             variant="ghost"
             size="sm"
@@ -218,9 +139,9 @@ export default function MobileSecondaryPaneHost({
           </Button>
         </header>
         <div
-          id={panelId(activeSurface.id)}
+          id={secondarySurfacePanelId(baseId, activeSurface.id)}
           role="tabpanel"
-          aria-labelledby={tabId(activeSurface.id)}
+          aria-labelledby={secondarySurfaceTabId(baseId, activeSurface.id)}
           className={styles.body}
         >
           {activeSurface.mobileBody ?? activeSurface.body}

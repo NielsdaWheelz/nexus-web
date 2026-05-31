@@ -6,11 +6,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.responses import success_response
-from nexus.schemas.notes import CreatePinnedObjectRefRequest, UpdatePinnedObjectRefRequest
+from nexus.schemas.notes import (
+    CreatePinnedObjectRefRequest,
+    ObjectRef,
+    UpdatePinnedObjectRefRequest,
+)
 from nexus.services.object_refs import (
+    PinObjectRefInput,
+    UpdatePinnedObjectRefPatch,
     list_pinned_object_refs,
     pin_object_ref,
     unpin_object_ref,
@@ -36,7 +42,15 @@ def create_pinned_object(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    pin = pin_object_ref(db, viewer.user_id, request)
+    pin = pin_object_ref(
+        db,
+        viewer.user_id,
+        PinObjectRefInput(
+            object_ref=ObjectRef(object_type=request.object_type, object_id=request.object_id),
+            surface_key=request.surface_key,
+            order_key=request.order_key,
+        ),
+    )
     return success_response(pin.model_dump(mode="json", by_alias=True))
 
 
@@ -47,7 +61,15 @@ def update_pinned_object(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    pin = update_pinned_object_ref(db, viewer.user_id, pin_id, request)
+    pin = update_pinned_object_ref(
+        db,
+        viewer.user_id,
+        pin_id,
+        UpdatePinnedObjectRefPatch(
+            surface_key=request.surface_key,
+            order_key=request.order_key,
+        ),
+    )
     return success_response(pin.model_dump(mode="json", by_alias=True))
 
 

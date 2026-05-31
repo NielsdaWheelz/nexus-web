@@ -19,6 +19,7 @@ from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiErrorCode
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.metadata_enrichment import (
     build_enrichment_prompt,
@@ -341,5 +342,28 @@ def enrich_metadata(
             _record_metadata_failure(media, "E_METADATA_UNEXPECTED", str(exc))
             db.commit()
         return _failed_result(reason="unexpected_error", error_code="E_METADATA_UNEXPECTED")
+    finally:
+        db.close()
+
+
+def dispatch_enrich_metadata(media_id: str, request_id: str | None) -> None:
+    """Best-effort enqueue of the metadata-enrichment job on its own session.
+
+    Owned by this module because it owns the `enrich_metadata` job. Ingest tasks
+    call this after extraction completes. Failure to enqueue is logged, never
+    raised — enrichment is a soft post-ingest enhancement.
+    """
+    db = get_session_factory()()
+    try:
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
     finally:
         db.close()

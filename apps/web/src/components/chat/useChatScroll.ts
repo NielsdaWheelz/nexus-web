@@ -27,7 +27,7 @@ export interface ChatScrollHandle {
   scrollToMessage: (messageId: string) => void;
 }
 
-/** The eye-line snapshot absorbed from the former branchScroll.ts. */
+/** The eye-line snapshot used for branch-switch and load-older restores. */
 interface ChatScrollAnchor {
   anchorMessageId: string | null;
   anchorOffsetTop: number;
@@ -36,7 +36,7 @@ interface ChatScrollAnchor {
   scrollTop: number;
 }
 
-export interface UseChatScroll {
+interface UseChatScroll {
   /** Reserved spacer height (px) rendered as the last child of the transcript. */
   spacerHeight: number;
   /** True when the newest message bottom sits below the fold (drives ↓ Latest). */
@@ -63,6 +63,20 @@ function findMessage(scrollport: HTMLElement, messageId: string) {
 function lastUserMessageId(messages: ConversationMessage[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === "user") return messages[index].id;
+  }
+  return null;
+}
+
+function assistantMessageIdAfter(
+  messages: ConversationMessage[],
+  anchorMessageId: string,
+): string | null {
+  const anchorIndex = messages.findIndex((message) => message.id === anchorMessageId);
+  if (anchorIndex < 0) return null;
+  for (let index = anchorIndex + 1; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === "assistant") return message.id;
+    if (message.role === "user") return null;
   }
   return null;
 }
@@ -165,13 +179,21 @@ export function useChatScroll(
     if (!scrollport) return;
     const anchorId = anchorMessageIdRef.current;
     const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
-    pinnedRef.current = true;
-    if (anchor && anchor.offsetHeight <= scrollport.clientHeight - topInset()) {
-      scrollTo(anchor.offsetTop - topInset(), "smooth");
+    const inset = topInset();
+    const assistantId = anchorId
+      ? assistantMessageIdAfter(messages, anchorId)
+      : null;
+    const assistant = assistantId ? findMessage(scrollport, assistantId) : null;
+    const assistantExceedsViewport =
+      assistant !== null &&
+      assistant.offsetHeight > scrollport.clientHeight - inset;
+    pinnedRef.current = Boolean(anchor && !assistantExceedsViewport);
+    if (anchor && !assistantExceedsViewport) {
+      scrollTo(anchor.offsetTop - inset, "smooth");
     } else {
       scrollTo(scrollport.scrollHeight, "smooth");
     }
-  }, [scrollportRef, scrollTo, topInset]);
+  }, [messages, scrollportRef, scrollTo, topInset]);
 
   const scrollToMessage = useCallback<ChatScrollHandle["scrollToMessage"]>(
     (messageId) => {

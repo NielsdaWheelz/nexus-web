@@ -1,6 +1,6 @@
 "use client";
 
-export const WORKSPACE_TELEMETRY_EVENT = "nexus:workspace-telemetry";
+const WORKSPACE_TELEMETRY_EVENT = "nexus:workspace-telemetry";
 
 interface WorkspaceTelemetryDetail {
   type: "title";

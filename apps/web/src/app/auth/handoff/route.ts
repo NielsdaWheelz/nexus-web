@@ -28,8 +28,8 @@ function noStore<T extends Response>(response: T): T {
   return response;
 }
 
-// Error codes produced by `/auth/callback` in handoff mode (see spec §7.4).
-// Inlined per the binding: this map lives nowhere else, no exported constants.
+// Error codes produced by `/auth/callback` in handoff mode.
+// This route owns the public copy because no other surface renders it.
 function publicErrorMessage(errorCode: string): string {
   switch (errorCode) {
     case "oauth_user_cancelled":

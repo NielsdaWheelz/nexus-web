@@ -533,27 +533,43 @@ def add_media_to_library(
     return _hydrate_library_entries(db, viewer_id, [row])[0]
 
 
-def validate_libraries_accessible(
+def _get_default_library_id(db: Session, user_id: UUID) -> UUID:
+    """Return the user's default library id."""
+    row = db.execute(
+        text("""
+            SELECT id
+            FROM libraries
+            WHERE owner_user_id = :user_id
+              AND is_default = true
+        """),
+        {"user_id": user_id},
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Default library not found")
+    return UUID(str(row[0]))
+
+
+def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
+    """Ensure media has intrinsic membership in the user's default library."""
+    from nexus.services.default_library_closure import ensure_default_intrinsic
+    from nexus.services.media_deletion import clear_user_media_deletion
+
+    default_library_id = _get_default_library_id(db, user_id)
+    ensure_default_intrinsic(db, default_library_id, media_id)
+    clear_user_media_deletion(db, user_id, media_id)
+
+
+def _resolve_accessible_non_default_library_ids(
     db: Session,
     viewer_id: UUID,
     library_ids: list[UUID],
-) -> None:
-    """Raise ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible.
-
-    Use at the top of any ingest path before creating media, so a forbidden
-    library_id rejects the request atomically (no orphan rows).
-
-    The viewer's default library id and duplicates are silently deduped. An
-    empty list is a no-op.
-    """
-    from nexus.services.upload import _get_default_library_id
-
+) -> list[UUID]:
     if not library_ids:
-        return
+        return []
     default_library_id = _get_default_library_id(db, viewer_id)
     targets = list({lid for lid in library_ids if lid != default_library_id})
     if not targets:
-        return
+        return []
     accessible_rows = db.execute(
         text("""
             SELECT l.id
@@ -568,6 +584,23 @@ def validate_libraries_accessible(
     accessible_ids = {UUID(str(row[0])) for row in accessible_rows}
     if accessible_ids != set(targets):
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not accessible")
+    return targets
+
+
+def validate_libraries_accessible(
+    db: Session,
+    viewer_id: UUID,
+    library_ids: list[UUID],
+) -> None:
+    """Raise ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible.
+
+    Use at the top of any ingest path before creating media, so a forbidden
+    library_id rejects the request atomically (no orphan rows).
+
+    The viewer's default library id and duplicates are silently deduped. An
+    empty list is a no-op.
+    """
+    _resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
 
 
 def add_media_to_libraries(
@@ -596,14 +629,17 @@ def add_media_to_libraries(
     Raises:
         ForbiddenError: If any id is inaccessible to the viewer.
     """
-    from nexus.services.upload import _get_default_library_id
+    targets = _resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
+    return _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 
-    validate_libraries_accessible(db, viewer_id, library_ids)
+
+def _add_media_to_resolved_libraries(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_ids: list[UUID],
+) -> list[UUID]:
     if not library_ids:
-        return []
-    default_library_id = _get_default_library_id(db, viewer_id)
-    targets = list({lid for lid in library_ids if lid != default_library_id})
-    if not targets:
         return []
 
     existing_rows = db.execute(
@@ -613,11 +649,11 @@ def add_media_to_libraries(
             WHERE media_id = :media_id
               AND library_id = ANY(:library_ids)
         """),
-        {"media_id": media_id, "library_ids": targets},
+        {"media_id": media_id, "library_ids": library_ids},
     ).fetchall()
     already_present = {UUID(str(row[0])) for row in existing_rows}
 
-    to_insert = [lid for lid in targets if lid not in already_present]
+    to_insert = [lid for lid in library_ids if lid not in already_present]
     for library_id in to_insert:
         add_media_to_library(db, viewer_id, library_id, media_id)
 
@@ -644,21 +680,9 @@ def assign_libraries_for_media(
     Raises:
         ForbiddenError: If any id in library_ids is inaccessible.
     """
-    from nexus.services.upload import _ensure_in_default_library
-
-    validate_libraries_accessible(db, viewer_id, library_ids)
-    _ensure_in_default_library(db, viewer_id, media_id)
-    add_media_to_libraries(db, viewer_id, media_id, library_ids)
-
-
-def ensure_writable_non_default_library(
-    db: Session,
-    viewer_id: UUID,
-    library_id: UUID,
-) -> None:
-    row = _fetch_library_with_membership(db, viewer_id, library_id)
-    _require_admin(row[6])
-    _require_non_default(row[1])
+    targets = _resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
+    ensure_media_in_default_library(db, viewer_id, media_id)
+    _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 
 
 def list_media_item_libraries(
@@ -2111,11 +2135,7 @@ def set_subscription_libraries(
     Raises:
         ForbiddenError: If any id in library_ids is inaccessible.
     """
-    from nexus.services.upload import _get_default_library_id
-
-    validate_libraries_accessible(db, subscription_user_id, library_ids)
-    default_library_id = _get_default_library_id(db, subscription_user_id)
-    targets = list({lid for lid in library_ids if lid != default_library_id})
+    targets = _resolve_accessible_non_default_library_ids(db, subscription_user_id, library_ids)
 
     with transaction(db):
         db.execute(

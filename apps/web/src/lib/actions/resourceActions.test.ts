@@ -145,6 +145,28 @@ describe("mediaResourceOptions", () => {
       disabled: true,
     });
   });
+
+  it("ignores non-boolean capability values", () => {
+    const options = mediaResourceOptions({
+      media: {
+        ...media,
+        capabilities: {
+          can_delete: "true",
+          can_retry: 1,
+          can_refresh_source: true,
+        },
+      },
+      canManageLibraries: false,
+      onDelete: () => {},
+      onRetry: () => {},
+      onRefreshSource: () => {},
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "open-source",
+      "refresh-source",
+    ]);
+  });
 });
 
 describe("libraryResourceOptions", () => {

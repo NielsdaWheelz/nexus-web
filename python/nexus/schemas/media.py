@@ -1,7 +1,7 @@
 """Media and Fragment Pydantic schemas.
 
 Contains response models for media and fragments endpoints.
-All schemas must match s0_spec.md exactly.
+Schemas are the FastAPI response contracts for current media routes.
 """
 
 from datetime import datetime

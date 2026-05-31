@@ -3,9 +3,10 @@
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   DEFAULT_READER_PROFILE,
+  isReaderFocusMode,
+  isReaderFontFamily,
+  isReaderTheme,
   type ReaderFocusMode,
-  type ReaderFontFamily,
-  type ReaderTheme,
 } from "@/lib/reader/types";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
@@ -52,7 +53,9 @@ export default function SettingsReaderPaneBody() {
               <Select
                 id="theme"
                 value={p.theme}
-                onChange={(e) => updateTheme(e.target.value as ReaderTheme)}
+                onChange={(e) => {
+                  if (isReaderTheme(e.target.value)) updateTheme(e.target.value);
+                }}
                 disabled={saving}
               >
                 <option value="light">Light</option>
@@ -67,9 +70,11 @@ export default function SettingsReaderPaneBody() {
               <Select
                 id="fontFamily"
                 value={p.font_family}
-                onChange={(e) =>
-                  updateFontFamily(e.target.value as ReaderFontFamily)
-                }
+                onChange={(e) => {
+                  if (isReaderFontFamily(e.target.value)) {
+                    updateFontFamily(e.target.value);
+                  }
+                }}
                 disabled={saving}
               >
                 <option value="serif">Serif</option>
@@ -144,9 +149,9 @@ export default function SettingsReaderPaneBody() {
               <span className={styles.formLabel}>Focus mode</span>
               <Tabs
                 value={p.focus_mode}
-                onValueChange={(next) =>
-                  save({ focus_mode: next as ReaderFocusMode })
-                }
+                onValueChange={(next) => {
+                  if (isReaderFocusMode(next)) save({ focus_mode: next });
+                }}
                 variant="segmented"
               >
                 <TabsList aria-label="Focus mode">

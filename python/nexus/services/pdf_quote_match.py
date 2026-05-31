@@ -111,72 +111,47 @@ def compute_match(
         page_text = plain_text[page_span_start:page_span_end]
         matches = _find_all_occurrences(page_text, exact)
 
-        if len(matches) == 1:
-            abs_start = page_span_start + matches[0]
-            abs_end = abs_start + len(exact)
-            prefix = _derive_prefix(plain_text, abs_start)
-            suffix = _derive_suffix(plain_text, abs_end)
-            return MatchResult(
-                status=MatchStatus.unique,
-                match_version=1,
-                start_offset=abs_start,
-                end_offset=abs_end,
-                prefix=prefix,
-                suffix=suffix,
-            )
-        elif len(matches) > 1:
-            return MatchResult(
-                status=MatchStatus.ambiguous,
-                match_version=1,
-                start_offset=None,
-                end_offset=None,
-                prefix="",
-                suffix="",
-            )
-        else:
-            return MatchResult(
-                status=MatchStatus.no_match,
-                match_version=1,
-                start_offset=None,
-                end_offset=None,
-                prefix="",
-                suffix="",
-            )
+        return _result_for_matches(
+            matches, exact=exact, plain_text=plain_text, base_offset=page_span_start
+        )
     else:
         # No page-local boundary is available, so search the full normalized text.
         matches = _find_all_occurrences(plain_text, exact)
 
-        if len(matches) == 1:
-            abs_start = matches[0]
-            abs_end = abs_start + len(exact)
-            prefix = _derive_prefix(plain_text, abs_start)
-            suffix = _derive_suffix(plain_text, abs_end)
-            return MatchResult(
-                status=MatchStatus.unique,
-                match_version=1,
-                start_offset=abs_start,
-                end_offset=abs_end,
-                prefix=prefix,
-                suffix=suffix,
-            )
-        elif len(matches) > 1:
-            return MatchResult(
-                status=MatchStatus.ambiguous,
-                match_version=1,
-                start_offset=None,
-                end_offset=None,
-                prefix="",
-                suffix="",
-            )
-        else:
-            return MatchResult(
-                status=MatchStatus.no_match,
-                match_version=1,
-                start_offset=None,
-                end_offset=None,
-                prefix="",
-                suffix="",
-            )
+        return _result_for_matches(matches, exact=exact, plain_text=plain_text, base_offset=0)
+
+
+def _result_for_matches(
+    matches: list[int],
+    *,
+    exact: str,
+    plain_text: str,
+    base_offset: int,
+) -> MatchResult:
+    """Build the MatchResult for a set of occurrences within `plain_text`.
+
+    `base_offset` shifts match positions to absolute offsets (the page-span start,
+    or 0 for a full-text search).
+    """
+    if len(matches) == 1:
+        abs_start = base_offset + matches[0]
+        abs_end = abs_start + len(exact)
+        return MatchResult(
+            status=MatchStatus.unique,
+            match_version=1,
+            start_offset=abs_start,
+            end_offset=abs_end,
+            prefix=_derive_prefix(plain_text, abs_start),
+            suffix=_derive_suffix(plain_text, abs_end),
+        )
+    return MatchResult(
+        status=MatchStatus.ambiguous if len(matches) > 1 else MatchStatus.no_match,
+        match_version=1,
+        start_offset=None,
+        end_offset=None,
+        prefix="",
+        suffix="",
+    )
 
 
 def _find_all_occurrences(text: str, needle: str) -> list[int]:

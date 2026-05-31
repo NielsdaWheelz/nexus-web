@@ -45,24 +45,28 @@ def _create_non_default_library(db: Session, owner_id):
         {"owner_id": owner_id},
     )
     lib_id = result.scalar()
-    db.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:lib_id, :owner_id, 'admin')
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib_id": lib_id, "owner_id": owner_id},
-    )
+    _add_membership(db, lib_id, owner_id, "admin")
     db.flush()
     return lib_id
 
 
 def _add_membership(db: Session, library_id, user_id, role="member"):
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM memberships
+            WHERE library_id = :lib
+              AND user_id = :uid
+        """),
+        {"lib": library_id, "uid": user_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             VALUES (:lib, :uid, :role)
-            ON CONFLICT DO NOTHING
         """),
         {"lib": library_id, "uid": user_id, "role": role},
     )
@@ -84,11 +88,22 @@ def _create_conversation(db: Session, owner_id, sharing="private"):
 
 
 def _share_conversation(db: Session, conversation_id, library_id):
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM conversation_shares
+            WHERE conversation_id = :cid
+              AND library_id = :lid
+        """),
+        {"cid": conversation_id, "lid": library_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO conversation_shares (conversation_id, library_id)
             VALUES (:cid, :lid)
-            ON CONFLICT DO NOTHING
         """),
         {"cid": conversation_id, "lid": library_id},
     )

@@ -15,7 +15,7 @@ export type BrowseSectionType =
   | "podcasts"
   | "podcast_episodes";
 
-export type BrowsePageInfo = {
+type BrowsePageInfo = {
   has_more: boolean;
   next_cursor: string | null;
 };

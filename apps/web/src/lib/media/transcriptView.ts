@@ -1,5 +1,3 @@
-"use client";
-
 export interface TranscriptPlaybackSource {
   kind: "external_audio" | "external_video";
   stream_url: string;
@@ -194,4 +192,3 @@ export function resolveActiveTranscriptFragment(
 
   return fragments[0] ?? null;
 }
-

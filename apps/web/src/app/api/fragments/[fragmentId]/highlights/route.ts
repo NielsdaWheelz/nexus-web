@@ -1,11 +1,3 @@
-/**
- * BFF route for fragment highlights.
- *
- * Proxies:
- * - POST /api/fragments/{fragmentId}/highlights → FastAPI
- * - GET /api/fragments/{fragmentId}/highlights → FastAPI
- */
-
 import { proxyToFastAPI } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";

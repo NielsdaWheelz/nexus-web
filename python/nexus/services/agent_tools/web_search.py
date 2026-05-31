@@ -167,30 +167,6 @@ class WebSearchRun:
         }
 
 
-def build_web_search_query(content: str) -> str:
-    """Build a bounded web-search query from the user message."""
-
-    query = " ".join(content.split()).strip()
-    lowered = query.lower()
-    for prefix in (
-        "search the web for ",
-        "search web for ",
-        "look up ",
-        "lookup ",
-        "find online ",
-        "find ",
-        "verify ",
-        "what is the latest ",
-        "what's the latest ",
-    ):
-        if lowered.startswith(prefix):
-            query = query[len(prefix) :].strip()
-            lowered = query.lower()
-            break
-    query = query.strip(" \t\r\n?.!,;:")
-    return (query or content).strip()[:WEB_SEARCH_QUERY_MAX_CHARS]
-
-
 def _citation_from_result(result: WebSearchResultItem) -> WebSearchCitation:
     return WebSearchCitation(
         result_ref=result.result_ref,

@@ -6,6 +6,12 @@
  */
 
 import type { ContributorCredit } from "@/lib/contributors/types";
+import {
+  canRequestTranscript,
+  shouldPollTranscriptProvisioning,
+  type TranscriptCoverage,
+  type TranscriptState,
+} from "@/lib/media/transcriptView";
 
 export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 export const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
@@ -14,19 +20,8 @@ export type TranscriptRequestReason = "search" | "highlight" | "quote";
 export type EpisodeState = "unplayed" | "in_progress" | "played";
 export type EpisodeStateFilter = "all" | EpisodeState;
 export type EpisodeSort = "newest" | "oldest" | "duration_asc" | "duration_desc";
-export type EpisodeTranscriptState =
-  | "not_requested"
-  | "queued"
-  | "running"
-  | "failed_provider"
-  | "failed_quota"
-  | "unavailable"
-  | "ready"
-  | "partial"
-  | null;
-export type EpisodeTranscriptCoverage = "none" | "partial" | "full" | null;
 
-export interface MediaCapabilities {
+interface MediaCapabilities {
   can_read: boolean;
   can_highlight: boolean;
   can_quote: boolean;
@@ -45,8 +40,8 @@ export interface PodcastEpisodeMedia {
   title: string;
   canonical_source_url: string | null;
   processing_status: string;
-  transcript_state: EpisodeTranscriptState;
-  transcript_coverage: EpisodeTranscriptCoverage;
+  transcript_state: TranscriptState;
+  transcript_coverage: TranscriptCoverage;
   failure_stage: string | null;
   last_error_code: string | null;
   playback_source: {
@@ -77,8 +72,8 @@ export interface PodcastEpisodeMedia {
 export interface TranscriptRequestResult {
   media_id: string;
   processing_status: string;
-  transcript_state: EpisodeTranscriptState;
-  transcript_coverage: EpisodeTranscriptCoverage;
+  transcript_state: TranscriptState;
+  transcript_coverage: TranscriptCoverage;
   required_minutes: number;
   remaining_minutes: number | null;
   fits_budget: boolean;
@@ -96,7 +91,7 @@ export interface TranscriptForecastBatchResponse {
   data: TranscriptRequestResult[];
 }
 
-export type TranscriptBatchStatus =
+type TranscriptBatchStatus =
   | "queued"
   | "already_ready"
   | "already_queued"
@@ -175,26 +170,13 @@ export function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number 
 export function canRequestTranscriptForEpisode(
   episode: PodcastEpisodeMedia,
 ): boolean {
-  const transcriptState = episode.transcript_state;
-  if (transcriptState === null) {
-    return false;
-  }
-  return !(
-    transcriptState === "queued" ||
-    transcriptState === "running" ||
-    transcriptState === "ready" ||
-    transcriptState === "partial" ||
-    transcriptState === "unavailable"
-  );
+  return canRequestTranscript(episode.transcript_state);
 }
 
 export function shouldPollTranscriptProvisioningForEpisode(
   episode: PodcastEpisodeMedia,
 ): boolean {
-  return (
-    episode.transcript_state === "queued" ||
-    episode.transcript_state === "running"
-  );
+  return shouldPollTranscriptProvisioning(episode.transcript_state);
 }
 
 export function applyTranscriptResponseToEpisode(

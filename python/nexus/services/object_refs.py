@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
@@ -16,6 +17,7 @@ from nexus.auth.permissions import (
     can_read_media,
     visible_media_ids_cte_sql,
 )
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Conversation,
     Fragment,
@@ -29,17 +31,28 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
     OBJECT_TYPES,
-    CreatePinnedObjectRefRequest,
     HydratedObjectRef,
     ObjectRef,
     PinnedObjectRefOut,
-    UpdatePinnedObjectRefRequest,
 )
 from nexus.services.contributors import hydrate_contributor_object_ref
 from nexus.services.note_block_markdown import (
     note_outline_markdown,
     ordered_note_blocks_for_page,
 )
+
+
+@dataclass(frozen=True)
+class PinObjectRefInput:
+    object_ref: ObjectRef
+    surface_key: str = "navbar"
+    order_key: str | None = None
+
+
+@dataclass(frozen=True)
+class UpdatePinnedObjectRefPatch:
+    surface_key: str | None = None
+    order_key: str | None = None
 
 
 def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> HydratedObjectRef:
@@ -589,28 +602,38 @@ def list_pinned_object_refs(
     return [_pinned_out(db, viewer_id, pin) for pin in pins]
 
 
+def _commit_pin_or_conflict(db: Session) -> None:
+    """Commit a pinned-ref mutation, mapping the unique-pin constraint to a typed conflict."""
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        constraint_name = integrity_constraint_name(exc)
+        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
+            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
+        ):
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
+        raise
+
+
 def pin_object_ref(
     db: Session,
     viewer_id: UUID,
-    request: CreatePinnedObjectRefRequest,
+    pin_input: PinObjectRefInput,
 ) -> PinnedObjectRefOut:
-    hydrate_object_ref(
-        db,
-        viewer_id,
-        ObjectRef(object_type=request.object_type, object_id=request.object_id),
-    )
+    hydrate_object_ref(db, viewer_id, pin_input.object_ref)
     existing = db.scalar(
         select(PinnedObjectRef).where(
             PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.surface_key == request.surface_key,
-            PinnedObjectRef.object_type == request.object_type,
-            PinnedObjectRef.object_id == request.object_id,
+            PinnedObjectRef.surface_key == pin_input.surface_key,
+            PinnedObjectRef.object_type == pin_input.object_ref.object_type,
+            PinnedObjectRef.object_id == pin_input.object_ref.object_id,
             PinnedObjectRef.deleted_at.is_(None),
         )
     )
     if existing is not None:
-        if request.order_key is not None:
-            existing.order_key = request.order_key
+        if pin_input.order_key is not None:
+            existing.order_key = pin_input.order_key
             existing.updated_at = func.now()
             db.commit()
             db.refresh(existing)
@@ -618,22 +641,13 @@ def pin_object_ref(
 
     pin = PinnedObjectRef(
         user_id=viewer_id,
-        object_type=request.object_type,
-        object_id=request.object_id,
-        surface_key=request.surface_key,
-        order_key=request.order_key or _next_pin_order_key(db, viewer_id, request.surface_key),
+        object_type=pin_input.object_ref.object_type,
+        object_id=pin_input.object_ref.object_id,
+        surface_key=pin_input.surface_key,
+        order_key=pin_input.order_key or _next_pin_order_key(db, viewer_id, pin_input.surface_key),
     )
     db.add(pin)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
-            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
-        ):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
-        raise
+    _commit_pin_or_conflict(db)
     db.refresh(pin)
     return _pinned_out(db, viewer_id, pin)
 
@@ -642,26 +656,17 @@ def update_pinned_object_ref(
     db: Session,
     viewer_id: UUID,
     pin_id: UUID,
-    request: UpdatePinnedObjectRefRequest,
+    patch: UpdatePinnedObjectRefPatch,
 ) -> PinnedObjectRefOut:
     pin = db.get(PinnedObjectRef, pin_id)
     if pin is None or pin.user_id != viewer_id or pin.deleted_at is not None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Pinned object ref not found")
-    if request.surface_key is not None:
-        pin.surface_key = request.surface_key
-    if request.order_key is not None:
-        pin.order_key = request.order_key
+    if patch.surface_key is not None:
+        pin.surface_key = patch.surface_key
+    if patch.order_key is not None:
+        pin.order_key = patch.order_key
     pin.updated_at = func.now()
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
-            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
-        ):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
-        raise
+    _commit_pin_or_conflict(db)
     db.refresh(pin)
     return _pinned_out(db, viewer_id, pin)
 

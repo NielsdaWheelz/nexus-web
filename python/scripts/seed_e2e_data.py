@@ -20,7 +20,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import subprocess
 import sys
 import time
 import zipfile
@@ -33,6 +32,7 @@ from uuid import UUID
 import fitz
 import httpx
 from sqlalchemy import select, text
+from supabase_auth_config import load_supabase_auth_config_or_exit
 
 from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus, UserApiKey
 from nexus.db.session import create_session_factory
@@ -90,40 +90,6 @@ YOUTUBE_TRANSCRIPT_SEGMENTS = [
     },
 ]
 E2E_OPENAI_API_KEY = "sk-e2e-openai-fixture"
-
-
-def _load_supabase_auth_config() -> tuple[str, str]:
-    supabase_url = os.environ.get("SUPABASE_URL")
-    admin_key = os.environ.get("SUPABASE_AUTH_ADMIN_KEY")
-
-    if supabase_url and admin_key:
-        return supabase_url, admin_key
-
-    try:
-        raw_status = subprocess.check_output(
-            ["supabase", "status", "--output", "json"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        status = json.loads(
-            "\n".join(
-                line
-                for line in raw_status.splitlines()
-                if line.strip() and not line.startswith("Stopped services:")
-            )
-        )
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        status = {}
-
-    supabase_url = supabase_url or status.get("API_URL") or "http://127.0.0.1:54321"
-    admin_key = admin_key or status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
-    if not supabase_url or not admin_key:
-        print(
-            "ERROR: SUPABASE_URL and SUPABASE_AUTH_ADMIN_KEY must be set, "
-            "or local Supabase CLI status must be available"
-        )
-        sys.exit(1)
-    return str(supabase_url), str(admin_key)
 
 
 # EPUB chapter content for deterministic tests
@@ -1540,7 +1506,7 @@ def main() -> None:
         print("ERROR: DATABASE_URL must be set")
         sys.exit(1)
 
-    supabase_url, supabase_auth_admin_key = _load_supabase_auth_config()
+    supabase_url, supabase_auth_admin_key = load_supabase_auth_config_or_exit()
     for key in (
         "SUPABASE_AUTH_ADMIN_KEY",
         "SUPABASE_SERVICE_KEY",

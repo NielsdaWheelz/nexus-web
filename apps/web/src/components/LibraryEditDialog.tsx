@@ -5,6 +5,11 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import type {
+  LibraryInvite,
+  LibraryMember,
+  UserSearchResult,
+} from "@/lib/libraries/sharing";
 import styles from "./LibraryEditDialog.module.css";
 
 /* ------------------------------------------------------------------ */
@@ -19,32 +24,7 @@ export interface LibraryForEdit {
   owner_user_id: string;
 }
 
-export interface LibraryMember {
-  user_id: string;
-  role: string;
-  is_owner: boolean;
-  email?: string | null;
-  display_name?: string | null;
-  created_at: string;
-}
-
-export interface LibraryInvite {
-  id: string;
-  library_id: string;
-  inviter_user_id: string;
-  invitee_user_id: string;
-  role: string;
-  status: string;
-  invitee_email?: string | null;
-  invitee_display_name?: string | null;
-  created_at: string;
-}
-
-export interface UserSearchResult {
-  user_id: string;
-  email: string | null;
-  display_name: string | null;
-}
+type InviteRole = "admin" | "member";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                             */
@@ -81,6 +61,10 @@ function inviteeDisplayLabel(inv: LibraryInvite): string {
   return inv.invitee_user_id;
 }
 
+function isInviteRole(value: unknown): value is InviteRole {
+  return value === "admin" || value === "member";
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
@@ -104,7 +88,7 @@ export default function LibraryEditDialog({
   const [draftName, setDraftName] = useState(library.name);
   const [saving, setSaving] = useState(false);
   const [inviteQuery, setInviteQuery] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
+  const [inviteRole, setInviteRole] = useState<InviteRole>("member");
   const [inviting, setInviting] = useState(false);
 
   // Search state
@@ -338,9 +322,9 @@ export default function LibraryEditDialog({
                 size="sm"
                 value={inviteRole}
                 aria-label="Invite role"
-                onChange={(e) =>
-                  setInviteRole(e.target.value as "admin" | "member")
-                }
+                onChange={(e) => {
+                  if (isInviteRole(e.target.value)) setInviteRole(e.target.value);
+                }}
               >
                 <option value="member">member</option>
                 <option value="admin">admin</option>

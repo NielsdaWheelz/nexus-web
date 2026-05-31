@@ -1,9 +1,9 @@
-export interface VaultFile {
+interface VaultFile {
   path: string;
   content: string;
 }
 
-export interface VaultConflict {
+interface VaultConflict {
   path: string;
   message: string;
   content: string;

@@ -2,8 +2,9 @@
 
 this records the current reader model and the constraints we actively ship.
 
-URL deep-link targets are one-shot reader focus state consumed by
-`useReaderTarget`.
+Reader hash targets are one-shot focus state consumed by `useReaderTarget`.
+Pane-local reader location that belongs in Back/Forward history uses route
+state such as `?loc=`.
 
 ## constraints we enforce
 
@@ -20,11 +21,12 @@ URL deep-link targets are one-shot reader focus state consumed by
 - focus mode: four states (`off`, `distraction_free`, `paragraph`,
   `sentence`) driven by `reader_profile.focus_mode`; toggle at
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
-- mobile-safe reader layout and controls; mobile document panes keep reader
-  controls local to the active pane and do not mount the desktop secondary
-- on mobile, highlights are reached through a drawer opened from the reader
-  menu or by tapping an existing highlight; the highlights secondary is
-  desktop-only
+- mobile-safe reader layout and controls; mobile document panes render the
+  shared reader-tools secondary surfaces as a mobile sheet instead of the
+  desktop attached secondary pane
+- on mobile, highlights are reached through the reader-tools sheet opened from
+  the reader menu or by tapping an existing highlight; the overview ruler
+  remains desktop-only
 - resume that survives reflow where possible
 
 ## architecture
@@ -44,15 +46,15 @@ the reader has two right-side highlight surfaces with distinct scopes.
   from the ruler's open-highlights button.
 - the ruler and the secondary are decoupled instruments, not two states of one
   widget: *map* (ruler, always on) vs *here, with notes* (secondary, on demand).
-- mobile has no ruler. highlights are reached through a drawer opened from the
-  reader menu or by tapping an existing highlight; the drawer is the same
+- mobile has no ruler. highlights are reached through a secondary sheet opened from the
+  reader menu or by tapping an existing highlight; the mobile sheet is the same
   `ReaderHighlightsSurface` component on the same visible-only model.
 
 ### contents surface
 
 the document table of contents (epub + web article) is the reader-tools
 "Contents" secondary surface (`ReaderContentsNav`), a peer of Highlights and
-Document chat under `docs/secondary-pane-cutover.md`.
+Document chat under `docs/workspace-pane-system.md`.
 
 - it is on-demand: a single reader toolbar "Contents" button toggles it
   open/closed. it is not always-on like the overview ruler.
@@ -60,7 +62,7 @@ Document chat under `docs/secondary-pane-cutover.md`.
   has TOC nodes, including focus mode where highlights are hidden.
 - selecting an entry runs the existing section/anchor navigation; navigation
   and pane-history behaviour are unchanged (see pane history).
-- mobile reaches Contents through the same secondary drawer as highlights.
+- mobile reaches Contents through the same secondary sheet as highlights.
 - it has no internal scroll container: the secondary body is the single scroll
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
   the TOC is not rendered inline.
@@ -80,7 +82,7 @@ width; the workspace raises the PDF pane floor to that width.
 The overview ruler is fixed primary-adjacent chrome: it changes rendered pane
 width without changing stored primary pane width. Reader highlights and
 document chat are target secondary surfaces under
-`docs/workspace-pane-system-consolidation-cutover.md`; their width is independent from the
+`docs/workspace-pane-system.md`; their width is independent from the
 primary reader width. Mobile panes ignore desktop runtime pane sizing and render
 at viewport width.
 
@@ -269,7 +271,7 @@ pure black/white to reduce halation under long sessions.
 - one-shot reader target hashes use `#loc-{section_id}` and are consumed by
   `useReaderTarget`; pane-local EPUB section navigation uses the `?loc=`
   search parameter for active-section history
-- legacy `chapters` and `toc` reader routes are removed from the client surface
+- removed `chapters` and `toc` reader routes stay out of the client surface
 - pane titles are driven by media metadata, not by navigation section title or
   active section content. navigation and section loading are content-level
   states and do not own workspace tab/header title state.
@@ -330,7 +332,7 @@ supporting test infra:
 ## validation commands
 
 ```bash
-make verify
-make test-e2e
-make test-e2e-ui
+cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx
+make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
 ```

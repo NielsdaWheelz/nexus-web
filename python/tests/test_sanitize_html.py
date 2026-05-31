@@ -1,4 +1,4 @@
-"""Tests for HTML sanitization per s2_pr04.md spec.
+"""Tests for HTML sanitization.
 
 Security fixtures suite:
 - Scripts removed
@@ -198,7 +198,7 @@ class TestAnchorTargetPreservation:
     def test_anchor_targets_preserved_when_opted_in(self):
         html = (
             '<h2 id="sec-a" class="heading">Section A</h2>'
-            '<a name="legacy-anchor" href="#sec-a" onclick="evil()">jump</a>'
+            '<a name="named-anchor" href="#sec-a" onclick="evil()">jump</a>'
         )
         result = sanitize_html(
             html,
@@ -208,7 +208,7 @@ class TestAnchorTargetPreservation:
 
         # Anchor targets must be retained for in-document navigation.
         assert 'id="sec-a"' in result
-        assert 'name="legacy-anchor"' in result
+        assert 'name="named-anchor"' in result
 
         # Security invariants still apply.
         assert "onclick" not in result

@@ -1,12 +1,3 @@
-/**
- * BFF route for individual highlight operations.
- *
- * Proxies:
- * - GET /api/highlights/{highlightId} → FastAPI
- * - PATCH /api/highlights/{highlightId} → FastAPI
- * - DELETE /api/highlights/{highlightId} → FastAPI
- */
-
 import { proxyToFastAPI } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";

@@ -13,13 +13,11 @@ Owns:
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
-    Conversation,
-    ConversationReference,
     Highlight,
     HighlightPdfAnchor,
     HighlightPdfQuad,
@@ -30,15 +28,14 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     CreatePdfHighlightRequest,
-    LinkedConversationRef,
-    LinkedNoteBlockRef,
-    PdfAnchorOut,
     PdfBoundsUpdate,
-    PdfQuadOut,
     TypedHighlightOut,
 )
-from nexus.services.highlights import require_media_ready_or_409
-from nexus.services.notes import linked_note_blocks_for_highlights
+from nexus.services.highlights import (
+    project_highlight,
+    project_highlights_with_links,
+    require_media_ready_or_409,
+)
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
     GeometryValidationError,
@@ -86,105 +83,6 @@ def _validate_page_number(page_number: int, page_count: int | None) -> None:
             ApiErrorCode.E_INVALID_REQUEST,
             f"page_number must be 1..{page_count}, got {page_number}",
         )
-
-
-def _batch_linked_conversations(
-    db: Session, highlight_ids: list[UUID], viewer_id: UUID
-) -> dict[UUID, list[LinkedConversationRef]]:
-    """Batch-fetch conversations that reference the given highlights.
-
-    Walks `conversation_references` for each ``highlight:UUID`` URI; conversations
-    are returned only when owned by ``viewer_id``.
-    """
-    if not highlight_ids:
-        return {}
-    uri_by_id = {highlight_id: f"highlight:{highlight_id}" for highlight_id in highlight_ids}
-    rows = db.execute(
-        select(
-            ConversationReference.resource_uri,
-            Conversation.id,
-            Conversation.title,
-        )
-        .join(Conversation, Conversation.id == ConversationReference.conversation_id)
-        .where(
-            ConversationReference.resource_uri.in_(list(uri_by_id.values())),
-            Conversation.owner_user_id == viewer_id,
-        )
-    ).all()
-    id_by_uri = {uri: highlight_id for highlight_id, uri in uri_by_id.items()}
-    result: dict[UUID, list[LinkedConversationRef]] = {}
-    for resource_uri, conversation_id, title in rows:
-        highlight_id = id_by_uri.get(resource_uri)
-        if highlight_id is None:
-            continue
-        result.setdefault(highlight_id, []).append(
-            LinkedConversationRef(conversation_id=conversation_id, title=title)
-        )
-    return result
-
-
-def _batch_linked_note_blocks(
-    db: Session, highlight_ids: list[UUID], viewer_id: UUID
-) -> dict[UUID, list[LinkedNoteBlockRef]]:
-    return {
-        highlight_id: [
-            LinkedNoteBlockRef(
-                note_block_id=block.id,
-                body_pm_json=block.body_pm_json,
-                body_markdown=block.body_markdown,
-                body_text=block.body_text,
-                revision=block.revision,
-            )
-            for block in blocks
-        ]
-        for highlight_id, blocks in linked_note_blocks_for_highlights(
-            db, viewer_id, highlight_ids
-        ).items()
-    }
-
-
-def _highlight_to_typed_out(
-    highlight: Highlight,
-    viewer_id: UUID,
-) -> TypedHighlightOut:
-    """Convert a PDF highlight ORM to TypedHighlightOut."""
-    pa = highlight.pdf_anchor
-    quads_out = []
-    if highlight.pdf_quads:
-        sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)
-        quads_out = [
-            PdfQuadOut(
-                x1=float(q.x1),
-                y1=float(q.y1),
-                x2=float(q.x2),
-                y2=float(q.y2),
-                x3=float(q.x3),
-                y3=float(q.y3),
-                x4=float(q.x4),
-                y4=float(q.y4),
-            )
-            for q in sorted_quads
-        ]
-
-    anchor = PdfAnchorOut(
-        type="pdf_page_geometry",
-        media_id=pa.media_id if pa else highlight.anchor_media_id,
-        page_number=pa.page_number if pa else 0,
-        quads=quads_out,
-    )
-
-    return TypedHighlightOut(
-        id=highlight.id,
-        anchor=anchor,
-        color=highlight.color,
-        exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
-        created_at=highlight.created_at,
-        updated_at=highlight.updated_at,
-        author_user_id=highlight.user_id,
-        is_owner=(highlight.user_id == viewer_id),
-    )
 
 
 def _get_page_span(db: Session, media_id: UUID, page_number: int) -> PdfPageTextSpan | None:
@@ -420,7 +318,7 @@ def create_pdf_highlight(
     db.commit()
 
     db.refresh(highlight)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return project_highlight(highlight, viewer_id)
 
 
 def list_pdf_highlights(
@@ -456,16 +354,7 @@ def list_pdf_highlights(
         Highlight.id.asc(),
     ).all()
 
-    highlight_ids = [highlight.id for highlight in highlights]
-    linked_conversations_by_highlight = _batch_linked_conversations(db, highlight_ids, viewer_id)
-    linked_note_blocks_by_highlight = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
-    results = []
-    for highlight in highlights:
-        out = _highlight_to_typed_out(highlight, viewer_id)
-        out.linked_conversations = linked_conversations_by_highlight.get(highlight.id, [])
-        out.linked_note_blocks = linked_note_blocks_by_highlight.get(highlight.id, [])
-        results.append(out)
-    return results
+    return project_highlights_with_links(db, viewer_id, highlights)
 
 
 def update_pdf_highlight_bounds(
@@ -505,10 +394,7 @@ def update_pdf_highlight_bounds(
     comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
 
     if comparison.is_noop:
-        return _highlight_to_typed_out(highlight, viewer_id)
-
-    if comparison.requires_full_path:
-        pass  # fall through to the normal locked write path.
+        return project_highlight(highlight, viewer_id)
 
     match_fields = _compute_write_time_match(
         db,
@@ -548,7 +434,7 @@ def update_pdf_highlight_bounds(
     # Post-lock no-op recheck using the same comparison helper.
     post_comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
     if post_comparison.is_noop:
-        return _highlight_to_typed_out(highlight, viewer_id)
+        return project_highlight(highlight, viewer_id)
 
     # Apply updates
     effective_color = new_color if new_color is not None else highlight.color
@@ -594,4 +480,4 @@ def update_pdf_highlight_bounds(
     db.commit()
 
     db.refresh(highlight)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return project_highlight(highlight, viewer_id)

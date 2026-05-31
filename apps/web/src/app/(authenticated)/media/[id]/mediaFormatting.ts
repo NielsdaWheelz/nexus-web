@@ -1,5 +1,3 @@
-"use client";
-
 import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 import type { ContributorCredit } from "@/lib/contributors/types";
 

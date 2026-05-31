@@ -1,9 +1,9 @@
 import { apiFetch } from "@/lib/api/client";
 
 export type PlaybackQueueInsertPosition = "next" | "last";
-export type PlaybackQueueSource = "manual" | "auto_subscription" | "auto_playlist";
+type PlaybackQueueSource = "manual" | "auto_subscription" | "auto_playlist";
 
-export interface PlaybackQueueListeningState {
+interface PlaybackQueueListeningState {
   position_ms: number;
   playback_speed: number;
 }

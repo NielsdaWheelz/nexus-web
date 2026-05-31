@@ -92,6 +92,13 @@ _READABLE_MEDIA_TYPES = frozenset(
 )
 
 _NCX_MEDIA_TYPES = frozenset({"application/x-dtbncx+xml"})
+_ZIP_ENTRY_READ_ERRORS = (
+    KeyError,
+    NotImplementedError,
+    RuntimeError,
+    zipfile.BadZipFile,
+)
+_XML_ENTRY_READ_ERRORS = (*_ZIP_ENTRY_READ_ERRORS, ET.ParseError)
 
 _NS = {
     "opf": "http://www.idpf.org/2007/opf",
@@ -759,7 +766,7 @@ def check_archive_safety(
         )
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
-    except (zipfile.BadZipFile, Exception) as exc:
+    except zipfile.BadZipFile as exc:
         return EpubExtractionError(
             error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
             error_message=f"Invalid archive: {exc}",
@@ -879,7 +886,8 @@ def _parse_xml_entry(zf: zipfile.ZipFile, path: str) -> ET.Element | None:
     try:
         raw = zf.read(path)
         return ET.fromstring(raw)
-    except (KeyError, ET.ParseError, Exception):
+    # justify-ignore-error: malformed optional EPUB XML entries are absence.
+    except _XML_ENTRY_READ_ERRORS:
         return None
 
 
@@ -1030,7 +1038,8 @@ def _collect_readable_chapters(
             continue
         try:
             raw = _decode_epub_text(zf.read(entry.href))
-        except (KeyError, Exception):
+        # justify-ignore-error: unreadable spine entries are not renderable chapters.
+        except _ZIP_ENTRY_READ_ERRORS:
             continue
         if not raw.strip():
             continue

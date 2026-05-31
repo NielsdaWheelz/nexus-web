@@ -47,7 +47,13 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textare
   ref
 ) {
   const innerRef = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(ref, () => innerRef.current as HTMLTextAreaElement, []);
+  useImperativeHandle(ref, () => {
+    const textarea = innerRef.current;
+    if (!textarea) {
+      throw new Error("Textarea ref is not mounted");
+    }
+    return textarea;
+  }, []);
 
   useLayoutEffect(() => {
     if (!autoGrow) return;

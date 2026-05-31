@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import date
 from uuid import UUID
 
 from sqlalchemy import text
@@ -54,10 +54,6 @@ class RateLimiter:
                 RATE_LIMITER_UNAVAILABLE_MESSAGE,
             )
 
-        now = datetime.now(UTC)
-        window_start = now - timedelta(seconds=RPM_WINDOW_SECONDS)
-        retention_start = now - timedelta(seconds=REQUEST_LOG_RETENTION_SECONDS)
-
         with self._db_strict(
             "rate_limit_check_failed",
             raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
@@ -69,19 +65,21 @@ class RateLimiter:
                 text(
                     """
                     DELETE FROM rate_limit_request_log
-                    WHERE requested_at < :retention_start
+                    WHERE requested_at < (
+                        now() - (CAST(:retention_seconds AS integer) * interval '1 second')
+                    )
                     """
                 ),
-                {"retention_start": retention_start},
+                {"retention_seconds": REQUEST_LOG_RETENTION_SECONDS},
             )
             db.execute(
                 text(
                     """
-                    INSERT INTO rate_limit_request_log (user_id, requested_at)
-                    VALUES (:user_id, :now)
+                    INSERT INTO rate_limit_request_log (user_id)
+                    VALUES (:user_id)
                     """
                 ),
-                {"user_id": user_id, "now": now},
+                {"user_id": user_id},
             )
             count = int(
                 db.execute(
@@ -90,10 +88,12 @@ class RateLimiter:
                         SELECT COUNT(*)
                         FROM rate_limit_request_log
                         WHERE user_id = :user_id
-                          AND requested_at >= :window_start
+                          AND requested_at >= (
+                              now() - (CAST(:window_seconds AS integer) * interval '1 second')
+                          )
                         """
                     ),
-                    {"user_id": user_id, "window_start": window_start},
+                    {"user_id": user_id, "window_seconds": RPM_WINDOW_SECONDS},
                 ).scalar_one()
             )
             db.commit()
@@ -150,7 +150,6 @@ class RateLimiter:
                 RATE_LIMITER_UNAVAILABLE_MESSAGE,
             )
 
-        now = datetime.now(UTC)
         with self._db_strict(
             "inflight_acquire_failed",
             raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
@@ -158,29 +157,7 @@ class RateLimiter:
             user_id=str(user_id),
         ) as db:
             self._lock_scope(db, scope="inflight", user_id=user_id)
-            db.execute(
-                text(
-                    """
-                    INSERT INTO rate_limit_inflight (user_id, inflight_count, updated_at)
-                    VALUES (:user_id, 0, :now)
-                    ON CONFLICT (user_id) DO NOTHING
-                    """
-                ),
-                {"user_id": user_id, "now": now},
-            )
-            current = int(
-                db.execute(
-                    text(
-                        """
-                        SELECT inflight_count
-                        FROM rate_limit_inflight
-                        WHERE user_id = :user_id
-                        FOR UPDATE
-                        """
-                    ),
-                    {"user_id": user_id},
-                ).scalar_one()
-            )
+            current = self._ensure_inflight_row(db=db, user_id=user_id)
             if current >= self._concurrent_limit:
                 db.rollback()
                 logger.warning("rate_limit.blocked", **safe_kv(limit_type="concurrent"))
@@ -192,14 +169,13 @@ class RateLimiter:
                 text(
                     """
                     UPDATE rate_limit_inflight
-                    SET inflight_count = :next_count, updated_at = :now
+                    SET inflight_count = :next_count, updated_at = now()
                     WHERE user_id = :user_id
                     """
                 ),
                 {
                     "user_id": user_id,
                     "next_count": current + 1,
-                    "now": now,
                 },
             )
             db.commit()
@@ -209,7 +185,6 @@ class RateLimiter:
         if not self.backend_available:
             return
 
-        now = datetime.now(UTC)
         with self._db_swallow("inflight_release_failed", user_id=str(user_id)) as db:
             self._lock_scope(db, scope="inflight", user_id=user_id)
             db.execute(
@@ -217,11 +192,11 @@ class RateLimiter:
                     """
                     UPDATE rate_limit_inflight
                     SET inflight_count = GREATEST(inflight_count - 1, 0),
-                        updated_at = :now
+                        updated_at = now()
                     WHERE user_id = :user_id
                     """
                 ),
-                {"user_id": user_id, "now": now},
+                {"user_id": user_id},
             )
             db.commit()
 
@@ -234,17 +209,16 @@ class RateLimiter:
                 RATE_LIMITER_UNAVAILABLE_MESSAGE,
             )
 
-        usage_date = self._today_utc()
         with self._db_strict(
             "token_budget_check_failed",
             raise_code=ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
             raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
         ) as db:
+            usage_date = self._db_utc_date(db)
             self._load_budget_totals_for_update(
                 db=db,
                 user_id=user_id,
                 usage_date=usage_date,
-                now=datetime.now(UTC),
             )
             entitlements = get_effective_entitlements(db, user_id)
             period_start = entitlements.usage_period_start.date()
@@ -282,56 +256,38 @@ class RateLimiter:
         if tokens <= 0:
             return
 
-        usage_date = self._today_utc()
-        now = datetime.now(UTC)
         with self._db_swallow(
             "token_budget_charge_failed",
             user_id=str(user_id),
             message_id=str(message_id),
             tokens=tokens,
         ) as db:
+            usage_date = self._db_utc_date(db)
             self._load_budget_totals_for_update(
                 db=db,
                 user_id=user_id,
                 usage_date=usage_date,
-                now=now,
             )
-            inserted = db.execute(
-                text(
-                    """
-                    INSERT INTO token_budget_charges (
-                        message_id,
-                        user_id,
-                        usage_date,
-                        charged_tokens,
-                        created_at
-                    )
-                    VALUES (:message_id, :user_id, :usage_date, :tokens, :now)
-                    ON CONFLICT (message_id) DO NOTHING
-                    """
-                ),
-                {
-                    "message_id": message_id,
-                    "user_id": user_id,
-                    "usage_date": usage_date,
-                    "tokens": int(tokens),
-                    "now": now,
-                },
-            )
-            if getattr(inserted, "rowcount", 0) > 0:
+            if not self._token_budget_charge_exists(db=db, message_id=message_id):
+                self._insert_token_budget_charge(
+                    db=db,
+                    message_id=message_id,
+                    user_id=user_id,
+                    usage_date=usage_date,
+                    charged_tokens=int(tokens),
+                )
                 db.execute(
                     text(
                         """
                         UPDATE token_budget_daily_usage
                         SET spent_tokens = spent_tokens + :tokens,
-                            updated_at = :now
+                            updated_at = now()
                         WHERE user_id = :user_id
                           AND usage_date = :usage_date
                         """
                     ),
                     {
-                        "tokens": int(tokens),
-                        "now": now,
+                        "tokens": tokens,
                         "user_id": user_id,
                         "usage_date": usage_date,
                     },
@@ -355,20 +311,18 @@ class RateLimiter:
         if est_tokens <= 0:
             return
 
-        now = datetime.now(UTC)
-        usage_date = self._today_utc()
-        expires_at = now + timedelta(seconds=max(int(ttl), 1))
+        ttl_seconds = max(int(ttl), 1)
 
         with self._db_strict(
             "token_budget_reserve_failed",
             raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
             raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
         ) as db:
+            usage_date = self._db_utc_date(db)
             self._load_budget_totals_for_update(
                 db=db,
                 user_id=user_id,
                 usage_date=usage_date,
-                now=now,
             )
             existing = db.execute(
                 text(
@@ -419,16 +373,14 @@ class RateLimiter:
                         user_id,
                         usage_date,
                         reserved_tokens,
-                        expires_at,
-                        created_at
+                        expires_at
                     )
                     VALUES (
                         :reservation_id,
                         :user_id,
                         :usage_date,
                         :reserved_tokens,
-                        :expires_at,
-                        :now
+                        now() + (CAST(:ttl_seconds AS integer) * interval '1 second')
                     )
                     """
                 ),
@@ -437,8 +389,7 @@ class RateLimiter:
                     "user_id": user_id,
                     "usage_date": usage_date,
                     "reserved_tokens": int(est_tokens),
-                    "expires_at": expires_at,
-                    "now": now,
+                    "ttl_seconds": ttl_seconds,
                 },
             )
             db.execute(
@@ -446,14 +397,13 @@ class RateLimiter:
                     """
                     UPDATE token_budget_daily_usage
                     SET reserved_tokens = reserved_tokens + :reserved_tokens,
-                        updated_at = :now
+                        updated_at = now()
                     WHERE user_id = :user_id
                       AND usage_date = :usage_date
                     """
                 ),
                 {
                     "reserved_tokens": int(est_tokens),
-                    "now": now,
                     "user_id": user_id,
                     "usage_date": usage_date,
                 },
@@ -465,7 +415,6 @@ class RateLimiter:
         if not self.backend_available:
             return
 
-        now = datetime.now(UTC)
         normalized_tokens = max(int(actual_tokens), 0)
 
         with self._db_swallow(
@@ -489,12 +438,13 @@ class RateLimiter:
                 .mappings()
                 .first()
             )
-            usage_date = reservation["usage_date"] if reservation is not None else self._today_utc()
+            usage_date = (
+                reservation["usage_date"] if reservation is not None else self._db_utc_date(db)
+            )
             self._load_budget_totals_for_update(
                 db=db,
                 user_id=user_id,
                 usage_date=usage_date,
-                now=now,
             )
 
             if reservation is not None:
@@ -516,61 +466,40 @@ class RateLimiter:
                                 reserved_tokens - :reserved_tokens,
                                 0
                             ),
-                            updated_at = :now
+                            updated_at = now()
                         WHERE user_id = :user_id
                           AND usage_date = :usage_date
                         """
                     ),
                     {
                         "reserved_tokens": int(reservation["reserved_tokens"]),
-                        "now": now,
                         "user_id": user_id,
                         "usage_date": usage_date,
                     },
                 )
 
-            inserted = db.execute(
-                text(
-                    """
-                    INSERT INTO token_budget_charges (
-                        message_id,
-                        user_id,
-                        usage_date,
-                        charged_tokens,
-                        created_at
-                    )
-                    VALUES (
-                        :message_id,
-                        :user_id,
-                        :usage_date,
-                        :charged_tokens,
-                        :now
-                    )
-                    ON CONFLICT (message_id) DO NOTHING
-                    """
-                ),
-                {
-                    "message_id": reservation_id,
-                    "user_id": user_id,
-                    "usage_date": usage_date,
-                    "charged_tokens": normalized_tokens,
-                    "now": now,
-                },
-            )
-            if getattr(inserted, "rowcount", 0) > 0 and normalized_tokens > 0:
+            existing_charge = self._token_budget_charge_exists(db=db, message_id=reservation_id)
+            if not existing_charge:
+                self._insert_token_budget_charge(
+                    db=db,
+                    message_id=reservation_id,
+                    user_id=user_id,
+                    usage_date=usage_date,
+                    charged_tokens=normalized_tokens,
+                )
+            if not existing_charge and normalized_tokens > 0:
                 db.execute(
                     text(
                         """
                         UPDATE token_budget_daily_usage
                         SET spent_tokens = spent_tokens + :charged_tokens,
-                            updated_at = :now
+                            updated_at = now()
                         WHERE user_id = :user_id
                           AND usage_date = :usage_date
                         """
                     ),
                     {
                         "charged_tokens": normalized_tokens,
-                        "now": now,
                         "user_id": user_id,
                         "usage_date": usage_date,
                     },
@@ -582,7 +511,6 @@ class RateLimiter:
         if not self.backend_available:
             return
 
-        now = datetime.now(UTC)
         with self._db_swallow(
             "token_budget_release_failed",
             user_id=str(user_id),
@@ -613,7 +541,6 @@ class RateLimiter:
                 db=db,
                 user_id=user_id,
                 usage_date=usage_date,
-                now=now,
             )
             db.execute(
                 text(
@@ -633,14 +560,13 @@ class RateLimiter:
                             reserved_tokens - :reserved_tokens,
                             0
                         ),
-                        updated_at = :now
+                        updated_at = now()
                     WHERE user_id = :user_id
                       AND usage_date = :usage_date
                     """
                 ),
                 {
                     "reserved_tokens": int(reservation["reserved_tokens"]),
-                    "now": now,
                     "user_id": user_id,
                     "usage_date": usage_date,
                 },
@@ -680,16 +606,14 @@ class RateLimiter:
         db: Session,
         user_id: UUID,
         usage_date: date,
-        now: datetime,
     ) -> tuple[int, int]:
         self._lock_scope(db, scope="budget", user_id=user_id, usage_date=usage_date)
-        self._ensure_daily_usage_row(db=db, user_id=user_id, usage_date=usage_date, now=now)
+        self._ensure_daily_usage_row(db=db, user_id=user_id, usage_date=usage_date)
         row = self._select_daily_usage_for_update(db=db, user_id=user_id, usage_date=usage_date)
         expired_total = self._expire_reservations(
             db=db,
             user_id=user_id,
             usage_date=usage_date,
-            now=now,
         )
         if expired_total > 0:
             db.execute(
@@ -697,14 +621,13 @@ class RateLimiter:
                     """
                     UPDATE token_budget_daily_usage
                     SET reserved_tokens = GREATEST(reserved_tokens - :expired_total, 0),
-                        updated_at = :now
+                        updated_at = now()
                     WHERE user_id = :user_id
                       AND usage_date = :usage_date
                     """
                 ),
                 {
                     "expired_total": expired_total,
-                    "now": now,
                     "user_id": user_id,
                     "usage_date": usage_date,
                 },
@@ -716,14 +639,51 @@ class RateLimiter:
             )
         return int(row["spent_tokens"]), int(row["reserved_tokens"])
 
+    def _ensure_inflight_row(self, *, db: Session, user_id: UUID) -> int:
+        row = db.execute(
+            text(
+                """
+                SELECT inflight_count
+                FROM rate_limit_inflight
+                WHERE user_id = :user_id
+                FOR UPDATE
+                """
+            ),
+            {"user_id": user_id},
+        ).first()
+        if row is not None:
+            return int(row[0])
+        db.execute(
+            text(
+                """
+                INSERT INTO rate_limit_inflight (user_id, inflight_count, updated_at)
+                VALUES (:user_id, 0, now())
+                """
+            ),
+            {"user_id": user_id},
+        )
+        return 0
+
     def _ensure_daily_usage_row(
         self,
         *,
         db: Session,
         user_id: UUID,
         usage_date: date,
-        now: datetime,
     ) -> None:
+        existing = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM token_budget_daily_usage
+                WHERE user_id = :user_id
+                  AND usage_date = :usage_date
+                """
+            ),
+            {"user_id": user_id, "usage_date": usage_date},
+        ).first()
+        if existing is not None:
+            return
         db.execute(
             text(
                 """
@@ -731,14 +691,12 @@ class RateLimiter:
                     user_id,
                     usage_date,
                     spent_tokens,
-                    reserved_tokens,
-                    updated_at
+                    reserved_tokens
                 )
-                VALUES (:user_id, :usage_date, 0, 0, :now)
-                ON CONFLICT (user_id, usage_date) DO NOTHING
+                VALUES (:user_id, :usage_date, 0, 0)
                 """
             ),
-            {"user_id": user_id, "usage_date": usage_date, "now": now},
+            {"user_id": user_id, "usage_date": usage_date},
         )
 
     def _select_daily_usage_for_update(
@@ -775,7 +733,6 @@ class RateLimiter:
         db: Session,
         user_id: UUID,
         usage_date: date,
-        now: datetime,
     ) -> int:
         expired_total = db.execute(
             text(
@@ -784,15 +741,63 @@ class RateLimiter:
                     DELETE FROM token_budget_reservations
                     WHERE user_id = :user_id
                       AND usage_date = :usage_date
-                      AND expires_at <= :now
+                      AND expires_at <= now()
                     RETURNING reserved_tokens
                 )
                 SELECT COALESCE(SUM(reserved_tokens), 0) FROM expired
                 """
             ),
-            {"user_id": user_id, "usage_date": usage_date, "now": now},
+            {"user_id": user_id, "usage_date": usage_date},
         ).scalar_one()
         return int(expired_total)
+
+    def _token_budget_charge_exists(self, *, db: Session, message_id: UUID) -> bool:
+        row = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM token_budget_charges
+                WHERE message_id = :message_id
+                FOR UPDATE
+                """
+            ),
+            {"message_id": message_id},
+        ).first()
+        return row is not None
+
+    def _insert_token_budget_charge(
+        self,
+        *,
+        db: Session,
+        message_id: UUID,
+        user_id: UUID,
+        usage_date: date,
+        charged_tokens: int,
+    ) -> None:
+        db.execute(
+            text(
+                """
+                INSERT INTO token_budget_charges (
+                    message_id,
+                    user_id,
+                    usage_date,
+                    charged_tokens
+                )
+                VALUES (
+                    :message_id,
+                    :user_id,
+                    :usage_date,
+                    :charged_tokens
+                )
+                """
+            ),
+            {
+                "message_id": message_id,
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "charged_tokens": charged_tokens,
+            },
+        )
 
     def _lock_scope(
         self,
@@ -811,8 +816,8 @@ class RateLimiter:
         return self._session_factory()
 
     @staticmethod
-    def _today_utc() -> date:
-        return datetime.now(UTC).date()
+    def _db_utc_date(db: Session) -> date:
+        return db.execute(text("SELECT (now() AT TIME ZONE 'UTC')::date")).scalar_one()
 
 
 def _advisory_lock_key(*, scope: str, user_id: UUID, usage_date: date | None = None) -> int:

@@ -9,6 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 
+def _validate_fragment_offset_range(start_offset: int, end_offset: int) -> None:
+    if end_offset <= start_offset:
+        raise ValueError("end_offset must be greater than start_offset")
+
+
 # =============================================================================
 # Output Schemas
 # =============================================================================
@@ -102,6 +107,11 @@ class CreateHighlightRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="after")
+    def validate_offset_range(self) -> "CreateHighlightRequest":
+        _validate_fragment_offset_range(self.start_offset, self.end_offset)
+        return self
+
 
 class PdfQuadIn(BaseModel):
     """Input quad vertices in canonical page-space points."""
@@ -137,6 +147,11 @@ class FragmentAnchorUpdateRequest(BaseModel):
     end_offset: int = Field(..., gt=0, description="New end offset (exclusive) in codepoints")
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offset_range(self) -> "FragmentAnchorUpdateRequest":
+        _validate_fragment_offset_range(self.start_offset, self.end_offset)
+        return self
 
 
 class PdfAnchorUpdateRequest(BaseModel):

@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.schemas.podcast import (
     PodcastEnsureRequest,

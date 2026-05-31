@@ -20,6 +20,8 @@ Allowed (with suffix):
 
 import os
 
+REDACTED_LOG_VALUE = "[REDACTED]"
+
 FORBIDDEN_KEYS = frozenset(
     {
         "prompt",
@@ -44,7 +46,7 @@ def safe_kv(**kwargs) -> dict:
     """Validate that no forbidden keys are present unless already redacted.
 
     Raises ValueError in dev/test environments if a forbidden key is used
-    without a redacted suffix. In production, logs a warning instead.
+    without a redacted suffix. In production, logs a warning and redacts.
 
     Usage:
         logger.info("llm.request.started", **safe_kv(
@@ -56,7 +58,8 @@ def safe_kv(**kwargs) -> dict:
         ))
 
     Returns:
-        The same kwargs dict, after validation.
+        The same kwargs dict in dev/test; a sanitized copy in prod/staging when
+        forbidden keys are present.
 
     Raises:
         ValueError: In dev/test, if a forbidden key is used without redacted suffix.
@@ -77,5 +80,9 @@ def safe_kv(**kwargs) -> dict:
 
             _logger = structlog.get_logger("nexus.services.redact")
             _logger.warning("safe_kv_violation", forbidden_keys=violations)
+            return {
+                key: REDACTED_LOG_VALUE if key in violations else value
+                for key, value in kwargs.items()
+            }
 
     return kwargs

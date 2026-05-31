@@ -14,9 +14,8 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
+from nexus.services.capabilities import READABLE_PROCESSING_STATUSES
 from nexus.services.epub_read import get_epub_navigation_for_viewer
-
-_READABLE_STATUSES = frozenset({"ready_for_reading", "embedding", "ready"})
 
 
 def get_media_navigation_for_viewer(
@@ -42,7 +41,7 @@ def get_media_navigation_for_viewer(
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports reader navigation")
         error.status_code = 409
         raise error
-    if status not in _READABLE_STATUSES:
+    if status not in READABLE_PROCESSING_STATUSES:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
     active = db.execute(

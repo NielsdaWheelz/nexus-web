@@ -70,9 +70,9 @@ vi.mock("@/lib/workspace/store", () => ({
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
   NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
-  NEXUS_OPEN_PANE_MESSAGE_TYPE: "nexus:open-pane",
   consumePendingPaneOpenQueue: () => [],
-  isOpenInAppPaneMessage: () => false,
+  parseOpenInAppPaneEvent: () => null,
+  parseOpenInAppPaneMessage: () => null,
   normalizePaneHref: (href: string) => href,
   setPaneGraphReady: vi.fn(),
   requestOpenInAppPane: (...args: unknown[]) => requestOpenInAppPaneMock(...args),

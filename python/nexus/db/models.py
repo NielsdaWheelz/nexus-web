@@ -3741,7 +3741,6 @@ class Conversation(Base):
     references: Mapped[list["ConversationReference"]] = relationship(
         "ConversationReference",
         back_populates="conversation",
-        cascade="all, delete-orphan",
         order_by="ConversationReference.created_at",
     )
 

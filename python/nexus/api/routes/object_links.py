@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.notes import (
@@ -64,7 +64,18 @@ def create_object_link(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    link = object_links_service.create_object_link(db, viewer.user_id, request)
+    link = object_links_service.create_object_link(
+        db,
+        viewer.user_id,
+        object_links_service.CreateObjectLinkInput(
+            relation_type=request.relation_type,
+            a=ObjectRef(object_type=request.a_type, object_id=request.a_id),
+            b=ObjectRef(object_type=request.b_type, object_id=request.b_id),
+            a_locator=request.a_locator,
+            b_locator=request.b_locator,
+            metadata=request.metadata,
+        ),
+    )
     return success_response(link.model_dump(mode="json", by_alias=True))
 
 
@@ -75,7 +86,19 @@ def update_object_link(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    link = object_links_service.update_object_link(db, viewer.user_id, link_id, request)
+    link = object_links_service.update_object_link(
+        db,
+        viewer.user_id,
+        link_id,
+        object_links_service.UpdateObjectLinkPatch(
+            relation_type=request.relation_type,
+            a_order_key=request.a_order_key,
+            b_order_key=request.b_order_key,
+            metadata=request.metadata,
+            set_a_order_key="a_order_key" in request.model_fields_set,
+            set_b_order_key="b_order_key" in request.model_fields_set,
+        ),
+    )
     return success_response(link.model_dump(mode="json", by_alias=True))
 
 

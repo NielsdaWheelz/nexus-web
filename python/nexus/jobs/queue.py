@@ -13,6 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import integrity_constraint_name
+
 PENDING = "pending"
 RUNNING = "running"
 SUCCEEDED = "succeeded"
@@ -20,6 +22,50 @@ FAILED = "failed"
 DEAD = "dead"
 
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
+
+_INSERT_JOB_SQL = text(
+    """
+    INSERT INTO background_jobs (
+        kind,
+        payload,
+        status,
+        priority,
+        attempts,
+        max_attempts,
+        available_at,
+        lease_expires_at,
+        claimed_by,
+        dedupe_key,
+        error_code,
+        last_error,
+        result,
+        started_at,
+        finished_at,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        :kind,
+        CAST(:payload AS jsonb),
+        'pending',
+        :priority,
+        0,
+        :max_attempts,
+        COALESCE(:available_at, now()),
+        NULL,
+        NULL,
+        :dedupe_key,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        now(),
+        now()
+    )
+    RETURNING *
+    """
+)
 
 
 @dataclass(frozen=True)
@@ -46,62 +92,19 @@ class JobRow:
     updated_at: datetime
 
 
-def enqueue_job(
+def _insert_job_row(
     db: Session,
     *,
     kind: str,
-    payload: Mapping[str, Any] | None = None,
-    priority: int = 100,
-    max_attempts: int = 3,
-    available_at: datetime | None = None,
-    dedupe_key: str | None = None,
+    payload: Mapping[str, Any] | None,
+    priority: int,
+    max_attempts: int,
+    available_at: datetime | None,
+    dedupe_key: str | None,
 ) -> JobRow:
-    """Insert one background job row without forcing commit."""
     row = (
         db.execute(
-            text(
-                """
-                INSERT INTO background_jobs (
-                    kind,
-                    payload,
-                    status,
-                    priority,
-                    attempts,
-                    max_attempts,
-                    available_at,
-                    lease_expires_at,
-                    claimed_by,
-                    dedupe_key,
-                    error_code,
-                    last_error,
-                    result,
-                    started_at,
-                    finished_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :kind,
-                    CAST(:payload AS jsonb),
-                    'pending',
-                    :priority,
-                    0,
-                    :max_attempts,
-                    COALESCE(:available_at, now()),
-                    NULL,
-                    NULL,
-                    :dedupe_key,
-                    NULL,
-                    NULL,
-                    NULL,
-                    NULL,
-                    NULL,
-                    now(),
-                    now()
-                )
-                RETURNING *
-                """
-            ),
+            _INSERT_JOB_SQL,
             {
                 "kind": kind,
                 "payload": json.dumps(dict(payload or {})),
@@ -116,6 +119,28 @@ def enqueue_job(
     )
     db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
     return _row_to_job(row)
+
+
+def enqueue_job(
+    db: Session,
+    *,
+    kind: str,
+    payload: Mapping[str, Any] | None = None,
+    priority: int = 100,
+    max_attempts: int = 3,
+    available_at: datetime | None = None,
+    dedupe_key: str | None = None,
+) -> JobRow:
+    """Insert one background job row without forcing commit."""
+    return _insert_job_row(
+        db,
+        kind=kind,
+        payload=payload,
+        priority=priority,
+        max_attempts=max_attempts,
+        available_at=available_at,
+        dedupe_key=dedupe_key,
+    )
 
 
 def enqueue_unique_job(
@@ -142,67 +167,18 @@ def enqueue_unique_job(
 
     try:
         with db.begin_nested():
-            inserted = (
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO background_jobs (
-                            kind,
-                            payload,
-                            status,
-                            priority,
-                            attempts,
-                            max_attempts,
-                            available_at,
-                            lease_expires_at,
-                            claimed_by,
-                            dedupe_key,
-                            error_code,
-                            last_error,
-                            result,
-                            started_at,
-                            finished_at,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (
-                            :kind,
-                            CAST(:payload AS jsonb),
-                            'pending',
-                            :priority,
-                            0,
-                            :max_attempts,
-                            COALESCE(:available_at, now()),
-                            NULL,
-                            NULL,
-                            :dedupe_key,
-                            NULL,
-                            NULL,
-                            NULL,
-                            NULL,
-                            NULL,
-                            now(),
-                            now()
-                        )
-                        RETURNING *
-                        """
-                    ),
-                    {
-                        "kind": kind,
-                        "payload": json.dumps(dict(payload or {})),
-                        "priority": int(priority),
-                        "max_attempts": max(int(max_attempts), 1),
-                        "available_at": available_at,
-                        "dedupe_key": dedupe_key,
-                    },
-                )
-                .mappings()
-                .one()
+            inserted = _insert_job_row(
+                db,
+                kind=kind,
+                payload=payload,
+                priority=priority,
+                max_attempts=max_attempts,
+                available_at=available_at,
+                dedupe_key=dedupe_key,
             )
-            db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
-            return _row_to_job(inserted), True
+            return inserted, True
     except IntegrityError as exc:
-        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        constraint_name = integrity_constraint_name(exc)
         sqlstate = getattr(exc.orig, "sqlstate", None)
         if not (
             constraint_name == "idx_background_jobs_dedupe_key_unique"

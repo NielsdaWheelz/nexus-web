@@ -52,7 +52,9 @@ def run_podcast_active_subscription_poll_now(
     run_lease_seconds: int,
     scheduler_identity: str | None,
 ) -> dict:
-    """Synchronous helper used by integration tests."""
+    """Run the active-subscription poll synchronously, defaulting `sync_lease_seconds`
+    from settings. Shared by the job handler above and by integration tests; unlike a
+    pure test seam it owns the settings-derived lease default, so it is not inlinable."""
     settings = get_settings()
     return run_scheduled_active_subscription_poll_service(
         db,

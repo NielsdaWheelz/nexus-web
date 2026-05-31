@@ -14,6 +14,15 @@ from nexus.services.prompt_budget import make_prompt_block
 pytestmark = pytest.mark.unit
 
 
+def test_system_prompt_names_resources_and_strict_tools():
+    prompt = render_system_prompt_block()
+
+    assert "<resources>" in prompt
+    assert "read_resource(uri)" in prompt
+    assert "app_search(query=..., scopes=[...])" in prompt
+    assert "pinned" not in prompt.lower()
+
+
 def test_prompt_plan_keeps_stable_prefix_before_dynamic_blocks():
     system = make_prompt_block(
         block_id="system",

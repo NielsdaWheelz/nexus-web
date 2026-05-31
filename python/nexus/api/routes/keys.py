@@ -26,8 +26,9 @@ from llm_calling.router import LLMRouter
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db, get_llm_router
+from nexus.api.deps import get_llm_router
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.keys import UserApiKeyCreate

@@ -115,23 +115,27 @@ def _create_shared_library(session, owner_id: UUID) -> UUID:
         """),
         {"id": library_id, "owner": owner_id},
     )
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:library_id, :user_id, 'admin')
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "user_id": owner_id},
-    )
+    _add_library_member(session, library_id, owner_id, "admin")
     return library_id
 
 
 def _add_library_member(session, library_id: UUID, user_id: UUID, role: str = "member") -> None:
+    existing = session.execute(
+        text("""
+            SELECT 1
+            FROM memberships
+            WHERE library_id = :library_id
+              AND user_id = :user_id
+        """),
+        {"library_id": library_id, "user_id": user_id},
+    ).first()
+    if existing is not None:
+        return
+
     session.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             VALUES (:library_id, :user_id, :role)
-            ON CONFLICT DO NOTHING
         """),
         {"library_id": library_id, "user_id": user_id, "role": role},
     )

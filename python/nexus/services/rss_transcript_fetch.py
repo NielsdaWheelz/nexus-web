@@ -92,9 +92,9 @@ def fetch_rss_transcript(
 
         source_type = ref["source_type"]
         if source_type == "vtt":
-            segments = _parse_vtt_transcript(content)
+            segments = parse_vtt_transcript(content)
         elif source_type == "srt":
-            segments = _parse_srt_transcript(content)
+            segments = parse_srt_transcript(content)
         elif source_type == "json":
             try:
                 payload = json.loads(content)
@@ -106,9 +106,9 @@ def fetch_rss_transcript(
                     error=str(exc),
                 )
                 continue
-            segments = _parse_json_transcript(payload)
+            segments = parse_json_transcript(payload)
         else:
-            segments = _parse_plain_text_transcript(
+            segments = parse_plain_text_transcript(
                 content,
                 episode_duration_ms=episode_duration_ms,
             )
@@ -172,7 +172,7 @@ def _fetch_real_media_fixture_transcript(
             "RSS transcript fixture hash mismatch",
         )
 
-    segments = _parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
+    segments = parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
     if not segments:
         return _failure(
             ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
@@ -360,7 +360,7 @@ def _is_allowed_content_type(content_type: str | None, *, source_type: str) -> b
     return content_type.startswith("text/") and content_type not in _REJECTED_CONTENT_TYPES
 
 
-def _parse_vtt_transcript(content: str) -> list[dict[str, Any]]:
+def parse_vtt_transcript(content: str) -> list[dict[str, Any]]:
     normalized = str(content or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
     if not normalized.strip():
         return []
@@ -451,7 +451,7 @@ def _extract_vtt_text_and_speaker(cue_lines: list[str]) -> tuple[str, str | None
     return text_value, speaker_label
 
 
-def _parse_srt_transcript(content: str) -> list[dict[str, Any]]:
+def parse_srt_transcript(content: str) -> list[dict[str, Any]]:
     normalized = str(content or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
     if not normalized.strip():
         return []
@@ -497,7 +497,7 @@ def _parse_srt_timing_line(line: str) -> tuple[int | None, int | None]:
     return t_start_ms, t_end_ms
 
 
-def _parse_json_transcript(payload: Any) -> list[dict[str, Any]]:
+def parse_json_transcript(payload: Any) -> list[dict[str, Any]]:
     entries: list[Any]
     if isinstance(payload, dict):
         raw_segments = payload.get("segments")
@@ -539,7 +539,7 @@ def _parse_json_transcript(payload: Any) -> list[dict[str, Any]]:
     return segments
 
 
-def _parse_plain_text_transcript(
+def parse_plain_text_transcript(
     content: str,
     *,
     episode_duration_ms: int | None = None,

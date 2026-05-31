@@ -22,26 +22,15 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import ReaderCitation, {
-  type ReaderCitationColor,
-  type ReaderCitationPreview,
-} from "@/components/ui/ReaderCitation";
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
+import ReaderCitation from "@/components/ui/ReaderCitation";
+import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
 const CITATION_HREF_PREFIX = "#nexus-reader-citation-";
-
-
-export interface ReaderCitationData {
-  index: number;
-  color: ReaderCitationColor;
-  preview: ReaderCitationPreview;
-  target: ReaderSourceTarget | null;
-  href?: string | null;
-}
 
 // ---------------------------------------------------------------------------
 // Code block with language label + copy button
@@ -247,26 +236,26 @@ function MarkdownMessageInner({
       ),
     [citationByIndex, content],
   );
-  const rendered = citationByIndex ? (
-    <CitationContext.Provider value={citationContext}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={citationComponents}
-      >
-        {renderedContent}
-      </ReactMarkdown>
-    </CitationContext.Provider>
-  ) : (
+  const markdown = (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
-      components={baseComponents}
+      components={citationByIndex ? citationComponents : baseComponents}
     >
       {renderedContent}
     </ReactMarkdown>
   );
-  return <div className={styles.markdown}>{rendered}</div>;
+  return (
+    <div className={styles.markdown}>
+      {citationByIndex ? (
+        <CitationContext.Provider value={citationContext}>
+          {markdown}
+        </CitationContext.Provider>
+      ) : (
+        markdown
+      )}
+    </div>
+  );
 }
 
 export const MarkdownMessage = memo(MarkdownMessageInner);

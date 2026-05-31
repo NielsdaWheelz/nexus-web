@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.user import UserProfileOut, UserSearchOut
+from nexus.schemas.user import DISPLAY_NAME_MAX_LENGTH, UserProfileOut, UserSearchOut
 
 
 def get_user_profile(
@@ -52,6 +52,11 @@ def update_display_name(db: Session, user_id: UUID, display_name: str | None) ->
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Display name cannot be empty (use null to clear)",
+            )
+        if len(display_name) > DISPLAY_NAME_MAX_LENGTH:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"Display name cannot exceed {DISPLAY_NAME_MAX_LENGTH} characters",
             )
 
     with transaction(db):

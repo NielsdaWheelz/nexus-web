@@ -26,15 +26,6 @@ describe("parseReaderResumeState", () => {
     expect(parseReaderResumeState(state)).toEqual(state);
   });
 
-  it("rejects removed flat payloads", () => {
-    expect(() =>
-      parseReaderResumeState({
-        source: "fragment-2",
-        text_offset: 84,
-      })
-    ).toThrow("Invalid reader state payload");
-  });
-
   it("rejects missing nullable fields", () => {
     expect(() =>
       parseReaderResumeState({

@@ -33,6 +33,13 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import UserApiKey
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode
+from nexus.llm_catalog import (
+    PROVIDER_ORDER,
+    VALID_PROVIDERS,
+    enabled_provider_names,
+    key_test_model,
+    provider_display_name,
+)
 from nexus.logging import get_logger
 from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
 from nexus.services.crypto import CryptoError, decrypt_api_key, encrypt_api_key
@@ -40,35 +47,9 @@ from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
-# Valid providers (lowercase only)
-VALID_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "deepseek"})
-PROVIDER_ORDER = ("openai", "anthropic", "gemini", "deepseek")
-PROVIDER_DISPLAY_NAMES = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "gemini": "Google",
-    "deepseek": "DeepSeek",
-}
-KEY_TEST_MODELS = {
-    "openai": "gpt-5.4-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
-    "gemini": "gemini-3-flash-preview",
-    "deepseek": "deepseek-v4-flash",
-}
-
 
 def _enabled_providers() -> tuple[str, ...]:
-    settings = get_settings()
-    enabled: list[str] = []
-    if settings.enable_openai:
-        enabled.append("openai")
-    if settings.enable_anthropic:
-        enabled.append("anthropic")
-    if settings.enable_gemini:
-        enabled.append("gemini")
-    if settings.enable_deepseek:
-        enabled.append("deepseek")
-    return tuple(enabled)
+    return enabled_provider_names(get_settings())
 
 
 def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
@@ -76,7 +57,7 @@ def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
     return UserApiKeyOut(
         id=key.id,
         provider=key.provider,
-        provider_display_name=PROVIDER_DISPLAY_NAMES[key.provider],
+        provider_display_name=provider_display_name(key.provider) or key.provider,
         fingerprint=fingerprint,
         key_fingerprint=fingerprint,
         status=cast(KeyProviderStateStatus, key.status),
@@ -89,9 +70,18 @@ def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
 def _missing_provider_out(provider: str) -> UserApiKeyOut:
     return UserApiKeyOut(
         provider=provider,
-        provider_display_name=PROVIDER_DISPLAY_NAMES[provider],
+        provider_display_name=provider_display_name(provider) or provider,
         status="missing",
     )
+
+
+def _fetch_user_key(db: Session, user_id: UUID, key_id: UUID) -> UserApiKey | None:
+    """Fetch a user's API key by id, scoped to the owning user."""
+    stmt = select(UserApiKey).where(
+        UserApiKey.id == key_id,
+        UserApiKey.user_id == user_id,
+    )
+    return db.scalars(stmt).first()
 
 
 def list_user_keys(db: Session, user_id: UUID) -> list[UserApiKeyOut]:
@@ -247,11 +237,7 @@ async def test_user_key(
     The plaintext key is decrypted only for the outbound provider validation call
     and is never logged or returned.
     """
-    stmt = select(UserApiKey).where(
-        UserApiKey.id == key_id,
-        UserApiKey.user_id == user_id,
-    )
-    key = db.scalars(stmt).first()
+    key = _fetch_user_key(db, user_id, key_id)
     if not key or key.status == "revoked" or not key.encrypted_key or not key.key_nonce:
         raise ApiError(ApiErrorCode.E_KEY_NOT_FOUND, "API key not found")
 
@@ -274,8 +260,12 @@ async def test_user_key(
         db.commit()
         return _key_to_out(key)
 
+    model_name = key_test_model(key.provider)
+    if model_name is None:
+        raise ApiError(ApiErrorCode.E_KEY_PROVIDER_INVALID, f"Unknown provider: {key.provider}")
+
     req = LLMRequest(
-        model_name=KEY_TEST_MODELS[key.provider],
+        model_name=model_name,
         messages=[Turn(role="user", content="Reply with ok.")],
         max_tokens=8,
         reasoning_effort="none",
@@ -381,12 +371,7 @@ def revoke_user_key(db: Session, user_id: UUID, key_id: UUID) -> None:
     Raises:
         ApiError: E_KEY_NOT_FOUND if key doesn't exist or not owned by user.
     """
-    # Find the key and verify ownership
-    stmt = select(UserApiKey).where(
-        UserApiKey.id == key_id,
-        UserApiKey.user_id == user_id,
-    )
-    key = db.scalars(stmt).first()
+    key = _fetch_user_key(db, user_id, key_id)
 
     if not key:
         raise ApiError(

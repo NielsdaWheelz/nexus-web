@@ -54,11 +54,6 @@
   background: var(--surface-2);
 }
 
-.option[data-disabled="true"] {
-  color: var(--ink-faint);
-  cursor: default;
-}
-
 .option > svg {
   flex-shrink: 0;
 }

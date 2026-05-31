@@ -114,13 +114,3 @@ class LibraryIntelligenceOut(BaseModel):
     sections: list[LibraryIntelligenceSectionOut]
     coverage: list[LibraryIntelligenceCoverageOut]
     build: LibraryIntelligenceBuildOut | None = None
-
-
-class LibraryArtifactPromptContext(BaseModel):
-    version_id: UUID
-    library_id: UUID
-    source_set_version_id: UUID
-    source_set_hash: str
-    prompt_version: str
-    schema_version: str
-    text: str

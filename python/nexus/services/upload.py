@@ -22,8 +22,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
 from nexus.db.models import (
-    FailureStage,
-    Library,
     Media,
     MediaFile,
     ProcessingStatus,
@@ -37,6 +35,12 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.services import libraries as libraries_service
+from nexus.services.file_ingest_validation import (
+    has_valid_file_signature,
+    validate_file_ingest_request,
+)
+from nexus.services.media_deletion import delete_duplicate_document_media
+from nexus.services.media_processing_state import mark_failed
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import (
     build_storage_path,
@@ -45,71 +49,6 @@ from nexus.storage.paths import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Content type validation
-VALID_CONTENT_TYPES = {
-    "pdf": {"application/pdf"},
-    "epub": {"application/epub+zip"},
-}
-
-# Magic bytes for file type validation
-MAGIC_BYTES = {
-    "pdf": b"%PDF-",
-    "epub": b"PK\x03\x04",  # ZIP header (EPUB is a ZIP file)
-}
-
-
-def _validate_upload_request(kind: str, content_type: str, size_bytes: int) -> None:
-    """Validate upload init request parameters.
-
-    Raises:
-        InvalidRequestError: If validation fails.
-    """
-    settings = get_settings()
-
-    if kind not in ("pdf", "epub"):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            f"Invalid kind '{kind}'. Upload is only supported for pdf, epub.",
-        )
-
-    valid_types = VALID_CONTENT_TYPES.get(kind, set())
-    if content_type not in valid_types:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_CONTENT_TYPE,
-            f"Invalid content type '{content_type}' for {kind}. "
-            f"Expected one of: {', '.join(valid_types)}",
-        )
-
-    max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
-    if size_bytes > max_size:
-        raise InvalidRequestError(
-            ApiErrorCode.E_FILE_TOO_LARGE,
-            f"File size {size_bytes} bytes exceeds maximum {max_size} bytes for {kind}.",
-        )
-
-
-def _get_default_library_id(db: Session, user_id: UUID) -> UUID:
-    """Get the user's default library ID.
-
-    Raises:
-        NotFoundError: If user has no default library (shouldn't happen).
-    """
-    result = db.execute(
-        select(Library.id).where(
-            Library.owner_user_id == user_id,
-            Library.is_default.is_(True),
-        )
-    )
-    library_id = result.scalar()
-
-    if not library_id:
-        raise NotFoundError(
-            ApiErrorCode.E_NOT_FOUND,
-            "Default library not found",
-        )
-
-    return library_id
 
 
 def init_upload(
@@ -150,7 +89,7 @@ def init_upload(
     libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
 
     # Validate request
-    _validate_upload_request(kind, content_type, size_bytes)
+    validate_file_ingest_request(kind, content_type, size_bytes)
 
     # Get file extension
     ext = get_file_extension(kind)
@@ -218,23 +157,6 @@ def init_upload(
     }
 
 
-def _validate_magic_bytes(content: bytes, kind: str) -> bool:
-    """Validate file content by checking magic bytes.
-
-    Args:
-        content: First bytes of the file.
-        kind: Expected media kind.
-
-    Returns:
-        True if magic bytes match expected pattern.
-    """
-    expected = MAGIC_BYTES.get(kind)
-    if expected is None:
-        return True  # No magic bytes defined for this kind
-
-    return content.startswith(expected)
-
-
 def _find_existing_by_hash(db: Session, user_id: UUID, kind: str, sha256: str) -> Media | None:
     """Find existing media by hash for deduplication."""
     result = db.execute(
@@ -294,12 +216,12 @@ def confirm_ingest(
 
     media_file = media.media_file
     if not media_file:
-        _mark_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "No media file record",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -380,12 +302,12 @@ def confirm_ingest(
     media_file = media.media_file
     if not media_file:
         _delete_upload_object(storage_client, storage_path, media_id, "missing_media_file")
-        _mark_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "No media file record",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -491,12 +413,12 @@ def confirm_ingest(
         _delete_upload_object(
             storage_client, final_storage_path, media_id, "missing_file_after_copy"
         )
-        _mark_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "No media file record",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -517,16 +439,14 @@ def confirm_ingest(
     existing = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
 
     if existing and existing.id != media.id:
-        db.execute(
-            text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
-            {"media_id": media.id},
+        libraries_service.ensure_media_in_default_library(db, viewer_id, existing.id)
+        _delete_duplicate_upload_loser(
+            db,
+            storage_client,
+            media_id,
+            [storage_path, final_storage_path],
+            "duplicate_loser",
         )
-        db.delete(media)
-        _ensure_in_default_library(db, viewer_id, existing.id)
-        db.commit()
-
-        _delete_upload_object(storage_client, storage_path, media_id, "duplicate_loser")
-        _delete_upload_object(storage_client, final_storage_path, media_id, "duplicate_loser")
 
         return {
             "media_id": str(existing.id),
@@ -543,24 +463,13 @@ def confirm_ingest(
         db.rollback()
         winner = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
         if winner:
-            db.execute(select(Media).where(Media.id == media_id).with_for_update())
-            result = db.execute(select(Media).where(Media.id == media_id))
-            media_to_delete = result.scalar()
-            if media_to_delete:
-                db.execute(
-                    text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
-                    {"media_id": media_to_delete.id},
-                )
-                db.delete(media_to_delete)
-
-            _ensure_in_default_library(db, viewer_id, winner.id)
-            db.commit()
-
-            _delete_upload_object(
-                storage_client, storage_path, media_id, "integrity_duplicate_loser"
-            )
-            _delete_upload_object(
-                storage_client, final_storage_path, media_id, "integrity_duplicate_loser"
+            libraries_service.ensure_media_in_default_library(db, viewer_id, winner.id)
+            _delete_duplicate_upload_loser(
+                db,
+                storage_client,
+                media_id,
+                [storage_path, final_storage_path],
+                "integrity_duplicate_loser",
             )
 
             return {
@@ -578,31 +487,6 @@ def confirm_ingest(
         "media_id": str(media.id),
         "duplicate": False,
     }
-
-
-def _mark_failed(
-    db: Session,
-    media: Media,
-    stage: str,
-    error_code: str,
-    error_message: str,
-) -> None:
-    """Mark media as failed.
-
-    Args:
-        db: Database session.
-        media: Media instance (must be in session).
-        stage: Failure stage (upload, extract, transcribe, embed, other).
-        error_code: Error code string.
-        error_message: Human-readable error message.
-    """
-    media.processing_status = ProcessingStatus.failed
-    media.failure_stage = FailureStage(stage)
-    media.last_error_code = error_code
-    media.last_error_message = error_message
-    media.failed_at = datetime.now(UTC)
-    media.updated_at = datetime.now(UTC)
-    db.commit()
 
 
 def _clear_upload_confirmation_claim(db: Session, media_id: UUID) -> None:
@@ -628,6 +512,26 @@ def _delete_upload_object(storage_client, storage_path: str, media_id: UUID, rea
         )
 
 
+def _delete_duplicate_upload_loser(
+    db: Session,
+    storage_client,
+    media_id: UUID,
+    storage_paths: list[str],
+    reason: str,
+) -> None:
+    db_storage_paths = delete_duplicate_document_media(db, media_id)
+    db.commit()
+    cleanup_paths: list[str] = []
+    seen_paths: set[str] = set()
+    for storage_path in [*storage_paths, *db_storage_paths]:
+        if storage_path in seen_paths:
+            continue
+        cleanup_paths.append(storage_path)
+        seen_paths.add(storage_path)
+    for storage_path in cleanup_paths:
+        _delete_upload_object(storage_client, storage_path, media_id, reason)
+
+
 def _mark_failed_and_delete_upload_by_id(
     db: Session,
     media_id: UUID,
@@ -639,7 +543,7 @@ def _mark_failed_and_delete_upload_by_id(
 ) -> None:
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is not None and media.file_sha256 is None:
-        _mark_failed(db, media, stage, error_code, error_message)
+        mark_failed(db, media, stage=stage, error_code=error_code, error_message=error_message)
     else:
         db.commit()
     _delete_upload_object(storage_client, storage_path, media_id, "failed_upload")
@@ -675,7 +579,7 @@ def _read_validated_upload_object(
     first_chunk = True
     for chunk in storage_client.stream_object(storage_path):
         if first_chunk:
-            if not _validate_magic_bytes(chunk, kind):
+            if not has_valid_file_signature(chunk, kind):
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_FILE_TYPE,
                     f"Invalid file type. Expected {kind}.",
@@ -696,83 +600,6 @@ def _read_validated_upload_object(
             "Uploaded file size does not match the stored object. Please upload the file again.",
         )
     return hasher.hexdigest(), total_bytes
-
-
-def _ensure_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
-    """Ensure media is in user's default library with intrinsic provenance.
-
-    Idempotent: no-op if already present. Delegates to shared closure helper.
-    """
-    from nexus.services.default_library_closure import ensure_default_intrinsic
-    from nexus.services.media_deletion import clear_user_media_deletion
-
-    default_library_id = _get_default_library_id(db, user_id)
-    ensure_default_intrinsic(db, default_library_id, media_id)
-    clear_user_media_deletion(db, user_id, media_id)
-
-
-def validate_source_integrity(
-    storage_client,
-    media_file: MediaFile,
-    kind: str,
-    *,
-    expected_sha256: str | None = None,
-) -> None:
-    """Validate stored file integrity for retry/re-extraction source preconditions.
-
-    Checks object exists, magic bytes match, size within limits, and optionally
-    that stored hash matches expected.  Raises on any failure — caller can rely
-    on deterministic error semantics with zero side-effects on the media row.
-    """
-    settings = get_settings()
-
-    try:
-        metadata = storage_client.head_object(media_file.storage_path)
-        if metadata is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_STORAGE_MISSING,
-                "Source file not found in storage.",
-            )
-    except StorageError as e:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR, f"Failed to read source file: {e.message}"
-        ) from e
-
-    max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
-    try:
-        hasher = hashlib.sha256()
-        total_bytes = 0
-        first_chunk = True
-
-        for chunk in storage_client.stream_object(media_file.storage_path):
-            if first_chunk:
-                if not _validate_magic_bytes(chunk, kind):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_FILE_TYPE,
-                        f"Invalid file type. Expected {kind}.",
-                    )
-                first_chunk = False
-
-            total_bytes += len(chunk)
-            if total_bytes > max_size:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_FILE_TOO_LARGE,
-                    f"File size exceeds maximum {max_size} bytes for {kind}.",
-                )
-            hasher.update(chunk)
-
-        if expected_sha256 is not None:
-            computed = hasher.hexdigest()
-            if computed != expected_sha256:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_STORAGE_MISSING,
-                    "Source integrity mismatch: stored hash does not match source bytes.",
-                )
-
-    except StorageError as e:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR, f"Failed to read source file: {e.message}"
-        ) from e
 
 
 def get_signed_download_url(

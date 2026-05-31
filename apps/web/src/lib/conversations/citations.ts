@@ -1,5 +1,7 @@
-import type { ReaderCitationData } from "@/components/ui/MarkdownMessage";
-import type { ReaderCitationColor } from "@/components/ui/ReaderCitation";
+import {
+  readerCitationColorForIndex,
+  type ReaderCitationData,
+} from "./readerCitation";
 import {
   hrefForReaderTarget,
   readerTargetFromRetrieval,
@@ -9,18 +11,6 @@ import type {
   ConversationMessage,
   MessageRetrieval,
 } from "./types";
-
-const CITATION_COLORS: ReaderCitationColor[] = [
-  "yellow",
-  "green",
-  "blue",
-  "pink",
-  "purple",
-];
-
-function citationColor(n: number): ReaderCitationColor {
-  return CITATION_COLORS[(n - 1) % CITATION_COLORS.length] ?? "neutral";
-}
 
 function retrievalBlocksOf(message: ConversationMessage): MessageRetrieval[] {
   const blocks = message.message_document?.blocks ?? [];
@@ -84,7 +74,7 @@ export function buildCitations(
         : null);
     citations.push({
       index: entry.n,
-      color: citationColor(entry.n),
+      color: readerCitationColorForIndex(entry.n),
       preview: {
         title: retrieval.source_title ?? "",
         excerpt: retrieval.exact_snippet ?? "",

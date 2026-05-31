@@ -210,18 +210,33 @@ export const insertSoftBreak: Command = (state, dispatch) => {
   return true;
 };
 
-export const indentOutlineBlock: Command = (state, dispatch) => {
+function resolveOutlineBlockContext(state: EditorState): {
+  current: CurrentBlock;
+  blocks: DraftBlock[];
+  path: number[];
+  parentList: DraftBlock[] | null;
+  index: number;
+} | null {
   const current = findCurrentBlock(state);
   if (!current) {
-    return false;
+    return null;
   }
   const blocks = readDraftBlocks(state.doc);
   const path = findPath(blocks, current.id);
   if (!path) {
-    return false;
+    return null;
   }
   const parentList = listAtPath(blocks, path.slice(0, -1));
   const index = path[path.length - 1]!;
+  return { current, blocks, path, parentList, index };
+}
+
+export const indentOutlineBlock: Command = (state, dispatch) => {
+  const ctx = resolveOutlineBlockContext(state);
+  if (!ctx) {
+    return false;
+  }
+  const { current, blocks, parentList, index } = ctx;
   if (!parentList || index <= 0) {
     return false;
   }
@@ -263,17 +278,11 @@ export const outdentOutlineBlock: Command = (state, dispatch) => {
 };
 
 export const moveOutlineBlockUp: Command = (state, dispatch) => {
-  const current = findCurrentBlock(state);
-  if (!current) {
+  const ctx = resolveOutlineBlockContext(state);
+  if (!ctx) {
     return false;
   }
-  const blocks = readDraftBlocks(state.doc);
-  const path = findPath(blocks, current.id);
-  if (!path) {
-    return false;
-  }
-  const parentList = listAtPath(blocks, path.slice(0, -1));
-  const index = path[path.length - 1]!;
+  const { current, blocks, parentList, index } = ctx;
   if (!parentList || index <= 0) {
     return false;
   }
@@ -282,17 +291,11 @@ export const moveOutlineBlockUp: Command = (state, dispatch) => {
 };
 
 export const moveOutlineBlockDown: Command = (state, dispatch) => {
-  const current = findCurrentBlock(state);
-  if (!current) {
+  const ctx = resolveOutlineBlockContext(state);
+  if (!ctx) {
     return false;
   }
-  const blocks = readDraftBlocks(state.doc);
-  const path = findPath(blocks, current.id);
-  if (!path) {
-    return false;
-  }
-  const parentList = listAtPath(blocks, path.slice(0, -1));
-  const index = path[path.length - 1]!;
+  const { current, blocks, parentList, index } = ctx;
   if (!parentList || index >= parentList.length - 1) {
     return false;
   }

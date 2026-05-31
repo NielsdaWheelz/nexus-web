@@ -1,35 +1,37 @@
 "use client";
 
-import {
-  normalizePaneTitle,
-} from "@/lib/workspace/schema";
+import { isRecord } from "@/lib/validation";
+import { normalizePaneTitle } from "@/lib/workspace/schema";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
-export const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";
+const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";
 const NEXUS_PANE_GRAPH_READY_KEY = "__nexusPaneGraphReady";
 const NEXUS_PENDING_PANE_OPEN_QUEUE_KEY = "__nexusPendingPaneOpenQueue";
+
+declare global {
+  interface Window {
+    [NEXUS_PANE_GRAPH_READY_KEY]?: boolean;
+    [NEXUS_PENDING_PANE_OPEN_QUEUE_KEY]?: OpenInAppPaneDetail[];
+  }
+}
 
 export interface OpenInAppPaneDetail {
   href: string;
   titleHint?: string;
 }
 
-interface OpenInAppPaneMessage extends OpenInAppPaneDetail {
+interface OpenInAppPaneMessage {
   type: typeof NEXUS_OPEN_PANE_MESSAGE_TYPE;
+  href: string;
+  titleHint?: string;
 }
 
-type PaneWindow = Window &
-  Partial<{
-    [NEXUS_PANE_GRAPH_READY_KEY]: boolean;
-    [NEXUS_PENDING_PANE_OPEN_QUEUE_KEY]: OpenInAppPaneDetail[];
-  }>;
-
-function paneWindow(): PaneWindow | null {
+function paneWindow(): Window | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window as PaneWindow;
+  return window;
 }
 
 function isPaneGraphReady(): boolean {
@@ -37,25 +39,21 @@ function isPaneGraphReady(): boolean {
 }
 
 function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
-  if (typeof detail !== "object" || detail === null) {
+  if (!isRecord(detail)) {
     return null;
   }
-  const candidate = detail as {
-    href?: unknown;
-    titleHint?: unknown;
-  };
-  if (typeof candidate.href !== "string") {
+  if (typeof detail.href !== "string") {
     return null;
   }
-  const href = normalizeWorkspaceHref(candidate.href);
+  const href = normalizeWorkspaceHref(detail.href);
   if (!href) {
     return null;
   }
   return {
     href,
     titleHint:
-      typeof candidate.titleHint === "string"
-        ? normalizePaneTitle(candidate.titleHint) ?? undefined
+      typeof detail.titleHint === "string"
+        ? normalizePaneTitle(detail.titleHint) ?? undefined
         : undefined,
   };
 }
@@ -94,22 +92,18 @@ export function consumePendingPaneOpenQueue(): OpenInAppPaneDetail[] {
   return queued;
 }
 
-export function isOpenInAppPaneMessage(value: unknown): value is OpenInAppPaneMessage {
-  if (typeof value !== "object" || value === null) {
-    return false;
+export function parseOpenInAppPaneMessage(value: unknown): OpenInAppPaneDetail | null {
+  if (!isRecord(value) || value.type !== NEXUS_OPEN_PANE_MESSAGE_TYPE) {
+    return null;
   }
-  const candidate = value as {
-    type?: unknown;
-    href?: unknown;
-    titleHint?: unknown;
-  };
-  if (candidate.type !== NEXUS_OPEN_PANE_MESSAGE_TYPE || typeof candidate.href !== "string") {
-    return false;
+  return sanitizeOpenPaneDetail(value);
+}
+
+export function parseOpenInAppPaneEvent(event: Event): OpenInAppPaneDetail | null {
+  if (event.type !== NEXUS_OPEN_PANE_EVENT || !(event instanceof CustomEvent)) {
+    return null;
   }
-  if (typeof candidate.titleHint !== "undefined" && typeof candidate.titleHint !== "string") {
-    return false;
-  }
-  return true;
+  return sanitizeOpenPaneDetail(event.detail);
 }
 
 export function requestOpenInAppPane(href: string, options?: { titleHint?: string }): boolean {

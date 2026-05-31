@@ -4,6 +4,23 @@ import { cookies } from "next/headers";
 import { ApiError } from "@/lib/api/client";
 import { getInternalApiConfig } from "@/lib/api/internal-config";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import { isRecord } from "@/lib/validation";
+
+function readApiErrorBody(body: unknown): {
+  code?: string;
+  message?: string;
+  requestId?: string;
+} {
+  if (!isRecord(body) || !isRecord(body.error)) {
+    return {};
+  }
+  return {
+    code: typeof body.error.code === "string" ? body.error.code : undefined,
+    message: typeof body.error.message === "string" ? body.error.message : undefined,
+    requestId:
+      typeof body.error.request_id === "string" ? body.error.request_id : undefined,
+  };
+}
 
 /**
  * Server-side equivalent of `apiFetch`: reads the Supabase session cookie,
@@ -46,12 +63,12 @@ export async function callFastAPI<T>(path: string): Promise<T> {
     );
   }
   if (!response.ok) {
-    const err = (body as { error?: { code?: string; message?: string; request_id?: string } }).error;
+    const err = readApiErrorBody(body);
     throw new ApiError(
       response.status,
-      err?.code ?? "E_UNKNOWN",
-      err?.message ?? `Request failed with status ${response.status}`,
-      err?.request_id,
+      err.code ?? "E_UNKNOWN",
+      err.message ?? `Request failed with status ${response.status}`,
+      err.requestId,
     );
   }
   return body as T;

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import text
+from sqlalchemy import func, null
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -167,7 +167,6 @@ def put_reader_media_state(
     if locator is not None:
         _validate_reader_state_for_media(media.kind, locator)
 
-    current_time = datetime.now(UTC)
     locator_payload = locator.model_dump(mode="json") if locator else None
     state = (
         db.query(ReaderMediaState)
@@ -181,19 +180,8 @@ def put_reader_media_state(
     if locator_payload is None:
         if state is None:
             return None
-        db.execute(
-            text(
-                """
-                UPDATE reader_media_state
-                SET locator = NULL, updated_at = :updated_at
-                WHERE id = :state_id
-                """
-            ),
-            {
-                "updated_at": current_time,
-                "state_id": state.id,
-            },
-        )
+        state.locator = null()
+        state.updated_at = func.now()
         db.commit()
         return None
 
@@ -202,8 +190,6 @@ def put_reader_media_state(
             user_id=viewer_id,
             media_id=media_id,
             locator=locator_payload,
-            created_at=current_time,
-            updated_at=current_time,
         )
         db.add(state)
         try:
@@ -221,6 +207,6 @@ def put_reader_media_state(
             )
 
     state.locator = locator_payload
-    state.updated_at = current_time
+    state.updated_at = func.now()
     db.commit()
     return locator

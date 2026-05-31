@@ -21,7 +21,7 @@ import Button from "@/components/ui/Button";
 import { isApiError, type ApiError } from "@/lib/api/client";
 import styles from "./Feedback.module.css";
 
-export type FeedbackSeverity = "neutral" | "info" | "success" | "warning" | "error";
+type FeedbackSeverity = "neutral" | "info" | "success" | "warning" | "error";
 
 export const PDF_PASSWORD_PROTECTED_MESSAGE = "This PDF is password-protected";
 

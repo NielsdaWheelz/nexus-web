@@ -686,7 +686,7 @@ export default function PdfReader({
     if (maxLocalScroll === 0) {
       return 0;
     }
-    return Math.max(0, Math.min(1, localScrollTop / maxLocalScroll));
+    return clamp(localScrollTop / maxLocalScroll, 0, 1);
   }, [readPageMetrics]);
   const publishCurrentResumeLocator = useCallback(
     (nextPageNumber = pageNumberRef.current, nextZoom = zoomRef.current) => {
@@ -718,7 +718,7 @@ export default function PdfReader({
     );
     container.scrollTop =
       metrics.pageTop +
-      maxLocalScroll * Math.max(0, Math.min(1, targetProgression));
+      maxLocalScroll * clamp(targetProgression, 0, 1);
     pendingStartPageProgressionRef.current = null;
   }, [readPageMetrics]);
 
@@ -1345,7 +1345,7 @@ export default function PdfReader({
       pendingViewerPageRef.current = null;
       removeOverlayLayers();
 
-      const boundedPage = Math.max(1, Math.min(targetPage, doc.numPages));
+      const boundedPage = clamp(targetPage, 1, doc.numPages);
       pageNumberRef.current = boundedPage;
       setPageNumber(boundedPage);
       setNumPages(doc.numPages);

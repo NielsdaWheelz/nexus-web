@@ -174,7 +174,7 @@ def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) 
 
     try:
         event = stripe.Webhook.construct_event(raw_body, signature, settings.stripe_webhook_secret)
-    except Exception as exc:
+    except (ValueError, stripe.SignatureVerificationError) as exc:
         raise ApiError(ApiErrorCode.E_STRIPE_WEBHOOK_INVALID, "Invalid Stripe webhook") from exc
 
     event_id = str(event["id"])

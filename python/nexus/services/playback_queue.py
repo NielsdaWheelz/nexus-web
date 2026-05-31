@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -13,13 +15,11 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import PlaybackQueueItem
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.playback import (
-    PlaybackQueueAddRequest,
-    PlaybackQueueItemOut,
-    PlaybackQueueOrderRequest,
-)
+from nexus.schemas.media import PlaybackSourceOut
+from nexus.schemas.playback import PlaybackQueueItemOut
 from nexus.services.playback_source import derive_playback_source
 
+QueueInsertPosition = Literal["next", "last"]
 QUEUE_SOURCE_MANUAL = "manual"
 QUEUE_SOURCE_AUTO_SUBSCRIPTION = "auto_subscription"
 QUEUE_SOURCE_AUTO_PLAYLIST = "auto_playlist"
@@ -84,10 +84,13 @@ def list_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueIte
 def add_queue_items_for_viewer(
     db: Session,
     viewer_id: UUID,
-    body: PlaybackQueueAddRequest,
+    *,
+    media_ids: list[UUID],
+    insert_position: QueueInsertPosition,
+    current_media_id: UUID | None = None,
 ) -> list[PlaybackQueueItemOut]:
     """Insert one or more media rows into the viewer queue."""
-    normalized_media_ids = _dedupe_media_ids(body.media_ids)
+    normalized_media_ids = _dedupe_media_ids(media_ids)
     _assert_media_ids_queueable(db, viewer_id, normalized_media_ids)
 
     with transaction(db):
@@ -95,8 +98,8 @@ def add_queue_items_for_viewer(
             db=db,
             viewer_id=viewer_id,
             media_ids=normalized_media_ids,
-            insert_position=body.insert_position,
-            current_media_id=body.current_media_id,
+            insert_position=insert_position,
+            current_media_id=current_media_id,
             source=QUEUE_SOURCE_MANUAL,
         )
         _normalize_queue_positions(db, viewer_id)
@@ -143,10 +146,11 @@ def remove_queue_item_for_viewer(
 def reorder_queue_for_viewer(
     db: Session,
     viewer_id: UUID,
-    body: PlaybackQueueOrderRequest,
+    *,
+    item_ids: list[UUID],
 ) -> list[PlaybackQueueItemOut]:
     """Reorder queue rows using a full item-id order payload."""
-    requested_ids = [UUID(str(item_id)) for item_id in body.item_ids]
+    requested_ids = [UUID(str(item_id)) for item_id in item_ids]
     if len(set(requested_ids)) != len(requested_ids):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Queue order contains duplicates")
 
@@ -256,8 +260,8 @@ def append_subscription_media_if_enabled(
     _normalize_queue_positions(db, viewer_id)
 
 
-def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
-    playback_source = derive_playback_source(
+def _playback_source_for_row(row: Mapping[str, object]) -> PlaybackSourceOut | None:
+    return derive_playback_source(
         kind=str(row["kind"]),
         external_playback_url=str(row["external_playback_url"])
         if row["external_playback_url"] is not None
@@ -268,6 +272,10 @@ def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
         provider=str(row["provider"]) if row["provider"] is not None else None,
         provider_id=str(row["provider_id"]) if row["provider_id"] is not None else None,
     )
+
+
+def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
+    playback_source = _playback_source_for_row(row)
     if playback_source is None:
         return None
 
@@ -330,18 +338,7 @@ def _assert_media_ids_queueable(db: Session, viewer_id: UUID, media_ids: list[UU
         )
         if row is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        playback_source = derive_playback_source(
-            kind=str(row["kind"]),
-            external_playback_url=str(row["external_playback_url"])
-            if row["external_playback_url"] is not None
-            else None,
-            canonical_source_url=str(row["canonical_source_url"])
-            if row["canonical_source_url"] is not None
-            else None,
-            provider=str(row["provider"]) if row["provider"] is not None else None,
-            provider_id=str(row["provider_id"]) if row["provider_id"] is not None else None,
-        )
-        if playback_source is None:
+        if _playback_source_for_row(row) is None:
             raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Media is not queueable")
 
 

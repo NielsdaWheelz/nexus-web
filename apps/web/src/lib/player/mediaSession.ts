@@ -6,6 +6,7 @@ import {
   useRef,
   type RefObject,
 } from "react";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 
 const POSITION_UPDATE_INTERVAL_MS = 1_000;
 
@@ -162,7 +163,7 @@ export function useMediaSessionAdapter(args: {
       artwork: track.image_url
         ? [
             {
-              src: `/api/media/image?url=${encodeURIComponent(track.image_url)}`,
+              src: buildMediaImageProxySrc(track.image_url),
             },
           ]
         : [],
@@ -171,6 +172,7 @@ export function useMediaSessionAdapter(args: {
       if (typeof window.MediaMetadata === "function") {
         ms.metadata = new window.MediaMetadata(init);
       } else {
+        // justify-type-assertion: clients without MediaMetadata constructor support still accept the init shape.
         ms.metadata = init as unknown as MediaMetadata;
       }
     } catch {

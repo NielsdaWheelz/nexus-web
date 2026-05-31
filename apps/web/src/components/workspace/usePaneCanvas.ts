@@ -6,6 +6,16 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 
 const PANE_CANVAS_DRAG_THRESHOLD_PX = 4;
 
+function wheelTargetElement(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+  if (target instanceof Node) {
+    return target.parentElement;
+  }
+  return null;
+}
+
 export function usePaneCanvas({
   enabled,
   paneIds,
@@ -47,7 +57,7 @@ export function usePaneCanvas({
       if (event.shiftKey) {
         return;
       }
-      let node: HTMLElement | null = event.target as HTMLElement;
+      let node = wheelTargetElement(event.target);
       while (node && node !== canvas) {
         if (node.scrollHeight > node.clientHeight) {
           return;

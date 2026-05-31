@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+DISPLAY_NAME_MAX_LENGTH = 100
+
 
 class UserSearchOut(BaseModel):
     """Response schema for a user search result."""
@@ -34,6 +36,6 @@ class UpdateProfileRequest(BaseModel):
 
     display_name: str | None = Field(
         default=...,
-        max_length=100,
+        max_length=DISPLAY_NAME_MAX_LENGTH,
         description="Display name (1-100 chars, or null to clear)",
     )

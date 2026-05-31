@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunEvent
@@ -20,7 +19,7 @@ def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[s
     payload = chat_run_event_payload_json(event_type, payload)
     db.add(ChatRunEvent(run_id=run.id, seq=seq, event_type=event_type, payload=payload))
     run.next_event_seq = seq + 1
-    run.updated_at = datetime.now(UTC)
+    run.updated_at = func.now()
     db.flush()
 
 
@@ -37,8 +36,8 @@ def mark_running(db: Session, run_id: UUID) -> None:
     run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
     if run.status == "queued":
         run.status = "running"
-        run.started_at = run.started_at or datetime.now(UTC)
-        run.updated_at = datetime.now(UTC)
+        run.started_at = run.started_at or func.now()
+        run.updated_at = func.now()
     db.commit()
 
 

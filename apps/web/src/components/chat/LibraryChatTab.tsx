@@ -1,8 +1,7 @@
 "use client";
 
-import ReferenceChatList from "@/components/chat/ReferenceChatList";
+import ResourceChatTab from "@/components/chat/ResourceChatTab";
 import { apiFetch } from "@/lib/api/client";
-import { useChatsByReference } from "@/lib/conversations/useChatsByReference";
 import styles from "./LibraryChatTab.module.css";
 
 interface LibraryChatTabProps {
@@ -15,7 +14,6 @@ export default function LibraryChatTab({
   onOpenChat,
 }: LibraryChatTabProps) {
   const resourceUri = `library:${libraryId}`;
-  const { conversations, isLoading } = useChatsByReference(resourceUri);
 
   const handleStartNewChat = async () => {
     const created = await apiFetch<{ data: { id: string } }>(
@@ -29,12 +27,11 @@ export default function LibraryChatTab({
   };
 
   return (
-    <ReferenceChatList
-      className={styles.tab}
-      conversations={conversations}
+    <ResourceChatTab
       emptyActionLabel="Start new chat about this library"
       emptyMessage="No chats reference this library yet."
-      isLoading={isLoading}
+      listClassName={styles.tab}
+      resourceUri={resourceUri}
       onOpenChat={onOpenChat}
       onStartNewChat={handleStartNewChat}
     />

@@ -1,7 +1,7 @@
 """SSE replay/tail routes for durable chat runs and oracle readings.
 
-Push-driven: an AFTER trigger (migration 0122) ``pg_notify``s the per-run /
-per-reading channel on each new event; the tail ``LISTEN``s via
+Push-driven: an AFTER trigger ``pg_notify``s the per-run / per-reading channel
+on each new event; the tail ``LISTEN``s via
 ``wait_for_notifications`` and re-reads on each notification. The synchronous
 DB reads run in a threadpool so they never block the event loop.
 """

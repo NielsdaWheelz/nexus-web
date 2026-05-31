@@ -52,7 +52,7 @@ from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import configure_logging, get_logger
+from nexus.logging import get_logger
 from nexus.middleware.request_id import RequestIDMiddleware
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.responses import (
@@ -62,9 +62,6 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-
-# Configure structured logging at import time
-configure_logging()
 
 logger = get_logger(__name__)
 

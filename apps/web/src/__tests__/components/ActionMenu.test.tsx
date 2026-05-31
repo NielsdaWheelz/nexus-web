@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
 describe("ActionMenu", () => {
   it("stays open when the page scrolls", async () => {
@@ -78,92 +77,6 @@ describe("ActionMenu", () => {
     expect(trigger).not.toHaveFocus();
   });
 
-  it("routes portaled internal menu links through the pane runtime", async () => {
-    const user = userEvent.setup();
-    const navigatePane = vi.fn();
-
-    render(
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href="/settings"
-        routeId="settings"
-        resourceRef="settings"
-        resourceKey="settings"
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-        onNavigatePane={navigatePane}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-      >
-        <ActionMenu
-          options={[
-            {
-              id: "reader-settings",
-              label: "Reader settings",
-              href: "/settings/reader",
-            },
-          ]}
-        />
-      </PaneRuntimeProvider>
-    );
-
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Reader settings" }));
-
-    expect(navigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/settings/reader",
-      { titleHint: "Reader settings" },
-    );
-  });
-
-  it("opens portaled internal menu links in a sibling pane on Shift-click", async () => {
-    const user = userEvent.setup();
-    const navigatePane = vi.fn();
-    const openInNewPane = vi.fn();
-
-    render(
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href="/settings"
-        routeId="settings"
-        resourceRef="settings"
-        resourceKey="settings"
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-        onNavigatePane={navigatePane}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={openInNewPane}
-      >
-        <ActionMenu
-          options={[
-            {
-              id: "reader-settings",
-              label: "Reader settings",
-              href: "/settings/reader",
-            },
-          ]}
-        />
-      </PaneRuntimeProvider>
-    );
-
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }), {
-      shiftKey: true,
-    });
-
-    expect(openInNewPane).toHaveBeenCalledWith(
-      "/settings/reader",
-      "Reader settings",
-      undefined,
-    );
-    expect(navigatePane).not.toHaveBeenCalled();
-  });
-
   it("mounts custom render content and closes the menu via the injected closeMenu", async () => {
     const user = userEvent.setup();
 
@@ -186,8 +99,25 @@ describe("ActionMenu", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     const applyColor = screen.getByRole("button", { name: "Apply color" });
     expect(applyColor).toBeInTheDocument();
+    await waitFor(() => {
+      expect(applyColor).toHaveFocus();
+    });
 
-    fireEvent.click(applyColor);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Apply color" })
+      ).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Actions" })).toHaveFocus();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    const reopenedApplyColor = screen.getByRole("button", { name: "Apply color" });
+
+    fireEvent.click(reopenedApplyColor);
 
     await waitFor(() => {
       expect(
@@ -196,44 +126,62 @@ describe("ActionMenu", () => {
     });
   });
 
-  it("does not route disabled portaled menu links", async () => {
+  it("keeps arrow navigation on menuitems when custom render content is present", async () => {
     const user = userEvent.setup();
-    const navigatePane = vi.fn();
-    const openInNewPane = vi.fn();
 
     render(
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        href="/settings"
-        routeId="settings"
-        resourceRef="settings"
-        resourceKey="settings"
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-        onNavigatePane={navigatePane}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={openInNewPane}
-      >
-        <ActionMenu
-          options={[
-            {
-              id: "reader-settings",
-              label: "Reader settings",
-              href: "/settings/reader",
-              disabled: true,
-            },
-          ]}
-        />
-      </PaneRuntimeProvider>
+      <ActionMenu
+        options={[
+          { id: "quote", label: "Quote", onSelect: vi.fn() },
+          {
+            id: "color",
+            label: "Highlight color",
+            render: () => <button type="button">Apply color</button>,
+          },
+          { id: "delete", label: "Delete", onSelect: vi.fn(), tone: "danger" },
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    const quote = screen.getByRole("menuitem", { name: "Quote" });
+    const deleteItem = screen.getByRole("menuitem", { name: "Delete" });
+    await waitFor(() => {
+      expect(quote).toHaveFocus();
+    });
+
+    await user.keyboard("{ArrowDown}");
+    expect(deleteItem).toHaveFocus();
+
+    await user.keyboard("{Home}");
+    expect(quote).toHaveFocus();
+
+    await user.keyboard("{End}");
+    expect(deleteItem).toHaveFocus();
+  });
+
+  it("keeps disabled link options non-interactive", async () => {
+    const user = userEvent.setup();
+    const handleSelect = vi.fn();
+
+    render(
+      <ActionMenu
+        options={[
+          {
+            id: "reader-settings",
+            label: "Reader settings",
+            href: "/settings/reader",
+            disabled: true,
+            onSelect: handleSelect,
+          },
+        ]}
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }));
 
-    expect(navigatePane).not.toHaveBeenCalled();
-    expect(openInNewPane).not.toHaveBeenCalled();
+    expect(handleSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitem", { name: "Reader settings" })).toBeInTheDocument();
   });
-
 });

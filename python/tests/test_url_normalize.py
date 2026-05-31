@@ -1,6 +1,6 @@
 """Unit tests for URL validation and normalization.
 
-Tests cover s2_pr03.md requirements for:
+Tests cover:
 - validate_requested_url(): Strict validation
 - normalize_url_for_display(): URL normalization
 

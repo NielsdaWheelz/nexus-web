@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.schemas.playback import PlaybackQueueAddRequest, PlaybackQueueOrderRequest
 from nexus.services import playback_queue as playback_queue_service
@@ -30,7 +30,13 @@ def post_playback_queue_items(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    rows = playback_queue_service.add_queue_items_for_viewer(db, viewer.user_id, body)
+    rows = playback_queue_service.add_queue_items_for_viewer(
+        db,
+        viewer.user_id,
+        media_ids=body.media_ids,
+        insert_position=body.insert_position,
+        current_media_id=body.current_media_id,
+    )
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -50,7 +56,11 @@ def put_playback_queue_order(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    rows = playback_queue_service.reorder_queue_for_viewer(db, viewer.user_id, body)
+    rows = playback_queue_service.reorder_queue_for_viewer(
+        db,
+        viewer.user_id,
+        item_ids=body.item_ids,
+    )
     return success_response([row.model_dump(mode="json") for row in rows])
 
 

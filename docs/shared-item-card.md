@@ -1,6 +1,8 @@
-# Item Card — hard cutover spec
+# Shared Item Card Contract
 
-Status: approved — ready to implement · Owner: reader/highlights · Type: hard cutover (no legacy, no fallbacks, no back-compat)
+Status: current contract · Owner: reader/highlights
+
+This contract records the shipped ownership boundaries. Problem sections remain as rationale.
 
 A single, centralized, presentational card for "an item in a list" — a highlight (with
 its selected text in context, an inline note, linked chats, and an actions menu) and,
@@ -40,7 +42,7 @@ row primitive (horizontal, single-line) used by search/AppList.
 **The margin-note alignment engine is correct and out of scope.** `alignRows`, the projection
 in `useAnchoredHighlightProjection`, `rowHeights` measurement, the `ResizeObserver`, overflow
 counting, and mobile above/below navigation (`ReaderHighlightsSurface.tsx:150–375, 818–851`)
-stay **byte-for-byte unchanged**. This cutover swaps only the *content* of each positioned row.
+stay **byte-for-byte unchanged**. This contract swaps only the *content* of each positioned row.
 
 ---
 
@@ -292,18 +294,18 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
 
 ---
 
-## 9. Scope
+## 9. Implemented Scope
 
-**In scope**
-- New `components/items/ItemCard.{tsx,module.css}` (+ test).
-- New `components/ui/Disclosure.{tsx,module.css}` (+ test).
-- Extend `ui/ActionMenu` with `render` option (+ test).
-- Add `compact` to `ProseMirrorOutlineEditor` and compact CSS; drop the 76px min in
+**Delivered**
+- `components/items/ItemCard.{tsx,module.css}` (+ test).
+- `components/ui/Disclosure.{tsx,module.css}` (+ test).
+- `ui/ActionMenu` supports a `render` option (+ test).
+- `ProseMirrorOutlineEditor` supports compact rendering and compact CSS; the 76px min is removed from
   `HighlightNoteEditor.module.css`.
-- Rebuild `ReaderHighlightsSurface` row rendering on `ItemCard`; trim dead CSS.
-- Rebuild `ConversationReferencesSurface` rows on `ItemCard` (resource variant).
-- Delete `reader/HighlightActionsMenu.{tsx,module.css}`.
-- Update affected tests.
+- `ReaderHighlightsSurface` row rendering uses `ItemCard`; dead CSS is trimmed.
+- `ConversationReferencesSurface` rows use `ItemCard` (resource variant).
+- `reader/HighlightActionsMenu.{tsx,module.css}` is deleted.
+- Affected tests cover the current shared primitives and callers.
 
 **Out of scope**
 - Alignment engine, projection, measurement, mobile nav.
@@ -315,18 +317,21 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
 
 ## 10. Files
 
-**New**
+**Added**
 - `apps/web/src/components/items/ItemCard.tsx`
 - `apps/web/src/components/items/ItemCard.module.css`
 - `apps/web/src/components/items/ItemCard.test.tsx`
+- `apps/web/src/components/ui/Disclosure.tsx`
+- `apps/web/src/components/ui/Disclosure.module.css`
+- `apps/web/src/components/ui/Disclosure.test.tsx`
+- `apps/web/src/lib/resources/resourceKind.ts`
+- `apps/web/src/lib/resources/resourceKind.test.ts`
 - `apps/web/src/components/chat/ConversationReferencesSurface.test.tsx`
 
-> **As built — minimalism deviations** (the implementing goal's "treat every abstraction as a cost / inline one-use" directive overrode the spec, since each proposed primitive had exactly one consumer):
-> - **No `ui/Disclosure` component.** The collapsible linked-items list is a native `<details>/<summary>` inlined in `ItemCard` — zero JS, keyboard-operable and accessible by default (AC6 satisfied via native disclosure semantics rather than `aria-expanded`/`aria-controls`).
-> - **No `lib/resources/resourceKind.ts` helper.** The scheme→icon map (all 10 schemes + `Link2` fallback) is an inline `const SCHEME_ICONS` in its only consumer, `ConversationReferencesSurface.tsx`.
-> - `HighlightNoteEditor` hardcodes `compact` on its internal editor (highlight notes are always compact) instead of threading a prop through its own API.
+> **As built note:** `HighlightNoteEditor` hardcodes `compact` on its internal editor
+> (highlight notes are always compact) instead of threading a prop through its own API.
 
-**Modified**
+**Changed**
 - `apps/web/src/components/ui/ActionMenu.tsx` (+ `render` option) · `ActionMenu.test.tsx`
 - `apps/web/src/components/notes/ProseMirrorOutlineEditor.tsx` (+ `compact`) ·
   `ProseMirrorOutlineEditor.module.css` (compact rules)
@@ -338,16 +343,17 @@ interface ProseMirrorOutlineEditorProps { /* …existing… */ compact?: boolean
   .conversationList/.conversationButton/.editHint`; keep `.root/.header/.linkedItemsContainer/
   .mobileVisibleContainer/.flowRow/.overflowIndicator/.mobileIndicator/.empty*`) ·
   `ReaderHighlightsSurface.test.tsx`
-- `apps/web/src/components/chat/ConversationReferencesSurface.tsx` (render `ItemCard`) ·
-  `ConversationReferencesSurface.module.css` (reduce to container only)
+- `apps/web/src/components/chat/ConversationReferencesSurface.tsx` (render `ItemCard`; use
+  `lib/resources/resourceKind.ts`) · `ConversationReferencesSurface.module.css` (reduce to
+  container only)
 
-**Deleted**
+**Removed**
 - `apps/web/src/components/reader/HighlightActionsMenu.tsx`
 - `apps/web/src/components/reader/HighlightActionsMenu.module.css`
 
 Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighlightsSurface`;
-`ConversationReferencesSurface` is consumed by `ConversationPaneBody` and `ConversationNewPaneBody`
-(both via the secondary, so no pane-body edits needed); `ContextRow` consumers are unaffected.
+`ConversationReferencesSurface` is consumed by the unified `Conversation` adapter via the secondary;
+`ContextRow` consumers are unaffected.
 
 ---
 
@@ -376,7 +382,7 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighli
 1. **Name & location → `components/items/ItemCard`.** Kind-neutral; it renders both a highlight and
    a media/resource item. (`components/items` is currently free; confirmed no `ItemCard` collisions.)
 2. **Migrate the chat context list now → yes.** `ConversationReferencesSurface` is rebuilt on
-   `ItemCard` (resource variant) in this cutover so there is genuinely "one component." The resource
+   `ItemCard` (resource variant) in this contract so there is genuinely "one component." The resource
    variant uses only data the reference already carries (label/summary/uri) — no snippet, no editor,
    no backend change.
 
@@ -391,7 +397,8 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighli
    disclosure. No loose chat/color/delete buttons remain on the row.
 3. The `⋯` menu contains Quote-to-new-chat, Quote-to-existing-chat, Edit/Cancel-bounds, color
    swatches, and Delete (danger, separated); all actions perform exactly as before.
-4. `reader/HighlightActionsMenu.*` is deleted and unreferenced; `rg HighlightActionsMenu` is empty.
+4. `reader/HighlightActionsMenu.*` is deleted and unreferenced;
+   `rg -n "HighlightActionsMenu" apps/web/src` is empty.
 5. `ui/ActionMenu` supports `render` options; existing menus elsewhere are visually/behaviourally
    unchanged; keyboard nav still cycles textual `menuitem`s.
 6. `ui/Disclosure` toggles with `aria-expanded`/`aria-controls` and is keyboard-operable.
@@ -413,8 +420,8 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighli
 ## 14. Rules adhered to (`docs/rules/`)
 
 - **module-apis:** one card, one menu, one disclosure — each capability in a single primary form.
-- **cleanliness:** hard cutover — delete `HighlightActionsMenu` and all superseded CSS; no dead
-  classes, no fallbacks, no compat shims.
+- **cleanliness:** current contract — delete `HighlightActionsMenu` and all superseded CSS; no dead
+  classes and no duplicate UI systems.
 - **simplicity:** no speculative props; `render`/`compact` added only because real call sites need
   them; compact/expanded is CSS, not a new state machine.
 - **conventions:** tokens over magic numbers; constants only where the name adds information.
@@ -422,20 +429,19 @@ Confirmed blast radius: `HighlightActionsMenu` is imported only by `ReaderHighli
 
 ---
 
-## 15. Cutover steps (ordered)
+## 15. Implementation Order
 
-1. Add `ui/Disclosure` (+ test).
-2. Extend `ui/ActionMenu` with `render` (+ test); verify existing menus unchanged.
-3. Add `compact` to `ProseMirrorOutlineEditor` (+ CSS); drop `min-height:76px` in
+1. Added `ui/Disclosure` (+ test).
+2. Extended `ui/ActionMenu` with `render` (+ test); verified existing menus unchanged.
+3. Added `compact` to `ProseMirrorOutlineEditor` (+ CSS); dropped `min-height:76px` in
    `HighlightNoteEditor`.
-4. Build `components/items/ItemCard` (+ CSS, + test) — presentational only.
-5. Rebuild `ReaderHighlightsSurface` `renderRow` on `ItemCard`; build `ActionMenuOption[]`; leave
-   the engine untouched; trim dead CSS; update its test.
-6. Delete `reader/HighlightActionsMenu.*`.
-7. Rebuild `ConversationReferencesSurface` rows on `ItemCard` (resource variant); reduce its CSS;
-   add the `lib/resources/resourceKind.ts` scheme→glyph helper.
-8. `make check-front && make test-front-unit && make test-front-browser` (or `make verify` for the
-   full gate); manual pass on desktop + mobile reader and a chat with references.
+4. Built `components/items/ItemCard` (+ CSS, + test) as a presentational primitive.
+5. Rebuilt `ReaderHighlightsSurface` `renderRow` on `ItemCard`; kept the engine untouched; trimmed
+   dead CSS; updated its test.
+6. Deleted `reader/HighlightActionsMenu.*`.
+7. Rebuilt `ConversationReferencesSurface` rows on `ItemCard` (resource variant); reduced its CSS;
+   added the `lib/resources/resourceKind.ts` scheme-to-glyph helper.
+8. Validated with focused component tests plus desktop/mobile reader and chat-reference checks.
 
 ---
 

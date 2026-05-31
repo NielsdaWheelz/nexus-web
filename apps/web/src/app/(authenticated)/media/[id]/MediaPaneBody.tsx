@@ -16,7 +16,7 @@ import {
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import ReaderHighlightsSurface from "@/components/reader/ReaderHighlightsSurface";
 import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
@@ -140,7 +140,7 @@ import {
   type TranscriptPlaybackSource,
   type TranscriptState,
   resolveActiveTranscriptFragment,
-} from "./transcriptView";
+} from "@/lib/media/transcriptView";
 import { usePodcastTrackSeeding } from "@/lib/player/usePodcastTrackSeeding";
 import {
   type Highlight,
@@ -390,8 +390,6 @@ function isUserScrollKey(event: KeyboardEvent): boolean {
     event.key === "Spacebar"
   );
 }
-
-export type InitialMedia = Media;
 
 export default function MediaPaneBody({
   initialMedia = null,
@@ -3206,8 +3204,7 @@ export default function MediaPaneBody({
       ? epubSections[activeSectionPosition + 1]
       : null;
   const hasEpubToc = epubToc !== null && epubToc.length > 0;
-  const hasWebToc =
-    webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
+  const hasWebToc = webToc !== null && webToc.length > 0;
   const contentsAvailable = hasEpubToc || hasWebToc;
 
   const epubTextDocumentContentState = (() => {
@@ -3842,6 +3839,14 @@ export default function MediaPaneBody({
     if (isMobileViewport) paneRuntime?.closeSecondaryPane();
   }, [isMobileViewport, paneRuntime]);
 
+  const handleOpenNoteLink = useCallback(
+    (href: string, options: { newPane: boolean }) => {
+      if (options.newPane) paneRuntime?.openInNewPane(href);
+      else paneRuntime?.router.push(href);
+    },
+    [paneRuntime],
+  );
+
   const contentsSurfaceBody = useMemo(
     () => (
       <div className={styles.readerSecondaryBody}>
@@ -4474,6 +4479,7 @@ export default function MediaPaneBody({
           onNoteSave={handleNoteSave}
           onNoteDelete={handleNoteDelete}
           onOpenConversation={handleOpenConversation}
+          onOpenNoteLink={handleOpenNoteLink}
         />
       ) : null,
     [
@@ -4489,6 +4495,7 @@ export default function MediaPaneBody({
       handleNoteDelete,
       handleNoteSave,
       handleOpenConversation,
+      handleOpenNoteLink,
       isEpub,
       isMobileViewport,
       isPdf,

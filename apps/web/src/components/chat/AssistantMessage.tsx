@@ -16,13 +16,13 @@ import type {
   ForkOption,
   MessageToolCall,
 } from "@/lib/conversations/types";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import AssistantSelectionPopover, {
   type AssistantSelectionDraft,
 } from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
-import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantMessage({

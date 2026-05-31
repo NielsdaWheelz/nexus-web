@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ExtensionSession
@@ -41,7 +40,7 @@ def resolve_extension_session_user(db: Session, token: str) -> UUID | None:
     if session is None:
         return None
 
-    session.last_used_at = datetime.now(UTC)
+    session.last_used_at = func.now()
     db.flush()
     return session.user_id
 
@@ -59,7 +58,7 @@ def revoke_extension_session_token(db: Session, token: str) -> bool:
     if session is None:
         return False
 
-    session.revoked_at = datetime.now(UTC)
+    session.revoked_at = func.now()
     db.commit()
     return True
 

@@ -9,6 +9,10 @@ export interface LinkedIdentity {
 
 const SUPPORTED_OAUTH_PROVIDERS: OAuthProvider[] = ["google", "github"];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 interface SupabaseIdentityRecord {
   id?: unknown;
   identity_id?: unknown;
@@ -24,11 +28,10 @@ function readIdentityEmail(identity: SupabaseIdentityRecord): string | null {
   }
 
   if (
-    identity.identity_data &&
-    typeof identity.identity_data === "object" &&
+    isRecord(identity.identity_data) &&
     "email" in identity.identity_data
   ) {
-    const email = (identity.identity_data as { email?: unknown }).email;
+    const email = identity.identity_data.email;
     if (typeof email === "string" && email.trim()) {
       return email;
     }
@@ -48,40 +51,58 @@ function normalizeIdentityId(identity: SupabaseIdentityRecord): string | null {
 }
 
 export function normalizeLinkedIdentities(payload: unknown): LinkedIdentity[] {
-  const identities = (payload as { identities?: unknown } | null)?.identities;
+  const identities = isRecord(payload) ? payload.identities : null;
   if (!Array.isArray(identities)) {
     return [];
   }
 
   return identities.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") {
+    if (!isRecord(entry)) {
       return [];
     }
 
-    const identity = entry as SupabaseIdentityRecord;
-    const id = normalizeIdentityId(identity);
+    const id = normalizeIdentityId(entry);
     const provider =
-      typeof identity.provider === "string" && identity.provider.trim()
-        ? identity.provider
+      typeof entry.provider === "string" && entry.provider.trim()
+        ? entry.provider
         : null;
     if (!id || !provider) {
       return [];
     }
 
     const createdAt =
-      typeof identity.created_at === "string" && identity.created_at.trim()
-        ? identity.created_at
+      typeof entry.created_at === "string" && entry.created_at.trim()
+        ? entry.created_at
         : null;
 
     return [
       {
         id,
         provider,
-        email: readIdentityEmail(identity),
+        email: readIdentityEmail(entry),
         createdAt,
       },
     ];
   });
+}
+
+export function findSupabaseIdentityForLinkedIdentity<
+  T extends SupabaseIdentityRecord,
+>(
+  payload: { identities?: T[] } | null | undefined,
+  identity: Pick<LinkedIdentity, "id" | "provider">
+): T | null {
+  const identities = payload?.identities;
+  if (!Array.isArray(identities)) {
+    return null;
+  }
+  return (
+    identities.find(
+      (entry) =>
+        normalizeIdentityId(entry) === identity.id &&
+        entry.provider === identity.provider
+    ) ?? null
+  );
 }
 
 export function getConnectableProviders(

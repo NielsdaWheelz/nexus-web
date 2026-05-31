@@ -26,8 +26,8 @@ from nexus.db.models import MediaFile
 from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.file_ingest_validation import validate_file_source_integrity
 from nexus.services.upload import confirm_ingest as confirm_upload_ingest
-from nexus.services.upload import validate_source_integrity
 from nexus.storage.client import StorageError
 from nexus.storage.paths import (
     build_storage_path,
@@ -128,6 +128,101 @@ def _upload_storage_path(init_data: dict, kind: str) -> str:
 
 def _final_storage_path(init_data: dict, kind: str) -> str:
     return build_storage_path(UUID(init_data["media_id"]), get_file_extension(kind))
+
+
+def _seed_duplicate_upload_loser_rows(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    winner_media_id: str,
+    loser_media_id: str,
+) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text("""
+                INSERT INTO user_media_deletions (user_id, media_id)
+                VALUES (:user_id, :media_id)
+            """),
+            {"user_id": user_id, "media_id": UUID(loser_media_id)},
+        )
+        session.execute(
+            text("""
+                INSERT INTO media_content_index_states (media_id, status, status_reason)
+                VALUES (:media_id, 'failed', 'test_duplicate_cleanup')
+            """),
+            {"media_id": UUID(loser_media_id)},
+        )
+        session.execute(
+            text("""
+                INSERT INTO object_links (
+                    user_id,
+                    relation_type,
+                    a_type,
+                    a_id,
+                    b_type,
+                    b_id
+                )
+                VALUES (:user_id, 'references', 'media', :loser_id, 'media', :winner_id)
+            """),
+            {
+                "user_id": user_id,
+                "loser_id": UUID(loser_media_id),
+                "winner_id": UUID(winner_media_id),
+            },
+        )
+        session.commit()
+
+
+def _assert_duplicate_upload_loser_deleted(
+    direct_db: DirectSessionManager,
+    *,
+    media_id: str,
+) -> None:
+    loser_id = UUID(media_id)
+    with direct_db.session() as session:
+        assert _count_rows(session, "media", "id = :media_id", media_id=loser_id) == 0
+        assert (
+            _count_rows(session, "library_entries", "media_id = :media_id", media_id=loser_id) == 0
+        )
+        assert (
+            _count_rows(
+                session,
+                "default_library_intrinsics",
+                "media_id = :media_id",
+                media_id=loser_id,
+            )
+            == 0
+        )
+        assert (
+            _count_rows(session, "user_media_deletions", "media_id = :media_id", media_id=loser_id)
+            == 0
+        )
+        assert _count_rows(session, "media_file", "media_id = :media_id", media_id=loser_id) == 0
+        assert (
+            _count_rows(
+                session,
+                "media_content_index_states",
+                "media_id = :media_id",
+                media_id=loser_id,
+            )
+            == 0
+        )
+        object_links = session.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM object_links
+                WHERE (a_type = 'media' AND a_id = :media_id)
+                   OR (b_type = 'media' AND b_id = :media_id)
+            """),
+            {"media_id": loser_id},
+        ).scalar_one()
+        assert int(object_links) == 0
+
+
+def _count_rows(session, table: str, where: str, **params: object) -> int:
+    return int(
+        session.execute(text(f"SELECT COUNT(*) FROM {table} WHERE {where}"), params).scalar_one()
+    )
 
 
 class HeadFailureStorageClient(FakeStorageClient):
@@ -761,6 +856,12 @@ class TestConfirmIngest:
         direct_db.register_cleanup("library_entries", "media_id", media_id_2)
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
+        _seed_duplicate_upload_loser_rows(
+            direct_db,
+            user_id=user_id,
+            winner_media_id=media_id_1,
+            loser_media_id=media_id_2,
+        )
 
         init_2_storage_path = _upload_storage_path(init_2, "pdf")
         fake_storage.put_object(init_2_storage_path, PDF_CONTENT, "application/pdf")
@@ -775,13 +876,7 @@ class TestConfirmIngest:
         assert ingest_2["media_id"] == media_id_1
         assert fake_storage.get_object(init_2_storage_path) is None
 
-        # Verify second media row was deleted
-        with direct_db.session() as session:
-            result = session.execute(
-                text("SELECT COUNT(*) FROM media WHERE id = :id"),
-                {"id": media_id_2},
-            )
-            assert result.scalar() == 0
+        _assert_duplicate_upload_loser_deleted(direct_db, media_id=media_id_2)
 
     def test_ingest_different_users_no_dedupe(self, upload_client, fake_storage, direct_db):
         """Same file by different users creates separate rows (no cross-user dedupe)."""
@@ -1479,6 +1574,6 @@ class TestValidateSourceIntegrity:
         )
 
         with pytest.raises(ApiError) as exc_info:
-            validate_source_integrity(HeadFailureStorageClient(), media_file, "pdf")
+            validate_file_source_integrity(HeadFailureStorageClient(), media_file, "pdf")
 
         assert exc_info.value.code == ApiErrorCode.E_STORAGE_ERROR

@@ -137,13 +137,6 @@ describe("PaletteBody", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "tab-oracle" }));
   });
 
-  it("does not render scope controls", () => {
-    render(<Harness view={restingView} />);
-
-    expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
-  });
-
   it("shows a no-matches status when every querying result is pinned", () => {
     const emptyResults: PaletteView = {
       state: "querying",

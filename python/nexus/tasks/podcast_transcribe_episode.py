@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
@@ -26,19 +27,19 @@ def podcast_transcribe_episode_job(
             request_id=request_id,
             task_id=resolved_task_id,
         )
-        return {"status": "failed", "error_code": "E_INVALID_REQUEST"}
+        return {"status": "failed", "error_code": ApiErrorCode.E_INVALID_REQUEST.value}
 
     try:
         requested_by_uuid = UUID(requested_by_user_id) if requested_by_user_id else None
     except (TypeError, ValueError):
-        logger.warning(
+        logger.error(
             "podcast_transcription_task_invalid_requested_by_user_id",
             media_id=media_id,
             requested_by_user_id=requested_by_user_id,
             request_id=request_id,
             task_id=resolved_task_id,
         )
-        requested_by_uuid = None
+        return {"status": "failed", "error_code": ApiErrorCode.E_INVALID_REQUEST.value}
 
     logger.info(
         "podcast_transcription_task_started",

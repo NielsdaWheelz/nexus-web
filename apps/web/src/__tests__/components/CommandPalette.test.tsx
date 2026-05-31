@@ -122,7 +122,6 @@ describe("CommandPalette", () => {
       "palette-listbox",
     );
     expect(screen.getByRole("listbox")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
 
     expect(screen.getByRole("group", { name: "Go to" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Oracle/ })).toBeInTheDocument();
@@ -291,23 +290,7 @@ describe("CommandPalette", () => {
     openPalette();
 
     await screen.findByRole("dialog", { name: "Command palette" });
-    expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Go to" })).toBeInTheDocument();
-  });
-
-  it("does not surface pane-local actions in the global palette", async () => {
-    renderCommandPalette();
-    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
-
-    openPane("/media/media-7", "The Selected Title");
-    openPalette();
-
-    await screen.findByRole("dialog", { name: "Command palette" });
-    expect(screen.getByRole("group", { name: "Go to" })).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: /In this/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Open chat about this/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Reader settings/ })).not.toBeInTheDocument();
   });
 
   it("closes on Esc when opened from a pane", async () => {

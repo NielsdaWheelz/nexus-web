@@ -6,8 +6,6 @@ import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./SurfaceHeader.module.css";
 
-export type SurfaceHeaderOption = ActionMenuOption;
-
 export interface SurfaceHeaderNavigation {
   canGoBack: boolean;
   canGoForward: boolean;
@@ -21,7 +19,7 @@ interface SurfaceHeaderProps {
   subtitle?: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
-  options?: SurfaceHeaderOption[];
+  options?: ActionMenuOption[];
   navigation: SurfaceHeaderNavigation;
   headingLevel?: 1 | 2;
   className?: string;

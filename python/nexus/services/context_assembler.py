@@ -428,6 +428,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
 
     if existing[1] == payload["provider_request_hash"]:
         return
+    # justify-service-invariant-check: chat_run_id uniqueness cannot encode provider hash equivalence.
+    # justify-defect: conflicting prompt assembly for one chat run indicates caller/state corruption.
     raise ValueError("prompt assembly already persisted with different provider request hash")
 
 
@@ -437,9 +439,9 @@ def _build_reader_context_block(
 ) -> PromptBlock | None:
     """Render the reader-context hint (the doc/library the viewer is reading).
 
-    Per spec §4.12 and §5.7 this is a model hint, not a retrieval filter. The
-    hint flows in as a request-level parameter; titles are resolved here and
-    discarded after the prompt block is rendered.
+    Reader context is a model hint, not a retrieval filter. The hint flows in
+    as a request-level parameter; titles are resolved here and discarded after
+    the prompt block is rendered.
     """
     if reader_context is None:
         return None

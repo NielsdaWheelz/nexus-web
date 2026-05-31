@@ -451,6 +451,13 @@ class PageInfo(BaseModel):
     next_cursor: str | None = None
 
 
+class MessagePageInfo(BaseModel):
+    """Pagination information for selected-path message windows."""
+
+    next_cursor: str | None = None
+    before_cursor: str | None = None
+
+
 # =============================================================================
 # Request Schemas
 # =============================================================================

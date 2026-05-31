@@ -50,10 +50,13 @@ from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
 from nexus.db.session import create_session_factory
+from nexus.logging import configure_logging
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager, TestDatabaseManager
+
+configure_logging()
 
 
 def _create_app(**kwargs):
@@ -180,17 +183,9 @@ def test_verifier() -> MockJwtVerifier:
     return MockJwtVerifier()
 
 
-@pytest.fixture
-def authenticated_app(engine: Engine, verify_schema_exists: None):
-    """Provide a FastAPI app with auth + request-id middleware using test verifier.
-
-    Uses the test database engine for bootstrap operations.
-    Includes request-id middleware for consistent middleware stack.
-    """
-    # Create session factory bound to test engine
+def _create_authenticated_test_app(engine: Engine):
     session_factory = create_session_factory(engine)
 
-    # Create bootstrap callback that uses the test session factory
     def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
@@ -198,12 +193,10 @@ def authenticated_app(engine: Engine, verify_schema_exists: None):
         finally:
             db.close()
 
-    # Create app with test verifier and custom bootstrap
     verifier = MockJwtVerifier()
     app = _create_app(skip_auth_middleware=True)
 
-    # Override get_db so route handlers use the test engine
-    from nexus.api.deps import get_db
+    from nexus.db.session import get_db
 
     def _test_get_db():
         db = session_factory()
@@ -214,7 +207,6 @@ def authenticated_app(engine: Engine, verify_schema_exists: None):
 
     app.dependency_overrides[get_db] = _test_get_db
 
-    # Manually add auth middleware with our test configuration
     from nexus.auth.middleware import AuthMiddleware
 
     app.add_middleware(
@@ -225,12 +217,21 @@ def authenticated_app(engine: Engine, verify_schema_exists: None):
         bootstrap_callback=bootstrap_callback,
     )
 
-    # Add request-id middleware (outermost — runs first)
     from nexus.app import add_request_id_middleware
 
     add_request_id_middleware(app, log_requests=False)
 
     return app
+
+
+@pytest.fixture
+def authenticated_app(engine: Engine, verify_schema_exists: None):
+    """Provide a FastAPI app with auth + request-id middleware using test verifier.
+
+    Uses the test database engine for bootstrap operations.
+    Includes request-id middleware for consistent middleware stack.
+    """
+    return _create_authenticated_test_app(engine)
 
 
 @pytest.fixture
@@ -285,46 +286,7 @@ def auth_client(engine: Engine, verify_schema_exists: None) -> Generator[TestCli
 
     For tests using db_session (auto-rollback), use authenticated_client instead.
     """
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id, email=email)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = _create_app(skip_auth_middleware=True)
-
-    # Override get_db so route handlers use the test engine
-    from nexus.api.deps import get_db
-
-    def _test_get_db():
-        db = session_factory()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = _test_get_db
-
-    from nexus.auth.middleware import AuthMiddleware
-
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    # Add request-id middleware (outermost — runs first)
-    from nexus.app import add_request_id_middleware
-
-    add_request_id_middleware(app, log_requests=False)
-
-    with TestClient(app) as client:
+    with TestClient(_create_authenticated_test_app(engine)) as client:
         yield client
 
 

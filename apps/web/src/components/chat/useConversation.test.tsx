@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversation } from "@/components/chat/useConversation";
+import type { SSEReferenceAddedEvent } from "@/lib/api/sse/events";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -281,7 +282,18 @@ describe("useConversation", () => {
     );
 
     // The first run seeds the optimistic user+assistant pair and tails the run.
-    const run = chatRunData();
+    const run = {
+      ...chatRunData(),
+      run: {
+        ...chatRunData().run,
+        conversation_id: "created-1",
+      },
+      conversation: {
+        ...conversationSummary,
+        id: "created-1",
+        title: "Created chat",
+      },
+    };
     act(() => {
       result.current.onChatRunCreated(run);
     });
@@ -296,6 +308,38 @@ describe("useConversation", () => {
     expect(tailMocks.abortAll.mock.invocationCallOrder[0]).toBeLessThan(
       tailMocks.tailChatRun.mock.invocationCallOrder[0],
     );
+  });
+
+  it("forwards reference_added events from the tail to the reference owner", async () => {
+    const onReferenceAdded = vi.fn();
+    const referenceAdded: SSEReferenceAddedEvent["data"] = {
+      reference_id: "ref-1",
+      conversation_id: "conversation-1",
+      resource_uri: "chunk:chunk-1",
+      label: "Evidence chunk",
+      summary: "Relevant context",
+      inline_body: "Evidence body",
+      fetch_hint: "inline",
+      missing: false,
+      created_at: timestamp,
+    };
+
+    renderHook(() =>
+      useConversation({
+        conversationId: null,
+        branching: false,
+        onReferenceAdded,
+      }),
+    );
+
+    const tailOptions = tailMocks.useChatRunTail.mock.calls[0]?.[0];
+    expect(tailOptions?.onReferenceAdded).toBeDefined();
+
+    act(() => {
+      tailOptions?.onReferenceAdded?.(referenceAdded);
+    });
+
+    expect(onReferenceAdded).toHaveBeenCalledWith(referenceAdded);
   });
 
   it("attaches initialReferences to an existing conversation on resolve", async () => {
@@ -410,15 +454,13 @@ describe("useConversation", () => {
     expect(result.current.olderCursor).toBeNull();
     expect(result.current.branch).toBeDefined();
 
-    // The /tree request carries no before_cursor (no pane pagination).
+    // The /tree request carries no query string (no pane pagination).
     const treeCall = fetchMock.mock.calls.find(
       ([input]) =>
         pathOf(input as RequestInfo | URL) ===
         "/api/conversations/conversation-1/tree",
     );
-    expect(searchOf(treeCall?.[0] as RequestInfo | URL)).not.toContain(
-      "before_cursor",
-    );
+    expect(searchOf(treeCall?.[0] as RequestInfo | URL)).toBe("");
 
     const callsBefore = fetchMock.mock.calls.length;
     await act(async () => {
@@ -535,7 +577,7 @@ describe("useConversation", () => {
   });
 
   it("(branching) onChatRunCreated tails the run without aborting concurrent branch runs", async () => {
-    stubFetch((input) => {
+    const fetchMock = stubFetch((input) => {
       const path = pathOf(input);
       if (path === "/api/conversations/conversation-1/tree") {
         return jsonResponse({ data: treeResponse("a") });
@@ -548,6 +590,11 @@ describe("useConversation", () => {
       useConversation({ conversationId: "conversation-1", branching: true }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
+    const initialTreeCalls = fetchMock.mock.calls.filter(
+      ([input]) =>
+        pathOf(input as RequestInfo | URL) ===
+        "/api/conversations/conversation-1/tree",
+    ).length;
 
     const run = chatRunData();
     act(() => {
@@ -558,6 +605,13 @@ describe("useConversation", () => {
     // Branching mode intentionally allows concurrent branch runs — it must not
     // abort the others (the linear/branching split is the key behavioural diff).
     expect(tailMocks.abortAll).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          pathOf(input as RequestInfo | URL) ===
+          "/api/conversations/conversation-1/tree",
+      ),
+    ).toHaveLength(initialTreeCalls);
   });
 
   it("(linear) loadOlder prepends older messages and captures the anchor", async () => {
@@ -570,15 +624,15 @@ describe("useConversation", () => {
         return jsonResponse({ data: { title: "Linear chat" } });
       }
       if (path === "/api/conversations/conversation-1/messages") {
-        if (search.includes("cursor=cursor-older")) {
+        if (search.includes("before_cursor=cursor-older")) {
           return jsonResponse({
             data: [older],
-            page: { next_cursor: null },
+            page: { before_cursor: null, next_cursor: null },
           });
         }
         return jsonResponse({
           data: [newest],
-          page: { next_cursor: "cursor-older" },
+          page: { before_cursor: "cursor-older", next_cursor: null },
         });
       }
       throw new Error(`Unexpected fetch: ${path}${search}`);
@@ -590,6 +644,15 @@ describe("useConversation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.messages.map((m) => m.id)).toEqual(["newest-1"]);
     expect(result.current.olderCursor).toBe("cursor-older");
+    const initialMessagesCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input]) =>
+          pathOf(input as RequestInfo | URL) ===
+            "/api/conversations/conversation-1/messages" &&
+          searchOf(input as RequestInfo | URL).includes("window=latest"),
+      );
+    expect(initialMessagesCall).toBeDefined();
 
     const scroll = fakeScrollHandle();
     result.current.scrollRef.current = scroll;
@@ -618,7 +681,7 @@ describe("useConversation", () => {
       if (path === "/api/conversations/conversation-1/messages") {
         return jsonResponse({
           data: [firstMessage],
-          page: { next_cursor: "older-first" },
+          page: { before_cursor: "older-first", next_cursor: null },
         });
       }
       if (path === "/api/conversations/conversation-2") {
@@ -627,7 +690,7 @@ describe("useConversation", () => {
       if (path === "/api/conversations/conversation-2/messages") {
         return jsonResponse({
           data: [secondMessage],
-          page: { next_cursor: null },
+          page: { before_cursor: null, next_cursor: null },
         });
       }
       throw new Error(`Unexpected fetch: ${path}`);
@@ -661,6 +724,81 @@ describe("useConversation", () => {
           "/api/conversations/conversation-2/messages",
       ),
     ).toBe(true);
+  });
+
+  it("refetches an existing conversation when returning after a send", async () => {
+    const firstMessage = message("first-user", 1, "user", "First route");
+    const secondMessage = message("second-user", 1, "user", "Second route");
+    const fetchMock = stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1") {
+        return jsonResponse({ data: { title: "First chat" } });
+      }
+      if (path === "/api/conversations/conversation-1/messages") {
+        return jsonResponse({
+          data: [firstMessage],
+          page: { before_cursor: null, next_cursor: null },
+        });
+      }
+      if (path === "/api/conversations/conversation-2") {
+        return jsonResponse({ data: { title: "Second chat" } });
+      }
+      if (path === "/api/conversations/conversation-2/messages") {
+        return jsonResponse({
+          data: [secondMessage],
+          page: { before_cursor: null, next_cursor: null },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result, rerender } = renderHook(
+      ({ conversationId }: { conversationId: string | null }) =>
+        useConversation({ conversationId, branching: false }),
+      { initialProps: { conversationId: "conversation-1" } },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.messages.map((m) => m.id)).toEqual(["first-user"]);
+
+    act(() => {
+      result.current.onChatRunCreated({
+        ...chatRunData(),
+        user_message: message(
+          "follow-up-user",
+          2,
+          "user",
+          "Follow up",
+          "first-user",
+        ),
+        assistant_message: message(
+          "follow-up-assistant",
+          3,
+          "assistant",
+          "",
+          "follow-up-user",
+          "pending",
+        ),
+      });
+    });
+
+    rerender({ conversationId: "conversation-2" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.messages.map((m) => m.id)).toEqual(["second-user"]);
+
+    rerender({ conversationId: "conversation-1" });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) =>
+            pathOf(input as RequestInfo | URL) ===
+            "/api/conversations/conversation-1/messages",
+        ),
+      ).toHaveLength(2);
+    });
+    await waitFor(() =>
+      expect(result.current.messages.map((m) => m.id)).toEqual(["first-user"]),
+    );
   });
 
   it("preserves optimistic messages when a newly created route adopts its id", async () => {

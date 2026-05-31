@@ -26,7 +26,11 @@ from nexus.auth.permissions import (
     can_read_highlight,
     can_read_media,
 )
-from nexus.coerce import parse_uuid
+from nexus.services.resource_resolver import (
+    SEARCH_SCOPE_RESOURCE_URI_SCHEMES,
+    ResourceUriParseFailure,
+    parse_resource_uri,
+)
 
 READ_RESOURCE_TOOL_NAME = "read_resource"
 
@@ -45,6 +49,7 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
             "uri": {"type": "string", "description": "Resource URI to read."},
         },
         "required": ["uri"],
+        "additionalProperties": False,
     },
 }
 
@@ -113,16 +118,31 @@ def execute_read_resource(
             error_code="not_in_references",
         )
 
-    scheme, sep, ident = uri.partition(":")
-    if not sep:
+    parsed = parse_resource_uri(uri)
+    if isinstance(parsed, ResourceUriParseFailure):
+        if parsed.reason == "unsupported_scheme":
+            scheme = uri.partition(":")[0]
+            return ReadResourceResult(
+                uri=uri,
+                status="error",
+                body=f"Resource URI scheme '{scheme}' is not supported.",
+                error_code="unknown_scheme",
+            )
+        if ":" not in uri:
+            return ReadResourceResult(
+                uri=uri,
+                status="error",
+                body=f"Resource URI {uri} is malformed.",
+                error_code="invalid_uri",
+            )
         return ReadResourceResult(
             uri=uri,
             status="error",
-            body=f"Resource URI {uri} is malformed.",
+            body=f"Resource URI {uri} has an invalid identifier.",
             error_code="invalid_uri",
         )
 
-    if scheme == "media" or scheme == "library":
+    if parsed.scheme in SEARCH_SCOPE_RESOURCE_URI_SCHEMES:
         return ReadResourceResult(
             uri=uri,
             status="error",
@@ -133,37 +153,23 @@ def execute_read_resource(
             error_code="scope_not_readable",
         )
 
-    resource_id = parse_uuid(ident)
-    if resource_id is None:
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=f"Resource URI {uri} has an invalid identifier.",
-            error_code="invalid_uri",
-        )
-
-    if scheme == "span":
-        return _read_span(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "chunk":
-        return _read_chunk(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "highlight":
-        return _read_highlight(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "page":
-        return _read_page(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "note_block":
-        return _read_note_block(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "fragment":
-        return _read_fragment(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "conversation":
-        return _read_conversation(db, uri, resource_id, viewer_id=viewer_id)
-    if scheme == "message":
-        return _read_message(db, uri, resource_id, viewer_id=viewer_id)
-    return ReadResourceResult(
-        uri=uri,
-        status="error",
-        body=f"Resource URI scheme '{scheme}' is not supported.",
-        error_code="unknown_scheme",
-    )
+    if parsed.scheme == "span":
+        return _read_span(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "chunk":
+        return _read_chunk(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "highlight":
+        return _read_highlight(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "page":
+        return _read_page(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "note_block":
+        return _read_note_block(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "fragment":
+        return _read_fragment(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "conversation":
+        return _read_conversation(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    if parsed.scheme == "message":
+        return _read_message(db, uri, parsed.resource_id, viewer_id=viewer_id)
+    raise AssertionError(f"Unhandled readable resource URI scheme: {parsed.scheme}")
 
 
 def _missing(uri: str) -> ReadResourceResult:

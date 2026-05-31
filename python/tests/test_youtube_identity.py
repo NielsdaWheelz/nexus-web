@@ -2,7 +2,10 @@
 
 import pytest
 
-from nexus.services.youtube_identity import build_youtube_identity, classify_youtube_url
+from nexus.services.youtube_identity import (
+    classify_youtube_provider_video_id,
+    classify_youtube_url,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -46,11 +49,15 @@ class TestClassifyYoutubeUrl:
         assert classify_youtube_url("https://www.youtube.com/watch?v=too-short") is None
 
 
-class TestBuildYoutubeIdentity:
+class TestClassifyYoutubeProviderVideoId:
     def test_builds_canonical_playback_urls_from_provider_video_id(self):
-        identity = build_youtube_identity("dQw4w9WgXcQ")
+        identity = classify_youtube_provider_video_id("dQw4w9WgXcQ")
 
+        assert identity is not None
         assert identity.provider == "youtube"
         assert identity.provider_video_id == "dQw4w9WgXcQ"
         assert identity.watch_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         assert identity.embed_url == "https://www.youtube.com/embed/dQw4w9WgXcQ"
+
+    def test_invalid_provider_video_id_returns_none(self):
+        assert classify_youtube_provider_video_id("not-a-youtube-id") is None

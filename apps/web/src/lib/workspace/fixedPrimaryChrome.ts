@@ -1,3 +1,1 @@
-"use client";
-
 export const OVERVIEW_RULER_WIDTH_PX = 28;

@@ -530,10 +530,10 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
     assert row[2]["transcript_version_id"] == str(version_id)
 
 
-def test_legacy_pdf_repair_marks_mutable_snapshot_source(db_session: Session):
+def test_pdf_repair_uses_current_snapshot_contract(db_session: Session):
     user_id = uuid4()
     media_id = uuid4()
-    plain_text = "Legacy mutable PDF repair source."
+    plain_text = "Repairable PDF text source."
     file_sha256 = _sha256("pdf-bytes")
 
     db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -560,15 +560,6 @@ def test_legacy_pdf_repair_marks_mutable_snapshot_source(db_session: Session):
     db_session.execute(
         text(
             """
-            INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
-            VALUES (:media_id, 'media/test/legacy.pdf', 'application/pdf', 1024)
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db_session.execute(
-        text(
-            """
             INSERT INTO pdf_page_text_spans (
                 media_id, page_number, start_offset, end_offset, text_extract_version
             )
@@ -588,21 +579,19 @@ def test_legacy_pdf_repair_marks_mutable_snapshot_source(db_session: Session):
     snapshot = db_session.execute(
         text(
             """
-            SELECT artifact_ref, source_version, metadata
+            SELECT artifact_ref, source_version, extractor_version, metadata
             FROM source_snapshots
             WHERE media_id = :media_id
             """
         ),
         {"media_id": media_id},
     ).one()
-    assert snapshot[0] == f"legacy_media_plain_text:{media_id}"
-    assert snapshot[1] == "pdf_text_legacy_mutable_repair_v1"
-    assert snapshot[2]["legacy_mutable_snapshot_repair"] is True
-    assert snapshot[2]["mutable_source_tables"] == [
-        "media.plain_text",
-        "pdf_page_text_spans",
-    ]
-    assert snapshot[2]["original_pdf_storage_path"] == "media/test/legacy.pdf"
+    assert snapshot[0] == f"media:{media_id}:pdf_text"
+    assert snapshot[1] == "pdf_text_v1"
+    assert snapshot[2] == "pymupdf_text_v1"
+    assert snapshot[3]["text_extract_version"] == 1
+    assert "legacy_repair" not in snapshot[3]
+    assert "legacy_mutable_snapshot_repair" not in snapshot[3]
 
 
 def _insert_ready_media(db_session: Session, *, user_id: UUID, media_id: UUID) -> None:

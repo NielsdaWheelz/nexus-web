@@ -41,7 +41,7 @@ export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
   return response.data.filter((library) => !library.is_default);
 }
 
-export interface FetchMediaLibraryMembershipsOptions {
+interface FetchMediaLibraryMembershipsOptions {
   /** Drop the user's default library from the response (used by media-detail pickers). */
   excludeDefault?: boolean;
 }

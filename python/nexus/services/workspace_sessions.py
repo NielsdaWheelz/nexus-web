@@ -1,8 +1,8 @@
 """Per user + device workspace session persistence service layer."""
 
-from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -40,7 +40,6 @@ def upsert_workspace_session(
     db: Session, user_id: UUID, device_id: str, state: dict[str, object]
 ) -> WorkspaceSession:
     """Upsert this device's workspace session (last-write-wins)."""
-    now = datetime.now(UTC)
     session = (
         db.query(WorkspaceSession)
         .filter(
@@ -55,12 +54,11 @@ def upsert_workspace_session(
             user_id=user_id,
             device_id=device_id,
             state=state,
-            created_at=now,
-            updated_at=now,
         )
         db.add(session)
         try:
             db.commit()
+            db.refresh(session)
             return session
         except IntegrityError:
             db.rollback()
@@ -74,6 +72,7 @@ def upsert_workspace_session(
             )
 
     session.state = state
-    session.updated_at = now
+    session.updated_at = func.now()
     db.commit()
+    db.refresh(session)
     return session

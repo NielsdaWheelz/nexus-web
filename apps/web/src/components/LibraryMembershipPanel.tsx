@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Check, X } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -156,33 +155,15 @@ export default function LibraryMembershipPanel({
           <div className={styles.emptyState}>{emptyMessage}</div>
         ) : (
           filteredLibraries.map((library) => {
-            const rowDisabled = busy || (library.isInLibrary ? !library.canRemove : !library.canAdd);
+            const rowDisabled =
+              busy || (library.isInLibrary ? !library.canRemove : !library.canAdd);
             return (
-              <div
+              <button
                 key={library.id}
-                role="button"
-                tabIndex={rowDisabled ? -1 : 0}
-                aria-disabled={rowDisabled || undefined}
+                type="button"
+                disabled={rowDisabled}
                 className={styles.item}
-                onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
-                  if (rowDisabled) {
-                    return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (library.isInLibrary) {
-                    onRemoveFromLibrary(library.id);
-                    return;
-                  }
-                  onAddToLibrary(library.id);
-                }}
-                onKeyDown={(event) => {
-                  if (rowDisabled) {
-                    return;
-                  }
-                  if (event.key !== "Enter" && event.key !== " ") {
-                    return;
-                  }
+                onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
                   if (library.isInLibrary) {
@@ -208,7 +189,7 @@ export default function LibraryMembershipPanel({
                   </span>
                 </span>
                 {library.isInLibrary ? <Check size={16} aria-hidden="true" /> : null}
-              </div>
+              </button>
             );
           })
         )}

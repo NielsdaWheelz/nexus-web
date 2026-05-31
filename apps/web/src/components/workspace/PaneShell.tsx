@@ -14,9 +14,9 @@ import {
   type CSSProperties,
 } from "react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
-  type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
 import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
@@ -40,7 +40,7 @@ import styles from "./PaneShell.module.css";
 interface PaneChromeOverrides {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
-  options?: SurfaceHeaderOption[];
+  options?: ActionMenuOption[];
   meta?: React.ReactNode;
 }
 
@@ -180,7 +180,7 @@ interface PaneShellProps {
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
-  options?: SurfaceHeaderOption[];
+  options?: ActionMenuOption[];
   navigation: SurfaceHeaderNavigation;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
@@ -444,7 +444,7 @@ export default function PaneShell({
         : new URL(href, window.location.origin).toString();
     copyText(link);
   }, [href]);
-  const paneMenuOptions = useMemo<SurfaceHeaderOption[]>(() => {
+  const paneMenuOptions = useMemo<ActionMenuOption[]>(() => {
     const routeOptions = effectiveOptions ?? [];
     const contextualOptions = routeOptions.map((option, index) =>
       index === 0

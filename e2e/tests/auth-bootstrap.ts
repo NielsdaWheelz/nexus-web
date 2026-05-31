@@ -1,6 +1,11 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import path from "node:path";
 import { applyResolvedSupabaseEnv } from "../supabase-env.mjs";
+import {
+  chunkSupabaseCookie,
+  encodeSupabaseCookieValue,
+  supabaseAuthCookieBaseName,
+} from "./supabase-auth-cookie";
 
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
@@ -26,15 +31,6 @@ interface HashSessionTokens {
   tokenType: string;
   expiresIn: number;
   expiresAt: number;
-}
-
-interface SupabaseSessionPayload {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  expires_at: number;
-  refresh_token: string;
-  user: Record<string, unknown>;
 }
 
 function resolveAuthEnv(): ResolvedAuthEnv {
@@ -64,33 +60,6 @@ function extractActionLink(payload: GenerateLinkResponse): string {
     );
   }
   return actionLink;
-}
-
-function sessionCookieBaseName(supabaseUrl: string): string {
-  const host = new URL(supabaseUrl).hostname;
-  const projectRef = host.split(".")[0] || host;
-  return `sb-${projectRef}-auth-token`;
-}
-
-function encodeSupabaseCookieValue(session: SupabaseSessionPayload): string {
-  return `base64-${Buffer.from(JSON.stringify(session)).toString("base64url")}`;
-}
-
-function chunkCookie(
-  name: string,
-  value: string,
-): Array<{ name: string; value: string }> {
-  const maxCookieValueBytes = 3_800;
-  if (value.length <= maxCookieValueBytes) {
-    return [{ name, value }];
-  }
-
-  const chunks: Array<{ name: string; value: string }> = [];
-  for (let idx = 0; idx < value.length; idx += maxCookieValueBytes) {
-    const chunk = value.slice(idx, idx + maxCookieValueBytes);
-    chunks.push({ name: `${name}.${chunks.length}`, value: chunk });
-  }
-  return chunks;
 }
 
 function readHashSessionTokens(pageUrl: string): HashSessionTokens | null {
@@ -154,7 +123,7 @@ async function persistSessionCookies(
   tokens: HashSessionTokens,
 ) {
   const user = await fetchSessionUser(request, env, tokens.accessToken);
-  const cookieName = sessionCookieBaseName(env.supabaseUrl);
+  const cookieName = supabaseAuthCookieBaseName();
   const cookieValue = encodeSupabaseCookieValue({
     access_token: tokens.accessToken,
     token_type: tokens.tokenType,
@@ -165,7 +134,7 @@ async function persistSessionCookies(
   });
 
   await page.context().addCookies(
-    chunkCookie(cookieName, cookieValue).map((cookie) => ({
+    chunkSupabaseCookie(cookieName, cookieValue).map((cookie) => ({
       ...cookie,
       url: env.appBaseUrl,
       sameSite: "Lax" as const,

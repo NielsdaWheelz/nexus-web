@@ -29,10 +29,13 @@ describe("pane route identity", () => {
     );
     expect(
       hasSamePaneResource(
-        "/conversations/conversation-1?run=old",
-        "/conversations/conversation-1?run=new",
+        "/libraries/library-1?tab=items",
+        "/libraries/library-1?tab=intelligence",
       ),
     ).toBe(true);
+    expect(hasSamePaneResource("/libraries/library-1", "/libraries/library-2")).toBe(
+      false,
+    );
   });
 
   it("falls back to normalized href for routes without resource refs", () => {

@@ -170,6 +170,23 @@ export function selectionIntersectsCodeBlock(
  * @param mismatchDisabled - Whether highlighting is disabled due to mismatch
  * @returns Conversion result with offsets or error
  */
+function resolveDirectTextNodeMatch(
+  container: Node,
+  offset: number,
+  nodes: CanonicalCursorResult["nodes"]
+): { node: CanonicalCursorResult["nodes"][number]; offsetInNode: number } | null {
+  if (container.nodeType !== Node.TEXT_NODE) {
+    return null;
+  }
+  for (const entry of nodes) {
+    if (entry.node === container) {
+      const max = entry.node.textContent?.length ?? 0;
+      return { node: entry, offsetInNode: Math.max(0, Math.min(offset, max)) };
+    }
+  }
+  return null;
+}
+
 export function selectionToOffsets(
   range: Range,
   cursor: CanonicalCursorResult,
@@ -203,15 +220,14 @@ export function selectionToOffsets(
   let endUtf16Offset = range.endOffset;
 
   // Resolve start boundary to a mapped cursor node.
-  if (startContainer.nodeType === Node.TEXT_NODE) {
-    for (const entry of cursor.nodes) {
-      if (entry.node === startContainer) {
-        startNode = entry;
-        const max = entry.node.textContent?.length ?? 0;
-        startUtf16Offset = Math.max(0, Math.min(range.startOffset, max));
-        break;
-      }
-    }
+  const startMatch = resolveDirectTextNodeMatch(
+    startContainer,
+    range.startOffset,
+    cursor.nodes
+  );
+  if (startMatch) {
+    startNode = startMatch.node;
+    startUtf16Offset = startMatch.offsetInNode;
   }
 
   if (!startNode) {
@@ -245,15 +261,14 @@ export function selectionToOffsets(
   }
 
   // Resolve end boundary to a mapped cursor node.
-  if (endContainer.nodeType === Node.TEXT_NODE) {
-    for (const entry of cursor.nodes) {
-      if (entry.node === endContainer) {
-        endNode = entry;
-        const max = entry.node.textContent?.length ?? 0;
-        endUtf16Offset = Math.max(0, Math.min(range.endOffset, max));
-        break;
-      }
-    }
+  const endMatch = resolveDirectTextNodeMatch(
+    endContainer,
+    range.endOffset,
+    cursor.nodes
+  );
+  if (endMatch) {
+    endNode = endMatch.node;
+    endUtf16Offset = endMatch.offsetInNode;
   }
 
   if (!endNode) {

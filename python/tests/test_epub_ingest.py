@@ -23,6 +23,7 @@ from nexus.errors import ApiErrorCode
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
+    check_archive_safety,
     extract_epub_artifacts,
 )
 from nexus.storage.paths import build_epub_asset_storage_path, build_storage_path
@@ -735,7 +736,7 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         storage = FakeStorageClient()
 
         chapter_html = _build_chapter_xhtml(
-            '<h2 id="sec-a">Section A</h2><a name="legacy-anchor"></a><p>Body text.</p>'
+            '<h2 id="sec-a">Section A</h2><a name="named-anchor"></a><p>Body text.</p>'
         )
         epub = _make_epub(
             {
@@ -747,7 +748,7 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
                 "OEBPS/toc.ncx": _build_ncx(
                     [
                         ("np1", "Section A", "chapter1.xhtml#sec-a"),
-                        ("np2", "Legacy anchor", "chapter1.xhtml#legacy-anchor"),
+                        ("np2", "Named anchor", "chapter1.xhtml#named-anchor"),
                     ]
                 ),
             }
@@ -768,7 +769,7 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         # These anchors are required for TOC items that target positions inside
         # the currently loaded fragment.
         assert 'id="sec-a"' in html
-        assert 'name="legacy-anchor"' in html
+        assert 'name="named-anchor"' in html
 
 
 class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
@@ -818,6 +819,15 @@ class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
         assert isinstance(result, EpubExtractionError)
         assert result.error_code == ApiErrorCode.E_ARCHIVE_UNSAFE.value
         assert _count_fragments(db_session, mid) == 0
+
+    def test_unexpected_archive_reader_error_is_not_classified_as_unsafe(self, monkeypatch):
+        def fail_unexpectedly(_stream):
+            raise RuntimeError("zip runtime defect")
+
+        monkeypatch.setattr("nexus.services.epub_ingest.zipfile.ZipFile", fail_unexpectedly)
+
+        with pytest.raises(RuntimeError, match="zip runtime defect"):
+            check_archive_safety(b"irrelevant")
 
 
 class TestEpubExtractFailureClassificationMatrix:

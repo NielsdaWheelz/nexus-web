@@ -12,7 +12,7 @@ export const AUDIO_EFFECTS_DEFAULTS: AudioEffectsState = {
   mono: false,
 };
 
-export const AUDIO_EFFECTS_STORAGE_KEYS = {
+const AUDIO_EFFECTS_STORAGE_KEYS = {
   silenceTrim: "podcast_effects_silence_trim",
   volumeBoost: "podcast_effects_volume_boost",
   mono: "podcast_effects_mono",

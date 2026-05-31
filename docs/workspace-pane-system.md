@@ -19,11 +19,11 @@ secondary sheets, and session restore.
 ## Non-Goals
 
 - No detachable secondary windows.
-- No route-local secondary rail, drawer, split pane, width constant, or resize
+- No route-local secondary rail, sheet, split pane, width constant, or resize
   state.
 - No URL workspace layout encoding.
 - No workspace layout schema migration path.
-- No compatibility parser for removed pane state shapes.
+- No parser for removed pane state shapes.
 - No generic plugin system for secondary content. Secondary surfaces are a small
   typed registry owned by the workspace shell.
 
@@ -130,7 +130,8 @@ Cross-pane secondary launch is host-mediated:
 1. Runtime calls `openInNewPane(href, titleHint, secondarySurfaceId)`.
 2. Host records an ephemeral pending request keyed to the target resource and,
    once known, the target primary pane id.
-3. Store opens or reuses the primary pane with no secondary state.
+3. Store opens or reuses the primary pane without seeding secondary state. A
+   newly opened pane has no attached secondary; a reused pane keeps its own.
 4. The mounted route publishes its secondary surfaces.
 5. Host validates the requested surface against the publication and then calls
    `requestSecondarySurface(primaryPaneId, surfaceId)`.
@@ -139,8 +140,11 @@ Cross-pane secondary launch is host-mediated:
 
 Host must never pass a visible secondary pane to runtime or shell rendering
 unless the current publication can render its active surface. When a publication
-exists and no longer matches persisted secondary state, host drops that secondary
-pane.
+exists whose group no longer matches the persisted secondary, host drops that
+secondary pane. When the group still matches but the persisted active surface is
+no longer published, host resets the secondary to the publication's default
+surface. Until the secondary again matches the publication, it is neither
+rendered nor exposed through pane runtime.
 
 ## Runtime Contract
 
@@ -274,6 +278,11 @@ Chat:
   and mobile host.
 - Desktop secondary tabs, mobile secondary tabs, mobile modal behavior, and
   secondary resize handle keyboard behavior are covered by tests.
+- Host publication validation is covered by tests: a visible secondary without a
+  matching publication is not rendered or exposed, a group-mismatched secondary
+  is dropped, an unpublished active surface is reset to the published default,
+  and pending cross-pane secondary requests are launched or discarded by
+  publication.
 
 ## Verification
 

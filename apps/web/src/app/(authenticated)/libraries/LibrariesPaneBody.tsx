@@ -16,12 +16,13 @@ import Input from "@/components/ui/Input";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
-import type {
-  LibraryForEdit,
-  LibraryMember,
-  LibraryInvite,
-  UserSearchResult,
-} from "@/components/LibraryEditDialog";
+import {
+  fetchEditableLibrarySharing,
+  type LibraryInvite,
+  type LibraryMember,
+  type UserSearchResult,
+} from "@/lib/libraries/sharing";
+import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import styles from "./page.module.css";
 
 interface Library {
@@ -123,20 +124,9 @@ export default function LibrariesPaneBody() {
   const openEditDialog = useCallback(async (library: Library) => {
     setEditLibrary(library);
     try {
-      const [membersResp, invitesResp] = await Promise.all([
-        library.role === "admin"
-          ? apiFetch<{ data: LibraryMember[] }>(
-              `/api/libraries/${library.id}/members`
-            )
-          : Promise.resolve({ data: [] as LibraryMember[] }),
-        library.role === "admin"
-          ? apiFetch<{ data: LibraryInvite[] }>(
-              `/api/libraries/${library.id}/invites`
-            )
-          : Promise.resolve({ data: [] as LibraryInvite[] }),
-      ]);
-      setEditMembers(membersResp.data);
-      setEditInvites(invitesResp.data);
+      const sharing = await fetchEditableLibrarySharing(library);
+      setEditMembers(sharing.members);
+      setEditInvites(sharing.invites);
     } catch (err) {
       setError(
         toFeedback(err, {

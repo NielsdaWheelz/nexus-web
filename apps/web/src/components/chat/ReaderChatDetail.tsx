@@ -4,10 +4,10 @@ import { useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useConversation } from "@/components/chat/useConversation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import styles from "./ReaderChatDetail.module.css";
 
 interface ReaderChatDetailProps {
@@ -27,7 +27,7 @@ interface ReaderChatDetailProps {
 }
 
 /**
- * A conversation rendered inline inside the reader's document-chat sidecar: a
+ * A conversation rendered inline inside the reader's document-chat secondary surface: a
  * compact header (back / title / open-in-full-chat) over the shared chat engine
  * (useConversation) and view (ChatSurface). All lifecycle, scroll, send and
  * retry logic lives in the engine and the view — this adapter only owns the

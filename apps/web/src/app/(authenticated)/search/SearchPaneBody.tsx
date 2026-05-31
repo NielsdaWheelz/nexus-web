@@ -72,8 +72,10 @@ const SEARCH_CONTENT_KIND_FILTERS = [
   ["podcast", "Podcasts"],
 ] as const;
 
+const SEARCH_TYPE_SET = new Set<string>(ALL_SEARCH_TYPES);
+
 function isSearchType(value: string): value is SearchType {
-  return ALL_SEARCH_TYPES.includes(value as SearchType);
+  return SEARCH_TYPE_SET.has(value);
 }
 
 function parseSelectedTypes(searchParams: URLSearchParams): SearchType[] {

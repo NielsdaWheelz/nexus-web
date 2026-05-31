@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import html
-import re
-import unicodedata
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -13,16 +11,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.coerce import coerce_non_negative_int
-
-_TRANSCRIPT_WHITESPACE_RE = re.compile(r"[\s\u00a0]+", re.UNICODE)
+from nexus.text import normalize_whitespace
 
 
 def canonicalize_transcript_segment_text(raw_value: Any) -> str:
     """Canonicalize transcript text to stable, searchable form."""
-    text_value = str(raw_value or "")
-    text_value = unicodedata.normalize("NFC", text_value)
-    text_value = _TRANSCRIPT_WHITESPACE_RE.sub(" ", text_value)
-    return text_value.strip()
+    return normalize_whitespace(str(raw_value or ""))
 
 
 def normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:

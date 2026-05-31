@@ -6,9 +6,7 @@ function getContributorCreditLabel(credit: ContributorCredit): string | null {
   if (creditedName) {
     return creditedName;
   }
-  const displayName =
-    credit.contributor_display_name?.trim() || credit.display_name?.trim();
-  return displayName || null;
+  return credit.contributor_display_name?.trim() || null;
 }
 
 export function formatContributorCreditSummary(

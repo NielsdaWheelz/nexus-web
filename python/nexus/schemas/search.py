@@ -83,14 +83,11 @@ class SearchResultContextRefOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultMediaOut(BaseModel):
-    """V2 typed search result for media title hits."""
+class SearchResultBaseOut(BaseModel):
+    """Envelope fields shared by every typed search result variant."""
 
-    type: Literal["media"]
-    id: UUID
     score: float
     snippet: str
-    source: SearchResultSourceOut
     title: str
     source_label: str | None = None
     media_id: UUID | None = None
@@ -101,81 +98,49 @@ class SearchResultMediaOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultEpisodeOut(BaseModel):
+class SearchResultMediaOut(SearchResultBaseOut):
+    """Typed search result for media title hits."""
+
+    type: Literal["media"]
+    id: UUID
+    source: SearchResultSourceOut
+
+
+class SearchResultEpisodeOut(SearchResultBaseOut):
     """Typed search result for podcast episode media hits."""
 
     type: Literal["episode"]
     id: UUID
-    score: float
-    snippet: str
     source: SearchResultSourceOut
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultVideoOut(BaseModel):
+class SearchResultVideoOut(SearchResultBaseOut):
     """Typed search result for video media hits."""
 
     type: Literal["video"]
     id: UUID
-    score: float
-    snippet: str
     source: SearchResultSourceOut
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultPodcastOut(BaseModel):
+class SearchResultPodcastOut(SearchResultBaseOut):
     """Typed search result for visible podcast hits."""
 
     type: Literal["podcast"]
     id: UUID
-    score: float
-    snippet: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultContentChunkOut(BaseModel):
+class SearchResultContentChunkOut(SearchResultBaseOut):
     """Typed search result for indexed document evidence."""
 
     type: Literal["content_chunk"]
     id: UUID
-    score: float
-    snippet: str
     source_kind: str
     source_version: str = Field(min_length=1)
     evidence_span_ids: list[UUID] = Field(default_factory=list)
     source: SearchResultSourceOut
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
     citation_label: str
     locator: RetrievalLocator
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultContentChunkOut":
@@ -183,25 +148,15 @@ class SearchResultContentChunkOut(BaseModel):
         return self
 
 
-class SearchResultFragmentOut(BaseModel):
+class SearchResultFragmentOut(SearchResultBaseOut):
     """Typed search result for a readable source fragment."""
 
     type: Literal["fragment"]
     id: UUID
-    score: float
-    snippet: str
     source: SearchResultSourceOut
     source_version: str = Field(min_length=1)
     citation_label: str | None = None
     locator: RetrievalLocator
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultFragmentOut":
@@ -209,46 +164,26 @@ class SearchResultFragmentOut(BaseModel):
         return self
 
 
-class SearchResultContributorOut(BaseModel):
+class SearchResultContributorOut(SearchResultBaseOut):
     """Typed search result for contributor identity hits."""
 
     type: Literal["contributor"]
     id: str
-    score: float
-    snippet: str
     contributor_handle: str
     contributor: ContributorOut
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultNoteBlockOut(BaseModel):
+class SearchResultNoteBlockOut(SearchResultBaseOut):
     """Typed search result for note-block body hits."""
 
     type: Literal["note_block"]
     id: UUID
-    score: float
-    snippet: str
     page_id: UUID
     page_title: str
     body_text: str
     highlight_excerpt: str | None = None
     source_version: str = Field(min_length=1)
     locator: RetrievalLocator
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultNoteBlockOut":
@@ -256,27 +191,17 @@ class SearchResultNoteBlockOut(BaseModel):
         return self
 
 
-class SearchResultHighlightOut(BaseModel):
+class SearchResultHighlightOut(SearchResultBaseOut):
     """Typed search result for a saved source highlight."""
 
     type: Literal["highlight"]
     id: UUID
-    score: float
-    snippet: str
     color: str
     exact: str
     source: SearchResultSourceOut
     source_version: str = Field(min_length=1)
     citation_label: str | None = None
     locator: RetrievalLocator
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultHighlightOut":
@@ -284,44 +209,24 @@ class SearchResultHighlightOut(BaseModel):
         return self
 
 
-class SearchResultPageOut(BaseModel):
+class SearchResultPageOut(SearchResultBaseOut):
     """Typed search result for note pages."""
 
     type: Literal["page"]
     id: UUID
-    score: float
-    snippet: str
     description: str | None = None
     source_version: str = Field(min_length=1)
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultMessageOut(BaseModel):
-    """V2 typed search result for conversation message hits."""
+class SearchResultMessageOut(SearchResultBaseOut):
+    """Typed search result for conversation message hits."""
 
     type: Literal["message"]
     id: UUID
-    score: float
-    snippet: str
     conversation_id: UUID
     seq: int
     source_version: str = Field(min_length=1)
     locator: RetrievalLocator
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultMessageOut":
@@ -329,26 +234,16 @@ class SearchResultMessageOut(BaseModel):
         return self
 
 
-class SearchResultEvidenceSpanOut(BaseModel):
+class SearchResultEvidenceSpanOut(SearchResultBaseOut):
     """Typed search result for one durable evidence span."""
 
     type: Literal["evidence_span"]
     id: UUID
-    score: float
-    snippet: str
     source: SearchResultSourceOut
     evidence_span_id: UUID
     source_version: str = Field(min_length=1)
     citation_label: str
     locator: RetrievalLocator
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_locator_contract(self) -> "SearchResultEvidenceSpanOut":
@@ -356,34 +251,21 @@ class SearchResultEvidenceSpanOut(BaseModel):
         return self
 
 
-class SearchResultConversationOut(BaseModel):
+class SearchResultConversationOut(SearchResultBaseOut):
     """Typed search result for visible conversations."""
 
     type: Literal["conversation"]
     id: UUID
-    score: float
-    snippet: str
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultWebOut(BaseModel):
+class SearchResultWebOut(SearchResultBaseOut):
     """Typed public-web result shape shared with chat web search."""
 
     type: Literal["web_result"]
     id: str
     result_type: Literal["web_result"]
-    score: float
-    snippet: str
     source_id: str
     result_ref: str
-    title: str
     url: str
     display_url: str | None = None
     extra_snippets: list[str] = Field(default_factory=list)
@@ -394,14 +276,7 @@ class SearchResultWebOut(BaseModel):
     provider_request_id: str | None = None
     source_version: str = Field(min_length=1)
     locator: RetrievalLocator
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
     selected: bool
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_web_result_contract(self) -> "SearchResultWebOut":

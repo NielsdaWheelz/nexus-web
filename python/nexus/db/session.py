@@ -78,6 +78,13 @@ def release_connection(db: Session) -> None:
     db.close()
 
 
+def use_serializable_if_available(db: Session) -> None:
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if not db.in_transaction() and not in_outer_transaction:
+        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+
+
 @contextmanager
 def transaction(db: Session) -> Generator[None, None, None]:
     """Context manager for database transactions.

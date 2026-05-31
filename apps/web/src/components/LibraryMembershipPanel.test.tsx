@@ -103,11 +103,8 @@ describe("LibraryMembershipPanel", () => {
 
     expect(
       await screen.findByRole("button", { name: "Personal Remove from this library" })
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("button", { name: "Work Add to library" })).toHaveAttribute(
-      "aria-disabled",
-      "true"
-    );
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Work Add to library" })).toBeDisabled();
   });
 
   it("restores focus to the anchor when it closes", async () => {

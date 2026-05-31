@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
-from nexus.services.url_normalize import normalize_host
+from nexus.services.url_identity import parse_identity_url
 
 _X_PROVIDER = "x"
 _X_HOSTS = {
@@ -28,8 +27,7 @@ class XIdentity:
 
 def is_x_url(url: str) -> bool:
     """Return True when URL host is one of the X/Twitter host variants."""
-    parsed = urlparse(url)
-    return normalize_host(parsed.hostname) in _X_HOSTS
+    return parse_identity_url(url).host in _X_HOSTS
 
 
 def classify_x_url(url: str) -> XIdentity | None:
@@ -38,11 +36,11 @@ def classify_x_url(url: str) -> XIdentity | None:
     Returns None for non-X URLs and for X URLs that do not include a valid
     decimal post ID.
     """
-    parsed = urlparse(url)
-    if normalize_host(parsed.hostname) not in _X_HOSTS:
+    parsed = parse_identity_url(url)
+    if parsed.host not in _X_HOSTS:
         return None
 
-    provider_id = _extract_post_id(parsed.path)
+    provider_id = _extract_post_id(parsed.path_segments)
     if provider_id is None:
         return None
 
@@ -50,12 +48,11 @@ def classify_x_url(url: str) -> XIdentity | None:
         provider=_X_PROVIDER,
         provider_id=provider_id,
         canonical_url=f"https://x.com/i/status/{provider_id}",
-        username=_extract_username(parsed.path),
+        username=_extract_username(parsed.path_segments),
     )
 
 
-def _extract_post_id(path: str) -> str | None:
-    segments = [segment for segment in path.split("/") if segment]
+def _extract_post_id(segments: tuple[str, ...]) -> str | None:
     for idx, segment in enumerate(segments):
         if segment in _POST_PATH_PREFIXES and idx + 1 < len(segments):
             post_id = segments[idx + 1]
@@ -63,8 +60,7 @@ def _extract_post_id(path: str) -> str | None:
     return None
 
 
-def _extract_username(path: str) -> str | None:
-    segments = [segment for segment in path.split("/") if segment]
+def _extract_username(segments: tuple[str, ...]) -> str | None:
     for idx, segment in enumerate(segments):
         if segment in _POST_PATH_PREFIXES and idx > 0:
             username = segments[idx - 1].strip("@")

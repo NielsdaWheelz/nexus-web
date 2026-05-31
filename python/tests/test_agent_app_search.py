@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 import respx
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
@@ -183,6 +184,45 @@ def test_execute_app_search_persists_retrieval_metadata(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_rejects_blank_explicit_scope(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find something",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+
+    run = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=["  "],
+        planned_query="Find something",
+        planned_types=["media"],
+        planned_filters={},
+    )
+
+    assert run.status == "error"
+    assert run.error_code == ApiErrorCode.E_INVALID_REQUEST.value
+    assert "non-empty URI strings" in run.context_text
+    assert run.citations == []
 
 
 def test_execute_app_search_persists_normalized_executed_filters(

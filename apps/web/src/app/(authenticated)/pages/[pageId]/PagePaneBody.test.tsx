@@ -81,6 +81,17 @@ describe("readDraftBlocksForPersistence", () => {
     });
   });
 
+  it("defaults invalid editor block kinds to bullet", () => {
+    const doc = outlineSchema.nodes.outline_doc!.create(null, [
+      outlineSchema.nodes.outline_block!.create(
+        { id: "block-1", kind: "not-a-note-kind", collapsed: false },
+        [paragraphFromText("one")]
+      ),
+    ]);
+
+    expect(readDraftBlocksForPersistence(doc)[0]?.blockKind).toBe("bullet");
+  });
+
   it("deletes only removed roots when removed descendants are cascaded by the backend", () => {
     expect(
       deletedRootBlockIdsForPersistence(

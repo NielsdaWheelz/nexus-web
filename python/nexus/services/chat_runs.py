@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -120,6 +120,10 @@ from nexus.services.conversation_references import (
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
+from nexus.services.resource_resolver import (
+    ResourceUriScheme,
+    format_resource_uri,
+)
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
@@ -164,6 +168,41 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         parameters=READ_RESOURCE_TOOL_DEFINITION["parameters"],
     ),
 )
+
+
+_RESULT_REF_RESOURCE_URI_SCHEMES: Mapping[str, ResourceUriScheme] = {
+    "content_chunk": "chunk",
+    "highlight": "highlight",
+    "page": "page",
+    "note_block": "note_block",
+    "conversation": "conversation",
+    "message": "message",
+    "fragment": "fragment",
+}
+
+
+def _app_search_scopes_from_tool_args(args: Mapping[str, Any]) -> tuple[list[str], str | None]:
+    if "scope" in args:
+        return (
+            [],
+            "app_search uses scopes=[...] for URI scopes; the singular scope field is invalid",
+        )
+
+    raw_scopes = args.get("scopes")
+    if raw_scopes is None:
+        return [], None
+    if not isinstance(raw_scopes, list):
+        return [], "app_search scopes must be an array of URI strings"
+
+    scopes: list[str] = []
+    for scope in raw_scopes:
+        if not isinstance(scope, str):
+            return [], "app_search scopes must be an array of URI strings"
+        normalized_scope = scope.strip()
+        if not normalized_scope:
+            return [], "app_search scopes must be non-empty URI strings"
+        scopes.append(normalized_scope)
+    return scopes, None
 
 
 class ChatRunLLMRouter(Protocol):
@@ -259,7 +298,7 @@ def _persist_read_resource_tool_call(
     *,
     run: ChatRun,
     tool_call_index: int,
-    args: dict[str, Any],
+    args: Mapping[str, Any],
     result: Any,
 ) -> None:
     """Persist a read_resource invocation as a message_tool_calls row.
@@ -397,47 +436,33 @@ def _retrieval_row_to_uri(
     if result_type == "evidence_span":
         if evidence_span_id is None:
             return None
-        return f"span:{evidence_span_id}"
-    if result_type == "content_chunk":
-        chunk_id = result_ref.get("id")
-        if not chunk_id:
-            return None
-        return f"chunk:{chunk_id}"
-    if result_type == "highlight":
-        highlight_id = result_ref.get("id")
-        if not highlight_id:
-            return None
-        return f"highlight:{highlight_id}"
-    if result_type == "page":
-        page_id = result_ref.get("id")
-        if not page_id:
-            return None
-        return f"page:{page_id}"
-    if result_type == "note_block":
-        block_id = result_ref.get("id")
-        if not block_id:
-            return None
-        return f"note_block:{block_id}"
+        return format_resource_uri("span", evidence_span_id)
     if result_type == "media":
         if media_id is None:
             return None
-        return f"media:{media_id}"
-    if result_type == "conversation":
-        conversation_id = result_ref.get("id")
-        if not conversation_id:
-            return None
-        return f"conversation:{conversation_id}"
-    if result_type == "message":
-        message_id = result_ref.get("id")
-        if not message_id:
-            return None
-        return f"message:{message_id}"
-    if result_type == "fragment":
-        fragment_id = result_ref.get("id")
-        if not fragment_id:
-            return None
-        return f"fragment:{fragment_id}"
-    return None
+        return format_resource_uri("media", media_id)
+    scheme = _RESULT_REF_RESOURCE_URI_SCHEMES.get(result_type)
+    if scheme is None:
+        return None
+    resource_id = _result_ref_resource_id(result_ref)
+    if resource_id is None:
+        return None
+    return format_resource_uri(scheme, resource_id)
+
+
+def _result_ref_resource_id(result_ref: Mapping[str, Any]) -> UUID | None:
+    raw_id = result_ref.get("id")
+    if isinstance(raw_id, UUID):
+        return raw_id
+    if not isinstance(raw_id, str):
+        return None
+    try:
+        resource_id = UUID(raw_id)
+    except ValueError:
+        return None
+    if str(resource_id) != raw_id:
+        return None
+    return resource_id
 
 
 def create_chat_run(
@@ -1060,17 +1085,15 @@ async def _execute_chat_run(
                 for tc in pending_tool_calls:
                     tool_call_index_next += 1
                     if tc.name == APP_SEARCH_TOOL_NAME:
-                        args = tc.arguments or {}
-                        raw_scopes = args.get("scopes")
-                        forced_error = None
-                        if "scope" in args and "scopes" not in args:
-                            forced_error = (
-                                "app_search uses scopes=[...] for URI scopes; "
-                                "the singular scope field is invalid"
-                            )
-                        scopes: list[str] = (
-                            [str(s) for s in raw_scopes] if isinstance(raw_scopes, list) else []
-                        )
+                        raw_args = tc.arguments or {}
+                        args: Mapping[str, Any]
+                        if isinstance(raw_args, Mapping):
+                            args = raw_args
+                            scopes, forced_error = _app_search_scopes_from_tool_args(args)
+                        else:
+                            args = {}
+                            scopes = []
+                            forced_error = "app_search arguments must be an object"
                         run_result = execute_app_search(
                             db,
                             viewer_id=run.owner_user_id,

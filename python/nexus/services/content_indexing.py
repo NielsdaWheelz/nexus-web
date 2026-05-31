@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.services.pdf_ingest import TEXT_EXTRACT_VERSION
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -987,7 +988,7 @@ def repair_ready_media_content_index_now(
             ),
             {"media_id": media_id},
         ).fetchall()
-        artifact_ref = f"legacy_fragments:{media_id}"
+        artifact_ref = f"fragments:{fragments[0][0]}" if fragments else f"fragments:{media_id}"
         if source_kind == "epub" and row[5]:
             artifact_ref = str(row[5])
         return rebuild_fragment_content_index(
@@ -1009,7 +1010,6 @@ def repair_ready_media_content_index_now(
         plain_text=str(row[2] or ""),
         page_count=int(row[3] or 0),
         file_sha256=str(row[4]) if row[4] else None,
-        storage_path=str(row[5]) if row[5] else None,
         reason=reason,
     )
 
@@ -1078,7 +1078,6 @@ def _repair_ready_pdf_content_index(
     plain_text: str,
     page_count: int,
     file_sha256: str | None,
-    storage_path: str | None,
     reason: str,
 ) -> ContentIndexResult:
     source_fingerprint = f"sha256:{file_sha256}" if file_sha256 else f"media:{media_id}"
@@ -1169,7 +1168,6 @@ def _repair_ready_pdf_content_index(
                     "source_fingerprint": source_fingerprint,
                     "page_number": int(page_number),
                     "page_label": str(page_label) if page_label else None,
-                    "legacy_repair": True,
                 },
             )
         )
@@ -1181,12 +1179,12 @@ def _repair_ready_pdf_content_index(
         source_kind="pdf",
         source_snapshot=SourceSnapshotSpec(
             artifact_kind="pdf_text",
-            artifact_ref=f"legacy_media_plain_text:{media_id}",
+            artifact_ref=f"media:{media_id}:pdf_text",
             content_type="text/plain",
             byte_length=len(text_bytes),
             content_sha256=_sha256(plain_text),
-            source_version="pdf_text_legacy_mutable_repair_v1",
-            extractor_version="pdf_text_legacy_mutable_repair_v1",
+            source_version=f"pdf_text_v{TEXT_EXTRACT_VERSION}",
+            extractor_version=f"pymupdf_text_v{TEXT_EXTRACT_VERSION}",
             source_fingerprint=source_fingerprint,
             parent_snapshot_id=None,
             language=None,
@@ -1194,10 +1192,9 @@ def _repair_ready_pdf_content_index(
                 "page_count": page_count,
                 "source_fingerprint": source_fingerprint,
                 "has_text": bool(plain_text.strip()),
-                "legacy_repair": True,
-                "legacy_mutable_snapshot_repair": True,
-                "mutable_source_tables": ["media.plain_text", "pdf_page_text_spans"],
-                "original_pdf_storage_path": storage_path,
+                "ocr_required": not bool(plain_text.strip()),
+                "source_byte_length": None,
+                "text_extract_version": TEXT_EXTRACT_VERSION,
             },
         ),
         blocks=blocks,

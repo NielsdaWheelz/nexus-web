@@ -8,19 +8,19 @@ from llm_calling.errors import LLMError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.models import Conversation, Message, Model
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.llm_catalog import is_provider_enabled, model_catalog_entry
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     BranchAnchorRequest,
 )
 from nexus.services.api_key_resolver import (
     get_model_by_id,
-    is_provider_enabled,
     resolve_api_key,
 )
 from nexus.services.conversation_branches import branch_anchor_for_message
-from nexus.services.models import get_model_catalog_metadata
 from nexus.services.rate_limit import get_rate_limiter
 
 
@@ -45,13 +45,12 @@ def validate_pre_phase(
     model = get_model_by_id(db, model_id)
     if model is None or not model.is_available:
         raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found or not available")
-    metadata = get_model_catalog_metadata(model.provider, model.model_name)
-    if metadata is None:
+    catalog_entry = model_catalog_entry(model.provider, model.model_name)
+    if catalog_entry is None:
         raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model is outside the curated catalog")
-    if not is_provider_enabled(model.provider):
+    if not is_provider_enabled(model.provider, get_settings()):
         raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model provider is disabled")
-    _, _, _, reasoning_modes = metadata
-    if reasoning not in reasoning_modes:
+    if reasoning not in catalog_entry.reasoning_modes:
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Reasoning mode '{reasoning}' is not supported for {model.provider}/{model.model_name}",

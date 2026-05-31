@@ -9,11 +9,11 @@ import httpx
 import pytest
 
 from nexus.services.rss_transcript_fetch import (
-    _parse_json_transcript,
-    _parse_plain_text_transcript,
-    _parse_srt_transcript,
-    _parse_vtt_transcript,
     fetch_rss_transcript,
+    parse_json_transcript,
+    parse_plain_text_transcript,
+    parse_srt_transcript,
+    parse_vtt_transcript,
 )
 
 pytestmark = pytest.mark.unit
@@ -33,7 +33,7 @@ class TestRssTranscriptParsing:
     def test_parse_vtt_handles_bom_note_style_multiline_and_speaker(self):
         vtt_content = "\ufeff" + _fixture_text("sample_transcript.vtt")
 
-        segments = _parse_vtt_transcript(vtt_content)
+        segments = parse_vtt_transcript(vtt_content)
 
         assert segments == [
             {
@@ -60,7 +60,7 @@ should be skipped
 valid cue
 """
 
-        segments = _parse_vtt_transcript(vtt_content)
+        segments = parse_vtt_transcript(vtt_content)
 
         assert segments == [
             {
@@ -82,7 +82,7 @@ this entry must be ignored
 """
         )
 
-        segments = _parse_srt_transcript(srt_content)
+        segments = parse_srt_transcript(srt_content)
 
         assert segments == [
             {
@@ -102,9 +102,9 @@ this entry must be ignored
     def test_parse_json_extracts_known_segment_shapes_and_returns_empty_for_unrecognized(self):
         fixture_payload = _fixture_json("sample_transcript.json")
 
-        fixture_segments = _parse_json_transcript(fixture_payload)
-        list_segments = _parse_json_transcript([{"text": "list shape", "start": 1, "end": 2}])
-        unknown_segments = _parse_json_transcript({"foo": "bar"})
+        fixture_segments = parse_json_transcript(fixture_payload)
+        list_segments = parse_json_transcript([{"text": "list shape", "start": 1, "end": 2}])
+        unknown_segments = parse_json_transcript({"foo": "bar"})
 
         assert fixture_segments == [
             {
@@ -133,8 +133,8 @@ this entry must be ignored
     def test_parse_plain_text_outputs_single_segment_with_duration_or_zero(self):
         plain_text = _fixture_text("sample_transcript.txt")
 
-        known_duration = _parse_plain_text_transcript(plain_text, episode_duration_ms=120_000)
-        unknown_duration = _parse_plain_text_transcript(plain_text, episode_duration_ms=None)
+        known_duration = parse_plain_text_transcript(plain_text, episode_duration_ms=120_000)
+        unknown_duration = parse_plain_text_transcript(plain_text, episode_duration_ms=None)
 
         assert known_duration == [
             {

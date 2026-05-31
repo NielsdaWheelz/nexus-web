@@ -13,10 +13,7 @@ import httpx
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 
-X_PROVIDER = "x"
 X_AUTHOR_THREAD_PROVIDER_ID_PREFIX = "thread:"
-X_AUTHOR_THREAD_SOURCE = "x_api_author_thread"
-X_QUOTED_POST_SOURCE = "x_api_quoted_post"
 
 _POST_FIELDS = ",".join(
     (

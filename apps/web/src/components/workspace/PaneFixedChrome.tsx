@@ -8,10 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-export type PaneFixedChromeSlotId = "reader-overview-ruler";
-
 export interface PaneFixedChromePublication {
-  id: PaneFixedChromeSlotId;
+  id: "reader-overview-ruler";
   widthPx: number;
   body: ReactNode;
 }

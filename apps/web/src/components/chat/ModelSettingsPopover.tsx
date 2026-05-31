@@ -18,8 +18,8 @@ import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscap
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   getModelSourceLabel,
+  isReasoningMode,
   REASONING_LABELS,
-  type ReasoningMode,
   type UseChatModels,
 } from "./useChatModels";
 import styles from "./ModelSettingsPopover.module.css";
@@ -178,7 +178,9 @@ export default function ModelSettingsPopover({
               <Select
                 value={selectedReasoning}
                 onChange={(e) => {
-                  setReasoning(e.target.value as ReasoningMode);
+                  if (isReasoningMode(e.target.value)) {
+                    setReasoning(e.target.value);
+                  }
                   closeOnDesktop();
                 }}
                 disabled={disabled || !selectedModel}

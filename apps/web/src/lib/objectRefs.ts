@@ -15,6 +15,7 @@ export const OBJECT_TYPES = [
 ] as const;
 
 export type ObjectType = (typeof OBJECT_TYPES)[number];
+const OBJECT_TYPE_SET = new Set<string>(OBJECT_TYPES);
 
 export interface ObjectRef {
   objectType: ObjectType;
@@ -39,7 +40,7 @@ function objectRefKey(ref: ObjectRef): string {
 }
 
 export function isObjectType(value: string): value is ObjectType {
-  return OBJECT_TYPES.includes(value as ObjectType);
+  return OBJECT_TYPE_SET.has(value);
 }
 
 export async function resolveObjectRefs(refs: ObjectRef[]): Promise<HydratedObjectRef[]> {

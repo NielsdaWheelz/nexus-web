@@ -4,8 +4,8 @@ import {
   Children,
   cloneElement,
   forwardRef,
+  isValidElement,
   type ButtonHTMLAttributes,
-  type ReactElement,
   type ReactNode,
 } from "react";
 import styles from "./Button.module.css";
@@ -66,7 +66,10 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     .join(" ");
 
   if (asChild) {
-    const child = Children.only(children) as ReactElement<{ className?: string }>;
+    const child = Children.only(children);
+    if (!isValidElement<{ className?: string }>(child)) {
+      throw new Error("Button asChild expects one element child");
+    }
     return cloneElement(child, {
       className: `${cls} ${child.props.className ?? ""}`.trim(),
     });

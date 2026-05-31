@@ -1,7 +1,7 @@
 /**
  * API Keys management page (BYOK).
  *
- * Security constraints (binding per s3_pr07 §7.3):
+ * Security constraints:
  * - Never console.log form state containing the api key.
  * - On submit success or failure, explicitly clear the input state.
  * - Mark input autoComplete="off".

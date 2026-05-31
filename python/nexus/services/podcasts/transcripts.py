@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import threading
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.config import Environment, get_settings
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import create_session_factory
 from nexus.errors import (
     ApiError,
@@ -844,6 +845,37 @@ def retry_transcript_media_for_viewer(
     }
 
 
+def requeue_podcast_transcription_for_source_refresh(
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID,
+    request_id: str | None = None,
+) -> None:
+    """Reset podcast transcript state for a source refresh.
+
+    Caller owns authorization, media kind validation, and the surrounding commit.
+    """
+    now = datetime.now(UTC)
+    _reset_podcast_transcription_job_for_operator_requeue(
+        db,
+        media_id=media_id,
+        requested_by_user_id=requested_by_user_id,
+        now=now,
+    )
+    _mark_media_transcription_extracting(db, media_id=media_id, now=now)
+    _reset_media_transcript_state_for_operator_requeue(db, media_id=media_id, now=now)
+    enqueue_job(
+        db,
+        kind="podcast_transcribe_episode_job",
+        payload={
+            "media_id": str(media_id),
+            "requested_by_user_id": str(requested_by_user_id),
+            "request_id": request_id,
+        },
+    )
+
+
 def _enqueue_podcast_transcription_job(
     db: Session,
     *,
@@ -1089,30 +1121,29 @@ def _run_transcription_job_heartbeat(
     interval_seconds: float,
 ) -> None:
     while not stop_event.wait(interval_seconds):
-        heartbeat_now = datetime.now(UTC)
         try:
             with session_factory() as heartbeat_db:
                 heartbeat_db.execute(
                     text(
                         """
                         UPDATE podcast_transcription_jobs
-                        SET updated_at = :now
+                        SET updated_at = now()
                         WHERE media_id = :media_id
                           AND status = 'running'
                         """
                     ),
-                    {"media_id": media_id, "now": heartbeat_now},
+                    {"media_id": media_id},
                 )
                 heartbeat_db.execute(
                     text(
                         """
                         UPDATE media
-                        SET updated_at = :now
+                        SET updated_at = now()
                         WHERE id = :media_id
                           AND processing_status = 'extracting'
                         """
                     ),
-                    {"media_id": media_id, "now": heartbeat_now},
+                    {"media_id": media_id},
                 )
                 heartbeat_db.commit()
         except SQLAlchemyError:
@@ -1167,11 +1198,7 @@ def run_podcast_transcription_now(
     requested_by_user_id: UUID | None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    claim_now = datetime.now(UTC)
     stale_extracting_seconds = get_settings().ingest_stale_extracting_seconds
-    # Allow recovery workers to reclaim stale running jobs. We intentionally
-    # reuse the ingest stale threshold so media/job stale detection is aligned.
-    running_lease_cutoff = claim_now - timedelta(seconds=stale_extracting_seconds)
     claimed = db.execute(
         text(
             """
@@ -1180,24 +1207,28 @@ def run_podcast_transcription_now(
                 status = 'running',
                 error_code = NULL,
                 attempts = attempts + 1,
-                started_at = :now,
+                started_at = now(),
                 completed_at = NULL,
-                updated_at = :now
+                updated_at = now()
             WHERE media_id = :media_id
               AND (
                     status IN ('pending', 'failed')
                     OR (
                         status = 'running'
-                        AND COALESCE(updated_at, started_at) < :running_lease_cutoff
+                        AND COALESCE(updated_at, started_at) < (
+                            now() - (
+                                CAST(:stale_extracting_seconds AS integer)
+                                * interval '1 second'
+                            )
+                        )
                     )
               )
-            RETURNING request_reason
+            RETURNING request_reason, updated_at
             """
         ),
         {
             "media_id": media_id,
-            "now": claim_now,
-            "running_lease_cutoff": running_lease_cutoff,
+            "stale_extracting_seconds": stale_extracting_seconds,
         },
     ).fetchone()
 
@@ -1222,6 +1253,7 @@ def run_podcast_transcription_now(
         }
 
     request_reason = str(claimed[0] or "episode_open")
+    claim_now = claimed[1]
     _set_media_transcript_state(
         db,
         media_id=media_id,
@@ -1810,6 +1842,175 @@ def _set_media_transcript_state(
     )
 
 
+def _reset_podcast_transcription_job_for_operator_requeue(
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID,
+    now: datetime,
+) -> None:
+    existing_media_id = db.scalar(
+        text("SELECT media_id FROM podcast_transcription_jobs WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    params = {
+        "media_id": media_id,
+        "requested_by_user_id": requested_by_user_id,
+        "updated_at": now,
+    }
+    if existing_media_id is None:
+        result = db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_jobs (
+                    media_id,
+                    requested_by_user_id,
+                    request_reason,
+                    reserved_minutes,
+                    reservation_usage_date,
+                    status,
+                    error_code,
+                    attempts,
+                    started_at,
+                    completed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :requested_by_user_id,
+                    'operator_requeue',
+                    0,
+                    NULL,
+                    'pending',
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
+                    :updated_at,
+                    :updated_at
+                )
+                """
+            ),
+            params,
+        )
+    else:
+        result = db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_jobs
+                SET
+                    requested_by_user_id = :requested_by_user_id,
+                    request_reason = 'operator_requeue',
+                    reserved_minutes = 0,
+                    reservation_usage_date = NULL,
+                    status = 'pending',
+                    error_code = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = :updated_at
+                WHERE media_id = :media_id
+                """
+            ),
+            params,
+        )
+    _assert_one_mutated_row(result, "podcast_transcription_jobs")
+
+
+def _mark_media_transcription_extracting(
+    db: Session,
+    *,
+    media_id: UUID,
+    now: datetime,
+) -> None:
+    result = db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'extracting',
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_started_at = :updated_at,
+                processing_completed_at = NULL,
+                failed_at = NULL,
+                updated_at = :updated_at
+            WHERE id = :media_id
+            """
+        ),
+        {"media_id": media_id, "updated_at": now},
+    )
+    _assert_one_mutated_row(result, "media")
+
+
+def _reset_media_transcript_state_for_operator_requeue(
+    db: Session,
+    *,
+    media_id: UUID,
+    now: datetime,
+) -> None:
+    existing_media_id = db.scalar(
+        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    params = {"media_id": media_id, "updated_at": now}
+    if existing_media_id is None:
+        result = db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    active_transcript_version_id,
+                    last_request_reason,
+                    last_error_code,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    'queued',
+                    'none',
+                    'none',
+                    NULL,
+                    'operator_requeue',
+                    NULL,
+                    :updated_at,
+                    :updated_at
+                )
+                """
+            ),
+            params,
+        )
+    else:
+        result = db.execute(
+            text(
+                """
+                UPDATE media_transcript_states
+                SET
+                    transcript_state = 'queued',
+                    transcript_coverage = 'none',
+                    semantic_status = 'none',
+                    active_transcript_version_id = NULL,
+                    last_request_reason = 'operator_requeue',
+                    last_error_code = NULL,
+                    updated_at = :updated_at
+                WHERE media_id = :media_id
+                """
+            ),
+            params,
+        )
+    _assert_one_mutated_row(result, "media_transcript_states")
+
+
+def _assert_one_mutated_row(result: Any, table_name: str) -> None:
+    if getattr(result, "rowcount", None) != 1:
+        raise RuntimeError(f"{table_name} mutation affected an unexpected row count")
+
+
 def _record_podcast_transcript_request_audit(
     db: Session,
     *,
@@ -2202,7 +2403,7 @@ def _ensure_usage_daily_row(
 
 def _is_usage_daily_identity_conflict(exc: IntegrityError) -> bool:
     orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "podcast_transcription_usage_daily_pkey"
     return "podcast_transcription_usage_daily_pkey" in str(orig or exc)
@@ -2437,9 +2638,9 @@ def _transcribe_real_media_fixture(audio_url: str, fixture_dir: str | None) -> d
             "Podcast transcript fixture hash mismatch",
         )
 
-    from nexus.services.rss_transcript_fetch import _parse_plain_text_transcript
+    from nexus.services.rss_transcript_fetch import parse_plain_text_transcript
 
-    segments = _parse_plain_text_transcript(content, episode_duration_ms=753_000)
+    segments = parse_plain_text_transcript(content, episode_duration_ms=753_000)
     if not segments:
         return _transcription_failure_result(
             ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,

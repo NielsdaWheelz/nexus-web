@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from llm_calling.types import LLMUsage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message, MessageLLM, Model
@@ -169,7 +168,7 @@ def finalize_run(
         assistant_message.content = content
         assistant_message.status = assistant_status
         assistant_message.error_code = error_code
-        assistant_message.updated_at = datetime.now(UTC)
+        assistant_message.updated_at = func.now()
         assistant_message.message_document = message_document_with_run_components(
             db,
             run_id=run.id,
@@ -212,8 +211,8 @@ def finalize_run(
 
     run.status = run_status
     run.error_code = error_code
-    run.completed_at = datetime.now(UTC)
-    run.updated_at = datetime.now(UTC)
+    run.completed_at = func.now()
+    run.updated_at = func.now()
     done_payload: dict[str, Any] = {"status": done_status}
     if error_code is not None:
         done_payload["error_code"] = error_code

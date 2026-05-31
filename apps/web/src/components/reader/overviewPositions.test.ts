@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { Fragment } from "@/app/(authenticated)/media/[id]/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
-import { positionHighlights } from "./overviewPositions";
+import { type OverviewPositionFragment, positionHighlights } from "./overviewPositions";
 import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
-function fragment(id: string, idx: number, canonical_text: string): Fragment {
+function fragment(
+  id: string,
+  idx: number,
+  canonical_text: string,
+): OverviewPositionFragment {
   return {
     id,
-    media_id: "media-1",
     idx,
-    html_sanitized: canonical_text,
     canonical_text,
-    created_at: "2026-01-01T00:00:00Z",
   };
 }
 

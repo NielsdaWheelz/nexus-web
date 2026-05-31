@@ -16,8 +16,7 @@ export interface PaneWidthContract {
 }
 
 export type PaneBodyMode = "standard" | "document" | "contained";
-export type RouteParamValue = string;
-export type RouteParams = Record<string, RouteParamValue>;
+export type RouteParams = Record<string, string>;
 export type RoutePattern = readonly string[];
 
 export interface PaneRouteContext {

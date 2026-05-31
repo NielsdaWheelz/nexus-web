@@ -1,6 +1,20 @@
-import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
 import type { MessageRetrieval } from "./types";
+
+export interface ReaderSourceTarget {
+  source: "message_retrieval";
+  media_id: string;
+  locator: RetrievalLocator;
+  snippet: string | null;
+  source_version: string;
+  highlight_behavior: "pulse";
+  focus_behavior: "scroll_into_view";
+  status: string;
+  label?: string;
+  href?: string | null;
+  evidence_span_id?: string | null;
+  evidence_id?: string;
+}
 
 export function hrefForReaderTarget(input: {
   media_id: string;

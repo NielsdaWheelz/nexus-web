@@ -11,8 +11,9 @@
  *   branching: true  → GET /conversations/{id}/tree (entire selected path +
  *                      fork data, no pagination → olderCursor null, loadOlder
  *                      is a no-op).
- *   branching: false → GET /conversations/{id}/messages?limit=30 (initial) and
- *                      ?cursor= (loadOlder), reading page.next_cursor.
+ *   branching: false → GET /conversations/{id}/messages?limit=30&window=latest
+ *                      (initial) and ?before_cursor= (loadOlder), reading
+ *                      page.before_cursor.
  *
  * Scroll lives entirely in the view (ChatSurface/useChatScroll); the engine
  * only holds the `scrollRef` it hands to the view and calls `captureAnchor`
@@ -63,7 +64,7 @@ const EMPTY_BRANCH_GRAPH: BranchGraph = {
   root_message_id: null,
 };
 
-export interface UseConversationOptions {
+interface UseConversationOptions {
   /** Existing conversation id, or null to create on first send. */
   conversationId: string | null;
   /** URIs attached to the conversation when it is created on first send. */
@@ -76,7 +77,7 @@ export interface UseConversationOptions {
   onConversationCreated?: (conversationId: string, runId: string) => void;
 }
 
-export interface UseConversationBranch {
+interface UseConversationBranch {
   forkOptionsByParentId: Record<string, ForkOption[]>;
   branchGraph: BranchGraph;
   switchableLeafIds: Set<string>;
@@ -92,7 +93,7 @@ export interface UseConversationBranch {
   reload: () => Promise<void>;
 }
 
-export interface UseConversation {
+interface UseConversation {
   // transcript
   messages: ConversationMessage[];
   olderCursor: string | null;
@@ -142,6 +143,8 @@ export function useConversation(
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
 
   // Branch state (only meaningful in branching mode).
   const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
@@ -159,7 +162,8 @@ export function useConversation(
   const retryingAssistantMessageIds = useStringIdSet();
 
   // Conversations created on first send are seeded optimistically; their
-  // history is never refetched.
+  // initial route adoption must not refetch history. Existing conversations
+  // must never enter this set, or route re-entry can skip a real reload.
   const locallyCreatedIdsRef = useRef<Set<string>>(new Set());
   // References already attached to the current conversation (seeded at creation
   // or POSTed on a prior send), so a continuation send does not redundantly
@@ -173,6 +177,10 @@ export function useConversation(
   // Single-flight guard for the active-runs fetch so the initial load and the two
   // branch-switch calls share one in-flight GET instead of issuing duplicates.
   const activeRunsRequestRef = useRef<Promise<ChatRunListResponse> | null>(null);
+  const treeRequestRef = useRef<{
+    conversationId: string;
+    promise: Promise<{ data: ConversationTreeResponse }>;
+  } | null>(null);
   const routeConversationIdRef = useRef(initialConversationId);
   const initialReferencesRef = useRef(initialReferences);
   initialReferencesRef.current = initialReferences;
@@ -271,12 +279,27 @@ export function useConversation(
     [messageIdsForPath],
   );
 
+  const loadConversationTree = useCallback((id: string) => {
+    if (treeRequestRef.current?.conversationId === id) {
+      return treeRequestRef.current.promise;
+    }
+    const request = apiFetch<{ data: ConversationTreeResponse }>(
+      `/api/conversations/${id}/tree`,
+    );
+    const promise = request.finally(() => {
+      if (treeRequestRef.current?.promise === promise) {
+        treeRequestRef.current = null;
+      }
+    });
+    treeRequestRef.current = { conversationId: id, promise };
+    return promise;
+  }, []);
+
   const refreshTreeForConversation = useCallback(
     async (id: string, reportError: boolean) => {
       try {
-        const response = await apiFetch<{ data: ConversationTreeResponse }>(
-          `/api/conversations/${id}/tree`,
-        );
+        const response = await loadConversationTree(id);
+        if (conversationIdRef.current !== id) return;
         applyConversationTree(response.data);
       } catch (err) {
         if (reportError) {
@@ -286,7 +309,7 @@ export function useConversation(
         }
       }
     },
-    [applyConversationTree],
+    [applyConversationTree, loadConversationTree],
   );
 
   // --------------------------------------------------------------------------
@@ -298,6 +321,7 @@ export function useConversation(
     routeConversationIdRef.current = initialConversationId;
     activePathSwitchSeqRef.current += 1;
     activeRunsRequestRef.current = null;
+    treeRequestRef.current = null;
 
     if (
       initialConversationId &&
@@ -334,6 +358,7 @@ export function useConversation(
   // Drop any in-flight active-runs promise scoped to a previous conversation.
   useEffect(() => {
     activeRunsRequestRef.current = null;
+    treeRequestRef.current = null;
   }, [conversationId]);
 
   useEffect(() => {
@@ -349,9 +374,7 @@ export function useConversation(
     const load = async () => {
       try {
         if (branching) {
-          const response = await apiFetch<{ data: ConversationTreeResponse }>(
-            `/api/conversations/${id}/tree`,
-          );
+          const response = await loadConversationTree(id);
           if (cancelled) return;
           applyConversationTree(response.data);
           await tailVisibleActiveRuns(
@@ -377,11 +400,14 @@ export function useConversation(
               console.error("Failed to load conversation title:", err);
             });
           const history = await apiFetch<ConversationMessagesResponse>(
-            `/api/conversations/${id}/messages?limit=${MESSAGE_PAGE_SIZE}`,
+            `/api/conversations/${id}/messages?${new URLSearchParams({
+              limit: String(MESSAGE_PAGE_SIZE),
+              window: "latest",
+            })}`,
           );
           if (cancelled) return;
           setMessages(history.data);
-          setOlderCursor(history.page.next_cursor);
+          setOlderCursor(history.page.before_cursor ?? null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -399,6 +425,7 @@ export function useConversation(
     applyConversationTree,
     branching,
     conversationId,
+    loadConversationTree,
     messageIdsForPath,
     tailVisibleActiveRuns,
   ]);
@@ -432,7 +459,7 @@ export function useConversation(
     try {
       const params = new URLSearchParams({
         limit: String(MESSAGE_PAGE_SIZE),
-        cursor: olderCursor,
+        before_cursor: olderCursor,
       });
       const response = await apiFetch<ConversationMessagesResponse>(
         `/api/conversations/${id}/messages?${params}`,
@@ -443,7 +470,7 @@ export function useConversation(
         const next = response.data.filter((m) => !existingIds.has(m.id));
         return [...next, ...prev];
       });
-      setOlderCursor(response.page.next_cursor);
+      setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
       console.error("Failed to load older messages:", err);
     }
@@ -490,7 +517,9 @@ export function useConversation(
 
   const onChatRunCreated = useCallback(
     (runData: ChatRunData) => {
-      locallyCreatedIdsRef.current.add(runData.conversation.id);
+      if (!conversationIdRef.current) {
+        locallyCreatedIdsRef.current.add(runData.conversation.id);
+      }
       setConversationId(runData.conversation.id);
       setTitle(runData.conversation.title);
       if (branching) {
@@ -511,11 +540,8 @@ export function useConversation(
       // mode intentionally allows concurrent branch runs, so it never aborts.
       if (!branching) abortAll();
       void tailChatRun(runData);
-      if (branching) {
-        void refreshTreeForConversation(runData.conversation.id, false);
-      }
     },
-    [abortAll, branching, refreshTreeForConversation, tailChatRun],
+    [abortAll, branching, tailChatRun],
   );
 
   // --------------------------------------------------------------------------

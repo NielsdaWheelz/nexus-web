@@ -37,6 +37,7 @@ from nexus.db.models import (
     PdfPageTextSpan,
     ProcessingStatus,
 )
+from nexus.llm_catalog import MODEL_CATALOG
 from nexus.services import object_search
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -74,20 +75,8 @@ def create_test_model(session: Session) -> UUID:
 
 def seed_test_models(session: Session) -> None:
     """Seed the curated test model catalog."""
-    catalog = [
-        ("openai", "gpt-5.5", 400000),
-        ("openai", "gpt-5.4-mini", 400000),
-        ("anthropic", "claude-opus-4-7", 1000000),
-        ("anthropic", "claude-sonnet-4-6", 1000000),
-        ("anthropic", "claude-haiku-4-5-20251001", 200000),
-        ("gemini", "gemini-3.1-pro-preview", 1048576),
-        ("gemini", "gemini-3-flash-preview", 1048576),
-        ("deepseek", "deepseek-v4-pro", 128000),
-        ("deepseek", "deepseek-v4-flash", 128000),
-    ]
-
-    allowed = {(provider, model_name) for provider, model_name, _max_tokens in catalog}
-    providers = {provider for provider, _model_name, _max_tokens in catalog}
+    allowed = {(model.provider, model.model_name) for model in MODEL_CATALOG}
+    providers = {model.provider for model in MODEL_CATALOG}
 
     existing_models = session.query(Model).filter(Model.provider.in_(providers)).all()
     existing_by_key = {(model.provider, model.model_name): model for model in existing_models}
@@ -96,18 +85,18 @@ def seed_test_models(session: Session) -> None:
         if (model.provider, model.model_name) not in allowed:
             model.is_available = False
 
-    for provider, model_name, max_tokens in catalog:
-        existing = existing_by_key.get((provider, model_name))
+    for catalog_model in MODEL_CATALOG:
+        existing = existing_by_key.get((catalog_model.provider, catalog_model.model_name))
         if existing:
-            existing.max_context_tokens = max_tokens
+            existing.max_context_tokens = catalog_model.max_context_tokens
             existing.is_available = True
             continue
 
         session.add(
             Model(
-                provider=provider,
-                model_name=model_name,
-                max_context_tokens=max_tokens,
+                provider=catalog_model.provider,
+                model_name=catalog_model.model_name,
+                max_context_tokens=catalog_model.max_context_tokens,
                 is_available=True,
             )
         )

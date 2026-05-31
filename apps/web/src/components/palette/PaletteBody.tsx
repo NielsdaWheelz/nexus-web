@@ -55,7 +55,7 @@ export default function PaletteBody({
       const commands = flattenView(view);
       const target =
         commands.find((command) => command.id === activeCommandId) ?? commands[0];
-      if (target && !target.disabled) onSelect(target);
+      if (target) onSelect(target);
       return;
     }
 

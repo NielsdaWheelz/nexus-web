@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   normalizeTrackChapters,
@@ -13,7 +14,7 @@ import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
   type TranscriptPlaybackSource,
-} from "./transcriptView";
+} from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
 const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
@@ -423,7 +424,7 @@ export default function TranscriptPlaybackPanel({
                 >
                   {chapter.image_url ? (
                     <Image
-                      src={`/api/media/image?url=${encodeURIComponent(chapter.image_url)}`}
+                      src={buildMediaImageProxySrc(chapter.image_url)}
                       alt={`${chapter.title} thumbnail`}
                       width={40}
                       height={40}

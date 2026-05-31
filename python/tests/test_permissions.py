@@ -46,14 +46,7 @@ def _create_non_default_library(db: Session, owner_id=None):
         {"owner_id": owner_id},
     )
     lib_id = result.scalar()
-    db.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:lib_id, :owner_id, 'admin')
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib_id": lib_id, "owner_id": owner_id},
-    )
+    _add_membership(db, lib_id, owner_id, "admin")
     db.flush()
     return lib_id
 
@@ -72,11 +65,22 @@ def _create_media(db: Session, title: str = "Test", kind: str = "web_article") -
 
 
 def _add_media_to_library(db: Session, library_id, media_id) -> None:
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM library_entries
+            WHERE library_id = :lib
+              AND media_id = :media
+        """),
+        {"lib": library_id, "media": media_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO library_entries (library_id, media_id)
             VALUES (:lib, :media)
-            ON CONFLICT DO NOTHING
         """),
         {"lib": library_id, "media": media_id},
     )
@@ -84,11 +88,22 @@ def _add_media_to_library(db: Session, library_id, media_id) -> None:
 
 
 def _add_intrinsic(db: Session, default_library_id, media_id) -> None:
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM default_library_intrinsics
+            WHERE default_library_id = :dl
+              AND media_id = :m
+        """),
+        {"dl": default_library_id, "m": media_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO default_library_intrinsics (default_library_id, media_id)
             VALUES (:dl, :m)
-            ON CONFLICT DO NOTHING
         """),
         {"dl": default_library_id, "m": media_id},
     )
@@ -96,11 +111,23 @@ def _add_intrinsic(db: Session, default_library_id, media_id) -> None:
 
 
 def _add_closure_edge(db: Session, default_library_id, media_id, source_library_id) -> None:
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM default_library_closure_edges
+            WHERE default_library_id = :dl
+              AND media_id = :m
+              AND source_library_id = :sl
+        """),
+        {"dl": default_library_id, "m": media_id, "sl": source_library_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO default_library_closure_edges (default_library_id, media_id, source_library_id)
             VALUES (:dl, :m, :sl)
-            ON CONFLICT DO NOTHING
         """),
         {"dl": default_library_id, "m": media_id, "sl": source_library_id},
     )
@@ -119,11 +146,22 @@ def _add_tombstone(db: Session, user_id, media_id) -> None:
 
 
 def _add_membership(db: Session, library_id, user_id, role="member") -> None:
+    existing = db.execute(
+        text("""
+            SELECT 1
+            FROM memberships
+            WHERE library_id = :lib
+              AND user_id = :uid
+        """),
+        {"lib": library_id, "uid": user_id},
+    ).first()
+    if existing is not None:
+        return
+
     db.execute(
         text("""
             INSERT INTO memberships (library_id, user_id, role)
             VALUES (:lib, :uid, :role)
-            ON CONFLICT DO NOTHING
         """),
         {"lib": library_id, "uid": user_id, "role": role},
     )

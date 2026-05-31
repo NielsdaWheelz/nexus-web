@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  canRequestTranscript,
   formatTranscriptTimestampMs,
   resolveActiveTranscriptFragment,
+  shouldPollTranscriptProvisioning,
   type Fragment,
 } from "./transcriptView";
 
@@ -39,6 +41,28 @@ describe("formatTranscriptTimestampMs", () => {
     expect(formatTranscriptTimestampMs(null)).toBeNull();
     expect(formatTranscriptTimestampMs(undefined)).toBeNull();
     expect(formatTranscriptTimestampMs(-1)).toBeNull();
+  });
+});
+
+describe("transcript provisioning predicates", () => {
+  it("allows requests only for requestable transcript states", () => {
+    expect(canRequestTranscript("not_requested")).toBe(true);
+    expect(canRequestTranscript("failed_provider")).toBe(true);
+    expect(canRequestTranscript("failed_quota")).toBe(true);
+    expect(canRequestTranscript(null)).toBe(false);
+    expect(canRequestTranscript("queued")).toBe(false);
+    expect(canRequestTranscript("running")).toBe(false);
+    expect(canRequestTranscript("ready")).toBe(false);
+    expect(canRequestTranscript("partial")).toBe(false);
+    expect(canRequestTranscript("unavailable")).toBe(false);
+  });
+
+  it("polls only active provisioning states", () => {
+    expect(shouldPollTranscriptProvisioning("queued")).toBe(true);
+    expect(shouldPollTranscriptProvisioning("running")).toBe(true);
+    expect(shouldPollTranscriptProvisioning("not_requested")).toBe(false);
+    expect(shouldPollTranscriptProvisioning("ready")).toBe(false);
+    expect(shouldPollTranscriptProvisioning(null)).toBe(false);
   });
 });
 

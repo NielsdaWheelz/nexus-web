@@ -243,28 +243,26 @@ def get_storage_client() -> StorageClientBase:
     bucket = settings.r2_bucket
     region = settings.r2_region or "auto"
 
-    missing = [
-        key
-        for key, value in (
-            ("R2_ENDPOINT_URL", endpoint_url),
-            ("R2_ACCESS_KEY_ID", access_key_id),
-            ("R2_SECRET_ACCESS_KEY", secret_access_key),
-            ("R2_BUCKET", bucket),
-        )
-        if not value
-    ]
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for key, value in (
+        ("R2_ENDPOINT_URL", endpoint_url),
+        ("R2_ACCESS_KEY_ID", access_key_id),
+        ("R2_SECRET_ACCESS_KEY", secret_access_key),
+        ("R2_BUCKET", bucket),
+    ):
+        if value:
+            resolved[key] = value
+        else:
+            missing.append(key)
     if missing:
         raise StorageError(f"Missing R2 storage settings: {', '.join(missing)}")
 
-    assert endpoint_url is not None
-    assert access_key_id is not None
-    assert secret_access_key is not None
-    assert bucket is not None
     return StorageClient(
-        endpoint_url=endpoint_url,
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-        bucket=bucket,
+        endpoint_url=resolved["R2_ENDPOINT_URL"],
+        access_key_id=resolved["R2_ACCESS_KEY_ID"],
+        secret_access_key=resolved["R2_SECRET_ACCESS_KEY"],
+        bucket=resolved["R2_BUCKET"],
         region=region,
     )
 

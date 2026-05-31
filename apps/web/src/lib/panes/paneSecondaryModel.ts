@@ -1,39 +1,92 @@
 "use client";
 
-export type WorkspaceSecondaryGroupId =
-  | "reader-tools"
-  | "conversation-context"
-  | "library-tools";
+export interface WorkspaceSecondaryWidthPolicy {
+  defaultWidthPx: number;
+  minWidthPx: number;
+  maxWidthPx: number;
+}
+
+const PANE_SECONDARY_GROUP_BASE = {
+  "reader-tools": {
+    title: "Reader tools",
+    width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
+  },
+  "conversation-context": {
+    title: "Conversation context",
+    width: { defaultWidthPx: 320, minWidthPx: 260, maxWidthPx: 640 },
+  },
+  "library-tools": {
+    title: "Library tools",
+    width: { defaultWidthPx: 420, minWidthPx: 320, maxWidthPx: 760 },
+  },
+} as const satisfies Record<
+  string,
+  { title: string; width: WorkspaceSecondaryWidthPolicy }
+>;
+
+export type WorkspaceSecondaryGroupId = keyof typeof PANE_SECONDARY_GROUP_BASE;
+
+const PANE_SECONDARY_SURFACE_DEFINITIONS = [
+  {
+    id: "reader-highlights",
+    groupId: "reader-tools",
+    title: "Highlights",
+    iconId: "highlighter",
+  },
+  {
+    id: "reader-doc-chat",
+    groupId: "reader-tools",
+    title: "Document chat",
+    iconId: "file-text",
+  },
+  {
+    id: "reader-contents",
+    groupId: "reader-tools",
+    title: "Contents",
+    iconId: "list-tree",
+  },
+  {
+    id: "conversation-references",
+    groupId: "conversation-context",
+    title: "References",
+    iconId: "link-2",
+  },
+  {
+    id: "conversation-forks",
+    groupId: "conversation-context",
+    title: "Forks",
+    iconId: "git-branch",
+  },
+  {
+    id: "library-chat",
+    groupId: "library-tools",
+    title: "Library chat",
+    iconId: "message-square",
+  },
+  {
+    id: "library-intelligence",
+    groupId: "library-tools",
+    title: "Intelligence",
+    iconId: "bar-chart-3",
+  },
+] as const satisfies readonly {
+  id: string;
+  groupId: WorkspaceSecondaryGroupId;
+  title: string;
+  iconId: string;
+}[];
 
 export type WorkspaceSecondarySurfaceId =
-  | "reader-highlights"
-  | "reader-doc-chat"
-  | "reader-contents"
-  | "conversation-references"
-  | "conversation-forks"
-  | "library-chat"
-  | "library-intelligence";
+  (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["id"];
 
 export type PaneSecondaryIconId =
-  | "bar-chart-3"
-  | "file-text"
-  | "git-branch"
-  | "highlighter"
-  | "link-2"
-  | "list-tree"
-  | "message-square";
+  (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"];
 
 export interface WorkspaceSecondaryState {
   groupId: WorkspaceSecondaryGroupId;
   activeSurfaceId: WorkspaceSecondarySurfaceId;
   widthPx: number;
   visibility: "visible" | "collapsed";
-}
-
-export interface WorkspaceSecondaryWidthPolicy {
-  defaultWidthPx: number;
-  minWidthPx: number;
-  maxWidthPx: number;
 }
 
 export interface WorkspaceSecondarySizing {
@@ -57,64 +110,17 @@ export interface PaneSecondarySurfaceDefinition {
   iconId: PaneSecondaryIconId;
 }
 
-const PANE_SECONDARY_GROUP_BASE = {
-  "reader-tools": {
-    title: "Reader tools",
-    width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
-  },
-  "conversation-context": {
-    title: "Conversation context",
-    width: { defaultWidthPx: 320, minWidthPx: 260, maxWidthPx: 640 },
-  },
-  "library-tools": {
-    title: "Library tools",
-    width: { defaultWidthPx: 420, minWidthPx: 320, maxWidthPx: 760 },
-  },
-} as const satisfies Record<
-  WorkspaceSecondaryGroupId,
-  { title: string; width: WorkspaceSecondaryWidthPolicy }
->;
-
-const PANE_SECONDARY_SURFACES = {
-  "reader-highlights": {
-    groupId: "reader-tools",
-    title: "Highlights",
-    iconId: "highlighter",
-  },
-  "reader-doc-chat": {
-    groupId: "reader-tools",
-    title: "Document chat",
-    iconId: "file-text",
-  },
-  "reader-contents": {
-    groupId: "reader-tools",
-    title: "Contents",
-    iconId: "list-tree",
-  },
-  "conversation-references": {
-    groupId: "conversation-context",
-    title: "References",
-    iconId: "link-2",
-  },
-  "conversation-forks": {
-    groupId: "conversation-context",
-    title: "Forks",
-    iconId: "git-branch",
-  },
-  "library-chat": {
-    groupId: "library-tools",
-    title: "Library chat",
-    iconId: "message-square",
-  },
-  "library-intelligence": {
-    groupId: "library-tools",
-    title: "Intelligence",
-    iconId: "bar-chart-3",
-  },
-} as const satisfies Record<
-  WorkspaceSecondarySurfaceId,
-  Omit<PaneSecondarySurfaceDefinition, "id">
->;
+function findSecondarySurfaceDefinition(
+  surfaceId: WorkspaceSecondarySurfaceId,
+): PaneSecondarySurfaceDefinition {
+  const definition = PANE_SECONDARY_SURFACE_DEFINITIONS.find(
+    (candidate) => candidate.id === surfaceId,
+  );
+  if (!definition) {
+    throw new Error(`Unknown secondary surface: ${surfaceId}`);
+  }
+  return definition;
+}
 
 export function isWorkspaceSecondaryGroupId(
   value: unknown,
@@ -125,30 +131,30 @@ export function isWorkspaceSecondaryGroupId(
 export function isWorkspaceSecondarySurfaceId(
   value: unknown,
 ): value is WorkspaceSecondarySurfaceId {
-  return typeof value === "string" && value in PANE_SECONDARY_SURFACES;
+  return (
+    typeof value === "string" &&
+    PANE_SECONDARY_SURFACE_DEFINITIONS.some((definition) => definition.id === value)
+  );
 }
 
 export function getSecondarySurfaceDefinition(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): PaneSecondarySurfaceDefinition {
-  return {
-    id: surfaceId,
-    ...PANE_SECONDARY_SURFACES[surfaceId],
-  };
+  return findSecondarySurfaceDefinition(surfaceId);
 }
 
 export function getSecondaryGroupForSurface(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): WorkspaceSecondaryGroupId {
-  return PANE_SECONDARY_SURFACES[surfaceId].groupId;
+  return findSecondarySurfaceDefinition(surfaceId).groupId;
 }
 
 export function getSecondarySurfaceIdsForGroup(
   groupId: WorkspaceSecondaryGroupId,
 ): readonly WorkspaceSecondarySurfaceId[] {
-  return Object.entries(PANE_SECONDARY_SURFACES)
-    .filter(([, definition]) => definition.groupId === groupId)
-    .map(([surfaceId]) => surfaceId as WorkspaceSecondarySurfaceId);
+  return PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
+    (definition) => definition.groupId === groupId,
+  ).map((definition) => definition.id);
 }
 
 export function getSecondaryGroupDefinition(

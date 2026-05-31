@@ -300,6 +300,67 @@ def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> N
     )
 
 
+def delete_duplicate_document_media(db: Session, media_id: UUID) -> list[str]:
+    """Hard-delete a duplicate document row after its replacement is reachable."""
+    return _delete_document_media_with_references(
+        db,
+        media_id,
+        defect_context="duplicate document media cleanup",
+    )
+
+
+def delete_abandoned_document_media(db: Session, media_id: UUID) -> list[str]:
+    """Hard-delete an abandoned document row that never became readable."""
+    return _delete_document_media_with_references(
+        db,
+        media_id,
+        defect_context="abandoned document media cleanup",
+    )
+
+
+def _delete_document_media_with_references(
+    db: Session,
+    media_id: UUID,
+    *,
+    defect_context: str,
+) -> list[str]:
+    media = db.execute(
+        text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).fetchone()
+    if media is None or media[0] not in _DOCUMENT_KINDS:
+        return []
+
+    affected_library_ids = _library_ids_referencing_media(db, media_id)
+    db.execute(
+        text("DELETE FROM default_library_closure_edges WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM default_library_intrinsics WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM library_entries WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+    storage_paths = delete_document_media_if_unreferenced(db, media_id)
+    if storage_paths is None:
+        raise RuntimeError(f"{defect_context} left references behind")
+
+    for library_id in affected_library_ids:
+        normalize_library_entry_positions(db, library_id)
+    return storage_paths
+
+
+def delete_document_storage_objects(
+    storage_paths: list[str],
+    storage_client: StorageClientBase | None = None,
+) -> None:
+    _delete_storage_objects(storage_paths, storage_client)
+
+
 def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[str] | None:
     """Hard-delete one unreferenced document media row and return storage paths."""
     media = db.execute(
@@ -469,6 +530,27 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     )
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
+
+
+def _library_ids_referencing_media(db: Session, media_id: UUID) -> list[UUID]:
+    rows = db.execute(
+        text("""
+            SELECT library_id AS id
+            FROM library_entries
+            WHERE media_id = :media_id
+            UNION
+            SELECT default_library_id AS id
+            FROM default_library_intrinsics
+            WHERE media_id = :media_id
+            UNION
+            SELECT default_library_id AS id
+            FROM default_library_closure_edges
+            WHERE media_id = :media_id
+            ORDER BY id
+        """),
+        {"media_id": media_id},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:

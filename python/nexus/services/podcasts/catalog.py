@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import transaction
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
@@ -742,14 +743,13 @@ def select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUID
 
 
 def is_podcast_identity_conflict(exc: IntegrityError) -> bool:
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name in {
             "uq_podcasts_provider_provider_podcast_id",
             "uq_podcasts_feed_url",
         }
-    message = str(orig or exc)
+    message = str(getattr(exc, "orig", None) or exc)
     return (
         "uq_podcasts_provider_provider_podcast_id" in message or "uq_podcasts_feed_url" in message
     )

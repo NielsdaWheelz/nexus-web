@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
+import { isRecord } from "@/lib/validation";
 import PaletteBody from "./PaletteBody";
 import type { PaletteCommand, PaletteView } from "./types";
 import styles from "./PaletteMobileShell.module.css";
@@ -21,9 +22,7 @@ const SWIPE_DISMISS_THRESHOLD_PX = 96;
 const PALETTE_HISTORY_OPEN_KEY = "__nexusCommandPaletteOpen";
 
 function readHistoryState(): Record<string, unknown> {
-  return typeof history.state === "object" && history.state !== null
-    ? (history.state as Record<string, unknown>)
-    : {};
+  return isRecord(history.state) ? history.state : {};
 }
 
 function historyStateHasPaletteMarker(): boolean {

@@ -5,6 +5,7 @@ import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
 import { fetchContributor, fetchContributors } from "@/lib/contributors/api";
+import { contributorAuthorHref } from "@/lib/contributors/routes";
 import type { ContributorSummary } from "@/lib/contributors/types";
 
 interface ContributorFilterProps {
@@ -123,7 +124,7 @@ export default function ContributorFilter({
                 aria-label={label}
               >
                 <a
-                  href={`/authors/${encodeURIComponent(handle)}`}
+                  href={contributorAuthorHref(handle)}
                   style={{ color: "inherit", textDecoration: "none" }}
                 >
                   {label}

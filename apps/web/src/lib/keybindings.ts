@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/validation";
+
 const STORAGE_KEY = "nexus.keybindings.v1";
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
@@ -44,16 +46,17 @@ export function matchesKeyEvent(combo: string, event: KeyboardEvent): boolean {
 }
 
 export function loadKeybindings(): Record<string, string> {
+  if (typeof localStorage === "undefined") {
+    return { ...DEFAULT_KEYBINDINGS };
+  }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === "object" && parsed !== null) {
-        return { ...DEFAULT_KEYBINDINGS, ...parsed };
-      }
-    }
-  } catch { /* ignore */ }
-  return { ...DEFAULT_KEYBINDINGS };
+    return {
+      ...DEFAULT_KEYBINDINGS,
+      ...parseStoredKeybindings(localStorage.getItem(STORAGE_KEY)),
+    };
+  } catch {
+    return { ...DEFAULT_KEYBINDINGS };
+  }
 }
 
 export function saveKeybindings(bindings: Record<string, string>): void {
@@ -67,6 +70,30 @@ export function saveKeybindings(bindings: Record<string, string>): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
   } catch { /* quota or private mode */ }
+}
+
+function parseStoredKeybindings(raw: string | null): Record<string, string> {
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!isRecord(parsed)) {
+    return {};
+  }
+
+  const bindings: Record<string, string> = {};
+  for (const [id, combo] of Object.entries(parsed)) {
+    if (typeof combo === "string") {
+      bindings[id] = combo;
+    }
+  }
+  return bindings;
 }
 
 export function formatKeyCombo(combo: string): string {

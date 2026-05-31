@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.config import get_settings
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     OracleCorpusImage,
     OracleCorpusPassage,
@@ -36,6 +37,7 @@ from nexus.db.models import (
     OracleReadingPassage,
 )
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
+from nexus.hashing import stable_json_hash
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.oracle import (
@@ -46,7 +48,6 @@ from nexus.schemas.oracle import (
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
 )
-from nexus.services.chat_prompt import _hash_json as _hash_prompt_json
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.semantic_chunks import (
     build_deterministic_hash_embedding,
@@ -309,8 +310,7 @@ def _ensure_corpus_seed_ready(db: Session, *, corpus_set_version_id: UUID) -> No
 
 
 def _is_oracle_folio_conflict(exc: IntegrityError) -> bool:
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "uix_oracle_readings_user_folio"
     return "uix_oracle_readings_user_folio" in str(exc)
@@ -1661,7 +1661,7 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LL
 
 
 def _provider_request_hash(request: LLMRequest) -> str:
-    return _hash_prompt_json(
+    return stable_json_hash(
         {
             "version": "oracle-provider-request-v1",
             "provider": ORACLE_PROVIDER,

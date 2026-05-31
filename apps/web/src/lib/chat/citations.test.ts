@@ -3,8 +3,65 @@ import {
   isSearchCitationEventData,
   isWebCitationEventData,
   type SearchCitationEventData,
+  type WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import type { MessageRetrievalResultRef } from "@/lib/conversations/types";
+
+const validWebCitation = {
+  type: "web_result",
+  id: "web-1",
+  result_type: "web_result",
+  result_ref: "web-1",
+  source_id: "web-1",
+  title: "Result",
+  url: "https://example.com",
+  deep_link: "https://example.com",
+  snippet: "Result snippet",
+  source_version: "web_search:test:v1",
+  context_ref: { type: "web_result", id: "web-1" },
+  media_id: null,
+  media_kind: null,
+  score: null,
+  selected: true,
+  locator: { type: "external_url", url: "https://example.com" },
+} satisfies WebCitationEventData;
+
+const validSearchCitation = {
+  type: "fragment",
+  id: "fragment-1",
+  result_type: "fragment",
+  source_id: "fragment-1",
+  title: "Source",
+  source_label: "Fragment",
+  snippet: "Matched text",
+  source_version: "fragment:fragment-1:v1",
+  deep_link: "/media/media-1#fragment-fragment-1",
+  context_ref: { type: "fragment", id: "fragment-1" },
+  locator: {
+    type: "web_text_offsets",
+    media_id: "media-1",
+    fragment_id: "fragment-1",
+    start_offset: 4,
+    end_offset: 12,
+  },
+  media_id: "media-1",
+  media_kind: "web_article",
+  score: 0.9,
+  selected: true,
+} satisfies SearchCitationEventData;
+
+function webCitation(overrides: Record<string, unknown> = {}) {
+  return { ...validWebCitation, ...overrides };
+}
+
+function searchCitation(overrides: Record<string, unknown> = {}) {
+  return { ...validSearchCitation, ...overrides };
+}
+
+function withoutKey(citation: Record<string, unknown>, key: string) {
+  const next = { ...citation };
+  delete next[key];
+  return next;
+}
 
 describe("citation guards", () => {
   it("rejects partial web citations", () => {
@@ -13,53 +70,27 @@ describe("citation guards", () => {
 
   it("rejects unknown web citation variants", () => {
     expect(
-      isWebCitationEventData({
-        result_type: "social",
-        title: "Result",
-        url: "https://example.com",
-      }),
+      isWebCitationEventData(webCitation({ result_type: "social" })),
     ).toBe(false);
   });
 
   it("accepts valid web citations", () => {
-    expect(
-      isWebCitationEventData({
-        type: "web_result",
-        id: "web-1",
-        result_type: "web_result",
-        result_ref: "web-1",
-        source_id: "web-1",
-        title: "Result",
-        url: "https://example.com",
-        deep_link: "https://example.com",
-        snippet: "Result snippet",
-        source_version: "web_search:test:v1",
-        context_ref: { type: "web_result", id: "web-1" },
-        media_id: null,
-        media_kind: null,
-        score: null,
-        selected: true,
-        locator: { type: "external_url", url: "https://example.com" },
-      }),
-    ).toBe(true);
+    expect(isWebCitationEventData(webCitation())).toBe(true);
   });
 
   it("rejects web citations without backend locators", () => {
-    expect(
-      isWebCitationEventData({
-        title: "Result",
-        url: "https://example.com",
-      }),
-    ).toBe(false);
+    expect(isWebCitationEventData(withoutKey(webCitation(), "locator"))).toBe(
+      false,
+    );
   });
 
-  it("rejects web citations whose locator points somewhere else", () => {
+  it("rejects web citations with non-external-url locators", () => {
     expect(
-      isWebCitationEventData({
-        title: "Result",
-        url: "https://example.com",
-        locator: { type: "external_url", url: "https://other.example" },
-      }),
+      isWebCitationEventData(
+        webCitation({
+          locator: { type: "web_url", url: "https://example.com" },
+        }),
+      ),
     ).toBe(false);
   });
 
@@ -74,183 +105,59 @@ describe("citation guards", () => {
 
   it("rejects unknown search citation variants", () => {
     expect(
-      isSearchCitationEventData({
-        result_type: "unknown",
-        source_id: "fragment-1",
-        title: "Source",
-        source_label: "Fragment",
-        snippet: "Matched text",
-        deep_link: "/media/media-1#fragment-fragment-1",
-        context_ref: { type: "unknown", id: "fragment-1" },
-        locator: {
-          type: "web_text_offsets",
-          media_id: "media-1",
-          fragment_id: "fragment-1",
-          start_offset: 4,
-          end_offset: 12,
-        },
-        media_id: "media-1",
-        media_kind: "web_article",
-        score: 0.9,
-        selected: true,
-      }),
+      isSearchCitationEventData(
+        searchCitation({
+          type: "unknown",
+          result_type: "unknown",
+          context_ref: { type: "unknown", id: "fragment-1" },
+        }),
+      ),
     ).toBe(false);
   });
 
   it("rejects status refs as search citations", () => {
     expect(
-      isSearchCitationEventData({
-        result_type: "status",
-        source_id: "no_results",
-        title: "No results",
-        source_label: null,
-        snippet: "",
-        deep_link: "",
-        context_ref: { type: "status", id: "no_results" },
-        locator: {
-          type: "web_text_offsets",
-          media_id: "media-1",
-          fragment_id: "fragment-1",
-          start_offset: 4,
-          end_offset: 12,
-        },
-        media_id: null,
-        media_kind: null,
-        score: null,
-        selected: false,
-      }),
+      isSearchCitationEventData(
+        searchCitation({
+          type: "status",
+          result_type: "status",
+          source_id: "no_results",
+          title: "No results",
+          source_label: null,
+          snippet: "",
+          source_version: "app_search_status:v1",
+          deep_link: "",
+          context_ref: { type: "status", id: "no_results" },
+          media_id: null,
+          media_kind: null,
+          selected: false,
+        }),
+      ),
     ).toBe(false);
   });
 
   it("rejects mismatched search citation context variants", () => {
     expect(
-      isSearchCitationEventData({
-        type: "fragment",
-        id: "fragment-1",
-        result_type: "fragment",
-        source_id: "fragment-1",
-        title: "Source",
-        source_label: "Fragment",
-        snippet: "Matched text",
-        deep_link: "/media/media-1#fragment-fragment-1",
-        context_ref: { type: "highlight", id: "fragment-1" },
-        locator: {
-          type: "web_text_offsets",
-          media_id: "media-1",
-          fragment_id: "fragment-1",
-          start_offset: 4,
-          end_offset: 12,
-        },
-        media_id: "media-1",
-        media_kind: "web_article",
-        score: 0.9,
-        selected: true,
-      }),
+      isSearchCitationEventData(
+        searchCitation({ context_ref: { type: "highlight", id: "fragment-1" } }),
+      ),
     ).toBe(false);
   });
 
   it("accepts valid search citations", () => {
-    expect(
-      isSearchCitationEventData({
-        type: "fragment",
-        id: "fragment-1",
-        result_type: "fragment",
-        source_id: "fragment-1",
-        title: "Source",
-        source_label: "Fragment",
-        snippet: "Matched text",
-        source_version: "fragment:fragment-1:v1",
-        deep_link: "/media/media-1#fragment-fragment-1",
-        context_ref: { type: "fragment", id: "fragment-1" },
-        locator: {
-          type: "web_text_offsets",
-          media_id: "media-1",
-          fragment_id: "fragment-1",
-          start_offset: 4,
-          end_offset: 12,
-        },
-        media_id: "media-1",
-        media_kind: "web_article",
-        score: 0.9,
-        selected: true,
-      }),
-    ).toBe(true);
+    expect(isSearchCitationEventData(searchCitation())).toBe(true);
   });
 
   it("rejects search citations without valid locators", () => {
     expect(
-      isSearchCitationEventData({
-        result_type: "fragment",
-        source_id: "fragment-1",
-        title: "Source",
-        source_label: "Fragment",
-        snippet: "Matched text",
-        deep_link: "/media/media-1#fragment-fragment-1",
-        context_ref: { type: "fragment", id: "fragment-1" },
-        media_id: "media-1",
-        media_kind: "web_article",
-        score: 0.9,
-        selected: true,
-      }),
+      isSearchCitationEventData(withoutKey(searchCitation(), "locator")),
     ).toBe(false);
     expect(
-      isSearchCitationEventData({
-        result_type: "fragment",
-        source_id: "fragment-1",
-        title: "Source",
-        source_label: "Fragment",
-        snippet: "Matched text",
-        deep_link: "/media/media-1#fragment-fragment-1",
-        context_ref: { type: "fragment", id: "fragment-1" },
-        locator: { type: "web_url", url: "https://example.test" },
-        media_id: "media-1",
-        media_kind: "web_article",
-        score: 0.9,
-        selected: true,
-      }),
+      isSearchCitationEventData(
+        searchCitation({
+          locator: { type: "web_url", url: "https://example.test" },
+        }),
+      ),
     ).toBe(false);
-  });
-
-  it("keeps result refs strict at type level", () => {
-    const invalidStatusRef: MessageRetrievalResultRef = {
-      // @ts-expect-error justify-ts-override: status refs are not citable result refs.
-      type: "status",
-      id: "no_results",
-      status: "no_results",
-      source_version: "app_search_status:v1",
-    };
-    expect((invalidStatusRef as { type: string }).type).toBe("status");
-
-    const invalidCitation: SearchCitationEventData = {
-      // @ts-expect-error justify-ts-override: search citations reject status refs.
-      result_type: "status",
-      source_id: "no_results",
-      title: "No results",
-      source_label: null,
-      snippet: "",
-      source_version: "app_search_status:v1",
-      deep_link: "",
-      // @ts-expect-error justify-ts-override: citation contexts reject status refs.
-      context_ref: { type: "status", id: "no_results" },
-      locator: {
-        type: "web_text_offsets",
-        media_id: "media-1",
-        fragment_id: "fragment-1",
-        start_offset: 4,
-        end_offset: 12,
-      },
-      media_id: null,
-      media_kind: null,
-      score: null,
-      selected: false,
-    };
-    expect(invalidCitation.result_type).toBe("status");
-
-    const invalidResultRef: MessageRetrievalResultRef = {
-      // @ts-expect-error justify-ts-override: unknown result-ref variants stay rejected.
-      type: "totally_unknown",
-      id: "x",
-    };
-    expect((invalidResultRef as { type: string }).type).toBe("totally_unknown");
   });
 });

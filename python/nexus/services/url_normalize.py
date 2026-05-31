@@ -1,6 +1,6 @@
 """URL validation and normalization utilities for web article ingestion.
 
-This module provides URL validation and normalization functions per s2_pr03.md spec:
+This module provides URL validation and normalization functions:
 - validate_requested_url(): Strict validation, raises InvalidRequestError on failure
 - normalize_url_for_display(): Returns normalized URL for canonical_source_url
 
@@ -22,7 +22,6 @@ from urllib.parse import urlparse, urlunparse
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
-# Maximum URL length per spec
 MAX_URL_LENGTH = 2048
 
 # Allowed schemes

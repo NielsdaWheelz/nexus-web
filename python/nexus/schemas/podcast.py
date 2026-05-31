@@ -24,7 +24,7 @@ class PodcastDiscoveryOut(BaseModel):
     description: str | None = None
 
 
-class PodcastEnsureRequest(BaseModel):
+class _PodcastWritePayload(BaseModel):
     provider_podcast_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     contributors: list[ContributorCreditIn] = Field(default_factory=list)
@@ -41,31 +41,19 @@ class PodcastEnsureRequest(BaseModel):
         return [contributor_credit_write_payload(item) for item in value]
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PodcastEnsureRequest(_PodcastWritePayload):
+    pass
 
 
 class PodcastEnsureOut(BaseModel):
     podcast_id: UUID
 
 
-class PodcastSubscribeRequest(BaseModel):
-    provider_podcast_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    contributors: list[ContributorCreditIn] = Field(default_factory=list)
-    feed_url: str = Field(min_length=1)
-    website_url: str | None = None
-    image_url: str | None = None
-    description: str | None = None
+class PodcastSubscribeRequest(_PodcastWritePayload):
     auto_queue: bool = False
     library_ids: list[UUID] = Field(default_factory=list)
-
-    @field_validator("contributors", mode="before")
-    @classmethod
-    def normalize_contributors(cls, value: object) -> object:
-        if not isinstance(value, list):
-            return value
-        return [contributor_credit_write_payload(item) for item in value]
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class PodcastOpmlImportRequest(BaseModel):

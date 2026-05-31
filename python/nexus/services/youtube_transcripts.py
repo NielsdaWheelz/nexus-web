@@ -176,10 +176,10 @@ def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[st
             "YouTube transcript fixture hash mismatch",
         )
 
-    from nexus.services.rss_transcript_fetch import _parse_srt_transcript
+    from nexus.services.rss_transcript_fetch import parse_srt_transcript
 
     content = payload.decode("utf-8", errors="ignore").replace("\xa0", " ")
-    segments = _parse_srt_transcript(content)
+    segments = parse_srt_transcript(content)
     if not segments:
         return _failure(
             ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,

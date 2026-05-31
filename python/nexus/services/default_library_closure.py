@@ -15,11 +15,10 @@ Rules:
 import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -30,6 +29,12 @@ from nexus.jobs.queue import enqueue_job
 logger = logging.getLogger(__name__)
 
 BackfillJobStatus = Literal["pending", "running", "completed", "failed"]
+BackfillFailureStatus = Literal[
+    "stale",
+    "retry_scheduled",
+    "retry_reset_failed",
+    "terminal",
+]
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,14 @@ class BackfillRequeueResult:
     updated_at: datetime
     finished_at: datetime | None
     idempotent: bool
+    enqueue_dispatched: bool
+
+
+@dataclass(frozen=True)
+class BackfillFailureResult:
+    status: BackfillFailureStatus
+    attempts: int
+    retry_delay_seconds: int | None
     enqueue_dispatched: bool
 
 
@@ -398,21 +411,19 @@ def mark_backfill_job_completed(
 ) -> bool:
     """Status-guarded running -> completed. Returns True if transition happened."""
     now = datetime.now(UTC)
-    result = cast(
-        CursorResult[Any],
-        db.execute(
-            text("""
+    row = db.execute(
+        text("""
             UPDATE default_library_backfill_jobs
             SET status = 'completed', finished_at = :now, updated_at = :now
             WHERE default_library_id = :dl
               AND source_library_id = :source
               AND user_id = :uid
               AND status = 'running'
+            RETURNING 1
         """),
-            {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
-        ),
-    )
-    return result.rowcount > 0
+        {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+    ).fetchone()
+    return row is not None
 
 
 def mark_backfill_job_failed(
@@ -461,10 +472,8 @@ def reset_backfill_job_to_pending_for_retry(
 ) -> bool:
     """Transition failed -> pending for auto-retry. Clears finished_at and error_code."""
     now = datetime.now(UTC)
-    result = cast(
-        CursorResult[Any],
-        db.execute(
-            text("""
+    row = db.execute(
+        text("""
             UPDATE default_library_backfill_jobs
             SET status = 'pending',
                 finished_at = NULL,
@@ -474,11 +483,75 @@ def reset_backfill_job_to_pending_for_retry(
               AND source_library_id = :source
               AND user_id = :uid
               AND status = 'failed'
+            RETURNING 1
         """),
-            {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
-        ),
+        {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+    ).fetchone()
+    return row is not None
+
+
+def handle_backfill_job_failure(
+    db: Session,
+    default_library_id: UUID,
+    source_library_id: UUID,
+    user_id: UUID,
+    error_code: str,
+    request_id: str | None = None,
+) -> BackfillFailureResult:
+    """Persist a running backfill failure and schedule its deterministic retry."""
+    attempts = mark_backfill_job_failed(
+        db,
+        default_library_id,
+        source_library_id,
+        user_id,
+        error_code[:500],
     )
-    return result.rowcount > 0
+    db.commit()
+    if attempts == 0:
+        return BackfillFailureResult(
+            status="stale",
+            attempts=0,
+            retry_delay_seconds=None,
+            enqueue_dispatched=False,
+        )
+
+    if attempts >= BACKFILL_MAX_ATTEMPTS:
+        return BackfillFailureResult(
+            status="terminal",
+            attempts=attempts,
+            retry_delay_seconds=None,
+            enqueue_dispatched=False,
+        )
+
+    delay = BACKFILL_RETRY_DELAYS_SECONDS[attempts - 1]
+    reset_ok = reset_backfill_job_to_pending_for_retry(
+        db,
+        default_library_id,
+        source_library_id,
+        user_id,
+    )
+    db.commit()
+    if not reset_ok:
+        return BackfillFailureResult(
+            status="retry_reset_failed",
+            attempts=attempts,
+            retry_delay_seconds=delay,
+            enqueue_dispatched=False,
+        )
+
+    dispatched = enqueue_backfill_task(
+        default_library_id,
+        source_library_id,
+        user_id,
+        request_id=request_id,
+        countdown=delay,
+    )
+    return BackfillFailureResult(
+        status="retry_scheduled",
+        attempts=attempts,
+        retry_delay_seconds=delay,
+        enqueue_dispatched=dispatched,
+    )
 
 
 def requeue_backfill_job(

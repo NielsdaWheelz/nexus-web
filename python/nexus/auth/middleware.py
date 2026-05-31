@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -192,6 +192,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 default_library_id = await run_in_threadpool(
                     self.bootstrap_callback, user_id, email=email
                 )
+            # justify-ignore-error: auth bootstrap boundary returns a generic 500
+            # while logging the server-side failure.
             except Exception as e:
                 logger.exception("Bootstrap failed for user %s: %s", user_id, e)
                 return self._error_json_response(
@@ -345,7 +347,3 @@ def get_viewer(request: Request) -> Viewer:
     if viewer is None:
         raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Authentication required")
     return viewer
-
-
-# Type alias for dependency injection
-ViewerDep = Depends(get_viewer)

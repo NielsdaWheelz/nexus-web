@@ -28,7 +28,7 @@ class TestHealthEndpoint:
         assert "data" in data
         assert data["data"]["status"] == "ok"
         assert "task_contract_version" in data["data"], (
-            "Health payload must include task_contract_version for deploy compatibility checks"
+            "Health payload must include task_contract_version for worker contract checks"
         )
 
     def test_health_content_type_is_json(self, client: TestClient):

@@ -28,8 +28,10 @@ from nexus.services.conversations import (
 )
 from tests.factories import (
     create_test_conversation,
+    create_test_media_in_library,
     create_test_message,
     create_test_model,
+    get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -78,6 +80,80 @@ class TestCreateConversation:
         assert "id" in data
         assert "created_at" in data
         assert "updated_at" in data
+
+    def test_create_conversation_with_initial_references_is_atomic(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """POST /conversations owns initial reference insertion in one service call."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            library_id = get_user_default_library(session, user_id)
+            assert library_id is not None
+            media_id = create_test_media_in_library(
+                session,
+                user_id,
+                library_id,
+                title="Create-time Reference",
+            )
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+
+        response = auth_client.post(
+            "/conversations",
+            headers=auth_headers(user_id),
+            json={"initial_references": [f"media:{media_id}"]},
+        )
+
+        assert response.status_code == 201, response.text
+        conversation_id = UUID(response.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT resource_uri
+                    FROM conversation_references
+                    WHERE conversation_id = :conversation_id
+                    """
+                ),
+                {"conversation_id": conversation_id},
+            ).scalars()
+            assert list(rows) == [f"media:{media_id}"]
+
+    def test_create_conversation_invalid_initial_reference_rolls_back(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            before = session.execute(
+                text("SELECT COUNT(*) FROM conversations WHERE owner_user_id = :user_id"),
+                {"user_id": user_id},
+            ).scalar_one()
+
+        response = auth_client.post(
+            "/conversations",
+            headers=auth_headers(user_id),
+            json={"initial_references": ["not-a-uri"]},
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        with direct_db.session() as session:
+            after = session.execute(
+                text("SELECT COUNT(*) FROM conversations WHERE owner_user_id = :user_id"),
+                {"user_id": user_id},
+            ).scalar_one()
+        assert after == before
 
 
 class TestCreateConversationVisibility:
@@ -218,6 +294,18 @@ class TestListConversations:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
+    def test_list_conversations_has_reference_invalid_uri_returns_400(self, auth_client):
+        """Invalid has_reference URI returns the reference service contract error."""
+        user_id = create_test_user_id()
+
+        response = auth_client.get(
+            "/conversations?has_reference=not-a-uri",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
 
 # =============================================================================
 # Conversation Get Tests
@@ -288,6 +376,22 @@ class TestDeleteConversation:
 
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = create_resp.json()["data"]["id"]
+        resource_uri = f"media:{uuid4()}"
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO conversation_references (conversation_id, resource_uri)
+                    VALUES (:conversation_id, :resource_uri)
+                    """
+                ),
+                {"conversation_id": conversation_id, "resource_uri": resource_uri},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
 
         response = auth_client.delete(
             f"/conversations/{conversation_id}", headers=auth_headers(user_id)
@@ -299,6 +403,11 @@ class TestDeleteConversation:
         with direct_db.session() as session:
             result = session.execute(
                 text("SELECT 1 FROM conversations WHERE id = :id"),
+                {"id": conversation_id},
+            )
+            assert result.fetchone() is None
+            result = session.execute(
+                text("SELECT 1 FROM conversation_references WHERE conversation_id = :id"),
                 {"id": conversation_id},
             )
             assert result.fetchone() is None
@@ -329,10 +438,56 @@ class TestDeleteConversation:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
 
-    def test_delete_conversation_cascades_messages(
+    def test_delete_conversation_not_owner_preserves_references(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Deleting conversation cascades to messages."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_a)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO conversation_references (conversation_id, resource_uri)
+                    VALUES (:conversation_id, :resource_uri)
+                    """
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "resource_uri": f"media:{uuid4()}",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+        response = auth_client.delete(
+            f"/conversations/{conversation_id}", headers=auth_headers(user_b)
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+        with direct_db.session() as session:
+            remaining = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM conversation_references
+                    WHERE conversation_id = :conversation_id
+                    """
+                ),
+                {"conversation_id": conversation_id},
+            ).scalar_one()
+        assert remaining == 1
+
+    def test_delete_conversation_cleans_messages(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Deleting a conversation explicitly cleans its messages."""
         user_id = create_test_user_id()
 
         # Bootstrap user
@@ -367,7 +522,7 @@ class TestDeleteConversation:
         )
         assert response.status_code == 204
 
-        # Verify messages deleted (cascade)
+        # Verify messages were explicitly deleted.
         with direct_db.session() as session:
             result = session.execute(
                 text("SELECT COUNT(*) FROM messages WHERE conversation_id = :id"),
@@ -474,30 +629,6 @@ class TestDeleteConversation:
                     {"id": conversation_id},
                 )
                 assert result.scalar() == 0, table
-
-    def test_conversation_response_has_no_scope_field(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Per the references cutover: ConversationOut response no longer
-        includes any scope-shaped or singleton-shaped field."""
-        user_id = create_test_user_id()
-        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
-        assert create_resp.status_code == 201, create_resp.text
-        data = create_resp.json()["data"]
-
-        for legacy_field in (
-            "scope",
-            "scope_type",
-            "scope_id",
-            "scope_media_id",
-            "scope_library_id",
-            "singleton",
-        ):
-            assert legacy_field not in data, (
-                f"Conversation response should not include legacy '{legacy_field}'; got: {data}"
-            )
-
-        direct_db.register_cleanup("conversations", "id", UUID(data["id"]))
 
 
 # =============================================================================
@@ -675,6 +806,99 @@ class TestListMessages:
         assert len(data3["data"]) == 1
         assert data3["data"][0]["seq"] == 5
         assert data3["page"]["next_cursor"] is None
+
+    def test_list_messages_latest_window_paginates_older(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Latest message window returns newest chat-order page and paginates older."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            first_id = create_test_message(session, conversation_id, seq=1, content="Msg 1")
+            second_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Msg 2",
+                parent_message_id=first_id,
+            )
+            third_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                content="Msg 3",
+                parent_message_id=second_id,
+            )
+            fourth_id = create_test_message(
+                session,
+                conversation_id,
+                seq=4,
+                role="assistant",
+                content="Msg 4",
+                parent_message_id=third_id,
+            )
+            create_test_message(
+                session,
+                conversation_id,
+                seq=5,
+                content="Msg 5",
+                parent_message_id=fourth_id,
+            )
+            session.commit()
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        resp1 = auth_client.get(
+            f"/conversations/{conversation_id}/messages?limit=2&window=latest",
+            headers=auth_headers(user_id),
+        )
+        assert resp1.status_code == 200
+        data1 = resp1.json()
+        assert [message["seq"] for message in data1["data"]] == [4, 5]
+        assert data1["page"]["next_cursor"] is None
+        assert data1["page"]["before_cursor"] is not None
+
+        before_cursor = data1["page"]["before_cursor"]
+        resp2 = auth_client.get(
+            f"/conversations/{conversation_id}/messages?limit=2&before_cursor={before_cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert [message["seq"] for message in data2["data"]] == [2, 3]
+        assert data2["page"]["before_cursor"] is not None
+
+        before_cursor = data2["page"]["before_cursor"]
+        resp3 = auth_client.get(
+            f"/conversations/{conversation_id}/messages?limit=2&before_cursor={before_cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert resp3.status_code == 200
+        data3 = resp3.json()
+        assert [message["seq"] for message in data3["data"]] == [1]
+        assert data3["page"]["before_cursor"] is None
+
+    def test_list_messages_rejects_conflicting_window_parameters(self, auth_client):
+        """Message pagination modes reject ambiguous parameter combinations."""
+        user_id = create_test_user_id()
+        conversation_id = uuid4()
+
+        invalid_queries = [
+            "limit=2&cursor=cursor-a&before_cursor=cursor-b",
+            "limit=2&cursor=cursor-a&window=latest",
+            "limit=2&window=middle",
+        ]
+        for query in invalid_queries:
+            response = auth_client.get(
+                f"/conversations/{conversation_id}/messages?{query}",
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 400, query
+            assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_list_messages_conversation_not_found(self, auth_client):
         """List messages for non-existent conversation returns 404."""

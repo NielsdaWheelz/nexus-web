@@ -23,6 +23,7 @@ from nexus.services.content_indexing import (
     mark_content_index_failed,
     repair_ready_media_content_index_now,
 )
+from nexus.services.media_deletion import delete_abandoned_document_media
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -115,17 +116,13 @@ def reconcile_stale_ingest_media_job(
             .limit(_BATCH_LIMIT)
             .with_for_update(skip_locked=True)
         ).all()
-        pending_upload_storage_paths = []
+        pending_upload_storage_paths: set[str] = set()
         for media, storage_path in pending_upload_rows:
-            pending_upload_storage_paths.append(str(storage_path))
-            pending_upload_storage_paths.append(
+            pending_upload_storage_paths.add(str(storage_path))
+            pending_upload_storage_paths.add(
                 build_storage_path(media.id, get_file_extension(str(media.kind)))
             )
-            db.execute(
-                text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
-                {"media_id": media.id},
-            )
-            db.delete(media)
+            pending_upload_storage_paths.update(delete_abandoned_document_media(db, media.id))
 
         stale_rows = (
             db.execute(
@@ -256,7 +253,7 @@ def reconcile_stale_ingest_media_job(
                 result = repair_ready_media_content_index_now(
                     db,
                     media_id=media_id,
-                    reason="evidence_cutover_repair",
+                    reason="content_index_repair",
                 )
                 if result is None:
                     _mark_content_index_state_failed(
@@ -380,7 +377,7 @@ def reconcile_stale_ingest_media_job(
                     semantic_skipped += 1
 
         db.commit()
-        for storage_path in pending_upload_storage_paths:
+        for storage_path in sorted(pending_upload_storage_paths):
             try:
                 get_storage_client().delete_object(storage_path)
             except StorageError as exc:

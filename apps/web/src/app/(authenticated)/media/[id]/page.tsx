@@ -3,13 +3,13 @@ import {
   isReadableStatus,
   type MediaNavigationResponse,
 } from "@/lib/media/readerNavigation";
-import MediaPaneBody, { type InitialMedia } from "./MediaPaneBody";
+import MediaPaneBody, { type Media } from "./MediaPaneBody";
 
 type Params = Promise<{ id: string }>;
 
 export default async function MediaPage({ params }: { params: Params }) {
   const { id } = await params;
-  const mediaResp = await callFastAPI<{ data: InitialMedia }>(`/media/${id}`);
+  const mediaResp = await callFastAPI<{ data: Media }>(`/media/${id}`);
   const media = mediaResp.data;
 
   const shouldPrefetchNavigation =

@@ -58,6 +58,21 @@ describe("paneLinkNavigation", () => {
     expect(paneRuntime.openInNewPane).not.toHaveBeenCalled();
   });
 
+  it("uses menuitem text as the pane title hint when no explicit hint exists", () => {
+    const event = click();
+    const paneRuntime = runtime();
+    const element = anchor("/settings/reader", { role: "menuitem" });
+    element.textContent = "Reader settings";
+
+    handlePaneInternalAnchorClick(event, paneRuntime, element);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(paneRuntime.router.push).toHaveBeenCalledWith(
+      "/settings/reader",
+      { titleHint: "Reader settings" },
+    );
+  });
+
   it("opens supported Shift-clicks in a sibling pane", () => {
     const event = click({ shiftKey: true });
     const paneRuntime = runtime();

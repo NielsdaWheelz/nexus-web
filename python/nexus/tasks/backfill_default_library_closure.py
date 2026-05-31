@@ -1,6 +1,6 @@
 """Worker job handler for default-library closure backfill materialization.
 
-Worker behaviour (per s4 spec section 7.4):
+Worker behaviour:
 1. Claim pending durable row atomically (pending -> running).
 2. Validate tuple integrity; invalid tuple is terminal failure.
 3. Lock membership row before materialization (strict revocation).
@@ -12,18 +12,16 @@ Worker behaviour (per s4 spec section 7.4):
 
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.default_library_closure import (
-    BACKFILL_MAX_ATTEMPTS,
-    BACKFILL_RETRY_DELAYS_SECONDS,
     claim_backfill_job_pending,
-    enqueue_backfill_task,
     get_backfill_backlog_health,
+    handle_backfill_job_failure,
     mark_backfill_job_completed,
-    mark_backfill_job_failed,
     materialize_closure_for_source,
-    reset_backfill_job_to_pending_for_retry,
     validate_backfill_job_tuple,
 )
 
@@ -68,6 +66,8 @@ def backfill_default_library_closure_job(
 
     try:
         return _execute_backfill(db, dl_uuid, src_uuid, uid_uuid, request_id, log_ctx)
+    # justify-ignore-error: task boundary records unexpected failures on the
+    # durable backfill row before re-raising to the worker.
     except Exception as exc:
         logger.error("backfill_task_unexpected_error", error=str(exc), **log_ctx)
         _handle_failure(db, dl_uuid, src_uuid, uid_uuid, str(exc), request_id, log_ctx)
@@ -137,8 +137,12 @@ def _execute_backfill(
                 pending_age_p95=health["pending_age_p95_seconds"],
                 **log_ctx,
             )
-    except Exception:
-        pass  # guardrail check is advisory only
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "backfill_backlog_health_check_failed",
+            error=str(exc),
+            **log_ctx,
+        )
 
     logger.info("backfill_completed", edges_inserted=edges, **log_ctx)
     return {"status": "completed", "edges_inserted": edges}
@@ -155,48 +159,51 @@ def _handle_failure(
 ) -> None:
     """Handle task failure: mark failed and attempt retry if under threshold."""
     try:
-        new_attempts = mark_backfill_job_failed(db, dl_uuid, src_uuid, uid_uuid, error_msg[:500])
-        db.commit()
-
-        if new_attempts == 0:
-            # Status guard prevented update (stale task)
-            logger.info("backfill_failure_stale", **log_ctx)
-            return
-
-        if new_attempts < BACKFILL_MAX_ATTEMPTS:
-            # Retry: reset to pending and enqueue with delay
-            delay_index = new_attempts - 1
-            delay = BACKFILL_RETRY_DELAYS_SECONDS[delay_index]
-            reset_ok = reset_backfill_job_to_pending_for_retry(db, dl_uuid, src_uuid, uid_uuid)
-            db.commit()
-
-            if reset_ok:
-                dispatched = enqueue_backfill_task(
-                    dl_uuid,
-                    src_uuid,
-                    uid_uuid,
-                    request_id=request_id,
-                    countdown=delay,
-                )
-                logger.info(
-                    "backfill_retry_scheduled",
-                    attempts=new_attempts,
-                    delay=delay,
-                    dispatched=dispatched,
-                    **log_ctx,
-                )
-        else:
-            logger.warning(
-                "backfill_terminal_failure",
-                attempts=new_attempts,
-                **log_ctx,
-            )
-    except Exception:
-        logger.exception("backfill_failure_handler_error", **log_ctx)
+        result = handle_backfill_job_failure(
+            db,
+            dl_uuid,
+            src_uuid,
+            uid_uuid,
+            error_msg,
+            request_id=request_id,
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("backfill_failure_handler_error", error=str(exc), **log_ctx)
         try:
             db.rollback()
-        except Exception:
-            pass
+        except SQLAlchemyError as rollback_exc:
+            logger.warning(
+                "backfill_failure_handler_rollback_failed",
+                error=str(rollback_exc),
+                **log_ctx,
+            )
+        return
+
+    if result.status == "stale":
+        logger.info("backfill_failure_stale", **log_ctx)
+        return
+    if result.status == "retry_scheduled":
+        logger.info(
+            "backfill_retry_scheduled",
+            attempts=result.attempts,
+            delay=result.retry_delay_seconds,
+            dispatched=result.enqueue_dispatched,
+            **log_ctx,
+        )
+        return
+    if result.status == "retry_reset_failed":
+        logger.warning(
+            "backfill_retry_reset_failed",
+            attempts=result.attempts,
+            delay=result.retry_delay_seconds,
+            **log_ctx,
+        )
+        return
+    logger.warning(
+        "backfill_terminal_failure",
+        attempts=result.attempts,
+        **log_ctx,
+    )
 
 
 def _mark_terminal_failure(

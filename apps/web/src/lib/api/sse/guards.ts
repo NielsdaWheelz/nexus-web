@@ -16,14 +16,7 @@ export function isOptionalRecord(value: unknown): boolean {
   return value === undefined || value === null || isRecord(value);
 }
 
-export function isValidOffsetRange(
-  value: Record<string, unknown>,
-): value is Record<string, unknown> & {
-  start_offset: number;
-  end_offset: number;
-} {
-  const start = value.start_offset;
-  const end = value.end_offset;
+function isValidIntRange(start: unknown, end: unknown): boolean {
   return (
     typeof start === "number" &&
     typeof end === "number" &&
@@ -34,17 +27,17 @@ export function isValidOffsetRange(
   );
 }
 
+export function isValidOffsetRange(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & {
+  start_offset: number;
+  end_offset: number;
+} {
+  return isValidIntRange(value.start_offset, value.end_offset);
+}
+
 export function isValidTimeRange(
   value: Record<string, unknown>,
 ): value is Record<string, unknown> & { t_start_ms: number; t_end_ms: number } {
-  const start = value.t_start_ms;
-  const end = value.t_end_ms;
-  return (
-    typeof start === "number" &&
-    typeof end === "number" &&
-    Number.isInteger(start) &&
-    Number.isInteger(end) &&
-    start >= 0 &&
-    end > start
-  );
+  return isValidIntRange(value.t_start_ms, value.t_end_ms);
 }

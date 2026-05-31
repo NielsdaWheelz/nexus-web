@@ -272,20 +272,43 @@ function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   if (
     !isRecord(data) ||
     typeof data.assistant_message_id !== "string" ||
-    !Array.isArray(data.entries) ||
-    !data.entries.every(
-      (entry) =>
-        isRecord(entry) &&
-        Number.isInteger(entry.n) &&
-        (entry.n as number) >= 1 &&
-        typeof entry.retrieval_id === "string" &&
-        typeof entry.tool_call_id === "string" &&
-        Number.isInteger(entry.ordinal),
-    )
+    !Array.isArray(data.entries)
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
-  return data as SSECitationIndexEvent["data"];
+  return {
+    assistant_message_id: data.assistant_message_id,
+    entries: data.entries.map(parseCitationIndexEntry),
+  };
+}
+
+function parseCitationIndexEntry(
+  entry: unknown,
+): SSECitationIndexEvent["data"]["entries"][number] {
+  if (!isRecord(entry)) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
+  const n = entry.n;
+  const retrievalId = entry.retrieval_id;
+  const toolCallId = entry.tool_call_id;
+  const ordinal = entry.ordinal;
+  if (
+    typeof n !== "number" ||
+    !Number.isInteger(n) ||
+    n < 1 ||
+    typeof retrievalId !== "string" ||
+    typeof toolCallId !== "string" ||
+    typeof ordinal !== "number" ||
+    !Number.isInteger(ordinal)
+  ) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
+  return {
+    n,
+    retrieval_id: retrievalId,
+    tool_call_id: toolCallId,
+    ordinal,
+  };
 }
 
 function parseReferenceAddedData(

@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api/client";
 import { toRoman } from "@/lib/toRoman";
 import { useStickyHeadline } from "../../OracleShell";
 import styles from "./atlas.module.css";
+import StarLabel from "./StarLabel";
 import {
   placeFolios,
   projectToScreen,
@@ -560,24 +561,7 @@ export default function AtlasPaneBody() {
           {/* The corner label fades up when a star is focused — Garamond italic,
               the marginalia voice. Roman numeral + motto + theme glyph. */}
           {focused && (
-            <div className={styles.starLabel} aria-live="polite">
-              <span className={styles.starLabelFolio}>
-                Folio {toRoman(focused.folio_number)}
-              </span>
-              {focused.folio_motto && (
-                <span className={styles.starLabelMotto}>{focused.folio_motto}</span>
-              )}
-              {focused.folio_theme && (
-                <span className={styles.starLabelTheme}>{focused.folio_theme}</span>
-              )}
-              {selectedId === focused.id && (
-                <span className={styles.starLabelHint}>
-                  {peerIds.length > 0
-                    ? `Constellation of ${peerIds.length} · click again to enter`
-                    : "click again to enter"}
-                </span>
-              )}
-            </div>
+            <StarLabel focused={focused} selectedId={selectedId} peerIds={peerIds} />
           )}
 
           {/* Legend / instructions — present but quiet. */}

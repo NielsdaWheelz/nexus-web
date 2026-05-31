@@ -1,5 +1,19 @@
 import { Schema, type Node as ProseMirrorNode } from "prosemirror-model";
 import type { NoteBlock } from "@/lib/notes/api";
+import { isRecord } from "@/lib/validation";
+
+function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
+  const value = dom.getAttribute(name);
+  return value ? value : false;
+}
+
+function prosemirrorNodeJson(node: ProseMirrorNode): Record<string, unknown> {
+  const json = node.toJSON();
+  if (!isRecord(json)) {
+    throw new Error("ProseMirror node JSON must be an object");
+  }
+  return json;
+}
 
 export const outlineSchema = new Schema({
   topNode: "outline_doc",
@@ -79,9 +93,12 @@ export const outlineSchema = new Schema({
           tag: "span[data-object-type][data-object-id]",
           getAttrs: (dom) => {
             if (!(dom instanceof HTMLElement)) return false;
+            const objectType = requiredDomAttribute(dom, "data-object-type");
+            const objectId = requiredDomAttribute(dom, "data-object-id");
+            if (!objectType || !objectId) return false;
             return {
-              objectType: dom.getAttribute("data-object-type"),
-              objectId: dom.getAttribute("data-object-id"),
+              objectType,
+              objectId,
               label: dom.textContent ?? "",
             };
           },
@@ -119,9 +136,12 @@ export const outlineSchema = new Schema({
           tag: "div[data-object-embed-type][data-object-embed-id]",
           getAttrs: (dom) => {
             if (!(dom instanceof HTMLElement)) return false;
+            const objectType = requiredDomAttribute(dom, "data-object-embed-type");
+            const objectId = requiredDomAttribute(dom, "data-object-embed-id");
+            if (!objectType || !objectId) return false;
             return {
-              objectType: dom.getAttribute("data-object-embed-type"),
-              objectId: dom.getAttribute("data-object-embed-id"),
+              objectType,
+              objectId,
               label: dom.textContent ?? "",
               relationType: dom.getAttribute("data-relation-type") ?? "embeds",
               displayMode: dom.getAttribute("data-display-mode") ?? "compact",
@@ -337,7 +357,7 @@ export function firstOutlineBlockFromDoc(doc: ProseMirrorNode): {
     const paragraph = node.childCount > 0 ? node.child(0) : paragraphFromText("");
     result = {
       id: String(node.attrs.id),
-      bodyPmJson: paragraph.toJSON() as Record<string, unknown>,
+      bodyPmJson: prosemirrorNodeJson(paragraph),
       bodyText: paragraph.textContent.trim(),
     };
     return false;

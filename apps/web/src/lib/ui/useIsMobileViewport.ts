@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-export const MOBILE_MAX_WIDTH_PX = 768;
+const MOBILE_MAX_WIDTH_PX = 768;
 
 function readIsMobile(): boolean {
   if (typeof window === "undefined") {

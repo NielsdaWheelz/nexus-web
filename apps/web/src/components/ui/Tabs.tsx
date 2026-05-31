@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./Tabs.module.css";
 
 type TabsVariant = "tabs" | "segmented";
@@ -73,9 +74,6 @@ export function TabsList({
   const listRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
-      return;
-    }
     const root = listRef.current;
     if (!root) return;
     const triggers = Array.from(
@@ -84,8 +82,15 @@ export function TabsList({
     if (triggers.length === 0) return;
     const activeIndex = triggers.findIndex((t) => t === document.activeElement);
     const startIndex = activeIndex < 0 ? 0 : activeIndex;
-    const delta = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (startIndex + delta + triggers.length) % triggers.length;
+    const nextIndex = nextRovingIndexForKey({
+      key: event.key,
+      currentIndex: startIndex,
+      itemCount: triggers.length,
+      orientation: "horizontal",
+      wrap: true,
+      homeEnd: false,
+    });
+    if (nextIndex === null) return;
     event.preventDefault();
     const nextTrigger = triggers[nextIndex];
     if (!nextTrigger) return;
@@ -180,4 +185,3 @@ export function TabsContent({
     </div>
   );
 }
-

@@ -13,6 +13,7 @@ describe("paneSecondaryModel", () => {
   it("maps secondary surfaces to their owning groups", () => {
     expect(getSecondaryGroupForSurface("reader-highlights")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-doc-chat")).toBe("reader-tools");
+    expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("conversation-references")).toBe(
       "conversation-context",
     );
@@ -24,11 +25,21 @@ describe("paneSecondaryModel", () => {
   });
 
   it("owns surface metadata in one place", () => {
+    expect(getSecondarySurfaceDefinition("reader-contents")).toMatchObject({
+      groupId: "reader-tools",
+      title: "Contents",
+      iconId: "list-tree",
+    });
     expect(getSecondarySurfaceDefinition("conversation-forks")).toMatchObject({
       groupId: "conversation-context",
       title: "Forks",
       iconId: "git-branch",
     });
+    expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
+      "reader-highlights",
+      "reader-doc-chat",
+      "reader-contents",
+    ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
       "conversation-references",
       "conversation-forks",

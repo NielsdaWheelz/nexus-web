@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
@@ -42,7 +43,7 @@ from .catalog import (
     validate_and_normalize_feed_url,
 )
 from .provider import PODCAST_PROVIDER, get_podcast_index_client
-from .sync import _enqueue_podcast_subscription_sync, _get_subscription_sync_snapshot
+from .sync import enqueue_podcast_subscription_sync, get_subscription_sync_snapshot
 
 logger = get_logger(__name__)
 
@@ -170,7 +171,7 @@ def import_subscriptions_from_opml(
                     summary.skipped_already_subscribed += 1
                     continue
                 set_subscription_libraries(db, viewer_id, podcast_id, library_ids)
-                _enqueue_podcast_subscription_sync(
+                enqueue_podcast_subscription_sync(
                     db,
                     user_id=viewer_id,
                     podcast_id=podcast_id,
@@ -266,12 +267,12 @@ def subscribe_to_podcast(
             auto_queue=body.auto_queue,
         )
         set_subscription_libraries(db, viewer_id, podcast_id, body.library_ids)
-        sync_enqueued = _enqueue_podcast_subscription_sync(
+        sync_enqueued = enqueue_podcast_subscription_sync(
             db,
             user_id=viewer_id,
             podcast_id=podcast_id,
         )
-        snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
+        snapshot = get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
 
@@ -850,7 +851,7 @@ def _upsert_subscription(
 
 def _is_subscription_identity_conflict(exc: IntegrityError) -> bool:
     orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     if constraint_name:
         return constraint_name == "podcast_subscriptions_pkey"
     return "podcast_subscriptions_pkey" in str(orig or exc)

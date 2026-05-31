@@ -14,6 +14,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import integrity_constraint_name, is_serialization_failure
 from nexus.db.models import (
     DailyNotePage,
     Highlight,
@@ -22,6 +23,7 @@ from nexus.db.models import (
     Page,
     PinnedObjectRef,
 )
+from nexus.db.session import use_serializable_if_available
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
@@ -1204,7 +1206,7 @@ def _resolve_daily_page_with_retry(
     commit: bool = True,
 ) -> tuple[Page, str]:
     for attempt in range(3):
-        _use_serializable_if_available(db)
+        use_serializable_if_available(db)
         try:
             page, stored_time_zone = _resolve_daily_page_once(
                 db,
@@ -1218,7 +1220,7 @@ def _resolve_daily_page_with_retry(
             return page, stored_time_zone
         except OperationalError as exc:
             db.rollback()
-            if not _is_serialization_failure(exc):
+            if not is_serialization_failure(exc):
                 raise
             if attempt == 2:
                 raise AssertionError("Daily note retry loop exhausted") from exc
@@ -1232,32 +1234,20 @@ def _resolve_daily_page_with_retry(
 def _with_serialization_retry[T](db: Session, label: str, op: Callable[[], T]) -> T:
     """Run op() under SERIALIZABLE isolation, retrying up to 3 times on serialization failure."""
     for attempt in range(3):
-        _use_serializable_if_available(db)
+        use_serializable_if_available(db)
         try:
             return op()
         except OperationalError as exc:
             db.rollback()
-            if not _is_serialization_failure(exc):
+            if not is_serialization_failure(exc):
                 raise
             if attempt == 2:
                 raise AssertionError(f"{label} retry loop exhausted") from exc
     raise AssertionError(f"{label} retry loop exhausted")
 
 
-def _use_serializable_if_available(db: Session) -> None:
-    bind = db.get_bind()
-    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-    if not db.in_transaction() and not in_outer_transaction:
-        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
-
-
-def _is_serialization_failure(exc: OperationalError) -> bool:
-    sqlstate = getattr(exc.orig, "sqlstate", None)
-    return sqlstate == "40001" or "could not serialize access" in str(exc.orig).lower()
-
-
 def _is_daily_unique_conflict(exc: IntegrityError) -> bool:
-    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     return constraint_name in {
         "uix_daily_note_pages_user_date",
         "uix_daily_note_pages_user_page",
@@ -1265,7 +1255,7 @@ def _is_daily_unique_conflict(exc: IntegrityError) -> bool:
 
 
 def _is_note_block_id_conflict(exc: IntegrityError) -> bool:
-    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    constraint_name = integrity_constraint_name(exc)
     return constraint_name == "note_blocks_pkey"
 
 

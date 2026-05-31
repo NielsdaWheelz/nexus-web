@@ -4,7 +4,7 @@ import { useMemo, type Ref } from "react";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { buildCitations } from "@/lib/conversations/citations";
 import type { ConversationMessage } from "@/lib/conversations/types";
-import type { ReaderSourceTarget } from "./MessageRow";
+import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantEvidenceDisclosure({

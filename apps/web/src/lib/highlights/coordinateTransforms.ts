@@ -1,10 +1,5 @@
 import type { PdfHighlightQuad } from "./pdfTypes";
 
-type BrandedNumber<Tag extends string> = number & { readonly __brand: Tag };
-
-export type PageSpaceX = BrandedNumber<"page-space-x">;
-export type PageSpaceY = BrandedNumber<"page-space-y">;
-
 export interface PdfPageViewportTransform {
   scale: number;
   rotation: 0 | 90 | 180 | 270;
@@ -38,14 +33,6 @@ export function isValidPdfRect(rect: {
   return rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON;
 }
 
-function toPageSpaceX(value: number): PageSpaceX {
-  return value as PageSpaceX;
-}
-
-function toPageSpaceY(value: number): PageSpaceY {
-  return value as PageSpaceY;
-}
-
 export function normalizeQuarterTurnRotation(rotation: number): 0 | 90 | 180 | 270 {
   const normalized = ((Math.round(rotation / 90) * 90) % 360 + 360) % 360;
   if (normalized === 90 || normalized === 180 || normalized === 270) {
@@ -55,35 +42,33 @@ export function normalizeQuarterTurnRotation(rotation: number): 0 | 90 | 180 | 2
 }
 
 export function pagePointToViewportPoint(
-  x: PageSpaceX,
-  y: PageSpaceY,
+  x: number,
+  y: number,
   transform: PdfPageViewportTransform
 ): PdfViewportPoint {
   const effectiveScale = transform.scale * transform.dpiScale;
-  const px = x as number;
-  const py = y as number;
 
   switch (transform.rotation) {
     case 90:
       return {
-        x: (transform.pageHeightPoints - py) * effectiveScale,
-        y: px * effectiveScale,
+        x: (transform.pageHeightPoints - y) * effectiveScale,
+        y: x * effectiveScale,
       };
     case 180:
       return {
-        x: (transform.pageWidthPoints - px) * effectiveScale,
-        y: (transform.pageHeightPoints - py) * effectiveScale,
+        x: (transform.pageWidthPoints - x) * effectiveScale,
+        y: (transform.pageHeightPoints - y) * effectiveScale,
       };
     case 270:
       return {
-        x: py * effectiveScale,
-        y: (transform.pageWidthPoints - px) * effectiveScale,
+        x: y * effectiveScale,
+        y: (transform.pageWidthPoints - x) * effectiveScale,
       };
     case 0:
     default:
       return {
-        x: px * effectiveScale,
-        y: py * effectiveScale,
+        x: x * effectiveScale,
+        y: y * effectiveScale,
       };
   }
 }
@@ -93,10 +78,10 @@ export function projectPdfQuadToViewportRect(
   transform: PdfPageViewportTransform
 ): PdfViewportRect {
   const points = [
-    pagePointToViewportPoint(toPageSpaceX(quad.x1), toPageSpaceY(quad.y1), transform),
-    pagePointToViewportPoint(toPageSpaceX(quad.x2), toPageSpaceY(quad.y2), transform),
-    pagePointToViewportPoint(toPageSpaceX(quad.x3), toPageSpaceY(quad.y3), transform),
-    pagePointToViewportPoint(toPageSpaceX(quad.x4), toPageSpaceY(quad.y4), transform),
+    pagePointToViewportPoint(quad.x1, quad.y1, transform),
+    pagePointToViewportPoint(quad.x2, quad.y2, transform),
+    pagePointToViewportPoint(quad.x3, quad.y3, transform),
+    pagePointToViewportPoint(quad.x4, quad.y4, transform),
   ];
 
   const xs = points.map((point) => point.x);

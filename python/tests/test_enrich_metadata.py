@@ -659,7 +659,7 @@ class TestEnrichMetadata:
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 status="completed",
-                text='{"title":"Legacy text payload must be ignored"}',
+                text='{"title":"Unstructured text payload must be ignored"}',
                 structured_output=None,
             )
 

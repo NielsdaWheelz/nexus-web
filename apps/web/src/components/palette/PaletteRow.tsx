@@ -48,7 +48,6 @@ export default function PaletteRow({
     command.subtitle,
     tag,
     showShortcut ? command.shortcutLabel : undefined,
-    command.disabled?.reason,
   ]
     .filter(Boolean)
     .join(" ");
@@ -64,14 +63,10 @@ export default function PaletteRow({
       role="option"
       aria-selected={selected ? "true" : "false"}
       aria-label={optionName}
-      aria-disabled={command.disabled ? "true" : undefined}
       className={styles.option}
       data-active={selected ? "true" : "false"}
-      data-disabled={command.disabled ? "true" : "false"}
       onMouseMove={() => onHover?.(command.id)}
-      onClick={() => {
-        if (!command.disabled) onSelect(command);
-      }}
+      onClick={() => onSelect(command)}
     >
       <Icon size={16} aria-hidden="true" />
       <span className={styles.optionText}>
@@ -80,9 +75,7 @@ export default function PaletteRow({
           <span className={styles.optionSubtitle}>{command.subtitle}</span>
         ) : null}
       </span>
-      {command.disabled ? (
-        <span className={styles.optionMeta}>{command.disabled.reason}</span>
-      ) : command.trailingAction ? (
+      {command.trailingAction ? (
         <button
           type="button"
           tabIndex={-1}

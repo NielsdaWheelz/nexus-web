@@ -80,7 +80,7 @@ describe("coordinateTransforms", () => {
     };
     for (const [rotation, expectedX, expectedY] of cases) {
       const transform: PdfPageViewportTransform = { ...transformBase, rotation };
-      const point = pagePointToViewportPoint(120 as never, 260 as never, transform);
+      const point = pagePointToViewportPoint(120, 260, transform);
       expectClose(point.x, expectedX);
       expectClose(point.y, expectedY);
     }

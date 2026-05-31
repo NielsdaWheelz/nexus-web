@@ -18,9 +18,10 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_db
+from nexus.api.query_params import parse_comma_list
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.media import (
@@ -238,9 +239,7 @@ async def create_captured_file(
 ) -> dict:
     library_ids_header = request.headers.get("x-nexus-library-ids", "")
     try:
-        library_ids: list[UUID] = [
-            UUID(s.strip()) for s in library_ids_header.split(",") if s.strip()
-        ]
+        library_ids = [UUID(value) for value in parse_comma_list(library_ids_header) or []]
     except ValueError as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "invalid x-nexus-library-ids header"
@@ -394,7 +393,15 @@ def put_listening_state(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Upsert per-media listening state for the authenticated viewer."""
-    media_service.upsert_listening_state_for_viewer(db, viewer.user_id, media_id, body)
+    media_service.upsert_listening_state_for_viewer(
+        db,
+        viewer.user_id,
+        media_id,
+        position_ms=body.position_ms,
+        duration_ms=body.duration_ms,
+        playback_speed=body.playback_speed,
+        is_completed=body.is_completed,
+    )
     return Response(status_code=204)
 
 
@@ -405,7 +412,12 @@ def post_listening_state_batch(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Batch mark many visible podcast episodes played/unplayed."""
-    media_service.batch_mark_listening_state_for_viewer(db, viewer.user_id, body)
+    media_service.batch_mark_listening_state_for_viewer(
+        db,
+        viewer.user_id,
+        media_ids=body.media_ids,
+        is_completed=body.is_completed,
+    )
     return Response(status_code=204)
 
 

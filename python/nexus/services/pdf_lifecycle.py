@@ -6,7 +6,6 @@ function here. Mirrors the EPUB lifecycle split.
 """
 
 import logging
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -28,15 +27,14 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
+from nexus.services.file_ingest_validation import validate_file_source_integrity
+from nexus.services.media_processing_state import begin_extraction, mark_failed
 from nexus.services.pdf_ingest import (
     delete_pdf_text_artifacts,
     invalidate_pdf_quote_match_metadata,
 )
 from nexus.services.upload import (
     confirm_ingest as _base_confirm_ingest,
-)
-from nexus.services.upload import (
-    validate_source_integrity,
 )
 from nexus.storage.client import get_storage_client
 
@@ -111,28 +109,19 @@ def confirm_pdf_ingest(
 
     media_file = media.media_file
     if not media_file:
-        _mark_pdf_failed(
+        mark_failed(
             db,
             media,
-            "upload",
-            ApiErrorCode.E_STORAGE_MISSING.value,
-            "No media file record",
+            stage="upload",
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+            error_message="No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
         )
 
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = now
-    db.flush()
+    begin_extraction(db, media)
 
     try:
         enqueue_job(
@@ -241,16 +230,7 @@ def _retry_pdf_embedding_only(
     request_id: str | None = None,
 ) -> dict:
     """Embedding/search-only retry. Does NOT rewrite text artifacts."""
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = now
-    db.flush()
+    begin_extraction(db, media)
 
     try:
         enqueue_job(
@@ -294,7 +274,7 @@ def _retry_pdf_text_rebuild(
         )
 
     storage_client = get_storage_client()
-    validate_source_integrity(
+    validate_file_source_integrity(
         storage_client,
         media_file,
         media.kind,
@@ -304,16 +284,7 @@ def _retry_pdf_text_rebuild(
     invalidate_pdf_quote_match_metadata(db, media.id)
     delete_pdf_text_artifacts(db, media.id)
 
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = now
-    db.flush()
+    begin_extraction(db, media)
 
     try:
         enqueue_job(
@@ -339,20 +310,3 @@ def _retry_pdf_text_rebuild(
         "processing_status": "extracting",
         "retry_enqueued": True,
     }
-
-
-def _mark_pdf_failed(
-    db: Session,
-    media: Media,
-    stage: str,
-    error_code: str,
-    error_message: str,
-) -> None:
-    now = datetime.now(UTC)
-    media.processing_status = ProcessingStatus.failed
-    media.failure_stage = FailureStage(stage)
-    media.last_error_code = error_code
-    media.last_error_message = error_message
-    media.failed_at = now
-    media.updated_at = now
-    db.commit()

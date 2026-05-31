@@ -133,7 +133,20 @@ class UpdatePageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class PageDocumentBlockRequest(BaseModel):
+class _NoteBodyPmJsonValidated(BaseModel):
+    """Mixin attaching the shared `body_pm_json` ProseMirror validator.
+
+    `validate_note_body_pm_json` is defined below; the wrapper only calls it at
+    validation time, so the forward reference resolves fine.
+    """
+
+    @field_validator("body_pm_json", check_fields=False)
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_note_body_pm_json(value)
+
+
+class PageDocumentBlockRequest(_NoteBodyPmJsonValidated):
     id: UUID
     parent_block_id: UUID | None = Field(
         ...,
@@ -169,11 +182,6 @@ class PageDocumentBlockRequest(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_note_body_pm_json(value)
 
     @model_validator(mode="after")
     def validate_position(self) -> "PageDocumentBlockRequest":
@@ -407,7 +415,7 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
             raise ValueError(f"{path} may contain only nested outline_block nodes after paragraph")
 
 
-class CreateNoteBlockRequest(BaseModel):
+class CreateNoteBlockRequest(_NoteBodyPmJsonValidated):
     id: UUID | None = None
     page_id: UUID | None = None
     parent_block_id: UUID | None = None
@@ -420,24 +428,14 @@ class CreateNoteBlockRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    @field_validator("body_pm_json")
-    @classmethod
-    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_note_body_pm_json(value)
 
-
-class UpdateNoteBlockRequest(BaseModel):
+class UpdateNoteBlockRequest(_NoteBodyPmJsonValidated):
     block_kind: NOTE_BLOCK_KINDS | None = None
     body_pm_json: dict[str, Any] | None = None
     collapsed: bool | None = None
     base_revision: int = Field(..., ge=1)
 
     model_config = ConfigDict(extra="forbid")
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_note_body_pm_json(value)
 
 
 class DeleteNoteBlockRequest(BaseModel):
@@ -460,16 +458,11 @@ class SplitNoteBlockRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class QuickCaptureRequest(BaseModel):
+class QuickCaptureRequest(_NoteBodyPmJsonValidated):
     body_pm_json: dict[str, Any] | None = None
     body_markdown: str | None = None
 
     model_config = ConfigDict(extra="forbid")
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_note_body_pm_json(value)
 
     @model_validator(mode="after")
     def require_body(self) -> "QuickCaptureRequest":

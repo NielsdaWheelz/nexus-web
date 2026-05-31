@@ -2,7 +2,10 @@
 
 from nexus.db.models import MediaKind
 from nexus.schemas.media import PlaybackSourceOut
-from nexus.services.youtube_identity import build_youtube_identity, classify_youtube_url
+from nexus.services.youtube_identity import (
+    classify_youtube_provider_video_id,
+    classify_youtube_url,
+)
 
 
 def derive_playback_source(
@@ -41,7 +44,9 @@ def derive_playback_source(
     )
     provider_video_id = provider_video_id or None
     youtube_identity = (
-        build_youtube_identity(provider_video_id) if provider_video_id is not None else None
+        classify_youtube_provider_video_id(provider_video_id)
+        if provider_video_id is not None
+        else None
     )
     if youtube_identity is None:
         for candidate in (stream_url, source_url, canonical_source_url):

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/player/subscriptionPlaybackSpeed";
 import {
   areAudioEffectsActive,
+  normalizeVolumeBoostLevel,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
 import Image from "next/image";
@@ -73,7 +75,7 @@ function EffectsPanel({
           disabled={!audioEffectsAvailable}
           onChange={(event) => {
             setAudioEffects({
-              volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+              volumeBoost: normalizeVolumeBoostLevel(event.currentTarget.value),
             });
           }}
           className={styles.select}
@@ -226,6 +228,7 @@ export default function GlobalPlayerFooter() {
   const bufferedPercent =
     durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
   const seekSliderValue = durationSafe > 0 ? Math.min(durationSafe, currentSafe) : 0;
+  const artworkSrc = track.image_url ? buildMediaImageProxySrc(track.image_url) : null;
   const seekTrackStyle = {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
@@ -271,9 +274,9 @@ export default function GlobalPlayerFooter() {
               onClick={() => setMobileExpanded(true)}
               aria-label="Expand player"
             >
-              {track.image_url ? (
+              {artworkSrc ? (
                 <Image
-                  src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                  src={artworkSrc}
                   alt=""
                   width={40}
                   height={40}
@@ -329,9 +332,9 @@ export default function GlobalPlayerFooter() {
                   Close
                 </Button>
 
-                {track.image_url ? (
+                {artworkSrc ? (
                   <Image
-                    src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                    src={artworkSrc}
                     alt={track.title}
                     width={240}
                     height={240}
@@ -498,9 +501,9 @@ export default function GlobalPlayerFooter() {
         <>
           {/* Desktop: full footer layout */}
           <div className={styles.metaRow}>
-            {track.image_url && (
+            {artworkSrc && (
               <Image
-                src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                src={artworkSrc}
                 alt=""
                 width={32}
                 height={32}

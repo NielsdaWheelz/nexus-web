@@ -466,6 +466,87 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("mutating one secondary leaves every sibling primary and secondary width unchanged", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneAId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-2" });
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+    });
+    const paneBId = primaryPanes(workspace().state).find(
+      (pane) => pane.href === "/media/media-2",
+    )!.id;
+
+    // Give each pane a distinct primary width and an attached reader-tools secondary.
+    act(() => {
+      workspace().resizePrimaryPane(paneAId, 820);
+      workspace().resizePrimaryPane(paneBId, 760);
+      workspace().requestSecondarySurface(paneAId, "reader-highlights");
+      workspace().requestSecondarySurface(paneBId, "reader-highlights");
+    });
+
+    let paneBSecondaryId = "";
+    await waitFor(() => {
+      const paneB = primaryPanes(workspace().state).find((pane) => pane.id === paneBId)!;
+      expect(paneB.attachedSecondaryPaneId).not.toBeNull();
+      paneBSecondaryId = paneB.attachedSecondaryPaneId!;
+    });
+
+    act(() => {
+      workspace().resizeSecondaryPane(paneBSecondaryId, 500);
+    });
+    await waitFor(() => {
+      expect(workspace().state.secondaryPanesById[paneBSecondaryId]?.widthPx).toBe(500);
+    });
+
+    // Snapshot the sibling (pane B) before touching pane A's secondary.
+    const paneBPrimaryWidthBefore = primaryPanes(workspace().state).find(
+      (pane) => pane.id === paneBId,
+    )!.primaryWidthPx;
+    const paneBSecondaryBefore =
+      workspace().state.secondaryPanesById[paneBSecondaryId];
+    const paneASecondaryId = primaryPanes(workspace().state).find(
+      (pane) => pane.id === paneAId,
+    )!.attachedSecondaryPaneId!;
+
+    // Resize, switch, and collapse pane A's secondary.
+    act(() => {
+      workspace().resizeSecondaryPane(paneASecondaryId, 680);
+      workspace().setSecondarySurface(paneASecondaryId, "reader-doc-chat");
+      workspace().closeSecondaryPane(paneASecondaryId);
+    });
+
+    await waitFor(() => {
+      expect(
+        workspace().state.secondaryPanesById[paneASecondaryId],
+      ).toMatchObject({
+        activeSurfaceId: "reader-doc-chat",
+        widthPx: 680,
+        visibility: "collapsed",
+      });
+    });
+
+    // Pane A's own primary width is untouched by its secondary operations.
+    expect(
+      primaryPanes(workspace().state).find((pane) => pane.id === paneAId)!
+        .primaryWidthPx,
+    ).toBe(820);
+
+    // The sibling pane B and its secondary are completely unchanged.
+    const paneBAfter = primaryPanes(workspace().state).find(
+      (pane) => pane.id === paneBId,
+    )!;
+    expect(paneBAfter.primaryWidthPx).toBe(paneBPrimaryWidthBefore);
+    expect(paneBAfter.attachedSecondaryPaneId).toBe(paneBSecondaryId);
+    expect(workspace().state.secondaryPanesById[paneBSecondaryId]).toEqual(
+      paneBSecondaryBefore,
+    );
+    flushWorkspaceSession();
+  });
+
   it("drops incompatible secondarys across resource navigation", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
     const paneId = workspace().state.activePrimaryPaneId;

@@ -23,7 +23,7 @@ export function toForkOption(node: ConversationForkNode): ForkOption {
   return fork;
 }
 
-export interface ForkNodeRowProps {
+interface ForkNodeRowProps {
   node: ConversationForkNode;
   depth: number;
   parentId?: string | null;

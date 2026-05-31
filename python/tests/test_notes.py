@@ -17,9 +17,7 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
     CreateNoteBlockRequest,
-    CreateObjectLinkRequest,
     CreatePageRequest,
-    CreatePinnedObjectRefRequest,
     LinkedObjectRequest,
     MoveNoteBlockRequest,
     ObjectRef,
@@ -27,7 +25,6 @@ from nexus.schemas.notes import (
     QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
-    UpdateObjectLinkRequest,
     UpdatePageRequest,
 )
 from nexus.services import notes, object_links, object_refs
@@ -655,14 +652,16 @@ def test_pinned_object_refs_hydrate_and_order_navigation_items(db_session, boots
     page_pin = object_refs.pin_object_ref(
         db_session,
         bootstrapped_user,
-        CreatePinnedObjectRefRequest(object_type="page", object_id=page.id, order_key="0000000002"),
+        object_refs.PinObjectRefInput(
+            object_ref=ObjectRef(object_type="page", object_id=page.id),
+            order_key="0000000002",
+        ),
     )
     block_pin = object_refs.pin_object_ref(
         db_session,
         bootstrapped_user,
-        CreatePinnedObjectRefRequest(
-            object_type="note_block",
-            object_id=block.id,
+        object_refs.PinObjectRefInput(
+            object_ref=ObjectRef(object_type="note_block", object_id=block.id),
             order_key="0000000001",
         ),
     )
@@ -692,12 +691,14 @@ def test_deleting_pinned_page_removes_page_and_note_block_pins(db_session, boots
     page_pin = object_refs.pin_object_ref(
         db_session,
         bootstrapped_user,
-        CreatePinnedObjectRefRequest(object_type="page", object_id=page.id),
+        object_refs.PinObjectRefInput(object_ref=ObjectRef(object_type="page", object_id=page.id)),
     )
     block_pin = object_refs.pin_object_ref(
         db_session,
         bootstrapped_user,
-        CreatePinnedObjectRefRequest(object_type="note_block", object_id=block.id),
+        object_refs.PinObjectRefInput(
+            object_ref=ObjectRef(object_type="note_block", object_id=block.id)
+        ),
     )
 
     notes.delete_page(db_session, bootstrapped_user, page.id)
@@ -896,12 +897,10 @@ def test_object_links_reject_duplicate_non_located_links(db_session, bootstrappe
         bootstrapped_user,
         CreateNoteBlockRequest(page_id=page.id, body_markdown="linked block"),
     )
-    request = CreateObjectLinkRequest(
+    request = object_links.CreateObjectLinkInput(
         relation_type="related",
-        a_type="page",
-        a_id=page.id,
-        b_type="note_block",
-        b_id=block.id,
+        a=ObjectRef(object_type="page", object_id=page.id),
+        b=ObjectRef(object_type="note_block", object_id=block.id),
     )
 
     object_links.create_object_link(db_session, bootstrapped_user, request)
@@ -909,24 +908,20 @@ def test_object_links_reject_duplicate_non_located_links(db_session, bootstrappe
         object_links.create_object_link(db_session, bootstrapped_user, request)
 
     assert duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST
-    reverse = CreateObjectLinkRequest(
+    reverse = object_links.CreateObjectLinkInput(
         relation_type="related",
-        a_type="note_block",
-        a_id=block.id,
-        b_type="page",
-        b_id=page.id,
+        a=ObjectRef(object_type="note_block", object_id=block.id),
+        b=ObjectRef(object_type="page", object_id=page.id),
     )
     with pytest.raises(ApiError) as reverse_duplicate:
         object_links.create_object_link(db_session, bootstrapped_user, reverse)
 
     assert reverse_duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST
 
-    located = CreateObjectLinkRequest(
+    located = object_links.CreateObjectLinkInput(
         relation_type="related",
-        a_type="page",
-        a_id=page.id,
-        b_type="note_block",
-        b_id=block.id,
+        a=ObjectRef(object_type="page", object_id=page.id),
+        b=ObjectRef(object_type="note_block", object_id=block.id),
         a_locator={"section": "intro"},
         b_locator={"offset": 12},
     )
@@ -939,12 +934,10 @@ def test_object_links_reject_duplicate_non_located_links(db_session, bootstrappe
     references = object_links.create_object_link(
         db_session,
         bootstrapped_user,
-        CreateObjectLinkRequest(
+        object_links.CreateObjectLinkInput(
             relation_type="references",
-            a_type="page",
-            a_id=page.id,
-            b_type="note_block",
-            b_id=block.id,
+            a=ObjectRef(object_type="page", object_id=page.id),
+            b=ObjectRef(object_type="note_block", object_id=block.id),
         ),
     )
     with pytest.raises(ApiError) as update_duplicate:
@@ -952,7 +945,7 @@ def test_object_links_reject_duplicate_non_located_links(db_session, bootstrappe
             db_session,
             bootstrapped_user,
             references.id,
-            UpdateObjectLinkRequest(relation_type="related"),
+            object_links.UpdateObjectLinkPatch(relation_type="related"),
         )
 
     assert update_duplicate.value.code == ApiErrorCode.E_INVALID_REQUEST

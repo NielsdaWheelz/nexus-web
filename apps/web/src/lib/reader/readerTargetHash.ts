@@ -38,10 +38,3 @@ export function parseReaderTargetHash(
   }
   return { kind: kind as ReaderTargetKind, value };
 }
-
-export function buildReaderTargetHash(target: {
-  kind: ReaderTargetKind;
-  value: string;
-}): string {
-  return `#${target.kind}-${target.value}`;
-}

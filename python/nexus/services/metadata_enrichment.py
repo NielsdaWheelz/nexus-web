@@ -536,7 +536,7 @@ def merge_enrichment(
 def select_enrichment_providers(
     settings: Settings,
 ) -> list[tuple[str, str, str]]:
-    """Return available providers in reliability-first fallback order."""
+    """Return available providers in reliability-first failover order."""
     if not settings.metadata_enrichment_enabled:
         return []
 
@@ -566,14 +566,3 @@ def select_enrichment_providers(
         for provider, model, api_key, enabled in candidates
         if enabled and api_key
     ]
-
-
-def select_enrichment_provider(
-    settings: Settings,
-) -> tuple[str, str, str] | None:
-    """Return the first configured provider for legacy callers/tests."""
-    providers = select_enrichment_providers(settings)
-    if providers:
-        return providers[0]
-
-    return None

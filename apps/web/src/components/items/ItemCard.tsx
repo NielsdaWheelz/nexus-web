@@ -2,6 +2,7 @@
 
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import Disclosure from "@/components/ui/Disclosure";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { cx } from "@/lib/ui/cx";
@@ -10,10 +11,12 @@ import styles from "./ItemCard.module.css";
 type ItemCardContent =
   | {
       kind: "highlight";
-      prefix?: string | null;
-      exact: string;
-      suffix?: string | null;
-      color: HighlightColor;
+      snippet: {
+        prefix?: string | null;
+        exact: string;
+        suffix?: string | null;
+        color: HighlightColor;
+      };
     }
   | { kind: "resource"; title: ReactNode; icon?: ReactNode };
 
@@ -30,6 +33,7 @@ interface ItemCardProps {
   actions?: ActionMenuOption[];
   note?: ReactNode;
   linkedItems?: ItemCardLinkedItem[];
+  linkedItemsSummary?: ReactNode;
   expanded?: boolean;
   selected?: boolean;
   onActivate?: () => void;
@@ -48,6 +52,7 @@ export default function ItemCard({
   actions,
   note,
   linkedItems,
+  linkedItemsSummary,
   expanded,
   selected,
   onActivate,
@@ -59,11 +64,32 @@ export default function ItemCard({
   highlightId,
   testId,
 }: ItemCardProps) {
+  const bodyContent =
+    content.kind === "highlight" ? (
+      <HighlightSnippet
+        prefix={content.snippet.prefix}
+        exact={content.snippet.exact}
+        suffix={content.snippet.suffix}
+        color={content.snippet.color}
+      />
+    ) : (
+      <>
+        {content.icon}
+        <span>{content.title}</span>
+      </>
+    );
+
   return (
     <div
       ref={rootRef}
       style={style}
-      className={cx(styles.card, selected && styles.selected, expanded && styles.expanded, className)}
+      className={cx(
+        styles.card,
+        selected && styles.selected,
+        expanded && styles.expanded,
+        className,
+      )}
+      data-content-kind={content.kind}
       data-highlight-id={highlightId}
       data-testid={testId}
       onMouseEnter={onMouseEnter}
@@ -80,40 +106,34 @@ export default function ItemCard({
       }}
     >
       <div className={styles.header}>
-        <button
-          type="button"
-          className={styles.body}
-          aria-pressed={selected}
-          onClick={onActivate}
-        >
-          {content.kind === "highlight" ? (
-            <HighlightSnippet
-              prefix={content.prefix}
-              exact={content.exact}
-              suffix={content.suffix}
-              color={content.color}
-            />
-          ) : (
-            <>
-              {content.icon}
-              <span>{content.title}</span>
-            </>
-          )}
-        </button>
+        {onActivate ? (
+          <button
+            type="button"
+            className={styles.body}
+            aria-pressed={selected}
+            onClick={onActivate}
+          >
+            {bodyContent}
+          </button>
+        ) : (
+          <div className={cx(styles.body, styles.staticBody)}>{bodyContent}</div>
+        )}
         {actions?.length ? <ActionMenu options={actions} /> : null}
       </div>
       {meta ? <div className={styles.meta}>{meta}</div> : null}
       {note ? <div className={styles.note}>{note}</div> : null}
       {linkedItems?.length ? (
-        <details className={styles.linked}>
-          <summary>{linkedItems.length} linked</summary>
+        <Disclosure
+          className={styles.linked}
+          summary={linkedItemsSummary ?? `${linkedItems.length} linked`}
+        >
           {linkedItems.map((item) => (
             <button key={item.id} type="button" onClick={item.onActivate}>
               {item.icon}
               <span>{item.label}</span>
             </button>
           ))}
-        </details>
+        </Disclosure>
       ) : null}
     </div>
   );

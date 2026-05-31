@@ -160,26 +160,6 @@ describe("buildPaletteView", () => {
     expect(view.results.filter((cmd) => cmd.id === "nav-library-exact")).toHaveLength(1);
   });
 
-  it("demotes disabled commands below enabled selectable commands", () => {
-    const view = buildPaletteView({
-      query: "delete",
-      commands: [
-        command({
-          id: "delete-library-disabled",
-          title: "Delete library",
-          disabled: { reason: "Only owners can delete libraries" },
-          danger: true,
-        }),
-        command({ id: "open-delete-settings", title: "Delete settings", sectionId: "settings" }),
-      ],
-      frecencyBoosts: new Map(),
-      currentWorkspaceHref: "/libraries",
-    });
-
-    if (view.state !== "querying") throw new Error("expected querying view");
-    expect(view.results[0].id).toBe("open-delete-settings");
-  });
-
   it("pins pin:last commands to the end of the querying list, preserving their order", () => {
     const view = buildPaletteView({
       query: "library",

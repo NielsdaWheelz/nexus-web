@@ -27,7 +27,7 @@ describe("retrieval locator contract", () => {
         media_id: "media-1",
         t_start_ms: 1,
         t_end_ms: 2,
-        text_quote_selector: { exact: "legacy quote" },
+        text_quote_selector: { exact: "unsupported quote" },
       }),
     ).toBe(false);
   });

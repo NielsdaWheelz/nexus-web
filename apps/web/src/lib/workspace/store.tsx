@@ -37,8 +37,9 @@ import {
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import {
   consumePendingPaneOpenQueue,
-  isOpenInAppPaneMessage,
   NEXUS_OPEN_PANE_EVENT,
+  parseOpenInAppPaneEvent,
+  parseOpenInAppPaneMessage,
   setPaneGraphReady,
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
@@ -1019,17 +1020,14 @@ export function WorkspaceStoreProvider({
     };
 
     const handleOpenPaneEvent = (event: Event) => {
-      const detail = (event as CustomEvent<OpenInAppPaneDetail>).detail;
-      if (detail?.href) handleOpenPaneDetail(detail);
+      const detail = parseOpenInAppPaneEvent(event);
+      if (detail) handleOpenPaneDetail(detail);
     };
 
     const handleWindowMessage = (event: MessageEvent<unknown>) => {
       if (event.origin !== window.location.origin) return;
-      if (!isOpenInAppPaneMessage(event.data)) return;
-      handleOpenPaneDetail({
-        href: event.data.href,
-        titleHint: event.data.titleHint,
-      });
+      const detail = parseOpenInAppPaneMessage(event.data);
+      if (detail) handleOpenPaneDetail(detail);
     };
 
     window.addEventListener(NEXUS_OPEN_PANE_EVENT, handleOpenPaneEvent);

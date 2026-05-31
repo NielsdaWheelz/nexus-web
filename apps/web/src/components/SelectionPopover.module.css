@@ -76,10 +76,6 @@
   cursor: pointer;
 }
 
-.mobilePopover .chatActions {
-  gap: var(--space-1);
-}
-
 .mobilePopover .chatButton {
   width: 42px;
   height: var(--size-sm);

@@ -41,6 +41,7 @@ def oracle_reading_generate(reading_id: str) -> dict:
         result = loop.run_until_complete(_call())
         logger.info("oracle_reading_completed", reading_id=reading_id, result=result)
         return result
+    # justify-ignore-error: worker boundary stores a safe terminal reading failure.
     except Exception:
         logger.exception("oracle_reading_failed_unexpected", reading_id=reading_id)
         result = fail_reading_after_worker_exception(db, reading_id=reading_uuid)

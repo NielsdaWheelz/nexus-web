@@ -91,6 +91,7 @@ export async function loadPdfJs(): Promise<PdfJsLike> {
     /* webpackIgnore: true */
     PDF_MODULE_URL
   );
+  // justify-type-assertion: the static asset is the vendored pdfjs module shape.
   return pdfJsModule as unknown as PdfJsLike;
 }
 
@@ -100,6 +101,7 @@ export async function loadPdfJsViewer(): Promise<PdfJsViewerLike> {
     /* webpackIgnore: true */
     PDF_VIEWER_MODULE_URL
   );
+  // justify-type-assertion: the static asset is the vendored pdfjs viewer module shape.
   return pdfViewerModule as unknown as PdfJsViewerLike;
 }
 

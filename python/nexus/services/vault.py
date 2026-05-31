@@ -303,21 +303,6 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
     return files
 
 
-def _sync_highlight_file(
-    db: Session,
-    viewer_id: UUID,
-    path: Path,
-    text_content: str,
-    metadata: dict[str, object],
-    body: str,
-) -> None:
-    changed, conflict_reason = _sync_highlight_content(db, viewer_id, metadata, body)
-    if conflict_reason is not None:
-        _write_conflict(path, text_content, conflict_reason)
-    elif changed and not str(metadata.get("highlight_handle") or "") and path.exists():
-        path.unlink()
-
-
 def _sync_highlight_content(
     db: Session,
     viewer_id: UUID,
@@ -557,23 +542,6 @@ def _create_fragment_highlight(
     return highlight
 
 
-def _sync_page_file(
-    db: Session,
-    viewer_id: UUID,
-    path: Path,
-    text_content: str,
-    metadata: dict[str, object],
-    body: str,
-) -> None:
-    changed, conflict_reason = _sync_page_content(
-        db, viewer_id, metadata, body, fallback_title=path.stem
-    )
-    if conflict_reason is not None:
-        _write_conflict(path, text_content, conflict_reason)
-    elif changed and not str(metadata.get("page_handle") or "") and path.exists():
-        path.unlink()
-
-
 def _sync_page_content(
     db: Session,
     viewer_id: UUID,
@@ -664,23 +632,11 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
     return [dict(row) for row in rows]
 
 
-def _write_highlight_file(db: Session, vault_dir: Path, highlight: Highlight) -> None:
-    path, content = _highlight_file(db, highlight)
-    _write_text(vault_dir / path, content)
-
-
 def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
     body = _highlight_note_body(db, highlight)
     metadata["last_synced_sha256"] = _highlight_hash(metadata, body)
     return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
-
-
-def _write_page_file(db: Session, vault_dir: Path, page: Page) -> None:
-    path, content = _page_file(db, page)
-    target = vault_dir / path
-    _remove_old_handle_files(target.parent, target.name, _page_handle(page.id))
-    _write_text(target, content)
 
 
 def _page_file(db: Session, page: Page) -> tuple[str, str]:
@@ -1309,11 +1265,6 @@ def _write_frontmatter(metadata: dict[str, object], body: str) -> str:
             lines.append(f"{key}: {json.dumps(str(value))}")
     lines.extend(["---", body.rstrip(), ""])
     return "\n".join(lines)
-
-
-def _write_conflict(path: Path, text_content: str, reason: str) -> None:
-    conflict_path = path.with_name(path.name.removesuffix(".md") + ".conflict.md")
-    _write_text(conflict_path, _conflict_markdown(text_content, reason))
 
 
 def _editable_vault_path(raw_path: str) -> str:

@@ -240,7 +240,9 @@ def estimate_reasoning_reserve(provider: str, reasoning: str) -> int:
 
     if provider != "openai":
         return 0
-    return REASONING_TOKEN_RESERVE.get(reasoning, 0)
+    if reasoning not in REASONING_TOKEN_RESERVE:
+        raise ValueError(f"Unknown OpenAI reasoning mode: {reasoning}")
+    return REASONING_TOKEN_RESERVE[reasoning]
 
 
 def build_prompt_budget(

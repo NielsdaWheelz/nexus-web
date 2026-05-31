@@ -1,9 +1,9 @@
 """Conversation references: pointer rows from a conversation to a resource URI.
 
-One table, one URI per row, dispatched by scheme. This service mirrors the
-shape of :mod:`nexus.services.pinned_sources` (its predecessor) and uses the
-resolver layer in :mod:`nexus.services.resource_resolver` to hydrate rows
-with label/summary/inline_body for API and prompt-assembly consumers.
+One table, one URI per row, dispatched by scheme. This service keeps pointer
+writes separate from resolver hydration, using
+:mod:`nexus.services.resource_resolver` to hydrate rows with
+label/summary/inline_body for API and prompt-assembly consumers.
 
 Owner-only access for list/add/remove. ``insert_reference_if_absent`` is the
 citation-pipeline write-through; it does the SELECT-then-INSERT step without
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -28,23 +27,24 @@ from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import Conversation, ConversationReference
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.conversation import ConversationOut, PageInfo
-from nexus.services.resource_resolver import ResolvedResource, resolve, resolve_batch
+from nexus.services.resource_resolver import (
+    RESOURCE_URI_SCHEMES,
+    ResolvedResource,
+    ResourceUriParseFailure,
+    parse_resource_uri,
+    resolve,
+    resolve_batch,
+)
 
-# Pagination defaults mirror `nexus.services.conversations`. Kept local because
-# importing that module during the cutover would pull in references to types
-# the migration has already dropped.
+# Pagination defaults mirror `nexus.services.conversations`. Kept local so this
+# service does not depend on conversation list internals.
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
 _MAX_LIMIT = 100
 
+
 # Allowed URI grammar: <scheme>:<UUID>. Scheme list mirrors the resolver's
 # dispatch table; UUID format is the canonical 8-4-4-4-12 lowercase hex form.
-_URI_PATTERN = re.compile(
-    r"^(media|library|span|chunk|highlight|page|note_block|fragment|conversation|message)"
-    r":[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
-
-
 @dataclass(frozen=True)
 class ResolvedResourceWithId:
     """A resolved resource plus its conversation_references row metadata."""
@@ -97,12 +97,12 @@ def _require_owner(db: Session, viewer_id: UUID, conversation_id: UUID) -> Conve
 
 
 def _validate_uri(resource_uri: str) -> None:
-    if not _URI_PATTERN.match(resource_uri):
+    parsed = parse_resource_uri(resource_uri)
+    if isinstance(parsed, ResourceUriParseFailure):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<UUID>' "
-            "where scheme is one of media, library, span, chunk, highlight, page, "
-            "note_block, fragment, conversation, message.",
+            f"where scheme is one of {', '.join(RESOURCE_URI_SCHEMES)}.",
         )
 
 
@@ -226,14 +226,14 @@ def list_references(
     return [_combine(row, res) for row, res in zip(rows, resolved, strict=True)]
 
 
-def add_reference(
+def add_reference_without_commit(
     db: Session, conversation_id: UUID, resource_uri: str, *, viewer_id: UUID
 ) -> ResolvedResourceWithId:
     """Add a reference to a conversation. Caller commits the transaction.
 
-    Letting the caller commit keeps the route layer free to batch reference
-    adds with a conversation create (or with other reference adds) in a single
-    atomic transaction.
+    Letting the caller commit keeps higher-level services free to batch
+    reference adds with conversation creation or other reference writes in a
+    single atomic transaction.
     """
     _require_owner(db, viewer_id, conversation_id)
     _validate_uri(resource_uri)
@@ -251,6 +251,20 @@ def add_reference(
         resource_uri=resource_uri,
     )
     return _combine(row, resolved)
+
+
+def add_reference(
+    db: Session, conversation_id: UUID, resource_uri: str, *, viewer_id: UUID
+) -> ResolvedResourceWithId:
+    """Add a reference to a conversation and commit the mutation."""
+    row = add_reference_without_commit(
+        db,
+        conversation_id=conversation_id,
+        resource_uri=resource_uri,
+        viewer_id=viewer_id,
+    )
+    db.commit()
+    return row
 
 
 def remove_reference(

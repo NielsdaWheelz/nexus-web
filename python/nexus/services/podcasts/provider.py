@@ -19,6 +19,7 @@ from nexus.errors import (
     ApiErrorCode,
 )
 from nexus.logging import get_logger
+from nexus.retry_after import parse_retry_after_seconds
 
 from ._normalize import normalize_provider_published_at
 
@@ -59,14 +60,12 @@ class PodcastIndexClient:
     ) -> float:
         # Respect Retry-After when provider rate-limits requests.
         if response is not None and response.status_code == 429:
-            retry_after = str(response.headers.get("Retry-After") or "").strip()
-            if retry_after:
-                try:
-                    retry_after_seconds = float(retry_after)
-                    if retry_after_seconds > 0:
-                        return min(retry_after_seconds, 10.0)
-                except ValueError:
-                    pass
+            retry_after_seconds = parse_retry_after_seconds(
+                response.headers.get("Retry-After"),
+                cap_seconds=10.0,
+            )
+            if retry_after_seconds is not None:
+                return retry_after_seconds
         return PODCAST_PROVIDER_BACKOFF_SECONDS[
             min(attempt_index, len(PODCAST_PROVIDER_BACKOFF_SECONDS) - 1)
         ]

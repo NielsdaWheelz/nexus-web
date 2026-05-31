@@ -2,7 +2,6 @@ export interface ContributorCredit {
   id?: string | null;
   contributor_handle: string;
   contributor_display_name?: string | null;
-  display_name?: string | null;
   credited_name: string;
   role: string | null;
   raw_role?: string | null;

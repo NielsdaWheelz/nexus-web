@@ -7,7 +7,6 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from uuid import UUID
-from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -19,7 +18,6 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.schemas.library_intelligence import (
-    LibraryArtifactPromptContext,
     LibraryIntelligenceArtifactFreshnessOut,
     LibraryIntelligenceArtifactOut,
     LibraryIntelligenceBuildOut,
@@ -129,55 +127,6 @@ def refresh_library_intelligence(
         build_id=build["id"],
         status=cast(Any, build["status"]),
         idempotent=idempotent,
-    )
-
-
-def load_current_library_artifact_context(
-    db: Session,
-    viewer_id: UUID,
-    library_id: UUID,
-) -> LibraryArtifactPromptContext | None:
-    if not is_library_member(db, viewer_id, library_id):
-        return None
-
-    source_set = _find_current_source_set(db, library_id)
-    if source_set is None:
-        return None
-
-    active = _load_active_artifact(db, library_id)
-    if active is None or active["status"] != "active":
-        return None
-    if active["source_set_version_id"] != source_set["id"]:
-        return None
-    if active["prompt_version"] != source_set["prompt_version"]:
-        return None
-
-    sections = _sections_for_version(db, active["id"])
-    if not sections:
-        return None
-
-    lines = [
-        (
-            f'<library_intelligence version_id="{active["id"]}" '
-            f'library_id="{library_id}" source_set_hash="{xml_escape(str(source_set["source_set_hash"]))}">'
-        )
-    ]
-    for section in sections:
-        lines.append(
-            f'<section kind="{xml_escape(section.section_kind)}" title="{xml_escape(section.title)}">'
-        )
-        lines.append(xml_escape(section.body))
-        lines.append("</section>")
-    lines.append("</library_intelligence>")
-
-    return LibraryArtifactPromptContext(
-        version_id=active["id"],
-        library_id=library_id,
-        source_set_version_id=source_set["id"],
-        source_set_hash=str(source_set["source_set_hash"]),
-        prompt_version=str(source_set["prompt_version"]),
-        schema_version=str(source_set["schema_version"]),
-        text="\n".join(lines),
     )
 
 
@@ -369,35 +318,6 @@ def _ensure_current_source_set(db: Session, library_id: UUID) -> Mapping[str, An
             )
             assert result.rowcount == 1  # justify-service-invariant-check: one source item insert.
         return source_set
-
-
-def _find_current_source_set(db: Session, library_id: UUID) -> Mapping[str, Any] | None:
-    inventory = _load_inventory(db, library_id)
-    if not inventory:
-        return _latest_source_set(db, library_id)
-
-    return (
-        db.execute(
-            text(
-                """
-            SELECT *
-            FROM library_source_set_versions
-            WHERE library_id = :library_id
-              AND source_set_hash = :source_set_hash
-              AND prompt_version = :prompt_version
-              AND schema_version = :schema_version
-            """
-            ),
-            {
-                "library_id": library_id,
-                "source_set_hash": _source_set_hash(inventory),
-                "prompt_version": PROMPT_VERSION,
-                "schema_version": SCHEMA_VERSION,
-            },
-        )
-        .mappings()
-        .first()
-    )
 
 
 def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:

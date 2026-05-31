@@ -1,4 +1,4 @@
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -26,34 +26,27 @@ def test_podcast_transcribe_episode_task_rejects_invalid_media_id(monkeypatch):
     assert called["value"] is False
 
 
-def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(monkeypatch):
-    captured = {"requested_by_user_id": "sentinel"}
+def test_podcast_transcribe_episode_task_rejects_invalid_requested_by_user_id(
+    monkeypatch,
+):
+    called = {"session": False, "service": False}
 
-    class _FakeDb:
-        def close(self) -> None:
-            return None
+    def fail_session_factory() -> None:
+        called["session"] = True
+        raise AssertionError("session should not open for invalid requester id")
 
-    def fake_session_factory():
-        return lambda: _FakeDb()
-
-    def fake_run(
-        db: object,
-        *,
-        media_id: UUID,
-        requested_by_user_id: UUID | None,
-        request_id: str | None,
-    ) -> dict[str, object]:
-        _ = db, media_id, request_id
-        captured["requested_by_user_id"] = requested_by_user_id
-        return {"status": "completed", "segment_count": 1}
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        called["service"] = True
+        raise AssertionError("service should not run for invalid requester id")
 
     monkeypatch.setattr(
         "nexus.tasks.podcast_transcribe_episode.get_session_factory",
-        fake_session_factory,
+        fail_session_factory,
     )
     monkeypatch.setattr(
         "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now",
-        fake_run,
+        fail_if_called,
     )
 
     result = podcast_transcribe_episode_job(
@@ -61,5 +54,5 @@ def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(mo
         requested_by_user_id="invalid-user-id",
     )
 
-    assert result["status"] == "completed"
-    assert captured["requested_by_user_id"] is None
+    assert result == {"status": "failed", "error_code": "E_INVALID_REQUEST"}
+    assert called == {"session": False, "service": False}

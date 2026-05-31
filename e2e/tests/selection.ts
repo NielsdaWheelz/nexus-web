@@ -271,57 +271,6 @@ export async function selectExactVisibleText(
   return dragSelection(page, candidate);
 }
 
-export async function selectTextFromElementStart(
-  page: Page,
-  selector: string,
-  index: number,
-  length: number,
-): Promise<string> {
-  const candidate = await page.evaluate(
-    ({ selector, index, length }) => {
-      const element = document.querySelectorAll(selector)[index];
-      if (!(element instanceof HTMLElement)) {
-        return null;
-      }
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      const firstText = walker.nextNode();
-      const textNode = firstText instanceof Text ? firstText : null;
-      if (!textNode || !textNode.textContent) {
-        return null;
-      }
-      const end = Math.max(2, Math.min(length, textNode.textContent.length));
-      const startRange = document.createRange();
-      startRange.setStart(textNode, 0);
-      startRange.setEnd(textNode, 1);
-      const startRect = startRange.getBoundingClientRect();
-      startRange.detach();
-      const endRange = document.createRange();
-      endRange.setStart(textNode, end - 1);
-      endRange.setEnd(textNode, end);
-      const endRect = endRange.getBoundingClientRect();
-      endRange.detach();
-      if (
-        startRect.width <= 0 ||
-        startRect.height <= 0 ||
-        endRect.width <= 0 ||
-        endRect.height <= 0
-      ) {
-        return null;
-      }
-      return {
-        text: textNode.textContent.slice(0, end).replace(/\s+/g, " ").trim(),
-        start: { x: startRect.left + 1, y: startRect.top + startRect.height / 2 },
-        end: { x: endRect.right - 1, y: endRect.top + endRect.height / 2 },
-      };
-    },
-    { selector, index, length },
-  );
-  if (!candidate) {
-    throw new Error(`Expected selectable text at ${selector}[${index}].`);
-  }
-  return dragSelection(page, candidate);
-}
-
 async function dragSelection(page: Page, candidate: SelectionCandidate): Promise<string> {
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
   await page.mouse.move(candidate.start.x, candidate.start.y);

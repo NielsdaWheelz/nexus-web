@@ -33,6 +33,16 @@ def test_build_prompt_budget_reserves_output_and_reasoning_tokens():
     assert budget.input_budget_tokens == 4904
 
 
+def test_build_prompt_budget_rejects_unknown_openai_reasoning():
+    with pytest.raises(ValueError, match="Unknown OpenAI reasoning mode"):
+        build_prompt_budget(
+            max_context_tokens=10000,
+            max_output_tokens=1000,
+            provider="openai",
+            reasoning="xhigh",
+        )
+
+
 def test_allocate_budget_drops_optional_items_by_lane_budget():
     budget = build_prompt_budget(
         max_context_tokens=240,

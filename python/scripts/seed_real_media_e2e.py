@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 from typing import NotRequired, TypedDict
@@ -21,6 +20,7 @@ import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from supabase_auth_config import load_supabase_auth_config
 
 from nexus.app import create_app
 from nexus.config import get_settings
@@ -42,39 +42,6 @@ ROOT = Path(__file__).parents[2]
 SEED_PATH = ROOT / "e2e" / ".seed" / "real-media.json"
 E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "e2e-test@nexus.local")
 NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
-
-
-def _load_supabase_auth_config() -> tuple[str, str]:
-    supabase_url = os.environ.get("SUPABASE_URL")
-    admin_key = os.environ.get("SUPABASE_AUTH_ADMIN_KEY")
-
-    if supabase_url and admin_key:
-        return supabase_url, admin_key
-
-    try:
-        raw_status = subprocess.check_output(
-            ["supabase", "status", "--output", "json"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        status = json.loads(
-            "\n".join(
-                line
-                for line in raw_status.splitlines()
-                if line.strip() and not line.startswith("Stopped services:")
-            )
-        )
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        status = {}
-
-    supabase_url = supabase_url or status.get("API_URL") or "http://127.0.0.1:54321"
-    admin_key = admin_key or status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
-    if not supabase_url or not admin_key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_AUTH_ADMIN_KEY must be set, "
-            "or local Supabase CLI status must be available."
-        )
-    return str(supabase_url), str(admin_key)
 
 
 class ExpectedSeedFixture(TypedDict):
@@ -167,7 +134,7 @@ def main() -> None:
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set for make seed-real-media-e2e.")
 
-    supabase_url, supabase_auth_admin_key = _load_supabase_auth_config()
+    supabase_url, supabase_auth_admin_key = load_supabase_auth_config()
     for key in (
         "SUPABASE_AUTH_ADMIN_KEY",
         "SUPABASE_SERVICE_KEY",

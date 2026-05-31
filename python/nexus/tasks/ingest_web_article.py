@@ -7,7 +7,7 @@ This task:
 4. Sanitizes HTML and generates canonical text
 5. Persists fragment and transitions to ready_for_reading
 
-Per s2_pr04.md spec:
+Current web-article ingest contract:
 - Task is idempotent - exits early if already ready_for_reading with fragment
 - Uses actor_user_id for dedup library attachment
 - max_retries=0 (manual retry only via API)
@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import FailureStage, Fragment, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
     mark_content_index_failed,
@@ -36,6 +35,7 @@ from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_structure import prepare_web_article_fragment
+from nexus.tasks.enrich_metadata import dispatch_enrich_metadata
 
 logger = get_logger(__name__)
 
@@ -358,7 +358,7 @@ def _do_ingest(
             )
             db.commit()
 
-    _try_enrich_dispatch(str(media_id), request_id)
+    dispatch_enrich_metadata(str(media_id), request_id)
 
     return {
         "status": "success",
@@ -366,25 +366,6 @@ def _do_ingest(
         "title": ingest_result.title,
         "provider_fixture": ingest_result.provider_fixture,
     }
-
-
-def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
-    """Best-effort dispatch of metadata enrichment task."""
-    session_factory = get_session_factory()
-    db = session_factory()
-    try:
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload={"media_id": media_id, "request_id": request_id},
-            max_attempts=1,
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
-    finally:
-        db.close()
 
 
 def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
@@ -473,6 +454,12 @@ def _handle_duplicate(
 
     Critical: Attach winner BEFORE deleting loser to ensure actor doesn't lose access.
     """
+    from nexus.services.media_deletion import (
+        clear_user_media_deletion,
+        delete_document_storage_objects,
+        delete_duplicate_document_media,
+    )
+
     # Find winner
     result = db.execute(
         text("""
@@ -485,11 +472,9 @@ def _handle_duplicate(
     winner_row = result.fetchone()
 
     if not winner_row:
-        # No winner found (race condition - someone else deleted it?)
-        # Just delete the loser
-        db.execute(text("DELETE FROM user_media_deletions WHERE media_id = :id"), {"id": loser_id})
-        db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
+        storage_paths = delete_duplicate_document_media(db, loser_id)
         db.commit()
+        delete_document_storage_objects(storage_paths)
         return
 
     winner_id = winner_row[0]
@@ -509,15 +494,13 @@ def _handle_duplicate(
 
         # Use shared helper for intrinsic provenance (attach winner to default library)
         from nexus.services.default_library_closure import ensure_default_intrinsic
-        from nexus.services.media_deletion import clear_user_media_deletion
 
         ensure_default_intrinsic(db, library_id, winner_id)
         clear_user_media_deletion(db, actor_user_id, winner_id)
 
-    # Delete loser (cascades media library_entries)
-    db.execute(text("DELETE FROM user_media_deletions WHERE media_id = :id"), {"id": loser_id})
-    db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
+    storage_paths = delete_duplicate_document_media(db, loser_id)
     db.commit()
+    delete_document_storage_objects(storage_paths)
 
 
 def _mark_failed(

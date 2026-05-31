@@ -196,24 +196,32 @@ def _extract_error_message(stderr: bytes, stdout: bytes) -> str:
     The node script outputs JSON errors to stderr.
     Falls back to raw stderr/stdout if JSON parsing fails.
     """
-    # Try stderr first (where errors are written)
     if stderr:
-        try:
-            error_data = json.loads(stderr.decode("utf-8"))
-            if "error" in error_data:
-                return error_data["error"]
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-        # Return raw stderr, truncated
-        decoded = stderr.decode("utf-8", errors="replace")
-        return decoded[:500] if len(decoded) > 500 else decoded
+        structured_error = _decode_node_error(stderr)
+        if structured_error is not None:
+            return structured_error
+        return _decode_output_excerpt(stderr)
 
-    # Fall back to stdout
     if stdout:
-        decoded = stdout.decode("utf-8", errors="replace")
-        return decoded[:500] if len(decoded) > 500 else decoded
+        return _decode_output_excerpt(stdout)
 
     return ""
+
+
+def _decode_node_error(stderr: bytes) -> str | None:
+    try:
+        error_data = json.loads(stderr.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(error_data, dict):
+        return None
+    error = error_data.get("error")
+    return error if isinstance(error, str) else None
+
+
+def _decode_output_excerpt(output: bytes) -> str:
+    decoded = output.decode("utf-8", errors="replace")
+    return decoded[:500] if len(decoded) > 500 else decoded
 
 
 def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestResult | IngestError:

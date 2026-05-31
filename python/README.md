@@ -60,8 +60,8 @@ make test-back-unit
 make test-back-integration
 make test-migrations
 make test-supabase
-make test-network
-make test-real
+make test-real-media
+make test-live-providers
 ```
 
 `make test-back-unit` uses `pytest-xdist` for parallel unit execution; integration tests stay single-process.

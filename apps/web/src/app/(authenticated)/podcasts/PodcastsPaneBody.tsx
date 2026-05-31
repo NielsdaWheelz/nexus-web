@@ -2,12 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
-import {
-  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
-  formatPlaybackSpeedLabel,
-} from "@/lib/player/subscriptionPlaybackSpeed";
+import { formatPlaybackSpeedLabel } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
@@ -35,6 +33,7 @@ import {
   unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
+import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal";
 import {
   fetchNonDefaultLibraries,
   patchLibraryMembership,
@@ -531,7 +530,7 @@ export default function PodcastsPaneBody() {
                     icon={
                       row.podcast.image_url ? (
                         <Image
-                          src={`/api/media/image?url=${encodeURIComponent(row.podcast.image_url)}`}
+                          src={buildMediaImageProxySrc(row.podcast.image_url)}
                           alt=""
                           width={32}
                           height={32}
@@ -674,65 +673,7 @@ export default function PodcastsPaneBody() {
         }}
       />
 
-      {settingsRow ? (
-        <div className={styles.modalBackdrop} role="presentation" onClick={settingsModal.close}>
-          <div
-            className={styles.modalCard}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Podcast settings"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2 className={styles.modalTitle}>Podcast settings</h2>
-            <p className={styles.modalDescription}>{settingsRow.podcast.title}</p>
-            <label className={styles.settingsFieldLabel}>
-              Default playback speed
-              <Select
-                value={settingsModal.defaultSpeed}
-                onChange={(event) => settingsModal.setDefaultSpeed(event.target.value)}
-                aria-label="Default playback speed"
-              >
-                <option value="default">Use player default</option>
-                {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
-                  <option key={option} value={String(option)}>
-                    {formatPlaybackSpeedLabel(option)}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className={styles.settingsToggleLabel}>
-              <input
-                type="checkbox"
-                checked={settingsModal.autoQueue}
-                onChange={(event) => settingsModal.setAutoQueue(event.target.checked)}
-                aria-label="Automatically add new episodes to my queue"
-              />
-              Automatically add new episodes to my queue
-            </label>
-            {settingsModal.error ? <FeedbackNotice feedback={settingsModal.error} /> : null}
-            <div className={styles.modalActions}>
-              <Button
-                variant="primary"
-                size="md"
-                onClick={() => {
-                  void settingsModal.save();
-                }}
-                disabled={settingsModal.busy}
-              >
-                {settingsModal.busy ? "Saving..." : "Save subscription settings"}
-              </Button>
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={settingsModal.close}
-                disabled={settingsModal.busy}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <PodcastSubscriptionSettingsModal settingsRow={settingsRow} settingsModal={settingsModal} />
     </>
   );
 }

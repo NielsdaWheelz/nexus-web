@@ -11,7 +11,7 @@ import {
   type TranscriptCoverage,
   type TranscriptFragment,
   type TranscriptState,
-} from "./transcriptView";
+} from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
 interface TranscriptContentPanelProps {

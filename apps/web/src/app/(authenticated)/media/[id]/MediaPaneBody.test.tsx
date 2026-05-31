@@ -1,14 +1,40 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
+import {
+  PaneSecondaryContext,
+  type PaneSecondaryPublication,
+} from "@/components/workspace/PaneSecondary";
+import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   mediaKind: "pdf" as "pdf" | "web_article" | "epub",
+  includeToc: false,
+  isMobileViewport: false,
+  readerFocusMode: "off" as
+    | "off"
+    | "distraction_free"
+    | "paragraph"
+    | "sentence",
+  readerContextFns: {
+    save: vi.fn(),
+    updateTheme: vi.fn(),
+    updateFontFamily: vi.fn(),
+    updateFontSize: vi.fn(),
+    updateLineHeight: vi.fn(),
+    updateColumnWidth: vi.fn(),
+  },
+}));
+
+const paneShellMocks = vi.hoisted(() => ({
+  usePaneChromeOverride: vi.fn(),
+  usePaneMobileChromeController: vi.fn(() => null),
 }));
 
 vi.mock("@/lib/api/client", async () => {
@@ -24,7 +50,29 @@ vi.mock("@/lib/api/client", async () => {
 });
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => false,
+  useIsMobileViewport: () => testState.isMobileViewport,
+}));
+
+vi.mock("@/components/workspace/PaneShell", () => ({
+  ...paneShellMocks,
+}));
+
+vi.mock("@/lib/reader/ReaderContext", () => ({
+  useReaderContext: () => ({
+    profile: {
+      theme: "light",
+      font_family: "serif",
+      font_size_px: 16,
+      line_height: 1.5,
+      column_width_ch: 65,
+      focus_mode: testState.readerFocusMode,
+      hyphenation: "auto",
+    },
+    loading: false,
+    error: null,
+    saving: false,
+    ...testState.readerContextFns,
+  }),
 }));
 
 vi.mock("@/lib/player/globalPlayer", () => ({
@@ -111,6 +159,10 @@ vi.mock("@/components/reader/ReaderOverviewRuler", () => ({
 
 const OVERVIEW_RULER_WIDTH_PX = 28;
 
+type PaneChromeOverrides = {
+  toolbar?: ReactNode;
+};
+
 function jsonResponse(data: unknown) {
   return { data };
 }
@@ -153,42 +205,124 @@ function fragmentResponse() {
   ];
 }
 
-function renderMediaPane() {
+function navigationTocNodes() {
+  if (!testState.includeToc) {
+    return [];
+  }
+  return [
+    {
+      id: "toc-section-1",
+      label: "Section 1",
+      ordinal: 0,
+      href: testState.mediaKind === "epub" ? "chapter-1.xhtml#start" : null,
+      fragment_idx: 0,
+      level: 1,
+      depth: 0,
+      section_id: "section-1",
+      source_version: "source:v1",
+      children: [],
+    },
+  ];
+}
+
+function readerContentsSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
+  return {
+    id: "secondary-1",
+    parentPrimaryPaneId: "pane-1",
+    groupId: "reader-tools",
+    activeSurfaceId: "reader-contents",
+    widthPx: 360,
+    visibility: "visible",
+  };
+}
+
+function latestChromeOverrides(): PaneChromeOverrides | null {
+  const call = paneShellMocks.usePaneChromeOverride.mock.calls.at(-1);
+  return (call?.[0] as PaneChromeOverrides | undefined) ?? null;
+}
+
+async function renderLatestToolbar() {
+  let toolbar: ReactNode = null;
+  await waitFor(() => {
+    toolbar = latestChromeOverrides()?.toolbar ?? null;
+    expect(toolbar).not.toBeNull();
+  });
+  render(<>{toolbar}</>);
+}
+
+function latestSecondaryPublication(
+  onSetPaneSecondary: ReturnType<typeof vi.fn>,
+): PaneSecondaryPublication | null {
+  for (const [publication] of [...onSetPaneSecondary.mock.calls].reverse()) {
+    if (publication) {
+      return publication as PaneSecondaryPublication;
+    }
+  }
+  return null;
+}
+
+async function getContentsSurfaceBody(
+  onSetPaneSecondary: ReturnType<typeof vi.fn>,
+): Promise<ReactNode> {
+  let body: ReactNode = null;
+  await waitFor(() => {
+    const publication = latestSecondaryPublication(onSetPaneSecondary);
+    body =
+      publication?.surfaces.find((surface) => surface.id === "reader-contents")
+        ?.body ?? null;
+    expect(body).not.toBeNull();
+  });
+  return body;
+}
+
+function renderMediaPane(options: {
+  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+} = {}) {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
+  const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
+  const onCloseSecondaryPane = vi.fn();
   const onSetFixedChrome = vi.fn();
+  const onSetPaneSecondary = vi.fn();
 
   render(
     <FeedbackProvider>
-      <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
-        <PaneRuntimeProvider
-          paneId="pane-1"
-          href={href}
-          routeId={identity.routeId}
-          resourceRef={identity.resourceRef}
-          resourceKey={identity.resourceKey}
-          canGoBack={false}
-          canGoForward={false}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-          pathParams={{ id: "media-1" }}
-          onNavigatePane={vi.fn()}
-          onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
-          onSetPaneLayout={onSetPaneLayout}
-          onRequestSecondarySurface={onRequestSecondarySurface}
-        >
-          <MediaPaneBody />
-        </PaneRuntimeProvider>
-      </PaneFixedChromeContext.Provider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={href}
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        secondaryPane={options.secondaryPane ?? null}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ id: "media-1" }}
+        onNavigatePane={onNavigatePane}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneLayout={onSetPaneLayout}
+        onRequestSecondarySurface={onRequestSecondarySurface}
+        onCloseSecondaryPane={onCloseSecondaryPane}
+      >
+        <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
+          <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
+            <MediaPaneBody />
+          </PaneFixedChromeContext.Provider>
+        </PaneSecondaryContext.Provider>
+      </PaneRuntimeProvider>
     </FeedbackProvider>,
   );
 
   return {
     onSetPaneLayout,
+    onNavigatePane,
     onRequestSecondarySurface,
+    onCloseSecondaryPane,
+    onSetPaneSecondary,
     onSetFixedChrome,
     resourceKey: identity.resourceKey,
   };
@@ -197,6 +331,14 @@ function renderMediaPane() {
 describe("MediaPaneBody pane sizing", () => {
   beforeEach(() => {
     testState.apiFetch.mockReset();
+    testState.includeToc = false;
+    testState.isMobileViewport = false;
+    testState.readerFocusMode = "off";
+    paneShellMocks.usePaneChromeOverride.mockReset();
+    paneShellMocks.usePaneMobileChromeController.mockClear();
+    for (const fn of Object.values(testState.readerContextFns)) {
+      fn.mockReset();
+    }
     testState.apiFetch.mockImplementation(async (input: unknown) => {
       const path = pathOf(input);
       if (path === "/api/media/media-1") {
@@ -228,7 +370,7 @@ describe("MediaPaneBody pane sizing", () => {
               source_version: "source:v1",
             },
           ],
-          toc_nodes: [],
+          toc_nodes: navigationTocNodes(),
           landmarks: [],
           page_list: [],
         });
@@ -333,4 +475,105 @@ describe("MediaPaneBody pane sizing", () => {
       expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
     },
   );
+
+  it("publishes one-node web article contents independent of highlights", async () => {
+    testState.mediaKind = "web_article";
+    testState.includeToc = true;
+    testState.readerFocusMode = "paragraph";
+    const { onSetPaneSecondary } = renderMediaPane();
+
+    await waitFor(() => {
+      const publication = latestSecondaryPublication(onSetPaneSecondary);
+      expect(publication).toMatchObject({
+        groupId: "reader-tools",
+        defaultSurfaceId: "reader-contents",
+      });
+      expect(publication?.surfaces.map((surface) => surface.id)).toEqual([
+        "reader-contents",
+        "reader-doc-chat",
+      ]);
+    });
+  });
+
+  it.each(["epub", "web_article"] as const)(
+    "requests the Contents secondary from %s toolbar controls",
+    async (kind) => {
+      testState.mediaKind = kind;
+      testState.includeToc = true;
+      const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+      await getContentsSurfaceBody(onSetPaneSecondary);
+
+      await renderLatestToolbar();
+      const contentsButton = screen.getByRole("button", { name: "Contents" });
+      expect(contentsButton).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(contentsButton);
+
+      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "reader-contents",
+      );
+    },
+  );
+
+  it.each(["epub", "web_article"] as const)(
+    "closes the active Contents secondary from %s toolbar controls",
+    async (kind) => {
+      testState.mediaKind = kind;
+      testState.includeToc = true;
+      const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
+        secondaryPane: readerContentsSecondaryPane(),
+      });
+      await getContentsSurfaceBody(onSetPaneSecondary);
+
+      await renderLatestToolbar();
+      const contentsButton = screen.getByRole("button", { name: "Contents" });
+      expect(contentsButton).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(contentsButton);
+
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+    },
+  );
+
+  it("navigates from desktop Contents without closing the secondary pane", async () => {
+    testState.mediaKind = "web_article";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane, onNavigatePane, onSetPaneSecondary } =
+      renderMediaPane({
+        secondaryPane: readerContentsSecondaryPane(),
+      });
+    const body = await getContentsSurfaceBody(onSetPaneSecondary);
+    render(<>{body}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+
+    expect(onNavigatePane).toHaveBeenCalledWith(
+      "pane-1",
+      "/media/media-1?loc=section-1&fragment=fragment-1",
+      undefined,
+    );
+    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+  });
+
+  it("navigates from mobile Contents and closes the secondary sheet", async () => {
+    testState.mediaKind = "web_article";
+    testState.includeToc = true;
+    testState.isMobileViewport = true;
+    const { onCloseSecondaryPane, onNavigatePane, onSetPaneSecondary } =
+      renderMediaPane({
+        secondaryPane: readerContentsSecondaryPane(),
+      });
+    const body = await getContentsSurfaceBody(onSetPaneSecondary);
+    render(<>{body}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
+
+    expect(onNavigatePane).toHaveBeenCalledWith(
+      "pane-1",
+      "/media/media-1?loc=section-1&fragment=fragment-1",
+      undefined,
+    );
+    expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+  });
 });

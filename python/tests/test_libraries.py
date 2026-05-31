@@ -350,10 +350,10 @@ class TestDeleteLibrary:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
-    def test_delete_library_cascades_library_entries(
+    def test_delete_library_cleans_library_entries(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Deleting library cascades to library_entries."""
+        """Deleting a library explicitly cleans its library_entries."""
         user_id = create_test_user_id()
 
         # Create media first using direct_db
@@ -389,7 +389,7 @@ class TestDeleteLibrary:
         # Delete library
         auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
 
-        # Verify library_entries deleted (cascade)
+        # Verify library_entries were explicitly deleted.
         with direct_db.session() as session:
             result = session.execute(
                 text("SELECT 1 FROM library_entries WHERE library_id = :id"),

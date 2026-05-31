@@ -26,6 +26,7 @@ from nexus.services.default_library_closure import (
     BACKFILL_RETRY_DELAYS_SECONDS,
     claim_backfill_job_pending,
     get_backfill_backlog_health,
+    handle_backfill_job_failure,
     mark_backfill_job_completed,
     mark_backfill_job_failed,
     materialize_closure_for_source,
@@ -268,6 +269,77 @@ class TestBackfillJobStateMachine:
         ok = reset_backfill_job_to_pending_for_retry(db_session, dl_id, src_id, user_id)
         assert ok is False
         assert _get_job_status(db_session, dl_id, src_id, user_id) == "running"
+
+    def test_handle_failure_schedules_retry(self, db_session: Session, monkeypatch):
+        """Failure handling owns failed -> pending retry scheduling."""
+        user_id = create_test_user_id()
+        dl_id = _create_user(db_session, user_id)
+        src_id = _create_non_default_library(db_session, user_id)
+        _insert_backfill_job(db_session, dl_id, src_id, user_id, status="running")
+        dispatched: list[tuple[UUID, UUID, UUID, str | None, int | None]] = []
+
+        def fake_enqueue(
+            default_library_id: UUID,
+            source_library_id: UUID,
+            owner_id: UUID,
+            request_id: str | None = None,
+            countdown: int | None = None,
+        ) -> bool:
+            dispatched.append(
+                (default_library_id, source_library_id, owner_id, request_id, countdown)
+            )
+            return True
+
+        monkeypatch.setattr(
+            "nexus.services.default_library_closure.enqueue_backfill_task",
+            fake_enqueue,
+        )
+
+        result = handle_backfill_job_failure(
+            db_session,
+            dl_id,
+            src_id,
+            user_id,
+            "worker_error",
+            request_id="req-1",
+        )
+
+        assert result.status == "retry_scheduled"
+        assert result.attempts == 1
+        assert result.retry_delay_seconds == 60
+        assert result.enqueue_dispatched is True
+        assert dispatched == [(dl_id, src_id, user_id, "req-1", 60)]
+        assert _get_job_status(db_session, dl_id, src_id, user_id) == "pending"
+        assert _get_job_attempts(db_session, dl_id, src_id, user_id) == 1
+
+    def test_handle_failure_marks_terminal_after_max_attempts(self, db_session: Session):
+        """The fifth failure stays failed instead of scheduling another retry."""
+        user_id = create_test_user_id()
+        dl_id = _create_user(db_session, user_id)
+        src_id = _create_non_default_library(db_session, user_id)
+        _insert_backfill_job(
+            db_session,
+            dl_id,
+            src_id,
+            user_id,
+            status="running",
+            attempts=4,
+        )
+
+        result = handle_backfill_job_failure(
+            db_session,
+            dl_id,
+            src_id,
+            user_id,
+            "worker_error",
+        )
+
+        assert result.status == "terminal"
+        assert result.attempts == 5
+        assert result.retry_delay_seconds is None
+        assert result.enqueue_dispatched is False
+        assert _get_job_status(db_session, dl_id, src_id, user_id) == "failed"
+        assert _get_job_attempts(db_session, dl_id, src_id, user_id) == 5
 
 
 # =============================================================================

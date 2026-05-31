@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
+from nexus.llm_catalog import model_catalog_entry
 from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_runs import (
@@ -17,7 +18,6 @@ from nexus.services.chat_runs import (
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
-from nexus.services.models import get_model_catalog_metadata
 from tests.factories import create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -60,10 +60,10 @@ class _UnreadStreamErrorRouter:
 
 
 def test_openai_catalog_exposes_default_separate_from_none():
-    metadata = get_model_catalog_metadata("openai", "gpt-5.5")
+    metadata = model_catalog_entry("openai", "gpt-5.5")
 
     assert metadata is not None
-    assert metadata[3] == ["default", "none", "low", "medium", "high", "max"]
+    assert list(metadata.reasoning_modes) == ["default", "none", "low", "medium", "high", "max"]
 
 
 def test_chat_run_request_defaults_reasoning_to_default():

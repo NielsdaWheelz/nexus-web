@@ -49,13 +49,14 @@ import Button from "@/components/ui/Button";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
+import {
+  fetchEditableLibrarySharing,
+  type LibraryInvite,
+  type LibraryMember,
+  type UserSearchResult,
+} from "@/lib/libraries/sharing";
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
-import type {
-  LibraryForEdit,
-  LibraryMember,
-  LibraryInvite,
-  UserSearchResult,
-} from "@/components/LibraryEditDialog";
+import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
@@ -579,20 +580,9 @@ export default function LibraryPaneBody() {
     if (!library) return;
     setEditOpen(true);
     try {
-      const [membersResp, invitesResp] = await Promise.all([
-        library.role === "admin"
-          ? apiFetch<{ data: LibraryMember[] }>(
-              `/api/libraries/${library.id}/members`,
-            )
-          : Promise.resolve({ data: [] as LibraryMember[] }),
-        library.role === "admin"
-          ? apiFetch<{ data: LibraryInvite[] }>(
-              `/api/libraries/${library.id}/invites`,
-            )
-          : Promise.resolve({ data: [] as LibraryInvite[] }),
-      ]);
-      setEditMembers(membersResp.data);
-      setEditInvites(invitesResp.data);
+      const sharing = await fetchEditableLibrarySharing(library);
+      setEditMembers(sharing.members);
+      setEditInvites(sharing.invites);
     } catch (err) {
       if (isApiError(err)) {
         setError(

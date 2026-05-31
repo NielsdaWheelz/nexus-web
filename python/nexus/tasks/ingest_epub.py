@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.epub_ingest import (
@@ -21,6 +20,7 @@ from nexus.services.epub_ingest import (
     extract_epub_artifacts,
 )
 from nexus.storage.client import get_storage_client
+from nexus.tasks.enrich_metadata import dispatch_enrich_metadata
 
 logger = get_logger(__name__)
 
@@ -100,7 +100,7 @@ def ingest_epub(
         media.updated_at = now
         db.commit()
 
-        _try_enrich_dispatch(media_id, request_id)
+        dispatch_enrich_metadata(media_id, request_id)
 
         logger.info(
             "ingest_epub_completed",
@@ -127,25 +127,6 @@ def ingest_epub(
             request_id=request_id,
         )
         raise
-    finally:
-        db.close()
-
-
-def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
-    """Best-effort dispatch of metadata enrichment task."""
-    session_factory = get_session_factory()
-    db = session_factory()
-    try:
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload={"media_id": media_id, "request_id": request_id},
-            max_attempts=1,
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
     finally:
         db.close()
 

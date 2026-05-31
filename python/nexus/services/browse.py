@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import time
 from typing import Any, Literal
@@ -279,7 +280,7 @@ def _browse_podcasts(
 ) -> dict[str, object]:
     offset = 0
     if cursor is not None:
-        offset = int(_decode_browse_cursor(cursor, query, "podcasts").get("offset", 0))
+        offset = _browse_cursor_offset(cursor, query, "podcasts")
 
     candidate_limit = offset + limit + 1
     candidates = podcast_rows
@@ -309,7 +310,7 @@ def _browse_podcast_episodes(
 ) -> dict[str, object]:
     offset = 0
     if cursor is not None:
-        offset = int(_decode_browse_cursor(cursor, query, "podcast_episodes").get("offset", 0))
+        offset = _browse_cursor_offset(cursor, query, "podcast_episodes")
 
     target_count = offset + limit + 1
     podcast_limit = max(target_count, 10)
@@ -762,8 +763,20 @@ def _decode_browse_cursor(
         if payload.get("page_type") != page_type:
             raise ValueError("Cursor type mismatch")
         return payload
-    except ValueError as exc:
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
+
+
+def _browse_cursor_offset(
+    cursor: str,
+    query: str,
+    page_type: BrowseSectionType,
+) -> int:
+    payload = _decode_browse_cursor(cursor, query, page_type)
+    offset = payload.get("offset", 0)
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+    return offset
 
 
 def _get_json(

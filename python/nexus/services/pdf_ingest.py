@@ -49,7 +49,6 @@ class PdfPageSpan:
 class PdfExtractionResult:
     """Successful PDF extraction outcome."""
 
-    status: str = "success"
     page_count: int = 0
     plain_text: str = ""
     page_spans: list[PdfPageSpan] = field(default_factory=list)
@@ -71,7 +70,6 @@ class PdfExtractionResult:
 class PdfExtractionError:
     """Deterministic PDF extraction failure."""
 
-    status: str = "error"
     error_code: str = ""
     error_message: str = ""
     terminal: bool = False

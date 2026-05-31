@@ -13,6 +13,7 @@ import httpx
 from nexus.config import Environment, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.retry_after import parse_retry_after_seconds
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
@@ -117,14 +118,12 @@ def _embedding_provider_retry_delay_seconds(
     attempt_index: int, response: httpx.Response | None = None
 ) -> float:
     if response is not None and response.status_code == 429:
-        retry_after = str(response.headers.get("Retry-After") or "").strip()
-        if retry_after:
-            try:
-                retry_after_seconds = float(retry_after)
-                if retry_after_seconds > 0:
-                    return min(retry_after_seconds, _EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS)
-            except ValueError:
-                pass
+        retry_after_seconds = parse_retry_after_seconds(
+            response.headers.get("Retry-After"),
+            cap_seconds=_EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS,
+        )
+        if retry_after_seconds is not None:
+            return retry_after_seconds
     return _EMBEDDING_PROVIDER_BACKOFF_SECONDS[
         min(attempt_index, len(_EMBEDDING_PROVIDER_BACKOFF_SECONDS) - 1)
     ]

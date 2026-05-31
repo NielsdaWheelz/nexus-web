@@ -324,7 +324,7 @@ describe("PaneRuntimeProvider", () => {
     });
   });
 
-  it("does not expose legacy pane width setters", async () => {
+  it("does not expose removed pane width setters", async () => {
     const onValue = vi.fn();
     const identity = resolvePaneRouteIdentity("/libraries/library-1");
 
