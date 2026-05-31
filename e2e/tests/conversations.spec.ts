@@ -98,9 +98,8 @@ async function selectTextInMessage(
 async function openForksPanel(page: Page) {
   await activeWorkspacePane(page)
     .getByTestId("pane-shell-chrome")
-    .getByRole("button", { name: "Options" })
+    .getByRole("button", { name: "Forks" })
     .click();
-  await page.getByRole("menuitem", { name: "Forks" }).click();
 
   const panel = page.getByTestId("workspace-secondary-pane");
   await expect(panel).toBeVisible();
@@ -544,9 +543,8 @@ test.describe("conversations", () => {
 
       await activeWorkspacePane(page)
         .getByTestId("pane-shell-chrome")
-        .getByRole("button", { name: "Options" })
+        .getByRole("button", { name: "Forks" })
         .click();
-      await page.getByRole("menuitem", { name: "Forks" }).click();
 
       const secondary = page.getByRole("dialog", { name: "Forks" });
       await expect(secondary).toBeVisible();

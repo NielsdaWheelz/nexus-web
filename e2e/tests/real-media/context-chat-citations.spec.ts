@@ -23,12 +23,11 @@ function conversationWorkspacePane(page: Page) {
     .last();
 }
 
-async function openConversationReferencesPane(
-  page: Page,
-  conversationPane: Locator,
-) {
-  await conversationPane.getByRole("button", { name: "Options" }).click();
-  await page.getByRole("menuitem", { name: "References" }).click();
+async function openConversationReferencesPane(conversationPane: Locator) {
+  await conversationPane
+    .getByTestId("pane-shell-chrome")
+    .getByRole("button", { name: "References" })
+    .click();
   const secondary = conversationPane.getByTestId("workspace-secondary-pane");
   await expect(secondary).toBeVisible({ timeout: 10_000 });
   await expect(secondary.getByRole("tab", { name: "References" })).toHaveAttribute(
@@ -189,10 +188,8 @@ test("@real-media search evidence chat citations open each media reader", async 
       await expect(conversationPane.getByLabel("Ask anything")).toBeVisible({
         timeout: 30_000,
       });
-      const referencesPane = await openConversationReferencesPane(
-        page,
-        conversationPane,
-      );
+      const referencesPane =
+        await openConversationReferencesPane(conversationPane);
       await expect(referencesPane).not.toContainText("No references yet.");
 
       await conversationPane

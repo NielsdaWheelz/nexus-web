@@ -2,8 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Conversation from "@/components/chat/Conversation";
+import PaneShell from "@/components/workspace/PaneShell";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type {
   ChatRunResponse,
@@ -11,6 +14,27 @@ import type {
   ConversationTreeResponse,
   ForkOption,
 } from "@/lib/conversations/types";
+
+function paneSizing(input: {
+  widthPx: number;
+  minWidthPx: number;
+  maxWidthPx: number;
+}): EffectivePaneSizing {
+  const primaryWidthPx = Math.min(
+    input.maxWidthPx,
+    Math.max(input.minWidthPx, input.widthPx),
+  );
+  return {
+    primaryWidthPx,
+    primaryMinWidthPx: input.minWidthPx,
+    primaryMaxWidthPx: input.maxWidthPx,
+    renderedPrimarySlotWidthPx: primaryWidthPx,
+    renderedPrimarySlotMinWidthPx: input.minWidthPx,
+    renderedPrimarySlotMaxWidthPx: input.maxWidthPx,
+    fixedChromeWidthPx: 0,
+    storedWidthCorrectionPx: null,
+  };
+}
 
 // Mock only the streaming spine (the SSE boundary). The engine is the sole
 // caller of useChatRunTail and owns all other lifecycle state under test.
@@ -781,5 +805,102 @@ describe("Conversation", () => {
       await screen.findByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
     expect(screen.queryByText("Loading conversation...")).toBeNull();
+  });
+
+  it("toggles the context secondary pane from chrome toolbar buttons", async () => {
+    const user = userEvent.setup();
+    const onRequestSecondarySurface = vi.fn();
+    const onCloseSecondaryPane = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/references") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    const referencesPane: WorkspaceAttachedSecondaryPaneState = {
+      id: "pane-1-secondary",
+      parentPrimaryPaneId: "pane-1",
+      groupId: "conversation-context",
+      activeSurfaceId: "conversation-references",
+      widthPx: 320,
+      visibility: "visible",
+    };
+
+    const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/conversations/conversation-1"
+        routeId="conversation"
+        resourceRef="conversation-1"
+        resourceKey={
+          resolvePaneRouteIdentity("/conversations/conversation-1").resourceKey
+        }
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ id: "conversation-1" }}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneTitle={vi.fn()}
+        secondaryPane={secondaryPane}
+        onRequestSecondarySurface={onRequestSecondarySurface}
+        onCloseSecondaryPane={onCloseSecondaryPane}
+      >
+        <PaneShell
+          paneId="pane-1"
+          title="Chat"
+          navigation={{
+            canGoBack: false,
+            canGoForward: false,
+            onBack: vi.fn(),
+            onForward: vi.fn(),
+          }}
+          sizing={paneSizing({ widthPx: 480, minWidthPx: 320, maxWidthPx: 1400 })}
+          bodyMode="contained"
+          onResizePrimaryPane={vi.fn()}
+        >
+          <Conversation />
+        </PaneShell>
+      </PaneRuntimeProvider>
+    );
+
+    const view = render(tree(null));
+
+    // Branch history present → the Forks toggle joins References in the chrome.
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    const referencesToggle = screen.getByRole("button", { name: "References" });
+    expect(referencesToggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Forks" })).toBeInTheDocument();
+
+    await user.click(referencesToggle);
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "conversation-references",
+    );
+
+    // With the references surface open, the same button collapses it.
+    view.rerender(tree(referencesPane));
+    const activeReferencesToggle = screen.getByRole("button", {
+      name: "References",
+    });
+    expect(activeReferencesToggle).toHaveAttribute("aria-pressed", "true");
+    await user.click(activeReferencesToggle);
+    expect(onCloseSecondaryPane).toHaveBeenCalledWith("pane-1-secondary");
   });
 });

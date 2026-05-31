@@ -213,8 +213,10 @@ test.describe("notes cutover", () => {
       conversationId = conversationPayload.data.id;
       await gotoSinglePaneWorkspace(page, deviceId, `/conversations/${conversationId}`);
       const activeConversationPane = activeWorkspacePane(page);
-      await activeConversationPane.getByRole("button", { name: "Options" }).click();
-      await page.getByRole("menuitem", { name: "References" }).click();
+      await activeConversationPane
+        .getByTestId("pane-shell-chrome")
+        .getByRole("button", { name: "References" })
+        .click();
       const referencesPane = activeConversationPane.getByTestId("workspace-secondary-pane");
       await expect(referencesPane).toBeVisible({ timeout: 10_000 });
       await expect(referencesPane).toHaveAttribute("aria-label", "References");

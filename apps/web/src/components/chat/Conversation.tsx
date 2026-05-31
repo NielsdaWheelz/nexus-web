@@ -5,7 +5,7 @@
  * `new` route), drives the shared `useConversation` engine (which owns all
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
  * (which owns scroll). This adapter only holds pane CHROME: title, the
- * chrome-override action menu, the
+ * chrome toolbar toggles and action menu, the
  * conversation-context secondary panes (references + forks), and the open-resource /
  * reader-source navigation wiring.
  */
@@ -13,6 +13,8 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { GitBranch, Link2 } from "lucide-react";
+import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
@@ -57,6 +59,8 @@ export default function Conversation() {
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
   const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
+  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
+  const secondaryPane = paneRuntime?.secondaryPane ?? null;
   const resourceRef = paneRuntime?.resourceRef ?? null;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
@@ -234,41 +238,78 @@ export default function Conversation() {
   // --------------------------------------------------------------------------
 
   const paneOptions = useMemo(
-    () => [
-      {
-        id: "open-references",
-        label: "References",
-        onSelect: () =>
-          requestSecondarySurface?.("conversation-references"),
-      },
-      ...(branch && convo.conversationId
-        ? [
-            {
-              id: "open-forks",
-              label: "Forks",
-              onSelect: () =>
-                requestSecondarySurface?.("conversation-forks"),
-            },
-          ]
-        : []),
-      ...(convo.conversationId
+    () =>
+      convo.conversationId
         ? conversationResourceOptions({
             deleting,
             onDelete: () => {
               void handleDeleteConversation();
             },
           })
-        : []),
-    ],
+        : [],
+    [convo.conversationId, deleting, handleDeleteConversation],
+  );
+  const activeChatSurface =
+    secondaryPane?.visibility === "visible"
+      ? secondaryPane.activeSurfaceId
+      : null;
+  const referencesSurfaceActive =
+    activeChatSurface === "conversation-references";
+  const forksSurfaceActive = activeChatSurface === "conversation-forks";
+
+  const toggleReferences = useCallback(() => {
+    if (referencesSurfaceActive) {
+      closeSecondaryPane?.();
+      return;
+    }
+    requestSecondarySurface?.("conversation-references");
+  }, [closeSecondaryPane, referencesSurfaceActive, requestSecondarySurface]);
+
+  const toggleForks = useCallback(() => {
+    if (forksSurfaceActive) {
+      closeSecondaryPane?.();
+      return;
+    }
+    requestSecondarySurface?.("conversation-forks");
+  }, [closeSecondaryPane, forksSurfaceActive, requestSecondarySurface]);
+
+  const showForksToggle = Boolean(branch && convo.conversationId);
+
+  const chatToolbar = useMemo(
+    () => (
+      <>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<Link2 size={16} aria-hidden="true" />}
+          onClick={toggleReferences}
+          aria-pressed={referencesSurfaceActive}
+        >
+          References
+        </Button>
+        {showForksToggle ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<GitBranch size={16} aria-hidden="true" />}
+            onClick={toggleForks}
+            aria-pressed={forksSurfaceActive}
+          >
+            Forks
+          </Button>
+        ) : null}
+      </>
+    ),
     [
-      branch,
-      convo.conversationId,
-      deleting,
-      handleDeleteConversation,
-      requestSecondarySurface,
+      forksSurfaceActive,
+      referencesSurfaceActive,
+      showForksToggle,
+      toggleForks,
+      toggleReferences,
     ],
   );
-  usePaneChromeOverride({ options: paneOptions });
+
+  usePaneChromeOverride({ toolbar: chatToolbar, options: paneOptions });
 
   const secondaryDescriptor = useMemo(
     () => ({
