@@ -52,6 +52,74 @@ describe("apiFetch", () => {
     );
   });
 
+  it("coalesces concurrent identical GET requests while they are in flight", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+
+    const first = apiFetch<{ data: string }>("/api/libraries/library-1");
+    const second = apiFetch<{ data: string }>("/api/libraries/library-1");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    resolveFetch?.(Response.json({ data: "ok" }));
+
+    await expect(first).resolves.toEqual({ data: "ok" });
+    await expect(second).resolves.toEqual({ data: "ok" });
+  });
+
+  it("does not keep completed GET responses as a cache", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ data: "first" }))
+      .mockResolvedValueOnce(Response.json({ data: "second" }));
+
+    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual({
+      data: "first",
+    });
+    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual({
+      data: "second",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not coalesce state-changing requests", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ data: { id: "library-1" } }))
+      .mockResolvedValueOnce(Response.json({ data: { id: "library-1" } }));
+
+    await Promise.all([
+      apiFetch("/api/libraries", {
+        method: "POST",
+        body: JSON.stringify({ name: "A" }),
+      }),
+      apiFetch("/api/libraries", {
+        method: "POST",
+        body: JSON.stringify({ name: "A" }),
+      }),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not coalesce GET requests with custom fetch behavior", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ data: "ok" }))
+      .mockResolvedValueOnce(Response.json({ data: "ok" }));
+
+    await Promise.all([
+      apiFetch("/api/libraries", { cache: "reload" }),
+      apiFetch("/api/libraries", { cache: "reload" }),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("redirects browser callers to login on unauthenticated API responses", async () => {
     const assign = vi.fn();
     vi.stubGlobal("window", {

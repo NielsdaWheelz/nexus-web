@@ -9,9 +9,12 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
+from fastapi import Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.engine import get_engine
+
+REQUEST_DB_SESSIONS_STATE_KEY = "_nexus_request_db_sessions"
 
 
 def create_session_factory(engine: Any = None) -> sessionmaker[Session]:
@@ -46,7 +49,7 @@ def get_session_factory() -> sessionmaker[Session]:
     return _SessionLocal
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db(request: Request) -> Generator[Session, None, None]:
     """FastAPI dependency that provides a database session.
 
     Yields:
@@ -59,23 +62,41 @@ def get_db() -> Generator[Session, None, None]:
     """
     SessionLocal = get_session_factory()
     db = SessionLocal()
+    track_request_db_session(request, db)
     try:
         yield db
     finally:
         db.close()
 
 
-def release_connection(db: Session) -> None:
-    """Return a request session's checked-out connection before response transfer.
+def track_request_db_session(request: Request, db: Session) -> None:
+    """Track a request-scoped session for response-start connection release."""
+    sessions = getattr(request.state, REQUEST_DB_SESSIONS_STATE_KEY, None)
+    if sessions is None:
+        sessions = []
+        setattr(request.state, REQUEST_DB_SESSIONS_STATE_KEY, sessions)
+    sessions.append(db)
 
-    FastAPI yield-dependency cleanup runs after the response body is sent. For
-    hot read routes with large JSON bodies, that can leave a PostgreSQL
-    transaction idle while the ASGI server is blocked on client reads. Routes
-    that have fully materialized their response can call this before returning.
-    """
+
+def release_connection(db: Session) -> None:
+    """Return a request session's checked-out connection before response transfer."""
     if db.in_transaction():
         db.rollback()
     db.close()
+
+
+def release_tracked_request_db_sessions(scope_state: Any) -> None:
+    """Release all DB sessions tracked for one ASGI request scope."""
+    if not isinstance(scope_state, dict):
+        return
+
+    sessions = scope_state.get(REQUEST_DB_SESSIONS_STATE_KEY)
+    if not sessions:
+        return
+
+    scope_state[REQUEST_DB_SESSIONS_STATE_KEY] = []
+    for db in sessions:
+        release_connection(db)
 
 
 def use_serializable_if_available(db: Session) -> None:

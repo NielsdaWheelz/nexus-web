@@ -6200,12 +6200,43 @@ class TestLibraryEntriesCutoverMigration:
 
         index_names = {row[0] for row in indexes}
         assert "ix_library_entries_library_position" in index_names
+        assert "ix_library_entries_library_order" in index_names
         assert "idx_library_entries_media_library" in index_names
 
         assert color_column is not None, "libraries.color must exist at head"
         assert color_column[1] == "text"
         assert color_column[2] == "YES"
         assert legacy_table is None, "legacy library_media table must be removed at head"
+
+    def test_head_contains_request_storm_hot_path_indexes(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            indexes = session.execute(
+                text("""
+                    SELECT tablename, indexname, indexdef
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND indexname IN (
+                        'ix_library_entries_library_order',
+                        'ix_workspace_sessions_user_updated',
+                        'ix_user_pinned_objects_active_order'
+                      )
+                """)
+            ).fetchall()
+
+        index_defs = {row[1]: row[2] for row in indexes}
+        assert set(index_defs) == {
+            "ix_library_entries_library_order",
+            "ix_workspace_sessions_user_updated",
+            "ix_user_pinned_objects_active_order",
+        }
+        assert (
+            'library_id, "position", created_at DESC, id DESC'
+            in index_defs["ix_library_entries_library_order"]
+        )
+        assert (
+            "user_id, updated_at DESC, id DESC" in index_defs["ix_workspace_sessions_user_updated"]
+        )
+        assert "WHERE (deleted_at IS NULL)" in index_defs["ix_user_pinned_objects_active_order"]
 
     def test_upgrade_0046_to_0047_backfills_media_and_podcast_entries(self):
         reset_test_schema()

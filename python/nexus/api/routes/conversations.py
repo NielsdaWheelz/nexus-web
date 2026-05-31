@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, release_connection
+from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
@@ -79,7 +79,6 @@ def list_conversations(
         )
         payload = [c.model_dump(mode="json") for c in conversations]
         page_payload = page.model_dump(mode="json")
-        release_connection(db)
         return {
             "data": payload,
             "page": page_payload,
@@ -102,7 +101,6 @@ def list_conversations(
     )
     payload = [c.model_dump(mode="json") for c in conversations]
     page_payload = page.model_dump(mode="json")
-    release_connection(db)
     return {
         "data": payload,
         "page": page_payload,
@@ -171,7 +169,6 @@ def get_conversation_tree(
         conversation_id=conversation_id,
     )
     payload = result.model_dump(mode="json")
-    release_connection(db)
     return success_response(payload)
 
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, release_connection
+from nexus.db.session import get_db
 from nexus.responses import success_response
 from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services import chat_runs as chat_runs_service
@@ -36,7 +36,6 @@ def create_chat_run(
         idempotency_key=idempotency_key,
     )
     payload = result.model_dump(mode="json")
-    release_connection(db)
     return success_response(payload)
 
 
@@ -54,7 +53,6 @@ def list_chat_runs(
         status=status,
     )
     payload = [result.model_dump(mode="json") for result in results]
-    release_connection(db)
     return success_response(payload)
 
 
@@ -66,7 +64,6 @@ def get_chat_run(
 ) -> dict:
     result = chat_runs_service.get_chat_run(db=db, viewer_id=viewer.user_id, run_id=run_id)
     payload = result.model_dump(mode="json")
-    release_connection(db)
     return success_response(payload)
 
 
@@ -78,5 +75,4 @@ def cancel_chat_run(
 ) -> dict:
     result = chat_runs_service.cancel_chat_run(db=db, viewer_id=viewer.user_id, run_id=run_id)
     payload = result.model_dump(mode="json")
-    release_connection(db)
     return success_response(payload)

@@ -49,3 +49,10 @@ This document covers PostgreSQL schema rules, query patterns, and DB-specific co
 - Use SERIALIZABLE isolation for transactions that require sequential equivalence.
 - Do not run non-DB side effects inside a DB transaction — they cannot be rolled back on serialization retry.
 - See [retries.md](retries.md) for retry-boundary rules such as in-memory state not rolling back across retries.
+
+## Request Sessions
+
+- Request-scoped FastAPI database sessions are owned by the database/session layer, not by individual routes.
+- The API must release checked-out request connections before response bodies are transferred to clients.
+- Do not add per-route database-session cleanup calls for ordinary request dependencies; fix lifecycle behavior at the shared session/middleware boundary.
+- Long-lived streaming routes must open short-lived sessions inside each read phase, not keep a request-scoped session open for the stream lifetime.

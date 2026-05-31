@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import {
   normalizePaneTitle,
   type WorkspaceAttachedSecondaryPaneState,
@@ -134,6 +141,87 @@ export function PaneRuntimeProvider({
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
+  const secondaryPaneId = secondaryPane?.id ?? null;
+  const router = useMemo<PaneScopedRouter>(
+    () => ({
+      canGoBack,
+      canGoForward,
+      push: (nextHref: string, options?: { titleHint?: string }) => {
+        const normalized = normalizeWorkspaceHref(nextHref);
+        if (!normalized) {
+          return;
+        }
+        onNavigatePane(paneId, normalized, options);
+      },
+      replace: (nextHref: string, options?: { titleHint?: string }) => {
+        const normalized = normalizeWorkspaceHref(nextHref);
+        if (!normalized) {
+          return;
+        }
+        onReplacePane(paneId, normalized, options);
+      },
+      back: () => {
+        onGoBackPane(paneId);
+      },
+      forward: () => {
+        onGoForwardPane(paneId);
+      },
+    }),
+    [
+      canGoBack,
+      canGoForward,
+      onGoBackPane,
+      onGoForwardPane,
+      onNavigatePane,
+      onReplacePane,
+      paneId,
+    ],
+  );
+  const openInNewPane = useCallback(
+    (
+      nextHref: string,
+      titleHint?: string,
+      secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+    ) => {
+      const normalized = normalizeWorkspaceHref(nextHref);
+      if (!normalized) {
+        return;
+      }
+      onOpenInNewPane(normalized, titleHint, secondarySurfaceId);
+    },
+    [onOpenInNewPane],
+  );
+  const setPaneTitle = useCallback(
+    (title: string | null) => {
+      onSetPaneTitle?.({ paneId, resourceKey, title });
+    },
+    [onSetPaneTitle, paneId, resourceKey],
+  );
+  const setPaneLayout = useCallback(
+    (layout: PaneRuntimeLayout) => {
+      onSetPaneLayout?.({ paneId, resourceKey, layout });
+    },
+    [onSetPaneLayout, paneId, resourceKey],
+  );
+  const requestSecondarySurface = useCallback(
+    (surfaceId: WorkspaceSecondarySurfaceId) => {
+      onRequestSecondarySurface?.(paneId, surfaceId);
+    },
+    [onRequestSecondarySurface, paneId],
+  );
+  const closeSecondaryPane = useCallback(() => {
+    if (secondaryPaneId) {
+      onCloseSecondaryPane?.(secondaryPaneId);
+    }
+  }, [onCloseSecondaryPane, secondaryPaneId]);
+  const setSecondarySurface = useCallback(
+    (surfaceId: WorkspaceSecondarySurfaceId) => {
+      if (secondaryPaneId) {
+        onSetSecondarySurface?.(secondaryPaneId, surfaceId);
+      }
+    },
+    [onSetSecondarySurface, secondaryPaneId],
+  );
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
@@ -145,75 +233,23 @@ export function PaneRuntimeProvider({
       secondaryPane,
       pathParams,
       searchParams: parsed.searchParams,
-      router: {
-        canGoBack,
-        canGoForward,
-        push: (nextHref: string, options?: { titleHint?: string }) => {
-          const normalized = normalizeWorkspaceHref(nextHref);
-          if (!normalized) {
-            return;
-          }
-          onNavigatePane(paneId, normalized, options);
-        },
-        replace: (nextHref: string, options?: { titleHint?: string }) => {
-          const normalized = normalizeWorkspaceHref(nextHref);
-          if (!normalized) {
-            return;
-          }
-          onReplacePane(paneId, normalized, options);
-        },
-        back: () => {
-          onGoBackPane(paneId);
-        },
-        forward: () => {
-          onGoForwardPane(paneId);
-        },
-      },
-      openInNewPane: (
-        nextHref: string,
-        titleHint?: string,
-        secondarySurfaceId?: WorkspaceSecondarySurfaceId,
-      ) => {
-        const normalized = normalizeWorkspaceHref(nextHref);
-        if (!normalized) {
-          return;
-        }
-        onOpenInNewPane(normalized, titleHint, secondarySurfaceId);
-      },
-      setPaneTitle: (title: string | null) => {
-        onSetPaneTitle?.({ paneId, resourceKey, title });
-      },
-      setPaneLayout: (layout: PaneRuntimeLayout) => {
-        onSetPaneLayout?.({ paneId, resourceKey, layout });
-      },
-      requestSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => {
-        onRequestSecondarySurface?.(paneId, surfaceId);
-      },
-      closeSecondaryPane: () => {
-        if (secondaryPane) {
-          onCloseSecondaryPane?.(secondaryPane.id);
-        }
-      },
-      setSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => {
-        if (secondaryPane) {
-          onSetSecondarySurface?.(secondaryPane.id, surfaceId);
-        }
-      },
+      router,
+      openInNewPane,
+      setPaneTitle,
+      setPaneLayout,
+      requestSecondarySurface,
+      closeSecondaryPane,
+      setSecondarySurface,
     }),
     [
       href,
-      canGoBack,
-      canGoForward,
-      onGoBackPane,
-      onGoForwardPane,
-      onNavigatePane,
-      onOpenInNewPane,
-      onReplacePane,
-      onSetPaneTitle,
-      onSetPaneLayout,
-      onRequestSecondarySurface,
-      onCloseSecondaryPane,
-      onSetSecondarySurface,
+      router,
+      openInNewPane,
+      setPaneTitle,
+      setPaneLayout,
+      requestSecondarySurface,
+      closeSecondaryPane,
+      setSecondarySurface,
       paneId,
       parsed.pathname,
       parsed.searchParams,

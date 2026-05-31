@@ -199,34 +199,51 @@ export default function LibraryPaneBody() {
   const [libraryPanelError, setLibraryPanelError] = useState<string | null>(
     null,
   );
+  const loadRequestIdRef = useRef(0);
   const libraryPanelRequestIdRef = useRef(0);
 
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   useEffect(() => {
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
+    setLoading(true);
     const fetchData = async () => {
       try {
         const [libraryResp, entriesResp] = await Promise.all([
           apiFetch<{ data: Library }>(`/api/libraries/${id}`),
           apiFetch<{ data: LibraryEntry[] }>(`/api/libraries/${id}/entries`),
         ]);
+        if (loadRequestIdRef.current !== requestId) {
+          return;
+        }
         setLibrary(libraryResp.data);
         setEntries(entriesResp.data);
         clearRemovedEntryIds();
         setError(null);
       } catch (err) {
+        if (loadRequestIdRef.current !== requestId) {
+          return;
+        }
         if (isApiError(err) && err.status === 404) {
           router.push("/libraries");
           return;
         }
         setError(toFeedback(err, { fallback: "Failed to load library" }));
       } finally {
-        setLoading(false);
+        if (loadRequestIdRef.current === requestId) {
+          setLoading(false);
+        }
       }
     };
 
     void fetchData();
+    return () => {
+      if (loadRequestIdRef.current === requestId) {
+        loadRequestIdRef.current += 1;
+      }
+    };
   }, [clearRemovedEntryIds, id, router]);
 
   const closeLibraryPanel = useCallback(() => {

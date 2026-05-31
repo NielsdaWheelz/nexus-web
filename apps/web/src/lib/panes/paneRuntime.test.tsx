@@ -71,6 +71,14 @@ function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
   return null;
 }
 
+function RouterIdentityProbe({ onRouter }: { onRouter: (value: unknown) => void }) {
+  const router = usePaneRouter();
+  useEffect(() => {
+    onRouter(router);
+  }, [onRouter, router]);
+  return null;
+}
+
 function GoBackForwardOnMount() {
   const router = usePaneRouter();
   useEffect(() => {
@@ -244,6 +252,39 @@ describe("PaneRuntimeProvider", () => {
     const state = screen.getByTestId("router-navigation-state");
     expect(state).toHaveAttribute("data-can-go-back", "true");
     expect(state).toHaveAttribute("data-can-go-forward", "true");
+  });
+
+  it("keeps the scoped router stable across unrelated runtime value changes", async () => {
+    const onRouter = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+    const stableProps = {
+      paneId: "pane-1",
+      href: "/libraries/library-1",
+      routeId: identity.routeId,
+      resourceRef: identity.resourceRef,
+      resourceKey: identity.resourceKey,
+      ...defaultNavigationProps,
+      onNavigatePane: vi.fn(),
+      onReplacePane: vi.fn(),
+      onOpenInNewPane: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <PaneRuntimeProvider {...stableProps} pathParams={{ id: "library-1" }}>
+        <RouterIdentityProbe onRouter={onRouter} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(onRouter).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <PaneRuntimeProvider {...stableProps} pathParams={{ id: "library-1" }}>
+        <RouterIdentityProbe onRouter={onRouter} />
+      </PaneRuntimeProvider>,
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(onRouter).toHaveBeenCalledTimes(1);
   });
 
   it("publishes pane layout with pane and resource identity", async () => {

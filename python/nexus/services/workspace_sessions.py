@@ -31,7 +31,7 @@ def get_most_recent_session_elsewhere(
             WorkspaceSession.user_id == user_id,
             WorkspaceSession.device_id != device_id,
         )
-        .order_by(WorkspaceSession.updated_at.desc())
+        .order_by(WorkspaceSession.updated_at.desc(), WorkspaceSession.id.desc())
         .first()
     )
 

@@ -56,6 +56,41 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
   );
 }
 
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const PLAIN_GET_COALESCING_OPTION_KEYS = new Set(["headers", "method"]);
+
+function normalizeMethod(method: string | undefined): string {
+  return method?.toUpperCase() ?? "GET";
+}
+
+function sortedHeaderEntries(headers: HeadersInit | undefined): [string, string][] {
+  if (!headers) {
+    return [];
+  }
+  return Array.from(new Headers(headers).entries()).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+}
+
+function coalescedGetKey(path: string, headers: HeadersInit | undefined): string {
+  return JSON.stringify({
+    path,
+    headers: sortedHeaderEntries(headers),
+  });
+}
+
+function isPlainGetRequest(options: RequestInit): boolean {
+  const hasOnlyPlainGetOptions = Object.keys(options).every((key) =>
+    PLAIN_GET_COALESCING_OPTION_KEYS.has(key)
+  );
+  return (
+    hasOnlyPlainGetOptions &&
+    normalizeMethod(options.method) === "GET" &&
+    options.body === undefined &&
+    options.signal === undefined
+  );
+}
+
 async function parseApiResponse<T>(response: Response): Promise<T> {
   let body: unknown;
   try {
@@ -133,14 +168,32 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(path, {
+  const init = {
     ...options,
+    method: normalizeMethod(options.method),
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
     },
-  });
+  } satisfies RequestInit;
 
+  if (isPlainGetRequest(options)) {
+    const key = coalescedGetKey(path, init.headers);
+    const inFlight = inFlightGetRequests.get(key);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+
+    const request = fetch(path, init)
+      .then((response) => parseApiResponse<T>(response))
+      .finally(() => {
+        inFlightGetRequests.delete(key);
+      });
+    inFlightGetRequests.set(key, request);
+    return request;
+  }
+
+  const response = await fetch(path, init);
   return parseApiResponse<T>(response);
 }
 

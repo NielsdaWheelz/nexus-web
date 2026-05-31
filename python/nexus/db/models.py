@@ -503,6 +503,15 @@ class PinnedObjectRef(Base):
             "object_id",
             name="uix_user_pinned_objects_surface_ref",
         ),
+        Index(
+            "ix_user_pinned_objects_active_order",
+            "user_id",
+            "surface_key",
+            "order_key",
+            "created_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
 
@@ -1406,6 +1415,13 @@ class LibraryEntry(Base):
         Index("idx_library_entries_media_library", "media_id", "library_id"),
         Index("idx_library_entries_podcast_library", "podcast_id", "library_id"),
         Index("ix_library_entries_library_position", "library_id", "position"),
+        Index(
+            "ix_library_entries_library_order",
+            "library_id",
+            "position",
+            text("created_at DESC"),
+            text("id DESC"),
+        ),
     )
 
     library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
@@ -6003,6 +6019,12 @@ class WorkspaceSession(Base):
         CheckConstraint(
             "jsonb_typeof(state) = 'object'",
             name="ck_workspace_sessions_state_object",
+        ),
+        Index(
+            "ix_workspace_sessions_user_updated",
+            "user_id",
+            text("updated_at DESC"),
+            text("id DESC"),
         ),
     )
 
