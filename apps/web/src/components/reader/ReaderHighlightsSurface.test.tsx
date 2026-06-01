@@ -284,13 +284,32 @@ describe("ReaderHighlightsSurface", () => {
     render(<ReaderHighlightsSurfaceHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    expect(within(row).getByText("Before visible context")).toBeVisible();
     expect(within(row).getByText("Visible quote")).toBeVisible();
-    expect(within(row).getByText("after visible context.")).toBeVisible();
+    expect(within(row).queryByText("Before visible context")).toBeNull();
+    expect(within(row).queryByText("after visible context.")).toBeNull();
     expect(within(row).getByRole("button", { name: "Actions" })).toBeVisible();
     expect(
       within(row).getByRole("textbox", { name: "Highlight note" }),
     ).toBeVisible();
+  });
+
+  it("shows a placeholder for a row with no selectable text and keeps it clickable", async () => {
+    const user = userEvent.setup();
+    const onFocusHighlight = vi.fn();
+    render(
+      <ReaderHighlightsSurfaceHarness
+        onFocusHighlight={onFocusHighlight}
+        highlights={[highlight("h1", "", "Before visible context ", " after visible context.")]}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await waitFor(() => {
+      expect(within(row).getByText("No selectable text")).toBeVisible();
+    });
+
+    await user.click(within(row).getByText("No selectable text"));
+    expect(onFocusHighlight).toHaveBeenCalledWith("h1");
   });
 
   it("exposes highlight actions through the row action menu", async () => {

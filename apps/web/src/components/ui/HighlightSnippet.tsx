@@ -26,7 +26,11 @@ export default function HighlightSnippet({
   return (
     <span className={cx(styles.root, compact && styles.compact, className)}>
       {!compact && prefix ? <span className={styles.prefix}>{prefix}</span> : null}
-      <mark className={cx(styles.exact, styles[`color-${color}`])}>{exact}</mark>
+      {exact.trim() ? (
+        <mark className={cx(styles.exact, styles[`color-${color}`])}>{exact}</mark>
+      ) : (
+        <span className={styles.empty}>No selectable text</span>
+      )}
       {!compact && suffix ? <span className={styles.suffix}>{suffix}</span> : null}
     </span>
   );

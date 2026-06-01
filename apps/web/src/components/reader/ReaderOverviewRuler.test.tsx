@@ -304,6 +304,33 @@ describe("ReaderOverviewRuler", () => {
     expect(tooltip).not.toHaveTextContent("Hidden note");
   });
 
+  it("shows a placeholder for an empty-exact member of a compact cluster", async () => {
+    const gapFraction = (OVERVIEW_TICK_MIN_GAP_PX - 2) / RULER_HEIGHT;
+    render(
+      <RulerHarness
+        positioned={[
+          {
+            highlight: highlight("h1", { exact: "" }),
+            position: 0.5,
+          },
+          {
+            highlight: highlight("h2", { exact: "Second clustered" }),
+            position: 0.5 + gapFraction,
+          },
+        ]}
+      />,
+    );
+
+    fireEnter(await screen.findByTestId("reader-overview-tick-h1"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    });
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("No selectable text");
+    expect(tooltip).toHaveTextContent("Second clustered");
+  });
+
   it("shows only a count for a 4+ highlight cluster", async () => {
     // Clustering measures each tick against the cluster's first member, so all
     // four must fall within one min-gap window of h1 to merge into one tick.

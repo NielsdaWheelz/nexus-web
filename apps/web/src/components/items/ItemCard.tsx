@@ -9,15 +9,7 @@ import { cx } from "@/lib/ui/cx";
 import styles from "./ItemCard.module.css";
 
 type ItemCardContent =
-  | {
-      kind: "highlight";
-      snippet: {
-        prefix?: string | null;
-        exact: string;
-        suffix?: string | null;
-        color: HighlightColor;
-      };
-    }
+  | { kind: "highlight"; snippet: { exact: string; color: HighlightColor } }
   | { kind: "resource"; title: ReactNode; icon?: ReactNode };
 
 interface ItemCardLinkedItem {
@@ -66,12 +58,7 @@ export default function ItemCard({
 }: ItemCardProps) {
   const bodyContent =
     content.kind === "highlight" ? (
-      <HighlightSnippet
-        prefix={content.snippet.prefix}
-        exact={content.snippet.exact}
-        suffix={content.snippet.suffix}
-        color={content.snippet.color}
-      />
+      <HighlightSnippet exact={content.snippet.exact} color={content.snippet.color} compact />
     ) : (
       <>
         {content.icon}

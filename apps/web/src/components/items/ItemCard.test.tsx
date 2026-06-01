@@ -9,17 +9,25 @@ describe("ItemCard", () => {
       <ItemCard
         content={{
           kind: "highlight",
-          snippet: {
-            prefix: "Before ",
-            exact: "selected text",
-            suffix: " after",
-            color: "yellow",
-          },
+          snippet: { exact: "selected text", color: "yellow" },
         }}
       />,
     );
 
     expect(screen.getByText("selected text").tagName).toBe("MARK");
+  });
+
+  it("renders a placeholder instead of a mark when the highlight text is empty", () => {
+    render(
+      <ItemCard
+        content={{
+          kind: "highlight",
+          snippet: { exact: "", color: "yellow" },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("No selectable text").tagName).not.toBe("MARK");
   });
 
   it("calls onActivate on body click but not on the menu trigger or a linked-item button", async () => {

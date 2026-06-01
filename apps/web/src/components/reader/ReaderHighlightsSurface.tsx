@@ -624,12 +624,7 @@ export default function ReaderHighlightsSurface({
           key={highlight.id}
           content={{
             kind: "highlight",
-            snippet: {
-              prefix: highlight.prefix,
-              exact: highlight.exact,
-              suffix: highlight.suffix,
-              color: highlight.color,
-            },
+            snippet: { exact: highlight.exact, color: highlight.color },
           }}
           actions={actions.length ? actions : undefined}
           note={notesToRender.map((note) => {

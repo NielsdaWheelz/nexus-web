@@ -49,9 +49,11 @@
   cursor: default;
 }
 
+/* Collapsed: clamp the selection to a generous bound so one long highlight
+   cannot swamp the viewport-scoped list; focused (.expanded) shows it in full. */
 .card[data-content-kind="highlight"]:not(.expanded) .body {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
