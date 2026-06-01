@@ -108,6 +108,22 @@ touching app theme tokens.
 - the shipped contract is discriminated by `kind` and rejects removed flat
   locator bags
 
+### reader-to-chat quote selection
+
+- quote-to-chat is highlight-first: the reader creates a durable highlight, adds
+  `highlight:<id>` as the conversation reference, and sends a transient
+  `reader_selection` anchor for that chat turn
+- `reader_selection` carries `media_id` + `highlight_id`; the backend
+  canonicalizes prefix/exact/suffix/source from the highlight row before
+  rendering `<reader_selection>`
+- the selection is bind-only context for words like "this" or "the quote"; it is
+  never stored as a reference and never numbered
+- citation chips point at the attached `highlight:` reference or later
+  `read_resource` evidence, not at the transient selection block
+- pdf quote-to-chat passes the freshly created highlight payload through the
+  same path as web/epub so a just-created quote does not depend on a stale
+  highlight list refresh
+
 ### reflow-safe web resume
 
 web article resume uses canonical text offsets instead of raw scroll
@@ -157,11 +173,16 @@ required automated coverage includes:
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf in-session page persistence without file reopen
+- reader-to-chat quote flow sends a durable `highlight:` reference and, when
+  the highlight has nonblank exact text, a transient `reader_selection`
+  carrying `media_id` + `highlight_id`
 
 ## validation commands
 
 ```bash
 cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
-cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx
+cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx src/components/reader/ReaderHighlightsSurface.test.tsx src/__tests__/components/ReaderChatDetail.test.tsx
 make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
+make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```

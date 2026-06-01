@@ -18,6 +18,9 @@ def test_system_prompt_names_resources_and_strict_tools():
     prompt = render_system_prompt_block()
 
     assert "<resources>" in prompt
+    assert "<reader_selection>" in prompt
+    assert "n attribute" in prompt
+    assert 'inspect_resource("media:...")' in prompt
     assert "read_resource(uri)" in prompt
     assert "app_search(query=..., scopes=[...])" in prompt
     assert "pinned" not in prompt.lower()

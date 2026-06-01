@@ -249,8 +249,10 @@ describe("PdfReader selection chat destinations", () => {
 
   it("creates a PDF highlight and quotes it to a new chat", async () => {
     pdfRuntimeState.createdHighlightId = "created-highlight-42";
-    const onQuoteToNewChat = vi.fn<(highlightId: string) => void>();
-    const onQuoteToExtantChat = vi.fn<(highlightId: string) => void>();
+    const onQuoteToNewChat =
+      vi.fn<(highlightId: string, highlight: unknown) => void>();
+    const onQuoteToExtantChat =
+      vi.fn<(highlightId: string, highlight: unknown) => void>();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(110, 140, 160, 20),
     );
@@ -293,7 +295,15 @@ describe("PdfReader selection chat destinations", () => {
     await waitFor(() => {
       expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
     });
-    expect(onQuoteToNewChat).toHaveBeenCalledWith("created-highlight-42");
+    expect(onQuoteToNewChat).toHaveBeenCalledWith(
+      "created-highlight-42",
+      expect.objectContaining({
+        id: "created-highlight-42",
+        exact: "selected quote",
+        prefix: "",
+        suffix: "",
+      }),
+    );
     expect(onQuoteToExtantChat).not.toHaveBeenCalled();
 
     const postCalls = vi

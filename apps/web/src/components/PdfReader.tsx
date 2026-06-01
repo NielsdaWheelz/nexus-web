@@ -164,8 +164,14 @@ interface PdfReaderProps {
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
-  onQuoteToNewChat?: (highlightId: string) => void | Promise<void>;
-  onQuoteToExtantChat?: (highlightId: string) => void | Promise<void>;
+  onQuoteToNewChat?: (
+    highlightId: string,
+    highlight: PdfHighlightOut,
+  ) => void | Promise<void>;
+  onQuoteToExtantChat?: (
+    highlightId: string,
+    highlight: PdfHighlightOut,
+  ) => void | Promise<void>;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -1559,7 +1565,7 @@ export default function PdfReader({
   ]);
 
   const handleCreateHighlight = useCallback(
-    async (color: HighlightColor): Promise<string | null> => {
+    async (color: HighlightColor): Promise<PdfHighlightOut | null> => {
       const shouldUseAreaFallback = !textGeometryReliable;
       const fallbackSelection: SelectionState | null = (() => {
         const sel = getPdfSelection();
@@ -1617,7 +1623,7 @@ export default function PdfReader({
       setIsCreating(true);
       setSelectionError(null);
       try {
-        let createdHighlightId: string | null = editingHighlightId;
+        let createdHighlight: PdfHighlightOut | null = null;
         if (editingHighlightId) {
           await apiFetch(`/api/highlights/${editingHighlightId}`, {
             method: "PATCH",
@@ -1630,6 +1636,21 @@ export default function PdfReader({
               },
             }),
           });
+          const existingHighlight = pageHighlights.find(
+            (highlight) => highlight.id === editingHighlightId,
+          );
+          createdHighlight = existingHighlight
+            ? {
+                ...existingHighlight,
+                exact,
+                anchor: {
+                  type: "pdf_page_geometry",
+                  media_id: mediaId,
+                  page_number: activeSelection.pageNumber,
+                  quads,
+                },
+              }
+            : null;
         } else {
           const response = await apiFetch<PdfHighlightCreateResponse>(
             `/api/media/${mediaId}/pdf-highlights`,
@@ -1643,13 +1664,13 @@ export default function PdfReader({
               }),
             },
           );
-          createdHighlightId = response.data.id;
+          createdHighlight = response.data;
         }
 
         setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
         clearSelection();
-        return createdHighlightId;
+        return createdHighlight;
       } catch (err) {
         setSelectionError(toUserFacingError(err));
         return null;
@@ -1664,6 +1685,7 @@ export default function PdfReader({
       editingHighlightId,
       isCreating,
       mediaId,
+      pageHighlights,
       resolveTextLayerRootFromRange,
       selection,
       textGeometryReliable,
@@ -2317,20 +2339,24 @@ export default function PdfReader({
           selectionRect={selection.rect}
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
-          onCreateHighlight={handleCreateHighlight}
+          onCreateHighlight={async (color) =>
+            (await handleCreateHighlight(color))?.id ?? null
+          }
           onQuoteToNewChat={
             onQuoteToNewChat && textGeometryReliable
               ? async () => {
-                  const highlightId = await handleCreateHighlight("yellow");
-                  if (highlightId) await onQuoteToNewChat(highlightId);
+                  const highlight = await handleCreateHighlight("yellow");
+                  if (highlight)
+                    await onQuoteToNewChat(highlight.id, highlight);
                 }
               : undefined
           }
           onQuoteToExtantChat={
             onQuoteToExtantChat && textGeometryReliable
               ? async () => {
-                  const highlightId = await handleCreateHighlight("yellow");
-                  if (highlightId) await onQuoteToExtantChat(highlightId);
+                  const highlight = await handleCreateHighlight("yellow");
+                  if (highlight)
+                    await onQuoteToExtantChat(highlight.id, highlight);
                 }
               : undefined
           }

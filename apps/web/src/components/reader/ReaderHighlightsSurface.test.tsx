@@ -90,6 +90,7 @@ function ReaderHighlightsSurfaceHarness({
   onCancelEditBounds = () => {},
   linkedConversations,
   onOpenConversation = () => {},
+  highlights,
 }: {
   focusedId?: string | null;
   onFocusHighlight?: (highlightId: string) => void;
@@ -103,8 +104,26 @@ function ReaderHighlightsSurfaceHarness({
   onCancelEditBounds?: () => void;
   linkedConversations?: NonNullable<AnchoredHighlightRow["linked_conversations"]>;
   onOpenConversation?: (conversationId: string, title: string) => void;
+  highlights?: AnchoredHighlightRow[];
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const rows = highlights ?? [
+    {
+      ...highlight(
+        "h1",
+        "Visible quote",
+        "Before visible context ",
+        " after visible context.",
+      ),
+      linked_conversations: linkedConversations ?? [],
+    },
+    highlight(
+      "h2",
+      "Hidden quote",
+      "Before hidden context ",
+      " after hidden context.",
+    ),
+  ];
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", height: 320 }}>
@@ -126,23 +145,7 @@ function ReaderHighlightsSurfaceHarness({
       </div>
       <FeedbackProvider>
         <ReaderHighlightsSurface
-          highlights={[
-            {
-              ...highlight(
-                "h1",
-                "Visible quote",
-                "Before visible context ",
-                " after visible context.",
-              ),
-              linked_conversations: linkedConversations ?? [],
-            },
-            highlight(
-              "h2",
-              "Hidden quote",
-              "Before hidden context ",
-              " after hidden context.",
-            ),
-          ]}
+          highlights={rows}
           contentRef={contentRef}
           focusedId={focusedId}
           onFocusHighlight={onFocusHighlight}
@@ -361,6 +364,36 @@ describe("ReaderHighlightsSurface", () => {
   it("hides the quote-to-chat options when quoting is disabled", async () => {
     const user = userEvent.setup();
     render(<ReaderHighlightsSurfaceHarness canQuoteToChat={false} />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Actions" }));
+
+    const menu = screen.getByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Quote to new chat" }),
+    ).toBeNull();
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Quote to existing chat" }),
+    ).toBeNull();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
+  });
+
+  it("hides quote-to-chat options for highlights without exact text", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReaderHighlightsSurfaceHarness
+        highlights={[
+          highlight(
+            "h1",
+            "   ",
+            "Before visible context ",
+            " after visible context.",
+          ),
+        ]}
+      />,
+    );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     await user.click(within(row).getByRole("button", { name: "Actions" }));

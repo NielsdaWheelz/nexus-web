@@ -20,17 +20,23 @@ from nexus.db.models import (
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
+    Media,
+    MediaKind,
     Message,
     NoteBlock,
     Page,
+    PdfPageTextSpan,
+    ProcessingStatus,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.resource_resolver import (
     INLINE_THRESHOLD_CHARS,
     resolve,
     resolve_batch,
 )
 from tests.factories import (
+    add_media_to_library,
     create_test_conversation,
     create_test_library,
     create_test_media_in_library,
@@ -169,12 +175,19 @@ def _make_note_block(db: Session, user_id: UUID, *, body: str = "Note body.") ->
     return block.id
 
 
-def _make_highlight_with_anchor(db: Session, user_id: UUID, media_id: UUID) -> UUID:
+def _make_highlight_with_anchor(
+    db: Session,
+    user_id: UUID,
+    media_id: UUID,
+    *,
+    exact: str = "some highlighted text",
+    prefix: str = "",
+    suffix: str = "",
+) -> UUID:
     fragment = (
         db.query(Fragment).filter(Fragment.media_id == media_id).order_by(Fragment.idx).first()
     )
     if fragment is None:
-        exact = "some highlighted text"
         fragment = Fragment(
             id=uuid4(),
             media_id=media_id,
@@ -190,9 +203,9 @@ def _make_highlight_with_anchor(db: Session, user_id: UUID, media_id: UUID) -> U
         anchor_kind="fragment_offsets",
         anchor_media_id=media_id,
         color="yellow",
-        exact="some highlighted text",
-        prefix="",
-        suffix="",
+        exact=exact,
+        prefix=prefix,
+        suffix=suffix,
     )
     db.add(highlight)
     db.flush()
@@ -201,11 +214,57 @@ def _make_highlight_with_anchor(db: Session, user_id: UUID, media_id: UUID) -> U
             highlight_id=highlight.id,
             fragment_id=fragment.id,
             start_offset=0,
-            end_offset=len("some highlighted text"),
+            end_offset=len(exact),
         )
     )
     db.commit()
     return highlight.id
+
+
+def _add_fragment(db: Session, media_id: UUID, *, idx: int, text: str) -> UUID:
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media_id,
+        idx=idx,
+        canonical_text=text,
+        html_sanitized=f"<p>{text}</p>",
+    )
+    db.add(fragment)
+    db.commit()
+    return fragment.id
+
+
+def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "Test PDF") -> UUID:
+    """Create a PDF media with plain_text + page spans (offsets into plain_text)."""
+    plain_text = ""
+    spans: list[tuple[int, int, int]] = []
+    for page_number, page in enumerate(pages, start=1):
+        start = len(plain_text)
+        plain_text += page
+        spans.append((page_number, start, len(plain_text)))
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.pdf.value,
+        title=title,
+        processing_status=ProcessingStatus.ready,
+        plain_text=plain_text,
+        page_count=len(pages),
+    )
+    db.add(media)
+    db.flush()
+    for page_number, start, end in spans:
+        db.add(
+            PdfPageTextSpan(
+                media_id=media.id,
+                page_number=page_number,
+                start_offset=start,
+                end_offset=end,
+                text_extract_version=1,
+            )
+        )
+    add_media_to_library(db, library_id, media.id)
+    db.commit()
+    return media.id
 
 
 # =============================================================================
@@ -218,7 +277,19 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
 ):
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
-    media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id, title="Dune")
+    media_id = _make_pdf(
+        db_session,
+        library_id,
+        pages=["first page words. ", "second page text. "],
+        title="Dune",
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "Frank Herbert", "role": "author"}],
+        source="manual",
+    )
+    db_session.commit()
 
     resolved = resolve(db_session, f"media:{media_id}", viewer_id=bootstrapped_user)
 
@@ -226,12 +297,19 @@ def test_resolve_media_returns_label_summary_and_pointer_only_body(
     assert resolved.uri == f"media:{media_id}", (
         f"Resolver should echo the input URI; got {resolved.uri}"
     )
-    assert "Dune" in resolved.label, f"Expected media title in label; got {resolved.label}"
+    assert resolved.label == "Dune by Frank Herbert", (
+        f"Expected media title + author in label; got {resolved.label}"
+    )
+    assert resolved.summary == "pdf · ~6 words · 2 pages", (
+        f"Expected kind/word/page summary; got {resolved.summary}"
+    )
     assert resolved.inline_body is None, (
         f"Media bodies are always pointer-only; got inline_body={resolved.inline_body!r}"
     )
-    assert "app_search" in resolved.fetch_hint, (
-        f"Media fetch_hint should direct the model to app_search; got {resolved.fetch_hint}"
+    assert all(
+        name in resolved.fetch_hint for name in ("inspect_resource", "read_resource", "app_search")
+    ), (
+        f"Media fetch_hint should direct the model to the map/read/search stack; got {resolved.fetch_hint}"
     )
 
 
@@ -310,22 +388,59 @@ def test_resolve_span_unknown_returns_missing(db_session: Session, bootstrapped_
     assert resolved.missing, "Unknown span URI must resolve as missing"
 
 
-def test_resolve_highlight_inlines_text(db_session: Session, bootstrapped_user: UUID):
+def test_resolve_highlight_returns_enriched_quote(db_session: Session, bootstrapped_user: UUID):
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Highlight Source"
     )
-    # _make_highlight_with_anchor needs a fragment; reuse the helper via _make_span,
-    # which inserts a fragment as part of its scaffolding.
-    _make_span(db_session, media_id, text="Background span text for highlight.")
-    highlight_id = _make_highlight_with_anchor(db_session, bootstrapped_user, media_id)
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "Ada Lovelace", "role": "author"}],
+        source="manual",
+    )
+    exact = "first quote line\nsecond quote line"
+    highlight_id = _make_highlight_with_anchor(
+        db_session,
+        bootstrapped_user,
+        media_id,
+        exact=exact,
+        prefix="before ",
+        suffix=" after",
+    )
 
     resolved = resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Expected highlight visibility, got {resolved}"
-    assert resolved.inline_body == "some highlighted text", (
-        f"Highlight bodies are always inline; got inline_body={resolved.inline_body!r}"
+    assert resolved.quote is not None, "Highlights resolve as an enriched <quote>, not bare text"
+    assert resolved.quote.exact == exact
+    assert resolved.quote.prefix == "before " and resolved.quote.suffix == " after"
+    assert resolved.quote.source_label == "“Highlight Source” by Ada Lovelace", (
+        f"Quote source should name the parent media; got {resolved.quote.source_label!r}"
+    )
+    assert resolved.inline_body is None, "Highlight quote replaces the inline <body>"
+    assert resolved.summary == exact
+    assert "Highlight Source" in resolved.label
+
+
+def test_resolve_highlight_includes_linked_note(db_session: Session, bootstrapped_user: UUID):
+    from nexus.services.notes import set_highlight_note_body
+
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Noted Source"
+    )
+    _make_span(db_session, media_id, text="Background span text for highlight.")
+    highlight_id = _make_highlight_with_anchor(db_session, bootstrapped_user, media_id)
+    set_highlight_note_body(db_session, bootstrapped_user, highlight_id, "my annotation")
+
+    resolved = resolve(db_session, f"highlight:{highlight_id}", viewer_id=bootstrapped_user)
+
+    assert resolved.quote is not None
+    assert resolved.quote.note == "my annotation", (
+        f"Linked note should reach the quote; got note={resolved.quote.note!r}"
     )
 
 

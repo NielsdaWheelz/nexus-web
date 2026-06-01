@@ -88,4 +88,14 @@ describe("buildChatRunBody", () => {
     });
     expect(body.reader_context).toEqual({ media_id: "m-1", library_id: null });
   });
+
+  it("forwards the reader selection anchor when present", () => {
+    const readerSelection = {
+      exact: "selected text",
+      media_id: "media-1",
+      highlight_id: "highlight-1",
+    };
+    const body = buildChatRunBody({ ...base, readerSelection });
+    expect(body.reader_selection).toEqual(readerSelection);
+  });
 });

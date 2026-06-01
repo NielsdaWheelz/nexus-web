@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -18,7 +19,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
-from nexus.schemas.conversation import ReaderContextHint
+from nexus.schemas.conversation import ReaderContextHint, ReaderSelectionRequest
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.chat_run_finalize import dummy_resolved_key, finalize_error
 from nexus.services.chat_runs import execute_chat_run
@@ -28,10 +29,19 @@ from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
 logger = get_logger(__name__)
 
 
-def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> dict:
+def chat_run(
+    run_id: str,
+    reader_context: Mapping[str, str] | None = None,
+    reader_selection: Mapping[str, Any] | None = None,
+) -> dict:
     run_uuid = UUID(run_id)
     reader_context_hint = (
         ReaderContextHint.model_validate(reader_context) if reader_context is not None else None
+    )
+    reader_selection_anchor = (
+        ReaderSelectionRequest.model_validate(reader_selection)
+        if reader_selection is not None
+        else None
     )
     settings = get_settings()
     session_factory = get_session_factory()
@@ -75,6 +85,7 @@ def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> di
                 llm_router=router,
                 web_search_provider=web_search_provider,
                 reader_context=reader_context_hint,
+                reader_selection=reader_selection_anchor,
             )
 
     logger.info("chat_run_started", run_id=run_id)

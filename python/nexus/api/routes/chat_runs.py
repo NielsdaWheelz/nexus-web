@@ -27,6 +27,7 @@ def create_chat_run(
         viewer_id=viewer.user_id,
         conversation_id=body.conversation_id,
         reader_context=body.reader_context,
+        reader_selection=body.reader_selection,
         parent_message_id=body.parent_message_id,
         branch_anchor=body.branch_anchor,
         content=body.content,

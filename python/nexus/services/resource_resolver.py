@@ -1,27 +1,26 @@
 """URI-based resource resolver for conversation references.
 
-Resolves opaque `<scheme>:<uuid>` URIs to label/summary/inline-body blocks
-used by prompt assembly. Permission checks delegate to existing helpers in
-``nexus.auth.permissions``. Unknown, missing, or forbidden URIs return a
+Owns the ``<scheme>:<uuid>`` URI grammar and presents resources for prompt
+assembly: label/summary/inline-body blocks, plus an enriched ``<quote>`` for
+highlights. Data access (SQL + permission per scheme) lives in
+:mod:`nexus.services.resource_loaders`; this module is a pure presenter over
+its :class:`LoadedResource`. Unknown, missing, or forbidden URIs return a
 ``missing=True`` block rather than raising.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import (
-    can_read_conversation,
-    can_read_highlight,
-    can_read_media,
-    is_library_member,
+from nexus.services.resource_loaders import (
+    LoadedQuote,
+    LoadedResource,
+    load_resource_batch,
 )
 
 INLINE_THRESHOLD_CHARS = 1500
@@ -50,8 +49,12 @@ RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = (
     "message",
 )
 SEARCH_SCOPE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = ("media", "library")
+# read_resource rejects these outright (a library has no canonical body). `media`
+# is NOT here — it is readable (full / too_large) — but stays a valid search scope
+# above. The two tuples are distinct on purpose; do not merge them.
+READ_REJECTED_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = ("library",)
 READABLE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = tuple(
-    scheme for scheme in RESOURCE_URI_SCHEMES if scheme not in SEARCH_SCOPE_RESOURCE_URI_SCHEMES
+    scheme for scheme in RESOURCE_URI_SCHEMES if scheme not in READ_REJECTED_RESOURCE_URI_SCHEMES
 )
 
 
@@ -75,6 +78,7 @@ class ResolvedResource:
     summary: str
     inline_body: str | None
     fetch_hint: str
+    quote: LoadedQuote | None = None  # set for highlights → <quote> instead of <body>
     missing: bool = False
 
 
@@ -111,43 +115,19 @@ def resolve_batch(
     *,
     viewer_id: UUID,
 ) -> list[ResolvedResource]:
-    by_scheme: dict[str, list[tuple[str, UUID]]] = defaultdict(list)
+    parsed_by_uri: dict[str, ParsedResourceUri] = {}
     results: dict[str, ResolvedResource] = {}
     for uri in uris:
-        if uri in results:
+        if uri in results or uri in parsed_by_uri:
             continue
         parsed = parse_resource_uri(uri)
         if isinstance(parsed, ResourceUriParseFailure):
             results[uri] = _missing(uri)
-            continue
-        by_scheme[parsed.scheme].append((uri, parsed.resource_id))
-
-    for scheme, items in by_scheme.items():
-        if scheme == "media":
-            resolved = _resolve_media_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "library":
-            resolved = _resolve_library_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "span":
-            resolved = _resolve_span_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "chunk":
-            resolved = _resolve_chunk_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "highlight":
-            resolved = _resolve_highlight_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "page":
-            resolved = _resolve_page_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "note_block":
-            resolved = _resolve_note_block_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "fragment":
-            resolved = _resolve_fragment_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "conversation":
-            resolved = _resolve_conversation_batch(db, items, viewer_id=viewer_id)
-        elif scheme == "message":
-            resolved = _resolve_message_batch(db, items, viewer_id=viewer_id)
         else:
-            resolved = [_missing(uri) for uri, _ in items]
-        for entry in resolved:
-            results[entry.uri] = entry
-
+            parsed_by_uri[uri] = parsed
+    loaded = load_resource_batch(db, list(parsed_by_uri.values()), viewer_id=viewer_id)
+    for uri in parsed_by_uri:
+        results[uri] = _present(loaded[uri])
     return [results[uri] for uri in uris]
 
 
@@ -170,422 +150,96 @@ def _first_line(body: str) -> str:
     return ""
 
 
-def _resolve_media_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                m.id,
-                m.title,
-                COALESCE(
-                    NULLIF(string_agg(DISTINCT cc.credited_name, ', ' ORDER BY cc.credited_name), ''),
-                    ''
-                ) AS authors
-            FROM media m
-            LEFT JOIN contributor_credits cc
-              ON cc.media_id = m.id
-             AND cc.role = 'author'
-            WHERE m.id = ANY(:ids)
-            GROUP BY m.id, m.title
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, media_id in items:
-        row = by_id.get(media_id)
-        if row is None or not can_read_media(db, viewer_id, media_id):
-            out.append(_missing(uri))
-            continue
-        title = str(row[1])
-        authors = str(row[2])
-        label = f"{title} by {authors}" if authors else title
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary="Searchable.",
-                inline_body=None,
-                fetch_hint=f'app_search(scopes=["{uri}"], query=...)',
-            )
+def _read_resolved(loaded: LoadedResource, *, label: str) -> ResolvedResource:
+    """Present a body-bearing scheme: summary + inline body under the threshold."""
+    body = loaded.body or ""
+    return ResolvedResource(
+        uri=loaded.uri,
+        label=label,
+        summary=_first_line(body),
+        inline_body=body if len(body) < INLINE_THRESHOLD_CHARS else None,
+        fetch_hint=f'read_resource("{loaded.uri}")',
+    )
+
+
+def _present(loaded: LoadedResource) -> ResolvedResource:
+    if loaded.missing:
+        return _missing(loaded.uri)
+    scheme = loaded.scheme
+    if scheme == "media":
+        title = loaded.title or ""
+        label = f"{title} by {loaded.author}" if loaded.author else title
+        kind = loaded.media_kind or "document"
+        count = loaded.section_count if loaded.section_count is not None else 0
+        word_count = loaded.word_count if loaded.word_count is not None else 0
+        unit = "pages" if kind == "pdf" else "sections"
+        summary_parts = [kind]
+        if word_count:
+            summary_parts.append(f"~{word_count:,} words")
+        if count:
+            summary_parts.append(f"{count} {unit}")
+        summary = " · ".join(summary_parts)
+        fetch_hint = (
+            f'inspect_resource("{loaded.uri}") to map; '
+            f'read_resource("{loaded.uri}") to read; '
+            f'app_search(scopes=["{loaded.uri}"], query=...) to search'
         )
-    return out
-
-
-def _resolve_library_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                l.id,
-                l.name,
-                (
-                    SELECT COUNT(*) FROM library_entries le
-                    WHERE le.library_id = l.id
-                ) AS item_count
-            FROM libraries l
-            WHERE l.id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, library_id in items:
-        row = by_id.get(library_id)
-        if row is None or not is_library_member(db, viewer_id, library_id):
-            out.append(_missing(uri))
-            continue
-        name = str(row[1])
-        count = int(row[2] or 0)
-        summary = f"{name} ({count} items)" if count else name
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=name,
-                summary=summary,
-                inline_body=None,
-                fetch_hint=f'app_search(scopes=["{uri}"], query=...)',
-            )
+        return ResolvedResource(
+            uri=loaded.uri, label=label, summary=summary, inline_body=None, fetch_hint=fetch_hint
         )
-    return out
-
-
-def _resolve_span_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                es.id,
-                es.media_id,
-                es.span_text,
-                es.citation_label,
-                m.title
-            FROM evidence_spans es
-            JOIN media m ON m.id = es.media_id
-            WHERE es.id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, span_id in items:
-        row = by_id.get(span_id)
-        if row is None or not can_read_media(db, viewer_id, row[1]):
-            out.append(_missing(uri))
-            continue
-        body = str(row[2] or "")
-        label = f"{row[4]} - {row[3]}"
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "library":
+        name = loaded.title or ""
+        summary = f"{name} ({loaded.item_count} items)" if loaded.item_count else name
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=name,
+            summary=summary,
+            inline_body=None,
+            fetch_hint=f'app_search(scopes=["{loaded.uri}"], query=...)',
         )
-    return out
-
-
-def _resolve_chunk_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                cc.id,
-                cc.media_id,
-                cc.chunk_text,
-                m.title
-            FROM content_chunks cc
-            JOIN media m ON m.id = cc.media_id
-            WHERE cc.id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, chunk_id in items:
-        row = by_id.get(chunk_id)
-        if row is None or not can_read_media(db, viewer_id, row[1]):
-            out.append(_missing(uri))
-            continue
-        body = str(row[2] or "")
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=f"{row[3]} - chunk: {_first_line(body)[:80]}",
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "highlight":
+        quote = loaded.quote
+        if quote is None:
+            # justify-defect: the highlight loader always sets quote for a visible highlight.
+            raise AssertionError(f"highlight {loaded.uri} loaded without a quote")
+        label = f"Highlight in {quote.source_label}" if quote.source_label else "Highlight"
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=label,
+            summary=quote.exact,
+            inline_body=None,
+            fetch_hint=f'read_resource("{loaded.uri}")',
+            quote=quote,
         )
-    return out
-
-
-def _resolve_highlight_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT id, exact
-            FROM highlights
-            WHERE id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, highlight_id in items:
-        row = by_id.get(highlight_id)
-        if row is None or not can_read_highlight(db, viewer_id, highlight_id):
-            out.append(_missing(uri))
-            continue
-        body = str(row[1] or "")
-        label = body[:120] or "Highlight"
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "span":
+        return _read_resolved(loaded, label=f"{loaded.title} - {loaded.citation_label}")
+    if scheme == "chunk":
+        return _read_resolved(
+            loaded, label=f"{loaded.title} - chunk: {_first_line(loaded.body or '')[:80]}"
         )
-    return out
-
-
-def _resolve_page_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT id, user_id, title, description
-            FROM pages
-            WHERE id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, page_id in items:
-        row = by_id.get(page_id)
-        if row is None or row[1] != viewer_id:
-            out.append(_missing(uri))
-            continue
-        title = str(row[2])
-        description = str(row[3] or "")
-        inline = description if len(description) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=title,
-                summary=_first_line(description),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "page":
+        return _read_resolved(loaded, label=loaded.title or "")
+    if scheme == "note_block":
+        return _read_resolved(loaded, label=_first_line(loaded.body or "")[:120] or "Note")
+    if scheme == "fragment":
+        return _read_resolved(
+            loaded, label=f"{loaded.title} — fragment {(loaded.fragment_idx or 0) + 1}"
         )
-    return out
-
-
-def _resolve_note_block_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT id, user_id, body_text
-            FROM note_blocks
-            WHERE id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, block_id in items:
-        row = by_id.get(block_id)
-        if row is None or row[1] != viewer_id:
-            out.append(_missing(uri))
-            continue
-        body = str(row[2] or "")
-        label = _first_line(body)[:120] or "Note"
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "conversation":
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=loaded.title or "Untitled conversation",
+            summary=f"Chat history with {loaded.message_count or 0} messages.",
+            inline_body=None,
+            fetch_hint=f'read_resource("{loaded.uri}")',
         )
-    return out
-
-
-def _resolve_fragment_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT f.id, f.media_id, f.idx, f.canonical_text, m.title
-            FROM fragments f
-            JOIN media m ON m.id = f.media_id
-            WHERE f.id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, fragment_id in items:
-        row = by_id.get(fragment_id)
-        if row is None or not can_read_media(db, viewer_id, row[1]):
-            out.append(_missing(uri))
-            continue
-        body = str(row[3] or "")
-        label = f"{row[4]} — fragment {int(row[2]) + 1}"
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
+    if scheme == "message":
+        body = loaded.body or ""
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=f"{loaded.message_role}: {body[:40]}".strip(),
+            summary=_first_line(body),
+            inline_body=body if len(body) < INLINE_THRESHOLD_CHARS else None,
+            fetch_hint=f'read_resource("{loaded.uri}")',
         )
-    return out
-
-
-def _resolve_conversation_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                c.id,
-                c.title,
-                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
-            FROM conversations c
-            WHERE c.id = ANY(:ids)
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, conversation_id in items:
-        row = by_id.get(conversation_id)
-        if row is None or not can_read_conversation(db, viewer_id, conversation_id):
-            out.append(_missing(uri))
-            continue
-        title = str(row[1] or "").strip() or "Untitled conversation"
-        message_count = int(row[2] or 0)
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=title,
-                summary=f"Chat history with {message_count} messages.",
-                inline_body=None,
-                fetch_hint=f'read_resource("{uri}")',
-            )
-        )
-    return out
-
-
-def _resolve_message_batch(
-    db: Session,
-    items: list[tuple[str, UUID]],
-    *,
-    viewer_id: UUID,
-) -> list[ResolvedResource]:
-    ids = [item[1] for item in items]
-    rows = db.execute(
-        text(
-            """
-            SELECT id, conversation_id, role, content
-            FROM messages
-            WHERE id = ANY(:ids)
-              AND status != 'pending'
-            """
-        ),
-        {"ids": ids},
-    ).fetchall()
-    by_id = {row[0]: row for row in rows}
-    out: list[ResolvedResource] = []
-    for uri, message_id in items:
-        row = by_id.get(message_id)
-        if row is None or not can_read_conversation(db, viewer_id, row[1]):
-            out.append(_missing(uri))
-            continue
-        role = str(row[2])
-        body = str(row[3] or "")
-        label = f"{role}: {body[:40]}".strip()
-        inline = body if len(body) < INLINE_THRESHOLD_CHARS else None
-        out.append(
-            ResolvedResource(
-                uri=uri,
-                label=label,
-                summary=_first_line(body),
-                inline_body=inline,
-                fetch_hint=f'read_resource("{uri}")',
-            )
-        )
-    return out
+    raise AssertionError(f"Unhandled resource URI scheme: {scheme}")

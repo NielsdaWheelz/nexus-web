@@ -337,6 +337,7 @@ class ChatRunCitationIndexEntry(BaseModel):
     retrieval_id: UUID
     tool_call_id: UUID
     ordinal: int = Field(ge=0)
+    result: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -610,6 +611,29 @@ class ReaderContextHint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ReaderSelectionRequest(BaseModel):
+    """The exact passage the viewer is asking about — a bind-only turn anchor.
+
+    Resolves pronouns ("this", "the quote"); never persisted and never itself
+    cited (the durable citable attachment is the `highlight:` reference). It is
+    answer-determining, so it joins the idempotency hash.
+    """
+
+    exact: str = Field(..., min_length=1, max_length=20000)
+    prefix: str | None = Field(default=None, max_length=1000)
+    suffix: str | None = Field(default=None, max_length=1000)
+    media_id: UUID
+    highlight_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _exact_not_blank(self) -> "ReaderSelectionRequest":
+        if not self.exact.strip():
+            raise ValueError("reader_selection exact quote cannot be blank")
+        return self
+
+
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run."""
 
@@ -621,6 +645,7 @@ class ChatRunCreateRequest(BaseModel):
     reasoning: REASONING_MODES = "default"
     key_mode: KEY_MODES = "auto"
     reader_context: ReaderContextHint | None = None
+    reader_selection: ReaderSelectionRequest | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 

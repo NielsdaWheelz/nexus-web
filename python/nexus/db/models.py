@@ -4099,8 +4099,6 @@ class MessageLLM(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
-    prompt_plan_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     stable_prefix_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_usage: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
@@ -4746,9 +4744,6 @@ class ChatPromptAssembly(Base):
         ForeignKey("models.id"),
         nullable=False,
     )
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
-    prompt_plan_version: Mapped[str] = mapped_column(Text, nullable=False)
-    assembler_version: Mapped[str] = mapped_column(Text, nullable=False)
     stable_prefix_hash: Mapped[str] = mapped_column(Text, nullable=False)
     cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
@@ -4794,18 +4789,6 @@ class ChatPromptAssembly(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "char_length(prompt_version) BETWEEN 1 AND 128",
-            name="ck_chat_prompt_assemblies_prompt_version_length",
-        ),
-        CheckConstraint(
-            "char_length(prompt_plan_version) BETWEEN 1 AND 128",
-            name="ck_chat_prompt_assemblies_prompt_plan_version_length",
-        ),
-        CheckConstraint(
-            "char_length(assembler_version) BETWEEN 1 AND 128",
-            name="ck_chat_prompt_assemblies_assembler_version_length",
-        ),
         CheckConstraint(
             "char_length(stable_prefix_hash) BETWEEN 1 AND 128",
             name="ck_chat_prompt_assemblies_stable_prefix_hash_length",

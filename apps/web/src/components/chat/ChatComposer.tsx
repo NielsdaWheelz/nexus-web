@@ -12,7 +12,10 @@ import { ArrowUp, Quote, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
-import type { ReaderContextHintInput } from "@/lib/api/sse/requests";
+import type {
+  ReaderContextHintInput,
+  ReaderSelectionInput,
+} from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ModelSettingsPopover from "@/components/chat/ModelSettingsPopover";
@@ -64,6 +67,8 @@ interface ChatComposerProps {
   onRemovePendingReference?: (uri: string) => void;
   /** Reader context hint for the model (current media/library). Not a retrieval constraint. */
   readerContext?: ReaderContextHintInput | null;
+  /** The quoted passage as a bind-only turn anchor for the asking turn. */
+  readerSelection?: ReaderSelectionInput | null;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
   disabledReason?: string;
 }
@@ -89,6 +94,7 @@ export default function ChatComposer({
   pendingReferences = [],
   onRemovePendingReference,
   readerContext = null,
+  readerSelection = null,
   disabledReason,
 }: ChatComposerProps) {
   const [sending, setSending] = useState(false);
@@ -149,6 +155,7 @@ export default function ChatComposer({
         branchDraft,
         parentMessageId,
         readerContext,
+        readerSelection,
       });
 
       const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
@@ -178,6 +185,7 @@ export default function ChatComposer({
     conversationId,
     onResolveConversation,
     readerContext,
+    readerSelection,
     disabledReason,
     branchDraft,
     parentMessageId,

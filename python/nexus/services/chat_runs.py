@@ -43,11 +43,17 @@ from nexus.schemas.conversation import (
     ChatRunEventOut,
     ChatRunResponse,
     ReaderContextHint,
+    ReaderSelectionRequest,
 )
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_TOOL_DEFINITION,
     APP_SEARCH_TOOL_NAME,
     execute_app_search,
+)
+from nexus.services.agent_tools.inspect_resource import (
+    INSPECT_RESOURCE_TOOL_DEFINITION,
+    INSPECT_RESOURCE_TOOL_NAME,
+    execute_inspect_resource,
 )
 from nexus.services.agent_tools.read_resource import (
     READ_RESOURCE_TOOL_DEFINITION,
@@ -124,6 +130,12 @@ from nexus.services.resource_resolver import (
     ResourceUriScheme,
     format_resource_uri,
 )
+from nexus.services.retrieval_citation import (
+    RetrievalCitation,
+    citation_from_search_result,
+    insert_retrieval_row,
+)
+from nexus.services.search import get_search_result
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
@@ -166,6 +178,11 @@ _CHAT_TOOL_SPECS: tuple[ToolSpec, ...] = (
         name=READ_RESOURCE_TOOL_NAME,
         description=READ_RESOURCE_TOOL_DEFINITION["description"],
         parameters=READ_RESOURCE_TOOL_DEFINITION["parameters"],
+    ),
+    ToolSpec(
+        name=INSPECT_RESOURCE_TOOL_NAME,
+        description=INSPECT_RESOURCE_TOOL_DEFINITION["description"],
+        parameters=INSPECT_RESOURCE_TOOL_DEFINITION["parameters"],
     ),
 )
 
@@ -226,6 +243,17 @@ def _assign_citation_ordinals(db: Session, *, tool_call_id: UUID | None, start_o
     """Assign citation_ordinal to selected retrievals for a tool call; return next ordinal."""
     if tool_call_id is None:
         return start_ordinal
+    db.execute(
+        text(
+            """
+            UPDATE message_retrievals
+            SET citation_ordinal = NULL
+            WHERE tool_call_id = :tool_call_id
+              AND selected = false
+            """
+        ),
+        {"tool_call_id": tool_call_id},
+    )
     rows = db.execute(
         text(
             """
@@ -234,7 +262,6 @@ def _assign_citation_ordinals(db: Session, *, tool_call_id: UUID | None, start_o
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND selected = true
-                  AND citation_ordinal IS NULL
             )
             UPDATE message_retrievals AS mr
             SET citation_ordinal = numbered.n
@@ -293,71 +320,222 @@ def _web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
     )
 
 
-def _persist_read_resource_tool_call(
+def _persist_attached_citations(
+    db: Session, run: ChatRun, citations: tuple[RetrievalCitation, ...]
+) -> None:
+    """Insert the synthetic parent tool-call + one retrieval per citable attached
+    resource, so attached ``<resources>`` get a ``[N]`` chip through the unchanged
+    citation pipeline. ``citation_ordinal`` is the resource's `n` (dense, 1..k).
+    Idempotent on the synthetic ``tool_call_index = 0``.
+    """
+    existing = db.execute(
+        text(
+            "SELECT id FROM message_tool_calls "
+            "WHERE assistant_message_id = :amid AND tool_call_index = 0 "
+            "FOR UPDATE"
+        ),
+        {"amid": run.assistant_message_id},
+    ).first()
+    if not citations:
+        if existing is not None:
+            tool_call_id = existing[0]
+            db.execute(
+                text("DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
+                {"tool_call_id": tool_call_id},
+            )
+            db.execute(
+                text("DELETE FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": tool_call_id},
+            )
+        return
+    if existing is not None:
+        tool_call_id = existing[0]
+    else:
+        tool_call_id = db.execute(
+            text(
+                """
+                INSERT INTO message_tool_calls (
+                    conversation_id, user_message_id, assistant_message_id, tool_name,
+                    tool_call_index, scope, semantic, requested_types, result_refs,
+                    selected_context_refs, provider_request_ids, status
+                )
+                VALUES (
+                    :conversation_id, :user_message_id, :assistant_message_id,
+                    'attached_resources', 0, 'attached_context', false, '[]'::jsonb,
+                    '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'complete'
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "conversation_id": run.conversation_id,
+                "user_message_id": run.user_message_id,
+                "assistant_message_id": run.assistant_message_id,
+            },
+        ).scalar_one()
+    for ordinal, citation in enumerate(citations):
+        insert_retrieval_row(
+            db,
+            tool_call_id=tool_call_id,
+            ordinal=ordinal,
+            citation=citation,
+            selected=True,
+            scope="attached_context",
+            retrieval_status="attached_context",
+            included_in_prompt=True,
+            citation_ordinal=ordinal + 1,
+        )
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrievals
+            WHERE tool_call_id = :tool_call_id
+              AND ordinal >= :citation_count
+            """
+        ),
+        {"tool_call_id": tool_call_id, "citation_count": len(citations)},
+    )
+
+
+def _persist_read_evidence_citation(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    tool_call_id: UUID,
+    result: Any,
+    start_ordinal: int,
+) -> int | None:
+    """Make an evidence read (`quote`/`section`/`full`/`page_range`) citable.
+
+    Materializes the chip via `get_search_result` under the read tool-call and
+    returns its `n` (= ``start_ordinal``), or None when the result is not
+    evidence (`too_large`/error) or no durable row materializes.
+    """
+    if result.is_error or result.citation_result_type is None or result.citation_source_id is None:
+        return None
+    try:
+        search_result = get_search_result(
+            db, viewer_id, result.citation_result_type, result.citation_source_id
+        )
+        citation = citation_from_search_result(search_result, filters={})
+        citation.selected = True
+        insert_retrieval_row(
+            db,
+            tool_call_id=tool_call_id,
+            ordinal=0,
+            citation=citation,
+            selected=True,
+            scope="read_resource",
+            retrieval_status="selected",
+            included_in_prompt=True,
+            citation_ordinal=start_ordinal,
+        )
+    except (NotFoundError, ValueError):
+        # justify-ignore-error: no resolvable anchor → the read body still
+        # returns, but it is not cited (no row, no `n`).
+        return None
+    return start_ordinal
+
+
+def _persist_tool_call_trace(
     db: Session,
     *,
     run: ChatRun,
     tool_call_index: int,
-    args: Mapping[str, Any],
+    tool_name: str,
     result: Any,
-) -> None:
-    """Persist a read_resource invocation as a message_tool_calls row.
+) -> UUID:
+    """Persist a read_resource / inspect_resource invocation as a message_tool_calls row.
 
-    No message_retrievals are written: read_resource returns a single body,
-    not a list of search candidates. ``result`` is a ``ReadResourceResult``
-    from :mod:`nexus.services.agent_tools.read_resource`.
+    Read evidence may get one message_retrievals row after this parent is
+    inserted. Inspect maps and too_large redirects stay trace-only.
     """
     payload = {
         "uri": result.uri,
         "status": result.status,
         "error_code": result.error_code,
-        "args": {"uri": str(args.get("uri") or "")},
         "body_chars": len(result.body or ""),
     }
+    params = {
+        "conversation_id": run.conversation_id,
+        "user_message_id": run.user_message_id,
+        "assistant_message_id": run.assistant_message_id,
+        "tool_name": tool_name,
+        "tool_call_index": tool_call_index,
+        "payload": json.dumps([payload]),
+        "status": "error" if result.is_error else "complete",
+        "error_code": result.error_code,
+    }
+    existing = db.execute(
+        text(
+            "SELECT id FROM message_tool_calls "
+            "WHERE assistant_message_id = :assistant_message_id "
+            "AND tool_call_index = :tool_call_index "
+            "FOR UPDATE"
+        ),
+        params,
+    ).first()
+    if existing is None:
+        return db.execute(
+            text(
+                """
+                INSERT INTO message_tool_calls (
+                    conversation_id,
+                    user_message_id,
+                    assistant_message_id,
+                    tool_name,
+                    tool_call_index,
+                    scope,
+                    semantic,
+                    result_refs,
+                    selected_context_refs,
+                    provider_request_ids,
+                    status,
+                    error_code
+                )
+                VALUES (
+                    :conversation_id,
+                    :user_message_id,
+                    :assistant_message_id,
+                    :tool_name,
+                    :tool_call_index,
+                    'conversation_references',
+                    false,
+                    CAST(:payload AS JSONB),
+                    '[]'::jsonb,
+                    '[]'::jsonb,
+                    :status,
+                    :error_code
+                )
+                RETURNING id
+                """
+            ),
+            params,
+        ).scalar_one()
+
+    tool_call_id = existing[0]
     db.execute(
         text(
             """
-            INSERT INTO message_tool_calls (
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-                tool_name,
-                tool_call_index,
-                scope,
-                semantic,
-                result_refs,
-                selected_context_refs,
-                provider_request_ids,
-                status,
-                error_code
-            )
-            VALUES (
-                :conversation_id,
-                :user_message_id,
-                :assistant_message_id,
-                :tool_name,
-                :tool_call_index,
-                'conversation_references',
-                false,
-                CAST(:payload AS JSONB),
-                '[]'::jsonb,
-                '[]'::jsonb,
-                :status,
-                :error_code
-            )
+            UPDATE message_tool_calls
+            SET tool_name = :tool_name,
+                scope = 'conversation_references',
+                semantic = false,
+                result_refs = CAST(:payload AS JSONB),
+                selected_context_refs = '[]'::jsonb,
+                provider_request_ids = '[]'::jsonb,
+                status = :status,
+                error_code = :error_code
+            WHERE id = :tool_call_id
             """
         ),
-        {
-            "conversation_id": run.conversation_id,
-            "user_message_id": run.user_message_id,
-            "assistant_message_id": run.assistant_message_id,
-            "tool_name": READ_RESOURCE_TOOL_NAME,
-            "tool_call_index": tool_call_index,
-            "payload": json.dumps([payload]),
-            "status": "error" if result.is_error else "complete",
-            "error_code": result.error_code,
-        },
+        {**params, "tool_call_id": tool_call_id},
     )
+    db.execute(
+        text("DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
+        {"tool_call_id": tool_call_id},
+    )
+    return tool_call_id
 
 
 def _emit_citation_index(db: Session, run: ChatRun) -> None:
@@ -376,6 +554,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :amid
               AND mr.citation_ordinal IS NOT NULL
+              AND mr.selected = true
             ORDER BY mr.citation_ordinal ASC
             """
         ),
@@ -395,6 +574,7 @@ def _emit_citation_index(db: Session, run: ChatRun) -> None:
                     "retrieval_id": str(row[1]),
                     "tool_call_id": str(row[2]),
                     "ordinal": row[3],
+                    "result": row[7] or None,
                 }
                 for row in rows
             ],
@@ -441,6 +621,10 @@ def _retrieval_row_to_uri(
         if media_id is None:
             return None
         return format_resource_uri("media", media_id)
+    if result_type in {"episode", "video"}:
+        if media_id is None:
+            return None
+        return format_resource_uri("media", media_id)
     scheme = _RESULT_REF_RESOURCE_URI_SCHEMES.get(result_type)
     if scheme is None:
         return None
@@ -471,6 +655,7 @@ def create_chat_run(
     viewer_id: UUID,
     conversation_id: UUID,
     reader_context: ReaderContextHint | None,
+    reader_selection: ReaderSelectionRequest | None,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
     content: str,
@@ -489,6 +674,7 @@ def create_chat_run(
         conversation_id,
         parent_message_id,
         branch_anchor,
+        reader_selection,
     )
 
     existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
@@ -518,6 +704,7 @@ def create_chat_run(
         conversation_id,
         parent_message_id,
         branch_anchor,
+        reader_selection,
         content,
         model_id,
         reasoning,
@@ -573,7 +760,7 @@ def create_chat_run(
         enqueue_job(
             db,
             kind="chat_run",
-            payload=_chat_run_job_payload(run.id, reader_context),
+            payload=_chat_run_job_payload(run.id, reader_context, reader_selection),
             priority=50,
             max_attempts=3,
             dedupe_key=f"chat_run:{run.id}",
@@ -589,13 +776,15 @@ def create_chat_run(
 def _chat_run_job_payload(
     run_id: UUID,
     reader_context: ReaderContextHint | None,
+    reader_selection: ReaderSelectionRequest | None,
 ) -> dict[str, object]:
     """Job payload for the chat_run worker.
 
-    Carries reader_context (a request-only model-prompt hint per spec §7.1)
-    through to the worker so prompt assembly can render the hint block without
-    a dedicated `ChatRun` column. The values are looked up to titles inside
-    `_build_reader_context_block` and otherwise discarded.
+    Carries the request-only turn anchors (`reader_context`, `reader_selection`)
+    through to the worker so prompt assembly can render their blocks without a
+    dedicated `ChatRun` column. They are rendered and otherwise discarded; a
+    retry enqueues only `run_id` and renders without them (the quote still
+    reaches the model via the enriched `highlight:` reference).
     """
     payload: dict[str, object] = {"run_id": str(run_id)}
     if reader_context is not None:
@@ -606,6 +795,8 @@ def _chat_run_job_payload(
             hint["library_id"] = str(reader_context.library_id)
         if hint:
             payload["reader_context"] = hint
+    if reader_selection is not None:
+        payload["reader_selection"] = reader_selection.model_dump(mode="json")
     return payload
 
 
@@ -827,6 +1018,7 @@ async def execute_chat_run(
     llm_router: ChatRunLLMRouter,
     web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
+    reader_selection: ReaderSelectionRequest | None = None,
 ) -> dict[str, str]:
     flow_id = str(run_id)
     set_flow_id(flow_id)
@@ -837,6 +1029,7 @@ async def execute_chat_run(
             llm_router=llm_router,
             web_search_provider=web_search_provider,
             reader_context=reader_context,
+            reader_selection=reader_selection,
         )
     except ApiError as exc:
         logger.warning(
@@ -881,6 +1074,7 @@ async def _execute_chat_run(
     llm_router: ChatRunLLMRouter,
     web_search_provider: WebSearchProvider | None = None,
     reader_context: ReaderContextHint | None = None,
+    reader_selection: ReaderSelectionRequest | None = None,
 ) -> dict[str, str]:
     run = db.get(ChatRun, run_id)
     if run is None:
@@ -972,9 +1166,11 @@ async def _execute_chat_run(
                 provider_account_boundary=resolved_key.user_key_id or resolved_key.mode,
                 max_output_tokens=max_output_tokens,
                 reader_context=reader_context,
+                reader_selection=reader_selection,
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
             reconcile_prompt_retrievals(db, run=run, assembly=assembly)
+            _persist_attached_citations(db, run, assembly.attached_citations)
             db.commit()
         except ContextBudgetError as exc:
             logger.warning(
@@ -1006,7 +1202,7 @@ async def _execute_chat_run(
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
-        citation_n_next = 1
+        citation_n_next = len(assembly.attached_citations) + 1
         tool_call_index_next = 0
         llm_start = time.monotonic()
         llm_log_fields = safe_kv(
@@ -1181,19 +1377,51 @@ async def _execute_chat_run(
                             conversation_id=run.conversation_id,
                             uri=str(args.get("uri") or ""),
                         )
-                        _persist_read_resource_tool_call(
+                        read_tool_call_id = _persist_tool_call_trace(
                             db,
                             run=run,
                             tool_call_index=tool_call_index_next,
-                            args=args,
+                            tool_name=READ_RESOURCE_TOOL_NAME,
                             result=read_result,
+                        )
+                        read_n = _persist_read_evidence_citation(
+                            db,
+                            viewer_id=run.owner_user_id,
+                            tool_call_id=read_tool_call_id,
+                            result=read_result,
+                            start_ordinal=citation_n_next,
+                        )
+                        if read_n is not None:
+                            citation_n_next += 1
+                        db.commit()
+                        tool_results.append(
+                            ToolResult(
+                                call_id=tc.id,
+                                output=read_result.tool_output(n=read_n),
+                                is_error=read_result.is_error,
+                            )
+                        )
+                    elif tc.name == INSPECT_RESOURCE_TOOL_NAME:
+                        args = tc.arguments or {}
+                        inspect_result = execute_inspect_resource(
+                            db,
+                            viewer_id=run.owner_user_id,
+                            conversation_id=run.conversation_id,
+                            uri=str(args.get("uri") or ""),
+                        )
+                        _persist_tool_call_trace(
+                            db,
+                            run=run,
+                            tool_call_index=tool_call_index_next,
+                            tool_name=INSPECT_RESOURCE_TOOL_NAME,
+                            result=inspect_result,
                         )
                         db.commit()
                         tool_results.append(
                             ToolResult(
                                 call_id=tc.id,
-                                output=read_result.tool_output(),
-                                is_error=read_result.is_error,
+                                output=inspect_result.tool_output(),
+                                is_error=inspect_result.is_error,
                             )
                         )
                     else:

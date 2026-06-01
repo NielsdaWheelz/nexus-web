@@ -30,10 +30,8 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
-    retrieval_locator_json,
     retrieval_result_ref_json,
 )
-from nexus.schemas.search import SearchResultOut
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.resource_resolver import (
@@ -41,10 +39,22 @@ from nexus.services.resource_resolver import (
     ResourceUriParseFailure,
     parse_resource_uri,
 )
+from nexus.services.retrieval_citation import (
+    RetrievalCitation,
+    citation_from_search_result,
+    insert_retrieval_row,
+    strict_citation_locator,
+    strict_citation_source_version,
+)
 from nexus.services.search import hash_query, parse_scope, search
 from nexus.timestamps import format_timestamp_ms
 
 logger = get_logger(__name__)
+
+
+def _xml_attr(value: object) -> str:
+    return xml_escape(str(value), {'"': "&quot;"})
+
 
 APP_SEARCH_TOOL_NAME = "app_search"
 APP_SEARCH_LIMIT = 8
@@ -77,169 +87,6 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
-STRICT_LOCATOR_RESULT_TYPES = frozenset(
-    {
-        "content_chunk",
-        "fragment",
-        "note_block",
-        "highlight",
-        "message",
-        "evidence_span",
-    }
-)
-STRICT_SOURCE_VERSION_RESULT_TYPES = STRICT_LOCATOR_RESULT_TYPES | {"page"}
-
-
-@dataclass(slots=True)
-class AppSearchCitation:
-    """Compact model/frontend citation for a retrieved search result."""
-
-    result_type: str
-    source_id: str
-    title: str
-    source_label: str | None
-    snippet: str
-    deep_link: str
-    citation_label: str | None
-    locator: dict[str, Any] | None
-    context_ref: dict[str, Any]
-    evidence_span_id: str | None
-    source_version: str | None
-    media_id: str | None
-    media_kind: str | None
-    score: float | None
-    contributors: list[dict[str, Any]] = field(default_factory=list)
-    filters: dict[str, Any] = field(default_factory=dict)
-    result_ref: dict[str, Any] = field(default_factory=dict)
-    selected: bool = False
-
-    def result_ref_json(self) -> dict[str, Any]:
-        common = {
-            "type": self.result_type,
-            "id": self.source_id,
-            "result_type": self.result_type,
-            "source_id": self.source_id,
-            "title": self.title,
-            "source_label": self.source_label,
-            "snippet": self.snippet,
-            "deep_link": self.deep_link,
-            "context_ref": self.context_ref,
-            "source_version": self.source_version,
-            "locator": self.locator,
-            "media_id": self.media_id,
-            "media_kind": self.media_kind,
-            "score": self.score,
-            "selected": self.selected,
-        }
-        if self.result_type == "media":
-            return common
-        if self.result_type == "podcast":
-            return {
-                **common,
-                "contributors": self.contributors,
-            }
-        if self.result_type in {"episode", "video"}:
-            return common
-        if self.result_type == "content_chunk":
-            return {
-                **common,
-                "source_kind": self.result_ref["source_kind"],
-                "citation_label": self.citation_label,
-                "evidence_span_id": self.evidence_span_id,
-                "evidence_span_ids": self.result_ref.get("evidence_span_ids", []),
-                "source_version": self.source_version,
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "fragment":
-            return {
-                **common,
-                "citation_label": self.citation_label,
-                "source_version": self.source_version,
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "contributor":
-            return {
-                **common,
-                "contributor_handle": self.result_ref["contributor_handle"],
-            }
-        if self.result_type == "page":
-            return {
-                **common,
-                "description": self.result_ref.get("description"),
-                "source_version": self.source_version,
-            }
-        if self.result_type == "note_block":
-            return {
-                **common,
-                "page_id": self.result_ref["page_id"],
-                "page_title": self.result_ref["page_title"],
-                "body_text": self.result_ref["body_text"],
-                "highlight_excerpt": self.result_ref.get("highlight_excerpt"),
-                "source_version": self.source_version,
-                "locator": self.locator,
-            }
-        if self.result_type == "highlight":
-            return {
-                **common,
-                "color": self.result_ref["color"],
-                "exact": self.result_ref["exact"],
-                "citation_label": self.citation_label,
-                "source_version": self.source_version,
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "message":
-            return {
-                **common,
-                "conversation_id": self.result_ref["conversation_id"],
-                "seq": self.result_ref["seq"],
-                "source_version": self.source_version,
-                "locator": self.locator,
-            }
-        if self.result_type == "evidence_span":
-            return {
-                "type": "evidence_span",
-                "id": self.source_id,
-                "result_type": "evidence_span",
-                "source_id": self.source_id,
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "citation_label": self.citation_label or "",
-                "context_ref": self.context_ref,
-                "evidence_span_id": self.evidence_span_id or self.source_id,
-                "source_version": self.source_version,
-                "locator": self.locator,
-                "media_id": self.media_id or self.result_ref.get("media_id"),
-                "media_kind": self.media_kind,
-                "score": self.score,
-                "selected": self.selected,
-            }
-        if self.result_type == "conversation":
-            return {
-                "type": "conversation",
-                "id": self.source_id,
-                "result_type": "conversation",
-                "source_id": self.source_id,
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "context_ref": self.context_ref,
-                "source_version": None,
-                "locator": None,
-                "media_id": None,
-                "media_kind": None,
-                "score": self.score,
-                "selected": self.selected,
-            }
-        raise ValueError(f"Unsupported app search result type: {self.result_type}")
 
 
 @dataclass(slots=True)
@@ -253,8 +100,8 @@ class AppSearchRun:
     scope: str
     requested_types: list[str]
     semantic: bool
-    citations: list[AppSearchCitation]
-    selected_citations: list[AppSearchCitation]
+    citations: list[RetrievalCitation]
+    selected_citations: list[RetrievalCitation]
     context_text: str
     context_chars: int
     latency_ms: int
@@ -337,8 +184,8 @@ def execute_app_search(
         error_code = ApiErrorCode.E_INVALID_REQUEST.value
         context_text = (
             '<app_search_results status="error" '
-            f'code="{xml_escape(error_code)}" '
-            f'message="{xml_escape(str(exc))}" />'
+            f'code="{_xml_attr(error_code)}" '
+            f'message="{_xml_attr(str(exc))}" />'
         )
         latency_ms = int((time.monotonic() - start) * 1000)
         run = AppSearchRun(
@@ -393,7 +240,7 @@ def execute_app_search(
                 limit=APP_SEARCH_LIMIT,
             )
             citations = [
-                _citation_from_search_result(result, filters=filters) for result in response.results
+                citation_from_search_result(result, filters=filters) for result in response.results
             ]
         context_text, context_chars, selected = render_retrieved_context_blocks(
             db,
@@ -410,8 +257,9 @@ def execute_app_search(
             )
             empty_status = result_status
             context_text = (
-                f'<app_search_results status="{result_status}" scope="{xml_escape(scope)}" '
-                f'filters="{xml_escape(json.dumps(filters, sort_keys=True))}" />'
+                f'<app_search_results status="{_xml_attr(result_status)}" '
+                f'scope="{_xml_attr(scope)}" '
+                f'filters="{_xml_attr(json.dumps(filters, sort_keys=True))}" />'
             )
             context_chars = len(context_text)
     except ApiError as exc:
@@ -521,14 +369,14 @@ def _search_across_scopes(
     requested_types: list[str],
     filters: dict[str, Any],
     semantic: bool,
-) -> list[AppSearchCitation]:
+) -> list[RetrievalCitation]:
     """Loop search() per scope and merge results.
 
     `search.parse_scope` accepts only one scope at a time; for multi-scope
     calls we union results across scopes, dedupe by `(result_type, id)`,
     sort by score descending, and cap at `APP_SEARCH_LIMIT`.
     """
-    merged: dict[tuple[str, str], AppSearchCitation] = {}
+    merged: dict[tuple[str, str], RetrievalCitation] = {}
     for scope_uri in scopes:
         response = search(
             db=db,
@@ -543,7 +391,7 @@ def _search_across_scopes(
             limit=APP_SEARCH_LIMIT,
         )
         for result in response.results:
-            citation = _citation_from_search_result(result, filters=filters)
+            citation = citation_from_search_result(result, filters=filters)
             key = (citation.result_type, citation.source_id)
             existing = merged.get(key)
             if existing is None or (
@@ -685,97 +533,6 @@ def _normalize_app_search_filters(filters: Mapping[str, object] | None) -> dict[
     return normalized
 
 
-def _contributors_from_search_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    source = payload.get("source")
-    if isinstance(source, Mapping):
-        contributors = source.get("contributors")
-        if isinstance(contributors, list):
-            return [dict(item) for item in contributors if isinstance(item, Mapping)]
-    contributors = payload.get("contributors")
-    if isinstance(contributors, list):
-        return [dict(item) for item in contributors if isinstance(item, Mapping)]
-    return []
-
-
-def _citation_from_search_result(
-    result: SearchResultOut,
-    *,
-    filters: dict[str, Any],
-) -> AppSearchCitation:
-    payload = result.model_dump(mode="json")
-    context_ref = payload["context_ref"]
-    evidence_span_ids = (
-        context_ref.get("evidence_span_ids") if isinstance(context_ref, dict) else []
-    )
-    evidence_span_id = payload.get("evidence_span_id")
-    if not isinstance(evidence_span_id, str):
-        evidence_span_id = (
-            str(evidence_span_ids[0])
-            if isinstance(evidence_span_ids, list) and evidence_span_ids
-            else None
-        )
-    result_ref = dict(payload)
-    result_type = str(payload["type"])
-    return AppSearchCitation(
-        result_type=result_type,
-        source_id=str(payload["id"]),
-        title=str(payload["title"]),
-        source_label=payload.get("source_label"),
-        snippet=str(payload["snippet"]),
-        deep_link=str(payload["deep_link"]),
-        citation_label=payload.get("citation_label"),
-        locator=_locator_from_search_payload(payload),
-        context_ref=context_ref,
-        evidence_span_id=evidence_span_id,
-        source_version=_source_version_from_search_payload(payload),
-        media_id=payload.get("media_id"),
-        media_kind=payload.get("media_kind"),
-        score=float(payload["score"]) if payload.get("score") is not None else None,
-        contributors=_contributors_from_search_payload(payload),
-        filters=filters,
-        result_ref=result_ref,
-    )
-
-
-def _locator_from_search_payload(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    result_type = str(payload.get("type") or "")
-    locator = payload.get("locator")
-    if isinstance(locator, dict):
-        validated = retrieval_locator_json(locator)
-        if validated is not None:
-            return validated
-    if result_type in STRICT_LOCATOR_RESULT_TYPES:
-        raise ValueError(f"{result_type} search result is missing locator")
-    return None
-
-
-def _source_version_from_search_payload(payload: Mapping[str, Any]) -> str | None:
-    source_version = payload.get("source_version")
-    if isinstance(source_version, str) and source_version.strip():
-        return source_version
-
-    result_type = str(payload.get("type") or "")
-    if result_type in STRICT_SOURCE_VERSION_RESULT_TYPES:
-        raise ValueError(f"{result_type} search result is missing source_version")
-    return None
-
-
-def _strict_citation_locator(citation: AppSearchCitation) -> dict[str, Any] | None:
-    locator = retrieval_locator_json(citation.locator)
-    if locator is None and citation.result_type in STRICT_LOCATOR_RESULT_TYPES:
-        raise ValueError(f"{citation.result_type} citation is missing locator")
-    return locator
-
-
-def _strict_citation_source_version(citation: AppSearchCitation) -> str | None:
-    source_version = citation.source_version
-    if isinstance(source_version, str) and source_version.strip():
-        return source_version
-    if citation.result_type in STRICT_SOURCE_VERSION_RESULT_TYPES:
-        raise ValueError(f"{citation.result_type} citation is missing source_version")
-    return None
-
-
 def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     """Persist the app-search tool call and retrieval rows."""
     result_refs = [
@@ -902,92 +659,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         )
     run.tool_call_id = tool_call_id
 
-    select_retrieval = text(
-        """
-        SELECT id
-        FROM message_retrievals
-        WHERE tool_call_id = :tool_call_id
-          AND ordinal = :ordinal
-        """
-    )
-    update_retrieval = text(
-        """
-        UPDATE message_retrievals
-        SET result_type = :result_type,
-            source_id = :source_id,
-            media_id = :media_id,
-            evidence_span_id = :evidence_span_id,
-            scope = :scope,
-            context_ref = :context_ref,
-            result_ref = :result_ref,
-            deep_link = :deep_link,
-            score = :score,
-            selected = :selected,
-            source_title = :source_title,
-            section_label = :section_label,
-            exact_snippet = :exact_snippet,
-            snippet_prefix = NULL,
-            snippet_suffix = NULL,
-            locator = :locator,
-            retrieval_status = :retrieval_status,
-            included_in_prompt = false,
-            source_version = :source_version
-        WHERE id = :retrieval_id
-        """
-    ).bindparams(
-        bindparam("context_ref", type_=JSONB),
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
-    insert_retrieval = text(
-        """
-        INSERT INTO message_retrievals (
-            tool_call_id,
-            ordinal,
-            result_type,
-            source_id,
-            media_id,
-            evidence_span_id,
-            scope,
-            context_ref,
-            result_ref,
-            deep_link,
-            score,
-            selected,
-            source_title,
-            section_label,
-            exact_snippet,
-            locator,
-            retrieval_status,
-            source_version
-        )
-        VALUES (
-            :tool_call_id,
-            :ordinal,
-            :result_type,
-            :source_id,
-            :media_id,
-            :evidence_span_id,
-            :scope,
-            :context_ref,
-            :result_ref,
-            :deep_link,
-            :score,
-            :selected,
-            :source_title,
-            :section_label,
-            :exact_snippet,
-            :locator,
-            :retrieval_status,
-            :source_version
-        )
-        RETURNING id
-        """
-    ).bindparams(
-        bindparam("context_ref", type_=JSONB),
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
     insert_candidate_ledger = text(
         """
         INSERT INTO message_retrieval_candidate_ledgers (
@@ -1029,37 +700,18 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
         selected = citation.source_id in selected_ids
-        locator = _strict_citation_locator(citation)
-        source_version = _strict_citation_source_version(citation)
+        locator = strict_citation_locator(citation)
+        source_version = strict_citation_source_version(citation)
         result_ref = retrieval_result_ref_json(citation.result_ref_json())
-        retrieval_payload = {
-            "tool_call_id": tool_call_id,
-            "ordinal": ordinal,
-            "result_type": citation.result_type,
-            "source_id": citation.source_id,
-            "media_id": citation.media_id,
-            "evidence_span_id": UUID(citation.evidence_span_id)
-            if citation.evidence_span_id
-            else None,
-            "scope": run.scope,
-            "context_ref": retrieval_context_ref_json(citation.context_ref),
-            "result_ref": result_ref,
-            "deep_link": citation.deep_link,
-            "score": citation.score,
-            "selected": selected,
-            "source_title": citation.title,
-            "section_label": citation.source_label,
-            "exact_snippet": citation.snippet,
-            "locator": locator,
-            "retrieval_status": "selected" if selected else "retrieved",
-            "source_version": source_version,
-        }
-        existing_retrieval = db.execute(select_retrieval, retrieval_payload).first()
-        if existing_retrieval is None:
-            retrieval_id = db.execute(insert_retrieval, retrieval_payload).scalar_one()
-        else:
-            retrieval_id = existing_retrieval[0]
-            db.execute(update_retrieval, {**retrieval_payload, "retrieval_id": retrieval_id})
+        retrieval_id = insert_retrieval_row(
+            db,
+            tool_call_id=tool_call_id,
+            ordinal=ordinal,
+            citation=citation,
+            selected=selected,
+            scope=run.scope,
+            retrieval_status="selected" if selected else "retrieved",
+        )
         db.execute(
             insert_candidate_ledger,
             {
@@ -1149,11 +801,11 @@ def render_retrieved_context_blocks(
     db: Session,
     *,
     viewer_id: UUID,
-    citations: list[AppSearchCitation],
-) -> tuple[str, int, list[AppSearchCitation]]:
+    citations: list[RetrievalCitation],
+) -> tuple[str, int, list[RetrievalCitation]]:
     """Render selected search citations into bounded prompt context blocks."""
     rendered_blocks: list[str] = []
-    selected: list[AppSearchCitation] = []
+    selected: list[RetrievalCitation] = []
     total_chars = 0
 
     for citation in citations[:APP_SEARCH_SELECTED_LIMIT]:
@@ -1176,7 +828,7 @@ def render_retrieved_context_blocks(
 def _render_single_retrieved_context(
     db: Session,
     viewer_id: UUID,
-    citation: AppSearchCitation,
+    citation: RetrievalCitation,
 ) -> str | None:
     context_type = citation.context_ref.get("type")
     if context_type == "contributor":
@@ -1334,7 +986,7 @@ def _render_evidence_span_block(db: Session, viewer_id: UUID, evidence_span_id: 
     return "\n".join(lines)
 
 
-def _append_citation_source_xml(lines: list[str], citation: AppSearchCitation) -> None:
+def _append_citation_source_xml(lines: list[str], citation: RetrievalCitation) -> None:
     if citation.locator:
         lines.append(
             "<source_locator>"
@@ -1350,7 +1002,7 @@ def _render_content_chunk_context(
     viewer_id: UUID,
     chunk_id: UUID,
     evidence_span_id: UUID,
-    citation: AppSearchCitation,
+    citation: RetrievalCitation,
 ) -> str | None:
     row = db.execute(
         text(
@@ -1403,7 +1055,7 @@ def _render_fragment_context(
     db: Session,
     viewer_id: UUID,
     fragment_id: UUID,
-    citation: AppSearchCitation,
+    citation: RetrievalCitation,
 ) -> str | None:
     row = db.execute(
         text(
@@ -1438,7 +1090,7 @@ def _render_message_context(
     db: Session,
     viewer_id: UUID,
     message_id: UUID,
-    citation: AppSearchCitation,
+    citation: RetrievalCitation,
 ) -> str | None:
     row = db.execute(
         text(
@@ -1470,7 +1122,7 @@ def _render_podcast_context(
     db: Session,
     viewer_id: UUID,
     podcast_id: UUID,
-    citation: AppSearchCitation,
+    citation: RetrievalCitation,
 ) -> str | None:
     row = db.execute(
         text(

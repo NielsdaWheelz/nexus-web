@@ -8,19 +8,22 @@ from llm_calling.errors import LLMError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_highlight
 from nexus.config import get_settings
-from nexus.db.models import Conversation, Message, Model
+from nexus.db.models import Conversation, Highlight, Message, Model
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.llm_catalog import is_provider_enabled, model_catalog_entry
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     BranchAnchorRequest,
+    ReaderSelectionRequest,
 )
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     resolve_api_key,
 )
 from nexus.services.conversation_branches import branch_anchor_for_message
+from nexus.services.conversation_references import is_conversation_reference
 from nexus.services.rate_limit import get_rate_limiter
 
 
@@ -30,6 +33,7 @@ def validate_pre_phase(
     conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
+    reader_selection: ReaderSelectionRequest | None,
     content: str,
     model_id: UUID,
     reasoning: str,
@@ -73,6 +77,7 @@ def validate_pre_phase(
         parent_message_id,
         branch_anchor,
     )
+    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection)
 
     return model
 
@@ -122,3 +127,32 @@ def _validate_parent_anchor_for_existing_conversation(
         parent_message_id=parent_message_id,
     )
     branch_anchor_for_message(parent, branch_anchor)
+
+
+def _validate_reader_selection(
+    db: Session,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    reader_selection: ReaderSelectionRequest | None,
+) -> None:
+    """Ensure the turn selection is backed by a visible attached highlight."""
+    if reader_selection is None:
+        return
+    if not can_read_highlight(db, viewer_id, reader_selection.highlight_id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader selection highlight not found")
+
+    highlight = db.get(Highlight, reader_selection.highlight_id)
+    if highlight is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader selection highlight not found")
+    if highlight.anchor_media_id != reader_selection.media_id:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "reader_selection media_id must match the highlight anchor media",
+        )
+
+    highlight_uri = f"highlight:{reader_selection.highlight_id}"
+    if not is_conversation_reference(db, conversation_id, highlight_uri):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "reader_selection highlight must be attached as a conversation reference",
+        )

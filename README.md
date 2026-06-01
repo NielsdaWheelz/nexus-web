@@ -135,7 +135,8 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/workspace-pane-system.md` -> current workspace primary and attached secondary pane contract
+- `docs/reader-design-rationale.md` -> current reader behavior rationale and reader-to-chat quote contract
+- `docs/chat-quote-context-cutover.md` -> chat quote-context, document-map, and citation cutover contract
 
 ## Documentation Rules
 

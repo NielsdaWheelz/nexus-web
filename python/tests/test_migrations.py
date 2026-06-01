@@ -7345,6 +7345,42 @@ class TestConversationReferencesCutoverMigration0121:
             f"got {prompt_columns}"
         )
 
+    def test_0126_drops_prompt_version_provenance_columns(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns_by_table = {
+                table_name: {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = :table_name
+                            """
+                        ),
+                        {"table_name": table_name},
+                    ).fetchall()
+                }
+                for table_name in ("chat_prompt_assemblies", "message_llm")
+            }
+
+        assert {
+            "prompt_version",
+            "prompt_plan_version",
+            "assembler_version",
+        }.isdisjoint(columns_by_table["chat_prompt_assemblies"]), (
+            "chat_prompt_assemblies must not retain prompt-version provenance columns; "
+            f"got {columns_by_table['chat_prompt_assemblies']}"
+        )
+        assert {"prompt_version", "prompt_plan_version"}.isdisjoint(
+            columns_by_table["message_llm"]
+        ), (
+            "message_llm must not retain prompt-version provenance columns; "
+            f"got {columns_by_table['message_llm']}"
+        )
+        assert "stable_prefix_hash" in columns_by_table["chat_prompt_assemblies"]
+        assert "stable_prefix_hash" in columns_by_table["message_llm"]
+
     def test_0121_conversations_has_no_scope_columns(self, migrated_engine):
         """Scope columns were dropped by 0114 and stay dropped through 0121."""
         with Session(migrated_engine) as session:
@@ -7366,13 +7402,13 @@ class TestConversationReferencesCutoverMigration0121:
                 f"got columns {conversations_columns}"
             )
 
-    def test_references_cutover_downgrade_raises(self):
+    def test_references_cutover_downgrade_raises(self, migrated_engine):
         """Per spec, the references cutover is irreversible by policy.
-        ``alembic downgrade -1`` from HEAD raises ``NotImplementedError``."""
-        result = run_alembic_command("downgrade -1")
+        Downgrading to a target before 0121 raises ``NotImplementedError``."""
+        result = run_alembic_command("downgrade 0120")
 
         assert result.returncode != 0, (
-            "Expected alembic downgrade from 0121 to fail; "
+            "Expected alembic downgrade through 0121 to fail; "
             f"got returncode={result.returncode}, stderr={result.stderr}"
         )
         combined = (result.stdout or "") + (result.stderr or "")
