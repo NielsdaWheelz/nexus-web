@@ -8,8 +8,10 @@
  *
  * The focus model:
  * - At most one highlight is focused at any time
- * - Focus determines which linked-item row is expanded
- * - Focus determines which highlight receives edit/delete actions
+ * - Focus is selection/emphasis: the .selected card + the .hl-focused prose ring,
+ *   and the target for edit/delete actions
+ * - Focus does not gate verbosity: the snippet show-more, the note, and linked
+ *   chats are all shown independently of which highlight is focused
  *
  * Overlap cycling:
  * - First click on segment focuses data-highlight-top

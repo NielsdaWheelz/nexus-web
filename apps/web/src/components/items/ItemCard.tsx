@@ -1,6 +1,9 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import Button from "@/components/ui/Button";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { pluralize } from "@/lib/text/pluralize";
@@ -24,9 +27,10 @@ interface ItemCardProps {
   actions?: ReactNode;
   note?: ReactNode;
   linkedItems?: ItemCardLinkedItem[];
-  expanded?: boolean;
   selected?: boolean;
   hovered?: boolean;
+  showFullText?: boolean;
+  onToggleFullText?: () => void;
   onActivate?: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
@@ -43,9 +47,10 @@ export default function ItemCard({
   actions,
   note,
   linkedItems,
-  expanded,
   selected,
   hovered,
+  showFullText,
+  onToggleFullText,
   onActivate,
   onMouseEnter,
   onMouseLeave,
@@ -55,6 +60,25 @@ export default function ItemCard({
   highlightId,
   testId,
 }: ItemCardProps) {
+  // The card owns one narrow measurement: does its own clamped snippet overflow?
+  // (Intent — which cards are expanded — is owned by the host.) Measure only while
+  // collapsed; when expanded the box is un-clamped and would read as not overflowing.
+  const bodyRef = useRef<HTMLButtonElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const snippetText = content.kind === "highlight" ? content.snippet.exact : null;
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body || snippetText === null || showFullText) {
+      return;
+    }
+    const measure = () => setOverflowing(body.scrollHeight - body.clientHeight > 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [snippetText, showFullText]);
+
   const bodyContent =
     content.kind === "highlight" ? (
       <HighlightSnippet exact={content.snippet.exact} color={content.snippet.color} compact />
@@ -73,7 +97,7 @@ export default function ItemCard({
         styles.card,
         selected && styles.selected,
         hovered && styles.hovered,
-        expanded && styles.expanded,
+        showFullText && styles.showFull,
         className,
       )}
       data-content-kind={content.kind}
@@ -95,6 +119,7 @@ export default function ItemCard({
       <div className={styles.header}>
         {onActivate ? (
           <button
+            ref={bodyRef}
             type="button"
             className={styles.body}
             aria-pressed={selected}
@@ -107,29 +132,37 @@ export default function ItemCard({
         )}
         {actions ? <div className={styles.actions}>{actions}</div> : null}
       </div>
+      {content.kind === "highlight" && (showFullText || overflowing) ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className={styles.showMoreToggle}
+          leadingIcon={
+            showFullText ? (
+              <ChevronUp size={14} aria-hidden="true" />
+            ) : (
+              <ChevronDown size={14} aria-hidden="true" />
+            )
+          }
+          aria-expanded={showFullText}
+          onClick={onToggleFullText}
+        >
+          {showFullText ? "Show less" : "Show more"}
+        </Button>
+      ) : null}
       {meta ? <div className={styles.meta}>{meta}</div> : null}
       {note ? <div className={styles.note}>{note}</div> : null}
       {linkedItems?.length ? (
-        expanded ? (
-          <ul
-            className={styles.linkedList}
-            aria-label={pluralize(linkedItems.length, "linked chat")}
-          >
-            {linkedItems.map((item) => (
-              <li key={item.id}>
-                <button type="button" onClick={item.onActivate}>
-                  {item.icon}
-                  <span>{item.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className={styles.linkedScent}>
-            {linkedItems[0].icon}
-            <span>{linkedItems.map((item) => item.label).join(" · ")}</span>
-          </div>
-        )
+        <ul className={styles.linkedList} aria-label={pluralize(linkedItems.length, "linked chat")}>
+          {linkedItems.map((item) => (
+            <li key={item.id}>
+              <button type="button" onClick={item.onActivate}>
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

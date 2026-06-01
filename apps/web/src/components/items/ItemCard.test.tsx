@@ -1,7 +1,25 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import ItemCard from "./ItemCard";
+
+// Drives showFullText the way ReaderHighlightsSurface does, so a click on the
+// card's own show-more toggle flips it. Width-constrained so a long snippet
+// overflows the 6-line clamp (clamp geometry is real in the Chromium project).
+function ExpandableHighlightCard({ exact }: { exact: string }) {
+  const [showFullText, setShowFullText] = useState(false);
+  return (
+    <div style={{ width: 180 }}>
+      <ItemCard
+        content={{ kind: "highlight", snippet: { exact, color: "yellow" } }}
+        showFullText={showFullText}
+        onToggleFullText={() => setShowFullText((value) => !value)}
+        onActivate={() => {}}
+      />
+    </div>
+  );
+}
 
 describe("ItemCard", () => {
   it("renders the highlight exact text via the mark", () => {
@@ -42,7 +60,6 @@ describe("ItemCard", () => {
         }}
         actions={<button type="button">Delete</button>}
         linkedItems={[{ id: "c1", label: "First chat", onActivate: onLinkedActivate }]}
-        expanded
         onActivate={onActivate}
       />,
     );
@@ -58,22 +75,16 @@ describe("ItemCard", () => {
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
-  it("shows linked chats as a scent line when blurred and a clickable list when focused", () => {
-    const content = {
-      kind: "highlight" as const,
-      snippet: { exact: "selected text", color: "blue" as const },
-    };
-    const linkedItems = [
-      { id: "c1", label: "First chat", onActivate: () => {} },
-      { id: "c2", label: "Second chat", onActivate: () => {} },
-    ];
-    const { rerender } = render(<ItemCard content={content} linkedItems={linkedItems} />);
-
-    expect(screen.getByText("First chat · Second chat")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "First chat" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /linked/ })).toBeNull();
-
-    rerender(<ItemCard content={content} linkedItems={linkedItems} expanded />);
+  it("always renders linked chats as a clickable list, with no scent line", () => {
+    render(
+      <ItemCard
+        content={{ kind: "highlight", snippet: { exact: "selected text", color: "blue" } }}
+        linkedItems={[
+          { id: "c1", label: "First chat", onActivate: () => {} },
+          { id: "c2", label: "Second chat", onActivate: () => {} },
+        ]}
+      />,
+    );
 
     expect(screen.getByRole("list", { name: "2 linked chats" })).toBeVisible();
     expect(screen.getByRole("button", { name: "First chat" })).toBeVisible();
@@ -81,32 +92,46 @@ describe("ItemCard", () => {
     expect(screen.queryByText("First chat · Second chat")).toBeNull();
   });
 
-  it("labels a single focused chat with singular grammar", () => {
+  it("labels a single linked chat with singular grammar", () => {
     render(
       <ItemCard
         content={{ kind: "highlight", snippet: { exact: "selected text", color: "blue" } }}
         linkedItems={[{ id: "c1", label: "Only chat", onActivate: () => {} }]}
-        expanded
       />,
     );
 
     expect(screen.getByRole("list", { name: "1 linked chat" })).toBeVisible();
   });
 
-  it("renders no linked-chat element when there are none, blurred or focused", () => {
-    const content = {
-      kind: "highlight" as const,
-      snippet: { exact: "selected text", color: "blue" as const },
-    };
-    const { rerender } = render(<ItemCard content={content} />);
+  it("renders no linked-chat element when there are none", () => {
+    render(
+      <ItemCard
+        content={{ kind: "highlight", snippet: { exact: "selected text", color: "blue" } }}
+      />,
+    );
 
     expect(screen.queryByRole("list")).toBeNull();
     expect(screen.queryByRole("listitem")).toBeNull();
+  });
 
-    rerender(<ItemCard content={content} expanded />);
+  it("toggles a show-more control when the snippet overflows the clamp", async () => {
+    const user = userEvent.setup();
+    render(<ExpandableHighlightCard exact={"overflowing ".repeat(120).trim()} />);
 
-    expect(screen.queryByRole("list")).toBeNull();
-    expect(screen.queryByRole("listitem")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Show less" }));
+    expect(screen.getByRole("button", { name: "Show more" })).toBeVisible();
+  });
+
+  it("renders no show-more control for a snippet that fits the clamp", async () => {
+    render(<ExpandableHighlightCard exact="short" />);
+
+    await screen.findByText("short");
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Show more|Show less/ })).toBeNull();
+    });
   });
 
   it("renders the resource title", () => {

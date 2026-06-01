@@ -22,6 +22,7 @@ import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   findScrollParent,
   useAnchoredHighlightProjection,
@@ -105,6 +106,7 @@ export default function ReaderHighlightsSurface({
   const [overflowCount, setOverflowCount] = useState(0);
   const [secondaryLayoutVersion, setSecondaryLayoutVersion] = useState(0);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
+  const expandedTextIds = useStringIdSet();
   const draftNoteEditorKeysRef = useRef(new Map<string, string>());
   const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
 
@@ -246,6 +248,7 @@ export default function ReaderHighlightsSurface({
     });
   }, [
     alignedRows,
+    expandedTextIds,
     focusedId,
     isEditingBounds,
     isMobile,
@@ -273,7 +276,14 @@ export default function ReaderHighlightsSurface({
         noteEditorKeysByBlockIdRef.current.delete(noteBlockId);
       }
     }
-  }, [highlights]);
+
+    const survivingExpandedTextIds = [...expandedTextIds.ids].filter((id) =>
+      renderedHighlightIds.has(id),
+    );
+    if (survivingExpandedTextIds.length !== expandedTextIds.ids.size) {
+      expandedTextIds.replace(survivingExpandedTextIds);
+    }
+  }, [expandedTextIds, highlights]);
 
   useEffect(() => {
     if (isMobile || !containerRef.current) {
@@ -420,6 +430,17 @@ export default function ReaderHighlightsSurface({
     [],
   );
 
+  const toggleTextExpansion = useCallback(
+    (highlightId: string) => {
+      if (expandedTextIds.has(highlightId)) {
+        expandedTextIds.remove(highlightId);
+      } else {
+        expandedTextIds.add(highlightId);
+      }
+    },
+    [expandedTextIds],
+  );
+
   const scheduleNoteLayoutMeasure = useCallback(() => {
     if (noteLayoutTimerRef.current !== null) {
       window.clearTimeout(noteLayoutTimerRef.current);
@@ -554,7 +575,8 @@ export default function ReaderHighlightsSurface({
           }
           selected={isFocused}
           hovered={hoveredId === highlight.id}
-          expanded={isFocused}
+          showFullText={expandedTextIds.ids.has(highlight.id)}
+          onToggleFullText={() => toggleTextExpansion(highlight.id)}
           rootRef={setRowRef(highlight.id)}
           style={style}
           className={className || undefined}
@@ -571,6 +593,8 @@ export default function ReaderHighlightsSurface({
       isReflowable,
       focusedId,
       hoveredId,
+      expandedTextIds,
+      toggleTextExpansion,
       handleRowClick,
       handleNoteSave,
       isEditingBounds,

@@ -93,6 +93,7 @@ function ReaderHighlightsSurfaceHarness({
   linkedConversations,
   onOpenConversation = () => {},
   highlights,
+  secondTargetMarginTop = 360,
 }: {
   focusedId?: string | null;
   onFocusHighlight?: (highlightId: string) => void;
@@ -109,6 +110,7 @@ function ReaderHighlightsSurfaceHarness({
   linkedConversations?: NonNullable<AnchoredHighlightRow["linked_conversations"]>;
   onOpenConversation?: (conversationId: string, title: string) => void;
   highlights?: AnchoredHighlightRow[];
+  secondTargetMarginTop?: number;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const rows = highlights ?? [
@@ -141,7 +143,7 @@ function ReaderHighlightsSurfaceHarness({
           </span>
           <span
             data-active-highlight-ids="h2"
-            style={{ display: "block", height: 24, marginTop: 360 }}
+            style={{ display: "block", height: 24, marginTop: secondTargetMarginTop }}
           >
             Second target
           </span>
@@ -478,15 +480,14 @@ describe("ReaderHighlightsSurface", () => {
     confirmSpy.mockRestore();
   });
 
-  it("opens a linked conversation from a focused card", async () => {
+  it("opens a linked conversation without focusing the card first", async () => {
     const user = userEvent.setup();
     const onOpenConversation = vi.fn();
+    const onFocusHighlight = vi.fn();
     render(
       <ReaderHighlightsSurfaceHarness
-        focusedId="h1"
-        linkedConversations={[
-          { conversation_id: "c1", title: "Linked chat" },
-        ]}
+        onFocusHighlight={onFocusHighlight}
+        linkedConversations={[{ conversation_id: "c1", title: "Linked chat" }]}
         onOpenConversation={onOpenConversation}
       />,
     );
@@ -494,6 +495,66 @@ describe("ReaderHighlightsSurface", () => {
     const row = await screen.findByTestId("anchored-highlight-row-h1");
     await user.click(within(row).getByRole("button", { name: "Linked chat" }));
     expect(onOpenConversation).toHaveBeenCalledWith("c1", "Linked chat");
+    expect(onFocusHighlight).not.toHaveBeenCalled();
+  });
+
+  it("expands a long highlight in place via show-more, without focusing it", async () => {
+    const user = userEvent.setup();
+    const onFocusHighlight = vi.fn();
+    render(
+      <ReaderHighlightsSurfaceHarness
+        onFocusHighlight={onFocusHighlight}
+        highlights={[
+          highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),
+        ]}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    const collapsedHeight = row.getBoundingClientRect().height;
+    await user.click(await within(row).findByRole("button", { name: "Show more" }));
+
+    expect(within(row).getByRole("button", { name: "Show less" })).toBeVisible();
+    await waitFor(() => {
+      expect(row.getBoundingClientRect().height).toBeGreaterThan(collapsedHeight);
+    });
+    expect(onFocusHighlight).not.toHaveBeenCalled();
+  });
+
+  it("leaves a focused highlight's snippet clamped — focus does not expand text", async () => {
+    render(
+      <ReaderHighlightsSurfaceHarness
+        focusedId="h1"
+        highlights={[
+          highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),
+        ]}
+      />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    expect(await within(row).findByRole("button", { name: "Show more" })).toBeVisible();
+    expect(within(row).queryByRole("button", { name: "Show less" })).toBeNull();
+  });
+
+  it("keeps one highlight expanded when another is expanded — multi-open", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReaderHighlightsSurfaceHarness
+        secondTargetMarginTop={96}
+        highlights={[
+          highlight("h1", "overflowing ".repeat(120).trim(), "before ", " after"),
+          highlight("h2", "spilling ".repeat(120).trim(), "before ", " after"),
+        ]}
+      />,
+    );
+
+    const row1 = await screen.findByTestId("anchored-highlight-row-h1");
+    const row2 = await screen.findByTestId("anchored-highlight-row-h2");
+    await user.click(await within(row1).findByRole("button", { name: "Show more" }));
+    await user.click(await within(row2).findByRole("button", { name: "Show more" }));
+
+    expect(within(row1).getByRole("button", { name: "Show less" })).toBeVisible();
+    expect(within(row2).getByRole("button", { name: "Show less" })).toBeVisible();
   });
 
   it("keeps the note editor key stable after a first linked-note save", async () => {
