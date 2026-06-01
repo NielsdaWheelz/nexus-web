@@ -18,10 +18,6 @@ from nexus.services.chat_run_prompt_tracking import prompt_assembly_metadata
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
-# Canonical prompt-text-format version. Recorded on every finalized assistant
-# message LLM row and used by the cache-key/manifest layer in
-# `nexus.services.context_assembler`.
-PROMPT_VERSION = "v2"
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 
 ERROR_CODE_TO_MESSAGE = {
@@ -181,7 +177,7 @@ def finalize_run(
         existing_llm = db.get(MessageLLM, assistant_message.id)
         target = existing_llm or MessageLLM(message_id=assistant_message.id)
         tokens = usage_tokens(usage)
-        prompt_plan_version, stable_prefix_hash = prompt_assembly_metadata(db, run_id=run.id)
+        stable_prefix_hash = prompt_assembly_metadata(db, run_id=run.id)
         target.provider = model.provider
         target.model_name = model.model_name
         target.input_tokens = tokens["input_tokens"]
@@ -196,8 +192,6 @@ def finalize_run(
         target.latency_ms = latency_ms
         target.error_class = error_code if assistant_status == "error" else None
         target.provider_request_id = provider_request_id
-        target.prompt_version = PROMPT_VERSION
-        target.prompt_plan_version = prompt_plan_version
         target.stable_prefix_hash = stable_prefix_hash
         target.provider_usage = usage_provider_json(usage)
         if existing_llm is None:

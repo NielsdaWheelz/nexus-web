@@ -2,6 +2,7 @@ import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 import type {
   ChatRunCreateRequest,
   ReaderContextHintInput,
+  ReaderSelectionInput,
 } from "@/lib/api/sse/requests";
 
 /**
@@ -19,6 +20,7 @@ export function buildChatRunBody(input: {
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerContext: ReaderContextHintInput | null;
+  readerSelection?: ReaderSelectionInput | null;
 }): ChatRunCreateRequest {
   const replyParentMessageId =
     input.branchDraft?.parentMessageId ?? input.parentMessageId;
@@ -43,5 +45,8 @@ export function buildChatRunBody(input: {
       : {}),
     branch_anchor: branchAnchor,
     reader_context: input.readerContext,
+    ...(input.readerSelection
+      ? { reader_selection: input.readerSelection }
+      : {}),
   };
 }

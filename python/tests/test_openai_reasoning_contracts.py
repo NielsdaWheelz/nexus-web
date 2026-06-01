@@ -4,22 +4,29 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from llm_calling.types import LLMChunk, LLMRequest, LLMUsage
+from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolCall
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
 from nexus.llm_catalog import model_catalog_entry
-from nexus.schemas.conversation import ChatRunCreateRequest
+from nexus.schemas.conversation import ChatRunCreateRequest, ReaderSelectionRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
     _max_output_tokens_for_reasoning,
     execute_chat_run,
 )
-from tests.factories import create_test_model
+from nexus.services.conversation_references import insert_reference_if_absent
+from tests.factories import (
+    create_searchable_media,
+    create_test_highlight,
+    create_test_model,
+    get_user_default_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
+from tests.test_resource_resolver import _make_pdf
 from tests.utils.db import DirectSessionManager
 
 
@@ -57,6 +64,41 @@ class _UnreadStreamErrorRouter:
             raise error from status_error
         raise AssertionError("Expected stream response to raise")
         yield
+
+
+class _DocumentStackRouter:
+    def __init__(self, media_id: UUID) -> None:
+        self.media_id = media_id
+        self.request_count = 0
+
+    async def generate_stream(self, provider, req, api_key, timeout_s):
+        self.request_count += 1
+        if self.request_count == 1:
+            yield LLMChunk(
+                tool_call=ToolCall(
+                    id="inspect-call",
+                    name="inspect_resource",
+                    arguments={"uri": f"media:{self.media_id}"},
+                )
+            )
+            yield LLMChunk(done=True)
+            return
+        if self.request_count == 2:
+            yield LLMChunk(
+                tool_call=ToolCall(
+                    id="read-call",
+                    name="read_resource",
+                    arguments={"uri": f"page_range:{self.media_id}:1-1"},
+                )
+            )
+            yield LLMChunk(done=True)
+            return
+        yield LLMChunk(delta_text="Summary [1].")
+        yield LLMChunk(
+            done=True,
+            usage=LLMUsage(input_tokens=10, output_tokens=3, total_tokens=13),
+            provider_request_id="resp_doc_stack",
+        )
 
 
 def test_openai_catalog_exposes_default_separate_from_none():
@@ -136,6 +178,7 @@ def _post_chat_run(
     model_id: UUID,
     reasoning: str | None,
     conversation_id: UUID,
+    extra: dict | None = None,
 ):
     payload = {
         "conversation_id": str(conversation_id),
@@ -145,6 +188,8 @@ def _post_chat_run(
     }
     if reasoning is not None:
         payload["reasoning"] = reasoning
+    if extra:
+        payload.update(extra)
 
     return auth_client.post(
         "/chat-runs",
@@ -274,7 +319,6 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
                        ml.cache_write_input_tokens,
                        ml.cache_read_input_tokens,
                        ml.provider_usage,
-                       ml.prompt_plan_version,
                        ml.stable_prefix_hash AS message_stable_prefix_hash,
                        cpa.prompt_block_manifest,
                        cpa.stable_prefix_hash AS assembly_stable_prefix_hash
@@ -293,9 +337,219 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     assert row.cache_write_input_tokens == 0
     assert row.cache_read_input_tokens == 0
     assert row.provider_usage["total_tokens"] == 11
-    assert row.prompt_plan_version == "prompt-plan-v1"
     assert row.message_stable_prefix_hash == row.assembly_stable_prefix_hash
     assert "Summarize the current notes." not in str(row.prompt_block_manifest)
+
+
+@pytest.mark.integration
+async def test_attached_highlight_public_run_persists_citation_index_and_reader_selection(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    _seed_ai_plus_billing(direct_db, user_id)
+    with direct_db.session() as session:
+        model_id = create_test_model(session)
+        media_id = create_searchable_media(session, user_id, title="Attached Source")
+        fragment_id = session.execute(
+            text("SELECT id FROM fragments WHERE media_id = :media_id ORDER BY idx LIMIT 1"),
+            {"media_id": media_id},
+        ).scalar_one()
+        highlight_id = create_test_highlight(session, user_id, fragment_id, exact="selected words")
+    conversation_id = _create_conversation(auth_client, user_id)
+    with direct_db.session() as session:
+        insert_reference_if_absent(session, conversation_id, f"highlight:{highlight_id}")
+        session.commit()
+    selection_payload = {
+        "media_id": str(media_id),
+        "highlight_id": str(highlight_id),
+        "exact": "selected words",
+    }
+
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="default",
+        conversation_id=conversation_id,
+        extra={"reader_selection": selection_payload},
+    )
+    assert response.status_code == 200, f"Create failed: {response.text}"
+    data = response.json()["data"]
+    run_id = UUID(data["run"]["id"])
+    assistant_message_id = UUID(data["assistant_message"]["id"])
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("highlights", "id", highlight_id)
+    direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+    with direct_db.session() as session:
+        job_payload = session.execute(
+            text(
+                """
+                SELECT payload
+                FROM background_jobs
+                WHERE payload->>'run_id' = :run_id
+                """
+            ),
+            {"run_id": str(run_id)},
+        ).scalar_one()
+    assert job_payload["reader_selection"] == {
+        **selection_payload,
+        "prefix": None,
+        "suffix": None,
+    }
+
+    router = _CapturingRouter(
+        LLMChunk(
+            delta_text="Attached quote [1].",
+            done=True,
+            usage=LLMUsage(input_tokens=12, output_tokens=4, total_tokens=16),
+            provider_request_id="resp_attached_quote",
+        )
+    )
+    with direct_db.session() as session:
+        result = await execute_chat_run(
+            session,
+            run_id=run_id,
+            llm_router=router,
+            reader_selection=ReaderSelectionRequest(**selection_payload),
+        )
+
+    assert result == {"status": "complete"}
+    assert router.request is not None
+    rendered_prompt = "\n".join(turn.content for turn in router.request.messages)
+    assert "<reader_selection" in rendered_prompt
+    assert "<exact>selected words</exact>" in rendered_prompt
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT mtc.tool_name, mtc.tool_call_index, mr.citation_ordinal, mr.result_ref
+                FROM message_tool_calls mtc
+                JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'attached_resources'
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).first()
+        citation_event = session.execute(
+            text(
+                """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'citation_index'
+                LIMIT 1
+                """
+            ),
+            {"run_id": run_id},
+        ).scalar_one_or_none()
+
+    assert row is not None
+    assert row.tool_name == "attached_resources"
+    assert row.tool_call_index == 0
+    assert row.citation_ordinal == 1
+    assert row.result_ref["result_type"] == "highlight"
+    assert isinstance(citation_event, dict)
+    assert citation_event["entries"][0]["n"] == 1
+    assert citation_event["entries"][0]["result"]["result_type"] == "highlight"
+
+
+@pytest.mark.integration
+async def test_document_summary_trace_inspects_then_reads_map_pointer(
+    auth_client, direct_db: DirectSessionManager, chat_runs_schema
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    _seed_ai_plus_billing(direct_db, user_id)
+    with direct_db.session() as session:
+        model_id = create_test_model(session)
+        library_id = get_user_default_library(session, user_id)
+        assert library_id is not None
+        media_id = _make_pdf(session, library_id, pages=["PDF evidence page. "], title="Trace PDF")
+    conversation_id = _create_conversation(auth_client, user_id)
+    with direct_db.session() as session:
+        insert_reference_if_absent(session, conversation_id, f"media:{media_id}")
+        session.commit()
+
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="default",
+        conversation_id=conversation_id,
+    )
+    assert response.status_code == 200, f"Create failed: {response.text}"
+    data = response.json()["data"]
+    run_id = UUID(data["run"]["id"])
+    assistant_message_id = UUID(data["assistant_message"]["id"])
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+
+    router = _DocumentStackRouter(media_id)
+    with direct_db.session() as session:
+        result = await execute_chat_run(session, run_id=run_id, llm_router=router)
+
+    assert result == {"status": "complete"}
+    assert router.request_count == 3
+    with direct_db.session() as session:
+        tool_rows = session.execute(
+            text(
+                """
+                SELECT id, tool_name, tool_call_index, result_refs
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                ORDER BY tool_call_index ASC
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).fetchall()
+        retrieval_row = session.execute(
+            text(
+                """
+                SELECT mr.result_type, mr.citation_ordinal, mr.result_ref
+                FROM message_retrievals mr
+                JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+                WHERE mtc.assistant_message_id = :assistant_message_id
+                  AND mtc.tool_name = 'read_resource'
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).first()
+        citation_event = session.execute(
+            text(
+                """
+                SELECT payload
+                FROM chat_run_events
+                WHERE run_id = :run_id AND event_type = 'citation_index'
+                LIMIT 1
+                """
+            ),
+            {"run_id": run_id},
+        ).scalar_one_or_none()
+
+    assert [(row[1], row[2]) for row in tool_rows] == [
+        ("inspect_resource", 1),
+        ("read_resource", 2),
+    ]
+    assert tool_rows[0][3][0]["uri"] == f"media:{media_id}"
+    assert tool_rows[1][3][0]["uri"] == f"page_range:{media_id}:1-1"
+    assert retrieval_row is not None
+    assert retrieval_row[0] == "media"
+    assert retrieval_row[1] == 1
+    assert retrieval_row[2]["result_type"] == "media"
+    assert isinstance(citation_event, dict)
+    assert citation_event["entries"][0]["n"] == 1
+    assert citation_event["entries"][0]["result"]["result_type"] == "media"
 
 
 @pytest.mark.integration

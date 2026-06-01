@@ -83,6 +83,11 @@ function message(
 
 const CID = "conversation-1";
 const MEDIA_ID = "media-1";
+const PENDING_SELECTION = {
+  exact: "selected words",
+  media_id: MEDIA_ID,
+  highlight_id: "HID",
+};
 const userMessage = message("user-1", 1, "user", "What is in this document?");
 const assistantMessage = message(
   "assistant-1",
@@ -259,6 +264,7 @@ describe("ReaderChatDetail", () => {
         conversationId={CID}
         mediaId={MEDIA_ID}
         pendingQuoteUri="highlight:HID"
+        pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -323,6 +329,7 @@ describe("ReaderChatDetail", () => {
         conversationId={CID}
         mediaId={MEDIA_ID}
         pendingQuoteUri="highlight:HID"
+        pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -359,6 +366,13 @@ describe("ReaderChatDetail", () => {
       return String(init.body).includes("highlight:HID");
     });
     expect(quoteRefPosted).toBe(false);
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    );
+    expect(chatRunCall).toBeDefined();
+    const body = JSON.parse(String(chatRunCall?.[1]?.body));
+    expect(body).not.toHaveProperty("reader_selection");
   });
 
   it("clears the pending quote chip after a successful send", async () => {
@@ -417,6 +431,7 @@ describe("ReaderChatDetail", () => {
         conversationId={CID}
         mediaId={MEDIA_ID}
         pendingQuoteUri="highlight:HID"
+        pendingReaderSelection={PENDING_SELECTION}
         onBack={vi.fn()}
         onOpenFullChat={vi.fn()}
       />,
@@ -440,6 +455,14 @@ describe("ReaderChatDetail", () => {
         return String(init.body).includes("highlight:HID");
       });
       expect(quoteRefPosted).toBe(true);
+    });
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    );
+    expect(chatRunCall).toBeDefined();
+    expect(JSON.parse(String(chatRunCall?.[1]?.body))).toMatchObject({
+      reader_selection: PENDING_SELECTION,
     });
     // ...and the chip clears afterward so it is not re-attached next send.
     await waitFor(() => {

@@ -62,6 +62,7 @@ import {
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import { buildQuoteSelector } from "@/lib/highlights/quoteText";
+import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -666,12 +667,18 @@ export default function MediaPaneBody({
   // A highlight URI parked for "quote to existing chat": the next chat the user
   // picks (or creates) in the doc-chat list gets this attached as a reference.
   const [pendingQuoteUri, setPendingQuoteUri] = useState<string | null>(null);
+  const [pendingQuoteLabel, setPendingQuoteLabel] = useState<string | null>(
+    null,
+  );
+  const [pendingQuoteSelection, setPendingQuoteSelection] =
+    useState<ReaderSelectionInput | null>(null);
   // When set, the doc-chat secondary surface shows this conversation inline (instead of
   // the chat list), with a link out to the full conversation pane.
   const [secondaryChat, setSecondaryChat] = useState<{
     conversationId: string | null;
     quoteUri: string | null;
     quoteLabel: string | null;
+    readerSelection: ReaderSelectionInput | null;
   } | null>(null);
   const docChatSurfaceActivatedRef = useRef(false);
   const appliedRequestedReaderLocRef = useRef<string | null>(null);
@@ -2720,7 +2727,7 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   const handleCreateHighlight = useCallback(
-    async (color: HighlightColor): Promise<string | null> => {
+    async (color: HighlightColor): Promise<Highlight | null> => {
       const activeSelection = selection ?? selectionSnapshotRef.current;
       if (!activeSelection || !activeContent || isCreating) return null;
 
@@ -2742,17 +2749,17 @@ export default function MediaPaneBody({
         return null;
       }
 
-      const duplicateId =
+      const duplicate =
         highlights.find(
           (highlight) =>
             highlight.anchor.start_offset === activeSelection.startOffset &&
             highlight.anchor.end_offset === activeSelection.endOffset,
-        )?.id ?? null;
+        ) ?? null;
 
-      if (duplicateId) {
-        focusHighlight(duplicateId);
+      if (duplicate) {
+        focusHighlight(duplicate.id);
         clearRetainedSelection(true);
-        return duplicateId;
+        return duplicate;
       }
 
       setIsCreating(true);
@@ -2784,7 +2791,7 @@ export default function MediaPaneBody({
           .catch((err) => {
             console.error("Failed to refresh highlights after create:", err);
           });
-        return createdHighlight.id;
+        return createdHighlight;
       } catch (err) {
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
           try {
@@ -2807,7 +2814,7 @@ export default function MediaPaneBody({
             }
 
             clearRetainedSelection(true);
-            return existing?.id ?? null;
+            return existing ?? null;
           } catch (refreshErr) {
             console.error(
               "Failed to refresh highlights after conflict:",
@@ -3074,48 +3081,108 @@ export default function MediaPaneBody({
   // Shift+G / button: reveal the doc-chat list, clearing any pending quote or open chat.
   const openDocChat = useCallback(() => {
     setPendingQuoteUri(null);
+    setPendingQuoteLabel(null);
+    setPendingQuoteSelection(null);
     setSecondaryChat(null);
     revealDocChatSecondary();
   }, [revealDocChatSecondary]);
 
   const quoteLabelForHighlightId = useCallback(
     (highlightId: string): string => {
-      return (
-        mediaHighlights.find((item) => item.id === highlightId)?.exact ??
-        "Selected quote"
-      );
+      const highlight =
+        mediaHighlights.find((item) => item.id === highlightId) ??
+        highlights.find((item) => item.id === highlightId);
+      if (!highlight) return "Selected quote";
+      const exact = highlight.exact.trim();
+      return exact ? highlight.exact : "Selected quote";
     },
-    [mediaHighlights],
+    [highlights, mediaHighlights],
+  );
+
+  // Derive the bind-only reader_selection turn anchor from a highlight: its
+  // exact/prefix/suffix passage plus this media + highlight id. The quote is
+  // always a real highlight (quote-to-chat is highlight-first).
+  const readerSelectionForHighlight = useCallback(
+    (highlight: MediaHighlight): ReaderSelectionInput | null => {
+      if (!highlight.exact.trim()) return null;
+      return {
+        ...buildQuoteSelector(highlight),
+        media_id: id,
+        highlight_id: highlight.id,
+      };
+    },
+    [id],
+  );
+
+  const readerSelectionForHighlightId = useCallback(
+    (highlightId: string): ReaderSelectionInput | null => {
+      const highlight =
+        mediaHighlights.find((item) => item.id === highlightId) ??
+        highlights.find((item) => item.id === highlightId);
+      if (!highlight) return null;
+      return readerSelectionForHighlight(highlight);
+    },
+    [highlights, mediaHighlights, readerSelectionForHighlight],
   );
 
   // Open an existing conversation inline in the secondary, carrying any pending quote.
   const openChatInSecondary = useCallback(
     (conversationId: string) => {
+      const highlightId = pendingQuoteUri?.startsWith("highlight:")
+        ? pendingQuoteUri.slice("highlight:".length)
+        : null;
       setSecondaryChat({
         conversationId,
         quoteUri: pendingQuoteUri,
-        quoteLabel: pendingQuoteUri?.startsWith("highlight:")
-          ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+        quoteLabel: highlightId
+          ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
+          : null,
+        readerSelection: highlightId
+          ? (pendingQuoteSelection ?? readerSelectionForHighlightId(highlightId))
           : null,
       });
       setPendingQuoteUri(null);
+      setPendingQuoteLabel(null);
+      setPendingQuoteSelection(null);
       revealDocChatSecondary();
     },
-    [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary],
+    [
+      pendingQuoteUri,
+      pendingQuoteLabel,
+      pendingQuoteSelection,
+      quoteLabelForHighlightId,
+      readerSelectionForHighlightId,
+      revealDocChatSecondary,
+    ],
   );
 
   // Start a new (unsent) conversation inline in the secondary, carrying any pending quote.
   const startChatInSecondary = useCallback(() => {
+    const highlightId = pendingQuoteUri?.startsWith("highlight:")
+      ? pendingQuoteUri.slice("highlight:".length)
+      : null;
     setSecondaryChat({
       conversationId: null,
       quoteUri: pendingQuoteUri,
-      quoteLabel: pendingQuoteUri?.startsWith("highlight:")
-        ? quoteLabelForHighlightId(pendingQuoteUri.slice("highlight:".length))
+      quoteLabel: highlightId
+        ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
+        : null,
+      readerSelection: highlightId
+        ? (pendingQuoteSelection ?? readerSelectionForHighlightId(highlightId))
         : null,
     });
     setPendingQuoteUri(null);
+    setPendingQuoteLabel(null);
+    setPendingQuoteSelection(null);
     revealDocChatSecondary();
-  }, [pendingQuoteUri, quoteLabelForHighlightId, revealDocChatSecondary]);
+  }, [
+    pendingQuoteUri,
+    pendingQuoteLabel,
+    pendingQuoteSelection,
+    quoteLabelForHighlightId,
+    readerSelectionForHighlightId,
+    revealDocChatSecondary,
+  ]);
 
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
@@ -3594,25 +3661,50 @@ export default function MediaPaneBody({
   // Quote a highlight into a brand-new (unsent) conversation in the secondary. The
   // conversation and reference are created when the user sends, not now.
   const quoteHighlightToNewChat = useCallback(
-    (highlightId: string) => {
+    (highlightId: string, highlightOverride?: MediaHighlight) => {
       setSecondaryChat({
         conversationId: null,
         quoteUri: `highlight:${highlightId}`,
-        quoteLabel: quoteLabelForHighlightId(highlightId),
+        quoteLabel: highlightOverride?.exact.trim()
+          ? highlightOverride.exact
+          : quoteLabelForHighlightId(highlightId),
+        readerSelection: highlightOverride
+          ? readerSelectionForHighlight(highlightOverride)
+          : readerSelectionForHighlightId(highlightId),
       });
       revealDocChatSecondary();
     },
-    [quoteLabelForHighlightId, revealDocChatSecondary],
+    [
+      quoteLabelForHighlightId,
+      readerSelectionForHighlight,
+      readerSelectionForHighlightId,
+      revealDocChatSecondary,
+    ],
   );
 
   // Quote a highlight into an existing chat: park the URI and reveal the
   // doc-chat list so the user can pick which conversation to add it to.
   const quoteHighlightToExtantChat = useCallback(
-    (highlightId: string) => {
+    (highlightId: string, highlightOverride?: MediaHighlight) => {
       setPendingQuoteUri(`highlight:${highlightId}`);
+      setPendingQuoteLabel(
+        highlightOverride?.exact.trim()
+          ? highlightOverride.exact
+          : quoteLabelForHighlightId(highlightId),
+      );
+      setPendingQuoteSelection(
+        highlightOverride
+          ? readerSelectionForHighlight(highlightOverride)
+          : readerSelectionForHighlightId(highlightId),
+      );
       revealDocChatSecondary();
     },
-    [revealDocChatSecondary],
+    [
+      quoteLabelForHighlightId,
+      readerSelectionForHighlight,
+      readerSelectionForHighlightId,
+      revealDocChatSecondary,
+    ],
   );
 
   // Drop parked doc-chat state only after the doc-chat secondary has actually
@@ -3638,6 +3730,8 @@ export default function MediaPaneBody({
 
     docChatSurfaceActivatedRef.current = false;
     setPendingQuoteUri(null);
+    setPendingQuoteLabel(null);
+    setPendingQuoteSelection(null);
     setSecondaryChat(null);
   }, [activeReaderSecondarySurface, pendingQuoteUri, secondaryChat]);
 
@@ -4553,6 +4647,7 @@ export default function MediaPaneBody({
               mediaId={id}
               pendingQuoteUri={secondaryChat.quoteUri}
               pendingQuoteLabel={secondaryChat.quoteLabel}
+              pendingReaderSelection={secondaryChat.readerSelection}
               onBack={() => setSecondaryChat(null)}
               onOpenFullChat={(cid) => {
                 setSecondaryChat(null);
@@ -4566,7 +4661,11 @@ export default function MediaPaneBody({
               onOpenChat={openChatInSecondary}
               onStartNewChat={startChatInSecondary}
               pendingQuoteUri={pendingQuoteUri}
-              onPendingQuoteResolved={() => setPendingQuoteUri(null)}
+              onPendingQuoteResolved={() => {
+                setPendingQuoteUri(null);
+                setPendingQuoteLabel(null);
+                setPendingQuoteSelection(null);
+              }}
             />
           )}
         </div>
@@ -4919,20 +5018,23 @@ export default function MediaPaneBody({
             selectionRect={selection.rect}
             selectionLineRects={selection.lineRects}
             containerRef={contentRef}
-            onCreateHighlight={handleCreateHighlight}
+            onCreateHighlight={async (color) =>
+              (await handleCreateHighlight(color))?.id ?? null
+            }
             onQuoteToNewChat={
               media?.capabilities?.can_quote
                 ? async () => {
-                    const highlightId = await handleCreateHighlight("yellow");
-                    if (highlightId) await quoteHighlightToNewChat(highlightId);
+                    const highlight = await handleCreateHighlight("yellow");
+                    if (highlight)
+                      await quoteHighlightToNewChat(highlight.id, highlight);
                   }
                 : undefined
             }
             onQuoteToExtantChat={
               media?.capabilities?.can_quote
                 ? async () => {
-                    const highlightId = await handleCreateHighlight("yellow");
-                    if (highlightId) quoteHighlightToExtantChat(highlightId);
+                    const highlight = await handleCreateHighlight("yellow");
+                    if (highlight) quoteHighlightToExtantChat(highlight.id, highlight);
                   }
                 : undefined
             }

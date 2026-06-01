@@ -18,6 +18,7 @@ from nexus.db.models import (
     ChatRun,
     Conversation,
     ConversationReference,
+    Highlight,
     Library,
     Media,
     Message,
@@ -25,9 +26,8 @@ from nexus.db.models import (
     Model,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import ReaderContextHint
+from nexus.schemas.conversation import ReaderContextHint, ReaderSelectionRequest
 from nexus.services.chat_prompt import (
-    SYSTEM_PROMPT_VERSION,
     PromptPlan,
     build_llm_request_from_plan,
     build_prompt_plan,
@@ -35,7 +35,8 @@ from nexus.services.chat_prompt import (
     validate_prompt_plan_budget,
     validate_prompt_size,
 )
-from nexus.services.chat_run_finalize import PROMPT_VERSION
+from nexus.services.chat_quote import render_quote_block
+from nexus.services.conversation_references import is_conversation_reference
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -44,10 +45,20 @@ from nexus.services.prompt_budget import (
     build_prompt_budget,
     make_prompt_block,
 )
-from nexus.services.resource_resolver import ResolvedResource, resolve_batch
+from nexus.services.resource_resolver import (
+    ResolvedResource,
+    ResourceUriParseFailure,
+    parse_resource_uri,
+    resolve_batch,
+)
+from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
+from nexus.services.search import get_search_result
 
-ASSEMBLER_VERSION = "chat-context-references-v1"
 CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
+
+# Stable, content-free provenance id for the invariant system block. The prompt's
+# identity is its content-only stable_prefix_hash, not a version label.
+SYSTEM_BLOCK_SOURCE_VERSION = "system"
 
 
 @dataclass(frozen=True)
@@ -61,9 +72,6 @@ class HistoryUnit:
 
 @dataclass(frozen=True)
 class AssemblyLedger:
-    prompt_version: str
-    prompt_plan_version: str
-    assembler_version: str
     stable_prefix_hash: str
     cacheable_input_tokens_estimate: int
     prompt_block_manifest: Mapping[str, object]
@@ -90,6 +98,10 @@ class ContextAssembly:
     tool_call_events: tuple[Mapping[str, object], ...]
     retrieval_result_events: tuple[Mapping[str, object], ...]
     ledger: AssemblyLedger
+    # Citable attached <resources>, in dense ordinal order (n = index + 1). Built at
+    # assembly so n is rendered only for resources whose retrieval row can materialize;
+    # the synthetic message_retrievals rows are inserted from these in _execute_chat_run.
+    attached_citations: tuple[RetrievalCitation, ...] = ()
 
 
 def assemble_chat_context(
@@ -102,6 +114,7 @@ def assemble_chat_context(
     provider_account_boundary: str,
     max_output_tokens: int,
     reader_context: ReaderContextHint | None = None,
+    reader_selection: ReaderSelectionRequest | None = None,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -130,11 +143,11 @@ def assemble_chat_context(
 
     context_types: set[str] = set()
     system_block = make_prompt_block(
-        block_id=f"system:{SYSTEM_PROMPT_VERSION}",
+        block_id="system",
         role="system",
         lane="system",
         text=render_system_prompt_block(),
-        source_version=SYSTEM_PROMPT_VERSION,
+        source_version=SYSTEM_BLOCK_SOURCE_VERSION,
         cache_policy=CACHE_POLICY_5M,
         required_provider_capability="prompt_cache",
     )
@@ -147,6 +160,21 @@ def assemble_chat_context(
                 "reader_context_hint",
                 reader_context_block,
                 {"hint": "reader_context"},
+            )
+        )
+
+    reader_selection_block = _build_reader_selection_block(
+        db,
+        reader_selection,
+        viewer_id=run.owner_user_id,
+        conversation_id=conversation.id,
+    )
+    if reader_selection_block is not None:
+        mandatory_blocks.append(
+            (
+                "reader_selection",
+                reader_selection_block,
+                {"hint": "reader_selection"},
             )
         )
 
@@ -172,7 +200,7 @@ def assemble_chat_context(
             )
         )
 
-    resources_block, resources_metadata = _build_resources_block(
+    resources_block, resources_metadata, attached_citations = _build_resources_block(
         db, conversation_id=conversation.id, viewer_id=run.owner_user_id
     )
 
@@ -320,6 +348,7 @@ def assemble_chat_context(
         tool_call_events=tuple(tool_call_events),
         retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
+        attached_citations=attached_citations,
     )
 
 
@@ -330,9 +359,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
         "model_id": run.model_id,
-        "prompt_version": ledger.prompt_version,
-        "prompt_plan_version": ledger.prompt_plan_version,
-        "assembler_version": ledger.assembler_version,
         "stable_prefix_hash": ledger.stable_prefix_hash,
         "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
@@ -372,9 +398,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 conversation_id,
                 assistant_message_id,
                 model_id,
-                prompt_version,
-                prompt_plan_version,
-                assembler_version,
                 stable_prefix_hash,
                 cacheable_input_tokens_estimate,
                 prompt_block_manifest,
@@ -395,9 +418,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :conversation_id,
                 :assistant_message_id,
                 :model_id,
-                :prompt_version,
-                :prompt_plan_version,
-                :assembler_version,
                 :stable_prefix_hash,
                 :cacheable_input_tokens_estimate,
                 :prompt_block_manifest,
@@ -483,24 +503,89 @@ def _build_reader_context_block(
     )
 
 
+def _build_reader_selection_block(
+    db: Session,
+    reader_selection: ReaderSelectionRequest | None,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID | None = None,
+) -> PromptBlock | None:
+    """Render the bind-only `<reader_selection>` turn anchor — the exact passage
+    the viewer is asking "this"/"the quote" about. Never numbered, never a
+    retrieval; the passage is cited through its attached `highlight:` reference.
+    """
+    if reader_selection is None:
+        return None
+    highlight = db.get(Highlight, reader_selection.highlight_id)
+    if highlight is None or highlight.anchor_media_id != reader_selection.media_id:
+        return None
+    if conversation_id is not None and not is_conversation_reference(
+        db, conversation_id, f"highlight:{reader_selection.highlight_id}"
+    ):
+        return None
+    resource = resolve_batch(
+        db, [f"highlight:{reader_selection.highlight_id}"], viewer_id=viewer_id
+    )[0]
+    if resource.missing or resource.quote is None:
+        return None
+    quote = resource.quote
+    return make_prompt_block(
+        block_id="reader_selection",
+        role="system",
+        lane="attached_context",
+        text=render_quote_block(
+            "reader_selection",
+            exact=quote.exact,
+            prefix=quote.prefix,
+            suffix=quote.suffix,
+            source_label=quote.source_label,
+        ),
+        source_refs=[
+            {"type": "media", "id": str(reader_selection.media_id)},
+            {"type": "highlight", "id": str(reader_selection.highlight_id)},
+        ],
+        source_version=f"reader_selection:{reader_selection.highlight_id}",
+    )
+
+
+# A citable attached resource maps its URI scheme to the retrieval result_type
+# get_search_result understands. media/library (pointers) and conversation
+# (summary) carry no in-prompt citable content and are absent here.
+_CITABLE_RESULT_TYPE: dict[str, str] = {
+    "highlight": "highlight",
+    "span": "evidence_span",
+    "chunk": "content_chunk",
+    "fragment": "fragment",
+    "page": "page",
+    "note_block": "note_block",
+    "message": "message",
+}
+
+
 def _build_resources_block(
     db: Session,
     *,
     conversation_id: UUID,
     viewer_id: UUID,
-) -> tuple[PromptBlock | None, Mapping[str, object]]:
+) -> tuple[PromptBlock | None, Mapping[str, object], tuple[RetrievalCitation, ...]]:
     rows = db.execute(
         select(ConversationReference.resource_uri, ConversationReference.id)
         .where(ConversationReference.conversation_id == conversation_id)
         .order_by(ConversationReference.created_at.asc(), ConversationReference.id.asc())
     ).all()
     if not rows:
-        return None, {}
+        return None, {}, ()
     uris = [row[0] for row in rows]
     resolved = resolve_batch(db, uris, viewer_id=viewer_id)
+    citations: list[RetrievalCitation] = []
     lines = ["<resources>"]
     for resource in resolved:
-        lines.append(_render_resource(resource))
+        citation = _materialize_attached_citation(db, resource, viewer_id=viewer_id)
+        if citation is None:
+            lines.append(_render_resource(resource))
+        else:
+            citations.append(citation)
+            lines.append(_render_resource(resource, n=len(citations)))
     lines.append("</resources>")
     source_refs = [
         {"type": "conversation_reference", "id": str(row[1]), "resource_uri": row[0]}
@@ -515,20 +600,61 @@ def _build_resources_block(
         source_version=f"resources:{conversation_id}:{len(uris)}",
         cache_policy=None,
     )
-    return block, {"resource_count": len(uris), "resource_uris": uris}
+    return block, {"resource_count": len(uris), "resource_uris": uris}, tuple(citations)
 
 
-def _render_resource(resource: ResolvedResource) -> str:
+def _materialize_attached_citation(
+    db: Session, resource: ResolvedResource, *, viewer_id: UUID
+) -> RetrievalCitation | None:
+    """The validated citation for a citable attached resource, or None.
+
+    Citable = carries in-prompt content (a `<quote>` or inline `<body>`) AND a
+    durable retrieval row materializes via `get_search_result`. An un-anchored
+    highlight (no locator) returns None: it stays in the prompt but is not
+    numbered, so no `[N]` ever renders without a backing row.
+    """
+    if resource.missing or (resource.quote is None and resource.inline_body is None):
+        return None
+    parsed = parse_resource_uri(resource.uri)
+    if isinstance(parsed, ResourceUriParseFailure):
+        return None
+    result_type = _CITABLE_RESULT_TYPE.get(parsed.scheme)
+    if result_type is None:
+        return None
+    try:
+        result = get_search_result(db, viewer_id, result_type, str(parsed.resource_id))
+        citation = citation_from_search_result(result, filters={})
+    except (NotFoundError, ValueError):
+        # justify-ignore-error: no active content index / no resolvable anchor →
+        # the resource stays in the prompt but is not citable (no synthetic row).
+        return None
+    citation.selected = True
+    return citation
+
+
+def _render_resource(resource: ResolvedResource, n: int | None = None) -> str:
     uri_attr = xml_escape(resource.uri, {'"': "&quot;"})
     if resource.missing:
         return f'<resource uri="{uri_attr}" missing="true">resource unavailable</resource>'
     label_attr = xml_escape(resource.label, {'"': "&quot;"})
     summary_attr = xml_escape(resource.summary, {'"': "&quot;"})
     fetch_attr = xml_escape(resource.fetch_hint, {'"': "&quot;"})
+    n_attr = f' n="{n}"' if n is not None else ""
     open_tag = (
-        f'<resource uri="{uri_attr}" label="{label_attr}" '
+        f'<resource uri="{uri_attr}"{n_attr} label="{label_attr}" '
         f'summary="{summary_attr}" fetch_hint="{fetch_attr}">'
     )
+    if resource.quote is not None:
+        quote = resource.quote
+        inner = render_quote_block(
+            "quote",
+            exact=quote.exact,
+            prefix=quote.prefix,
+            suffix=quote.suffix,
+            source_label=quote.source_label,
+            note=quote.note,
+        )
+        return f"{open_tag}\n{inner}\n</resource>"
     if resource.inline_body is None:
         return f"{open_tag}</resource>"
     body = xml_escape(resource.inline_body)
@@ -536,23 +662,19 @@ def _render_resource(resource: ResolvedResource) -> str:
 
 
 def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:
-    exact = anchor.get("exact")
     prefix = anchor.get("prefix")
     suffix = anchor.get("suffix")
+    exact = anchor.get("exact")
     offset_status = anchor.get("offset_status")
-    lines = [
-        "The user branched from this selected part of the previous assistant answer.",
-        "<assistant_selection>",
-    ]
-    if offset_status in {"mapped", "unmapped"}:
-        lines.append(f"<offset_status>{offset_status}</offset_status>")
-    if isinstance(prefix, str) and prefix:
-        lines.append(f"<prefix>{xml_escape(prefix)}</prefix>")
-    lines.append(f"<exact>{xml_escape(exact if isinstance(exact, str) else '')}</exact>")
-    if isinstance(suffix, str) and suffix:
-        lines.append(f"<suffix>{xml_escape(suffix)}</suffix>")
-    lines.append("</assistant_selection>")
-    return "\n".join(lines)
+    return "The user branched from this selected part of the previous assistant answer.\n" + (
+        render_quote_block(
+            "assistant_selection",
+            exact=exact if isinstance(exact, str) else "",
+            prefix=prefix if isinstance(prefix, str) else None,
+            suffix=suffix if isinstance(suffix, str) else None,
+            offset_status=offset_status if isinstance(offset_status, str) else None,
+        )
+    )
 
 
 def load_recent_history_units(
@@ -764,8 +886,6 @@ def _cache_identity(
         "key_mode_requested": run.key_mode,
         "key_mode_used": key_mode_used,
         "provider_account_boundary": provider_account_boundary,
-        "prompt_version": PROMPT_VERSION,
-        "system_prompt_version": SYSTEM_PROMPT_VERSION,
     }
 
 
@@ -779,9 +899,6 @@ def _build_ledger(
     included_context_refs: Sequence[Mapping[str, object]],
 ) -> AssemblyLedger:
     return AssemblyLedger(
-        prompt_version=PROMPT_VERSION,
-        prompt_plan_version=prompt_plan.version,
-        assembler_version=ASSEMBLER_VERSION,
         stable_prefix_hash=prompt_plan.stable_prefix_hash,
         cacheable_input_tokens_estimate=prompt_plan.cacheable_input_tokens_estimate,
         prompt_block_manifest=prompt_plan.manifest(),

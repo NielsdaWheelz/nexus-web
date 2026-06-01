@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
 from nexus.services.agent_tools.app_search import (
-    AppSearchCitation,
     execute_app_search,
     render_retrieved_context_blocks,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
     create_searchable_media_in_library,
@@ -223,6 +223,45 @@ def test_execute_app_search_rejects_blank_explicit_scope(
     assert run.error_code == ApiErrorCode.E_INVALID_REQUEST.value
     assert "non-empty URI strings" in run.context_text
     assert run.citations == []
+
+
+def test_execute_app_search_error_output_escapes_attribute_quotes(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Find something",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+    )
+
+    run = execute_app_search(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        scopes=[],
+        planned_query="Find something",
+        planned_types=["media"],
+        planned_filters={},
+        forced_error='bad "scope"',
+    )
+
+    assert run.status == "error"
+    assert 'message="bad &quot;scope&quot;"' in run.context_text
+    assert 'message="bad "scope""' not in run.context_text
 
 
 def test_execute_app_search_persists_normalized_executed_filters(
@@ -532,6 +571,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert run.retrieval_result_event()["results"] == []
         assert 'status="no_results"' in run.context_text
         assert 'status="no_indexed_evidence"' not in run.context_text
+        assert "&quot;content_kinds&quot;" in run.context_text
 
         tool_row = session.execute(
             text(
@@ -567,6 +607,79 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_accepts_referenced_media_scope(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Media Scoped Search Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find media scoped evidence",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Media Scope Needle",
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO conversation_references (conversation_id, resource_uri)
+                VALUES (:conversation_id, :resource_uri)
+                """
+            ),
+            {
+                "conversation_id": conversation_id,
+                "resource_uri": f"media:{media_id}",
+            },
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            planned_query="Media Scope Needle",
+            planned_types=["content_chunk"],
+            planned_filters={},
+        )
+
+        assert run is not None
+    assert run.status == "complete"
+    assert run.empty_status is None
+    assert run.citations
+    assert all(citation.media_id == str(media_id) for citation in run.citations)
+    assert "Media Scope Needle" in run.context_text
+
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
@@ -769,7 +882,7 @@ def test_render_retrieved_context_requires_matching_index_run(
                 "span_sha": hashlib.sha256(span_text.encode("utf-8")).hexdigest(),
             },
         ).scalar_one()
-        citation = AppSearchCitation(
+        citation = RetrievalCitation(
             result_type="content_chunk",
             source_id=str(row[0]),
             title="Index Run Guard Needle",

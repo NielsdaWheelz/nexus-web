@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, Message
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.conversation import BranchAnchorRequest
+from nexus.schemas.conversation import BranchAnchorRequest, ReaderSelectionRequest
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
@@ -26,11 +26,24 @@ def compute_payload_hash(
     conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
+    reader_selection: ReaderSelectionRequest | None,
 ) -> str:
     payload_anchor = branch_anchor.model_dump(mode="json")
+    # reader_selection is answer-determining by durable identity, not by the
+    # client-supplied text hints. The worker canonicalizes exact/prefix/suffix
+    # from the highlight row, so hashing those fields would create false replay
+    # mismatches without changing the prompt evidence.
+    selection = (
+        {
+            "media_id": str(reader_selection.media_id),
+            "highlight_id": str(reader_selection.highlight_id),
+        }
+        if reader_selection is not None
+        else None
+    )
     payload = (
         f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|"
-        f"{key_mode}|"
+        f"{key_mode}|{selection}|"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 

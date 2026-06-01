@@ -167,6 +167,14 @@ def _select_reference(
     ).scalar_one_or_none()
 
 
+def is_conversation_reference(db: Session, conversation_id: UUID, resource_uri: str) -> bool:
+    """True if ``resource_uri`` is already a reference of the conversation."""
+    return (
+        _select_reference(db, conversation_id=conversation_id, resource_uri=resource_uri)
+        is not None
+    )
+
+
 def _insert_reference_if_missing(
     db: Session,
     *,

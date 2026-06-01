@@ -3,8 +3,8 @@
 Covers the contract enforced by ``execute_read_resource``:
 
 - Resource must already be a reference of the current conversation.
-- Media/library URIs are not readable — the model is told to call
-  ``app_search`` instead.
+- Media URIs read the whole short document or redirect oversized documents to
+  ``inspect_resource``; library URIs remain search scopes.
 - Span/highlight/page/note_block/fragment/conversation/message URIs return
   the full body when visible to the viewer.
 - Missing or forbidden URIs return ``status="error"`` rather than raising.
@@ -17,8 +17,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from nexus.services.agent_tools.read_resource import execute_read_resource
+from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.conversation_references import insert_reference_if_absent
 from tests.factories import (
     create_test_conversation,
@@ -27,13 +28,30 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.test_resource_resolver import (
+    _add_fragment,
     _make_highlight_with_anchor,
     _make_note_block,
     _make_page,
+    _make_pdf,
     _make_span,
 )
 
 pytestmark = pytest.mark.integration
+
+
+def test_read_resource_tool_output_escapes_attribute_quotes():
+    result = ReadResourceResult(
+        uri='fragment:"quoted"',
+        status="error",
+        body='Bad "resource" <body>',
+        error_code='bad"code',
+    )
+
+    output = result.tool_output()
+
+    assert 'uri="fragment:&quot;quoted&quot;"' in output
+    assert 'code="bad&quot;code"' in output
+    assert 'Bad "resource" &lt;body&gt;' in output
 
 
 # =============================================================================
@@ -79,15 +97,15 @@ def test_read_resource_not_in_references_errors_with_actionable_hint(
     )
 
 
-def test_read_resource_media_uri_returns_scope_not_readable_error(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_read_resource_media_short_returns_full(db_session: Session, bootstrapped_user: UUID):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
     media_id = create_test_media_in_library(
-        db_session, bootstrapped_user, library_id, title="Big Source"
+        db_session, bootstrapped_user, library_id, title="Short Article"
     )
+    _add_fragment(db_session, media_id, idx=0, text="First paragraph.")
+    _add_fragment(db_session, media_id, idx=1, text="Second paragraph.")
     uri = f"media:{media_id}"
     _admit_reference(db_session, conversation_id, uri)
 
@@ -95,13 +113,102 @@ def test_read_resource_media_uri_returns_scope_not_readable_error(
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
 
-    assert result.is_error, f"Media URIs must surface a scope-not-readable error; got {result}"
-    assert result.error_code == "scope_not_readable", (
-        f"Expected error_code='scope_not_readable'; got {result.error_code}"
+    assert not result.is_error, f"A short media document should read whole; got {result}"
+    assert result.kind == "full"
+    assert "First paragraph." in result.body and "Second paragraph." in result.body
+
+
+def test_read_resource_media_over_budget_redirects_to_inspect(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Huge Article"
     )
-    assert "app_search" in result.body, (
-        "Error body should redirect the model to app_search with the media scope"
+    _add_fragment(db_session, media_id, idx=0, text="x" * 60_000)
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
+
+    assert not result.is_error
+    assert result.kind == "too_large", f"Over-budget media should redirect, not dump; got {result}"
+    assert "inspect_resource" in result.body
+
+
+def test_read_resource_pdf_page_range_slices_plain_text(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = _make_pdf(
+        db_session, library_id, pages=["PAGE-ONE-TEXT. ", "PAGE-TWO-TEXT. ", "PAGE-THREE-TEXT. "]
+    )
+    _admit_reference(db_session, conversation_id, f"media:{media_id}")
+    uri = f"page_range:{media_id}:2-3"
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error, f"page_range read should succeed; got {result}"
+    assert result.kind == "page_range"
+    assert result.body == "PAGE-TWO-TEXT. PAGE-THREE-TEXT. "
+    assert "PAGE-ONE-TEXT" not in result.body
+
+
+def test_read_resource_media_derived_pointer_readable_via_parent_media(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """Gate O2: a fragment is readable when its parent media is referenced."""
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Mapped Article"
+    )
+    fragment_id = _add_fragment(db_session, media_id, idx=0, text="A readable section body.")
+    # Only the parent media is referenced; the fragment sub-URI is not.
+    _admit_reference(db_session, conversation_id, f"media:{media_id}")
+
+    result = execute_read_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=f"fragment:{fragment_id}",
+    )
+
+    assert not result.is_error, f"A fragment of a referenced media should be readable; got {result}"
+    assert result.kind == "section"
+    assert result.body == "A readable section body."
+
+
+def test_read_resource_fragment_without_referenced_parent_errors(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Unpinned Article"
+    )
+    fragment_id = _add_fragment(db_session, media_id, idx=0, text="Body.")
+    # Nothing is referenced — neither the fragment nor its parent media.
+
+    result = execute_read_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=f"fragment:{fragment_id}",
+    )
+
+    assert result.is_error
+    assert result.error_code == "not_in_references"
 
 
 def test_read_resource_library_uri_returns_scope_not_readable_error(
@@ -139,18 +246,33 @@ def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user:
     )
 
     assert not result.is_error, f"Span read should succeed; got {result}"
+    assert result.kind == "span"
     assert result.body == span_text, f"Expected full span text; got {result.body!r}"
 
 
-def test_read_resource_highlight_returns_exact_text(db_session: Session, bootstrapped_user: UUID):
+def test_read_resource_highlight_returns_enriched_quote(
+    db_session: Session, bootstrapped_user: UUID
+):
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Highlighted Source"
     )
-    _make_span(db_session, media_id, text="Background text.")
-    highlight_id = _make_highlight_with_anchor(db_session, bootstrapped_user, media_id)
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "Octavia Butler", "role": "author"}],
+        source="manual",
+    )
+    highlight_id = _make_highlight_with_anchor(
+        db_session,
+        bootstrapped_user,
+        media_id,
+        exact="some highlighted text",
+        prefix="before ",
+        suffix=" after",
+    )
     uri = f"highlight:{highlight_id}"
     _admit_reference(db_session, conversation_id, uri)
 
@@ -159,7 +281,18 @@ def test_read_resource_highlight_returns_exact_text(db_session: Session, bootstr
     )
 
     assert not result.is_error, f"Highlight read should succeed; got {result}"
-    assert result.body == "some highlighted text"
+    assert result.quote is not None, "A highlight read carries the enriched quote"
+    assert result.quote.exact == "some highlighted text"
+    assert result.quote.prefix == "before "
+    assert result.quote.suffix == " after"
+    output = result.tool_output()
+    assert 'kind="quote"' in output, f"Read output should label kind=quote; got {output}"
+    assert "<prefix>before </prefix>" in output
+    assert "<exact>some highlighted text</exact>" in output
+    assert "<suffix> after</suffix>" in output
+    assert "“Highlighted Source” by Octavia Butler" in output, (
+        "Quote source should name the parent media and author"
+    )
 
 
 def test_read_resource_page_owner_returns_description(db_session: Session, bootstrapped_user: UUID):

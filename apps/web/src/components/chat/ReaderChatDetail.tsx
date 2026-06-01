@@ -7,6 +7,7 @@ import ChatSurface from "@/components/chat/ChatSurface";
 import { useConversation } from "@/components/chat/useConversation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import styles from "./ReaderChatDetail.module.css";
 
@@ -18,6 +19,8 @@ interface ReaderChatDetailProps {
   pendingQuoteUri?: string | null;
   /** Human-readable quote chip text for the pending highlight reference. */
   pendingQuoteLabel?: string | null;
+  /** The quoted passage as a bind-only turn anchor for the asking turn. */
+  pendingReaderSelection?: ReaderSelectionInput | null;
   onBack: () => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (
@@ -42,6 +45,7 @@ export default function ReaderChatDetail({
   mediaId,
   pendingQuoteUri = null,
   pendingQuoteLabel = null,
+  pendingReaderSelection = null,
   onBack,
   onOpenFullChat,
   onReaderSourceActivate,
@@ -67,6 +71,12 @@ export default function ReaderChatDetail({
     () => [`media:${mediaId}`, ...pendingReferences.map((ref) => ref.uri)],
     [mediaId, pendingReferences],
   );
+  const activePendingReaderSelection = useMemo(() => {
+    if (!pendingQuoteUri) return null;
+    return pendingReferences.some((ref) => ref.uri === pendingQuoteUri)
+      ? pendingReaderSelection
+      : null;
+  }, [pendingQuoteUri, pendingReaderSelection, pendingReferences]);
 
   const convo = useConversation({
     conversationId,
@@ -134,6 +144,7 @@ export default function ReaderChatDetail({
             draftKey={draftKey}
             parentMessageId={parentMessageId}
             readerContext={readerContext}
+            readerSelection={activePendingReaderSelection}
             pendingReferences={pendingReferences}
             onRemovePendingReference={(uri) =>
               setPendingReferences((prev) =>

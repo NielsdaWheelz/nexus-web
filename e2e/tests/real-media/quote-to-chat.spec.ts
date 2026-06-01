@@ -83,7 +83,7 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
     secondary.getByRole("region", { name: "Chat detail" }),
   ).toBeVisible({ timeout: 10_000 });
   await expect(secondary.getByLabel("Attached to next message")).toContainText(
-    "Selected quote",
+    selectedText,
   );
   await expect(
     secondary.getByRole("textbox", { name: /ask anything/i }),

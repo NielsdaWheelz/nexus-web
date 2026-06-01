@@ -101,6 +101,7 @@ export interface SSECitationIndexEvent {
       retrieval_id: string;
       tool_call_id: string;
       ordinal: number;
+      result?: CitationEventData;
     }>;
   };
 }
@@ -292,6 +293,7 @@ function parseCitationIndexEntry(
   const retrievalId = entry.retrieval_id;
   const toolCallId = entry.tool_call_id;
   const ordinal = entry.ordinal;
+  const result = entry.result;
   if (
     typeof n !== "number" ||
     !Number.isInteger(n) ||
@@ -303,11 +305,15 @@ function parseCitationIndexEntry(
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
+  if (result !== undefined && !isCitationEventData(result)) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
   return {
     n,
     retrieval_id: retrievalId,
     tool_call_id: toolCallId,
     ordinal,
+    ...(result !== undefined ? { result } : {}),
   };
 }
 

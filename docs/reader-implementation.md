@@ -121,6 +121,23 @@ cadences.
   media across all fragments and pages; fed to the overview ruler only,
   fetched once per media open and after mutations
 
+### reader-to-chat quote selection
+
+quote-to-chat is highlight-first. The reader creates or reuses a durable
+highlight, adds `highlight:<id>` as the document-chat reference, and sends a
+transient `reader_selection` turn anchor for the current chat run.
+
+- `reader_selection` carries `media_id` and `highlight_id`; the backend
+  canonicalizes prefix, exact, suffix, and source from the highlight row before
+  rendering `<reader_selection>`
+- the selection is bind-only context for phrases like "this" or "the quote";
+  it is never persisted as a reference and never receives a citation ordinal
+- citation chips point at the attached `highlight:` reference or later
+  `read_resource` evidence, not at the transient selection block
+- PDF quote-to-chat passes the freshly created highlight payload through the
+  same path as web and EPUB so a just-created quote does not depend on a stale
+  highlight-list refresh
+
 ### anchored highlight projection
 
 Anchored projection is the reader-owned bridge from stored highlight anchors to
@@ -321,6 +338,9 @@ required e2e coverage includes:
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf page changes persisting without reopening the file
+- reader-to-chat quote flow sends a durable `highlight:` reference and, when
+  the highlight has nonblank exact text, a transient `reader_selection`
+  carrying `media_id` and `highlight_id`
 
 supporting test infra:
 
@@ -333,6 +353,8 @@ supporting test infra:
 
 ```bash
 cd apps/web && bunx vitest run --project unit src/lib/reader/useReaderResumeState.test.tsx src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
+cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
 cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderOverviewRuler.test.tsx
 make test-e2e PLAYWRIGHT_ARGS='tests/reader-resume.spec.ts --project=chromium'
+make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```

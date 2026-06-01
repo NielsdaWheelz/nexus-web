@@ -5,6 +5,15 @@ export interface ReaderContextHintInput {
   library_id: string | null;
 }
 
+/** The exact passage the user is asking about — a bind-only turn anchor. */
+export interface ReaderSelectionInput {
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  media_id: string;
+  highlight_id: string;
+}
+
 export interface ChatRunCreateRequest {
   conversation_id: string;
   content: string;
@@ -14,4 +23,5 @@ export interface ChatRunCreateRequest {
   parent_message_id?: string;
   branch_anchor?: BranchAnchor;
   reader_context: ReaderContextHintInput | null;
+  reader_selection?: ReaderSelectionInput | null;
 }

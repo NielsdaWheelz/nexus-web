@@ -561,11 +561,12 @@ export default function ReaderHighlightsSurface({
     ) => {
       const isFocused = focusedId === highlight.id;
       const canEditHighlight = highlight.is_owner !== false;
+      const hasQuoteText = highlight.exact.trim().length > 0;
       const linkedNotes = highlight.linked_note_blocks ?? [];
       const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
 
       const actions: ActionMenuOption[] = [];
-      if (canQuoteToChat) {
+      if (canQuoteToChat && hasQuoteText) {
         actions.push({
           id: "quote-new",
           label: "Quote to new chat",

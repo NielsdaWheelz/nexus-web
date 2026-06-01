@@ -82,6 +82,7 @@ export interface CitationIndexEntry {
   retrieval_id: string;
   tool_call_id: string;
   ordinal: number;
+  result?: MessageRetrievalResultRef;
 }
 
 export type MessageRetrievalResultRef =

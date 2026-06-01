@@ -15,11 +15,11 @@ def prompt_assembly_metadata(
     db: Session,
     *,
     run_id: UUID,
-) -> tuple[str | None, str | None]:
+) -> str | None:
     row = db.execute(
         text(
             """
-            SELECT prompt_plan_version, stable_prefix_hash
+            SELECT stable_prefix_hash
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :run_id
             """
@@ -27,8 +27,8 @@ def prompt_assembly_metadata(
         {"run_id": run_id},
     ).first()
     if row is None:
-        return None, None
-    return row[0], row[1]
+        return None
+    return row[0]
 
 
 def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> None:
