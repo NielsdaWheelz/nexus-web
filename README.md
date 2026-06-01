@@ -21,6 +21,7 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - Android Studio + Android SDK (only if working in `apps/android/`)
 - Docker (running)
 - `uv`
+- `actionlint`
 - Supabase CLI
 
 ### Setup

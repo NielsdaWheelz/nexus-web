@@ -8,6 +8,7 @@ import {
   readerSecondaryForActivePane,
 } from "./reader";
 import {
+  activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
   workspacePaneButton,
@@ -72,13 +73,13 @@ async function putReaderState(
 }
 
 function activeTextLayer(page: Page) {
-  return page
+  return activeWorkspacePane(page)
     .locator('.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]')
     .last();
 }
 
 function pdfControlsToolbar(page: Page) {
-  return page.getByRole("toolbar", { name: "PDF controls" }).first();
+  return activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" }).first();
 }
 
 async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Promise<void> {
@@ -301,7 +302,13 @@ test.describe("pdf reader", () => {
       expect(persistedHighlight.ok()).toBe(true);
       // Reader-state persistence can resume on page 1 or 2 depending on save timing.
       // Normalize deterministically so this test validates highlight persistence only.
-      await ensureOnPage(page, 2, expectedPageCount);
+      const overviewTick = activeWorkspacePane(page).getByRole("button", { name: exact }).first();
+      await expect(overviewTick).toBeVisible({ timeout: 20_000 });
+      await overviewTick.click();
+      await page.mouse.move(16, 16);
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
 
       const highlightsPane = await openHighlightsPane(page);
       const linkedRow = highlightsPane.getByTestId(

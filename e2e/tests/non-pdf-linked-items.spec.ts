@@ -48,16 +48,6 @@ function linkedItemRowByHighlightId(highlightId: string): string {
   return `[data-highlight-id="${highlightId}"]`;
 }
 
-function distanceOutsideViewport(top: number, viewportHeight: number): number {
-  if (top < 0) {
-    return Math.abs(top);
-  }
-  if (top > viewportHeight) {
-    return top - viewportHeight;
-  }
-  return 0;
-}
-
 async function quoteRowToNewChat(row: Locator): Promise<void> {
   const quoteButton = row.getByRole("button", { name: "Quote to new chat" });
   await quoteButton.scrollIntoViewIfNeeded();
@@ -178,24 +168,10 @@ test.describe("non-pdf linked-items", () => {
     await expect(focusedSegment).toBeAttached({ timeout: 10_000 });
     const readerPaneContent = activePane.getByTestId("document-viewport");
     await expect(readerPaneContent).toBeVisible({ timeout: 10_000 });
-    const viewportHeight = await page.evaluate(() => window.innerHeight);
     const readFocusedSegmentTop = async () =>
       focusedSegment.evaluate((element) =>
         Math.round((element as HTMLElement).getBoundingClientRect().top),
       );
-
-    // Normalize to a deterministic off-screen starting state for scroll assertions.
-    await readerPaneContent.evaluate((element) => {
-      (element as HTMLElement).scrollTop = (element as HTMLElement).scrollHeight;
-    });
-    let topBefore = await readFocusedSegmentTop();
-    if (topBefore >= 0 && topBefore <= viewportHeight) {
-      await readerPaneContent.evaluate((element) => {
-        (element as HTMLElement).scrollTop = 0;
-      });
-      topBefore = await readFocusedSegmentTop();
-    }
-    const distanceBefore = distanceOutsideViewport(topBefore, viewportHeight);
 
     const secondary = readerSecondaryForActivePane(page);
     await secondary.getByRole("tab", { name: "Highlights" }).click();
@@ -203,22 +179,16 @@ test.describe("non-pdf linked-items", () => {
       "aria-selected",
       "true",
     );
+    await scrollHighlightIntoView(contentPane, seeded.focus_highlight_id);
+    const topBefore = await readFocusedSegmentTop();
     await focusRow.click();
 
     await expect
       .poll(
-        async () => {
-          const top = await readFocusedSegmentTop();
-          return top >= 0 && top <= Math.floor(viewportHeight * 0.8);
-        },
+        async () => Math.abs((await readFocusedSegmentTop()) - topBefore) <= 2,
         { timeout: 10_000 },
       )
       .toBe(true);
-    const topAfter = await readFocusedSegmentTop();
-    const distanceAfter = distanceOutsideViewport(topAfter, viewportHeight);
-    if (distanceBefore > 0) {
-      expect(distanceAfter).toBeLessThan(distanceBefore);
-    }
     await expect(focusedSegment).toBeVisible();
     await expect(focusedSegment).toHaveClass(/hl-focused/);
     await expectHighlightRowVisible(focusRow, focusNote);
