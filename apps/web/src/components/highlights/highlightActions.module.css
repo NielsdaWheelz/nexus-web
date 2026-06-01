@@ -1,0 +1,27 @@
+.dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  border: var(--stroke-hairline) solid var(--edge);
+}
+
+.dot-yellow {
+  background: var(--highlight-yellow);
+}
+
+.dot-green {
+  background: var(--highlight-green);
+}
+
+.dot-blue {
+  background: var(--highlight-blue);
+}
+
+.dot-pink {
+  background: var(--highlight-pink);
+}
+
+.dot-purple {
+  background: var(--highlight-purple);
+}

@@ -163,7 +163,12 @@ test.describe("youtube transcript media", () => {
         response.request().method() === "POST" &&
         response.url().includes(`/api/fragments/${targetFragment.id}/highlights`)
     );
-    await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
+    await highlightActions.getByRole("button", { name: "Highlight color" }).click();
+    await page
+      .getByRole("dialog", { name: "Highlight color" })
+      .getByRole("button", { name: /^Green/ })
+      .first()
+      .click();
     const createdHighlightResponse = await createHighlightResponse;
     expect(createdHighlightResponse.ok()).toBeTruthy();
 

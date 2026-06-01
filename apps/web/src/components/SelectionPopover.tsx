@@ -10,12 +10,11 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import { clamp } from "@/lib/clamp";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
-import Button from "@/components/ui/Button";
+import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import styles from "./SelectionPopover.module.css";
 
 interface SelectionPopoverProps {
@@ -81,7 +80,6 @@ export default function SelectionPopover({
   isCreating = false,
 }: SelectionPopoverProps) {
   const isMobileViewport = useIsMobileViewport();
-  const [selectedColor, setSelectedColor] = useState<HighlightColor>(DEFAULT_COLOR);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     top: number;
@@ -241,48 +239,9 @@ export default function SelectionPopover({
     };
   }, [updatePosition]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onDismiss();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onDismiss]);
-
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Element) {
-        const preserveSelectionTarget = target.closest(
-          '[data-selection-popover-ignore-outside="true"]'
-        );
-        if (preserveSelectionTarget) {
-          return;
-        }
-      }
-
-      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        onDismiss();
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [onDismiss]);
-
-  const handleColorSelect = useCallback(
-    (color: HighlightColor) => {
-      setSelectedColor(color);
-      if (!isCreating) {
-        void onCreateHighlight(color);
-      }
-    },
-    [isCreating, onCreateHighlight]
-  );
+  // Dismiss on outside-pointerdown / Escape. The shared hook honors
+  // [data-dismiss-ignore] so the nested color-picker popover never dismisses us.
+  useDismissOnOutsideOrEscape({ enabled: true, refs: [popoverRef], onDismiss });
 
   const handleQuoteToNewChat = useCallback(() => {
     if (!isCreating) {
@@ -315,44 +274,15 @@ export default function SelectionPopover({
       data-mobile={isMobileViewport ? "true" : "false"}
       onPointerDown={handlePopoverPointerDown}
     >
-      <HighlightColorPicker
-        selectedColor={selectedColor}
-        onSelectColor={handleColorSelect}
-        disabled={isCreating}
-        className={styles.colorPicker}
+      <HighlightActionBar
+        variant="selection"
+        selectionColor={DEFAULT_COLOR}
+        canQuoteToChat={Boolean(onQuoteToNewChat || onQuoteToExtantChat)}
+        busy={isCreating}
+        onSelectColor={onCreateHighlight}
+        onQuoteToNewChat={handleQuoteToNewChat}
+        onQuoteToExistingChat={handleQuoteToExtantChat}
       />
-      {onQuoteToNewChat || onQuoteToExtantChat ? (
-        <div className={styles.chatActions} role="group" aria-label="Quote to chat">
-          {onQuoteToNewChat ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              iconOnly
-              className={styles.chatButton}
-              onClick={handleQuoteToNewChat}
-              disabled={isCreating}
-              aria-label="Quote to new chat"
-              title="Quote to new chat"
-            >
-              <MessageSquarePlus size={14} aria-hidden="true" />
-            </Button>
-          ) : null}
-          {onQuoteToExtantChat ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              iconOnly
-              className={styles.chatButton}
-              onClick={handleQuoteToExtantChat}
-              disabled={isCreating}
-              aria-label="Quote to existing chat"
-              title="Quote to existing chat"
-            >
-              <MessagesSquare size={14} aria-hidden="true" />
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

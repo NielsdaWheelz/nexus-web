@@ -1,0 +1,102 @@
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "vitest/browser";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import HighlightActionBar from "./HighlightActionBar";
+
+const highlight: AnchoredHighlightRow = { id: "h1", exact: "hello", color: "yellow" };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function setupExisting(overrides: Record<string, unknown> = {}) {
+  const handlers = {
+    onSelectColor: vi.fn(async () => {}),
+    onDelete: vi.fn(async () => {}),
+    onQuoteToNewChat: vi.fn(),
+    onQuoteToExistingChat: vi.fn(),
+    onToggleEditBounds: vi.fn(),
+  };
+  render(
+    <FeedbackProvider>
+      <HighlightActionBar
+        variant="existing"
+        highlight={highlight}
+        canQuoteToChat
+        isReflowable
+        isEditingBounds={false}
+        {...handlers}
+        {...overrides}
+      />
+    </FeedbackProvider>,
+  );
+  return handlers;
+}
+
+describe("HighlightActionBar — existing", () => {
+  it("deletes only after the confirm prompt is accepted", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const handlers = setupExisting();
+
+    await user.click(screen.getByRole("button", { name: "Delete highlight" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(handlers.onDelete).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not delete when the confirm prompt is dismissed", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const handlers = setupExisting();
+
+    await user.click(screen.getByRole("button", { name: "Delete highlight" }));
+    expect(handlers.onDelete).not.toHaveBeenCalled();
+  });
+
+  it("changes color through the picker popover", async () => {
+    const user = userEvent.setup();
+    const handlers = setupExisting();
+
+    await user.click(screen.getByRole("button", { name: "Highlight color" }));
+    await user.click(await screen.findByRole("button", { name: "Green" }));
+    await waitFor(() => expect(handlers.onSelectColor).toHaveBeenCalledWith("green"));
+  });
+
+  it("toggles edit-bounds", async () => {
+    const user = userEvent.setup();
+    const handlers = setupExisting();
+
+    await user.click(screen.getByRole("button", { name: "Edit bounds" }));
+    expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("HighlightActionBar — selection", () => {
+  it("offers color and quotes but never edit-bounds or delete", async () => {
+    const user = userEvent.setup();
+    const onSelectColor = vi.fn();
+    render(
+      <FeedbackProvider>
+        <HighlightActionBar
+          variant="selection"
+          selectionColor="yellow"
+          canQuoteToChat
+          busy={false}
+          onSelectColor={onSelectColor}
+          onQuoteToNewChat={vi.fn()}
+          onQuoteToExistingChat={vi.fn()}
+        />
+      </FeedbackProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Quote to new chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete highlight" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit bounds" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Highlight color" }));
+    await user.click(await screen.findByRole("button", { name: "Green" }));
+    expect(onSelectColor).toHaveBeenCalledWith("green");
+  });
+});

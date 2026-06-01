@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 
 export interface LibrarySummary {
@@ -312,15 +313,19 @@ function DropdownPicker(props: DropdownProps) {
   const { selectedLibraryIds, onChange, libraries, className } = props;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [panelStyle, setPanelStyle] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
+  const {
+    ref: panelRef,
+    style: anchoredStyle,
+    anchorRect,
+  } = useAnchoredPosition(buttonRef.current, {
+    enabled: open,
+    placement: "below",
+    align: "start",
+    gap: 6,
+  });
 
   const showSearch = libraries.length > SEARCH_THRESHOLD;
   const chipLabel = computeChipLabel(selectedLibraryIds, libraries);
@@ -335,7 +340,6 @@ function DropdownPicker(props: DropdownProps) {
     refs: [panelRef, buttonRef],
     onDismiss: (reason) => {
       setOpen(false);
-      setPanelStyle(null);
       if (reason === "escape") {
         requestAnimationFrame(() => {
           buttonRef.current?.focus();
@@ -345,31 +349,11 @@ function DropdownPicker(props: DropdownProps) {
   });
 
   useEffect(() => {
-    if (!open) return;
-    const updatePanelStyle = () => {
-      if (!buttonRef.current) return;
-      const rect = buttonRef.current.getBoundingClientRect();
-      const width = Math.max(rect.width, 260);
-      const maxLeft = window.innerWidth - width - 8;
-      setPanelStyle({
-        top: rect.bottom + 6,
-        left: Math.max(8, Math.min(rect.left, maxLeft)),
-        width,
-      });
-    };
-    updatePanelStyle();
-    if (showSearch) {
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      });
-    }
-    window.addEventListener("resize", updatePanelStyle);
-    window.addEventListener("scroll", updatePanelStyle, true);
-    return () => {
-      window.removeEventListener("resize", updatePanelStyle);
-      window.removeEventListener("scroll", updatePanelStyle, true);
-    };
+    if (!open || !showSearch) return;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
   }, [open, showSearch]);
 
   const toggle = (id: string) => {
@@ -381,7 +365,7 @@ function DropdownPicker(props: DropdownProps) {
   };
 
   const panel =
-    open && panelStyle && !isEmpty
+    open && !isEmpty
       ? createPortal(
           <div
             ref={panelRef}
@@ -390,10 +374,8 @@ function DropdownPicker(props: DropdownProps) {
             aria-label="Select libraries"
             style={{
               ...PANEL_STYLE,
-              position: "fixed",
-              top: `${panelStyle.top}px`,
-              left: `${panelStyle.left}px`,
-              width: `${panelStyle.width}px`,
+              ...anchoredStyle,
+              width: Math.max(anchorRect?.width ?? 0, 260),
             }}
           >
             <LibraryOptionList

@@ -164,7 +164,7 @@ describe("SelectionPopover", () => {
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
-  it("keeps highlight color selection separate from chat destination actions", () => {
+  it("creates a highlight in the picked color, separate from chat actions", async () => {
     const onCreateHighlight = vi.fn();
     const onQuoteToNewChat = vi.fn();
 
@@ -178,7 +178,8 @@ describe("SelectionPopover", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Blue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Highlight color" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Blue" }));
     fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
@@ -232,7 +233,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const button = screen.getByRole("button", { name: "Green" });
+    const button = screen.getByRole("button", { name: "Highlight color" });
     const event = createEvent.pointerDown(button);
     fireEvent(button, event);
 

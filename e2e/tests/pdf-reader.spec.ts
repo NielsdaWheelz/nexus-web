@@ -111,24 +111,19 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
   throw new Error(`Missing PDF controls action: ${ariaLabel}`);
 }
 
-function rowActionsButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Actions" });
-}
-
-async function quoteRowToNewChat(page: Page, row: Locator): Promise<void> {
-  const actionsButton = rowActionsButton(row);
-  await actionsButton.scrollIntoViewIfNeeded();
-  await expect(actionsButton).toBeEnabled();
-  await actionsButton.click();
-  const quoteItem = page.getByRole("menuitem", { name: "Quote to new chat" }).first();
-  await expect(quoteItem).toBeVisible();
-  await expect(quoteItem).toBeEnabled();
-  await quoteItem.click();
+async function quoteRowToNewChat(row: Locator): Promise<void> {
+  const quoteButton = row.getByRole("button", { name: "Quote to new chat" });
+  await quoteButton.scrollIntoViewIfNeeded();
+  await expect(quoteButton).toBeVisible();
+  await expect(quoteButton).toBeEnabled();
+  await quoteButton.click();
 }
 
 async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(row).toBeVisible();
-  await expect(rowActionsButton(row)).toHaveCount(1);
+  await expect(
+    row.getByRole("group", { name: "Highlight actions" }),
+  ).toHaveCount(1);
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
@@ -318,7 +313,7 @@ test.describe("pdf reader", () => {
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-      await quoteRowToNewChat(page, linkedRow);
+      await quoteRowToNewChat(linkedRow);
       await expectDocChatPendingContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })

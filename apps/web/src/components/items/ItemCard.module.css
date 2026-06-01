@@ -29,6 +29,28 @@
   gap: var(--space-2);
 }
 
+.actions {
+  flex: 0 0 auto;
+}
+
+/* Highlight cards keep the icon bar ambient at rest and full on hover /
+   focus-within (the WorkspacePaneStrip idiom); resource cards stay constant. */
+.card[data-content-kind="highlight"] .actions {
+  opacity: 0.5;
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+.card[data-content-kind="highlight"]:hover .actions,
+.card[data-content-kind="highlight"]:focus-within .actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .card[data-content-kind="highlight"] .actions {
+    opacity: 1;
+  }
+}
+
 .body {
   flex: 1;
   min-width: 0;

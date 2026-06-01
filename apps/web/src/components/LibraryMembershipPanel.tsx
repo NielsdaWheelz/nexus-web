@@ -17,6 +17,7 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./LibraryMembershipPanel.module.css";
@@ -50,12 +51,16 @@ export default function LibraryMembershipPanel({
 }: LibraryMembershipPanelProps) {
   const isMobile = useIsMobileViewport();
   const [query, setQuery] = useState("");
-  const [panelStyle, setPanelStyle] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const {
+    ref: panelRef,
+    style: panelStyle,
+    anchorRect,
+  } = useAnchoredPosition(anchorEl, {
+    enabled: open && !isMobile,
+    placement: "below",
+    align: "start",
+    gap: 6,
+  });
   const inputRef = useRef<HTMLInputElement>(null);
 
   const filteredLibraries = useMemo(() => {
@@ -85,7 +90,6 @@ export default function LibraryMembershipPanel({
   useEffect(() => {
     if (!open) {
       setQuery("");
-      setPanelStyle(null);
       return;
     }
     requestAnimationFrame(() => {
@@ -101,28 +105,6 @@ export default function LibraryMembershipPanel({
     refs: [panelRef, anchorRef],
     onDismiss: handleClose,
   });
-
-  useEffect(() => {
-    if (!open || isMobile) return;
-    const updatePanelStyle = () => {
-      if (!anchorEl) return;
-      const rect = anchorEl.getBoundingClientRect();
-      const width = Math.max(rect.width, 320);
-      const maxLeft = window.innerWidth - width - 8;
-      setPanelStyle({
-        top: rect.bottom + 6,
-        left: Math.max(8, Math.min(rect.left, maxLeft)),
-        width,
-      });
-    };
-    updatePanelStyle();
-    window.addEventListener("resize", updatePanelStyle);
-    window.addEventListener("scroll", updatePanelStyle, true);
-    return () => {
-      window.removeEventListener("resize", updatePanelStyle);
-      window.removeEventListener("scroll", updatePanelStyle, true);
-    };
-  }, [anchorEl, isMobile, open]);
 
   if (!open) {
     return null;
@@ -205,22 +187,13 @@ export default function LibraryMembershipPanel({
     );
   }
 
-  if (!panelStyle) {
-    return null;
-  }
-
   return createPortal(
     <div
       ref={panelRef}
       className={styles.panel}
       role="dialog"
       aria-label={title}
-      style={{
-        position: "fixed",
-        top: `${panelStyle.top}px`,
-        left: `${panelStyle.left}px`,
-        width: `${panelStyle.width}px`,
-      }}
+      style={{ ...panelStyle, width: Math.max(anchorRect?.width ?? 0, 320) }}
     >
       <div className={styles.header}>
         <h2 className={styles.title}>{title}</h2>

@@ -11,12 +11,17 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./ActionMenu.module.css";
 
 export interface ActionMenuOption {
   id: string;
   label: string;
+  /** Leading glyph; the accessible name / tooltip in icon-only renderers (ActionBar). */
+  icon?: ReactNode;
+  /** Toggle state; ActionBar maps to aria-pressed + active styling. */
+  pressed?: boolean;
   render?: (controls: {
     closeMenu: () => void;
     triggerEl: HTMLButtonElement | null;
@@ -59,28 +64,35 @@ export default function ActionMenu({
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLUListElement>(null);
   const triggerId = useId();
   const menuId = useId();
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const {
+    ref: menuRef,
+    style: menuStyle,
+    anchorRect,
+  } = useAnchoredPosition<HTMLUListElement>(toggleRef.current, {
+    enabled: menuOpen,
+    placement: "below",
+    align: "end",
+    gap: 4,
+  });
 
   const getMenuItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
     return Array.from(
       menuRef.current.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR),
     );
-  }, []);
+  }, [menuRef]);
 
   const getTabbableItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
     return Array.from(menuRef.current.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)).filter(
       (item) => item.tabIndex >= 0,
     );
-  }, []);
+  }, [menuRef]);
 
   const closeMenu = useCallback((restoreFocus: boolean = true) => {
     setMenuOpen(false);
-    setMenuPos(null);
     if (!restoreFocus) {
       return;
     }
@@ -110,23 +122,7 @@ export default function ActionMenu({
   });
 
   useEffect(() => {
-    if (!menuOpen) return;
-    const updateMenuPos = () => {
-      if (!toggleRef.current) return;
-      const rect = toggleRef.current.getBoundingClientRect();
-      setMenuPos({ top: rect.bottom + 4, left: rect.right });
-    };
-    updateMenuPos();
-    window.addEventListener("scroll", updateMenuPos, true);
-    window.addEventListener("resize", updateMenuPos);
-    return () => {
-      window.removeEventListener("scroll", updateMenuPos, true);
-      window.removeEventListener("resize", updateMenuPos);
-    };
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen || !menuPos) return;
+    if (!menuOpen || !anchorRect) return;
 
     requestAnimationFrame(() => {
       const menuItems = getMenuItems();
@@ -138,7 +134,7 @@ export default function ActionMenu({
           : focusable[0];
       target?.focus();
     });
-  }, [getMenuItems, getTabbableItems, initialFocus, menuOpen, menuPos]);
+  }, [getMenuItems, getTabbableItems, initialFocus, menuOpen, anchorRect]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();
@@ -230,18 +226,13 @@ export default function ActionMenu({
     .join(" ");
 
   const menu =
-    menuOpen && menuPos ? (
+    menuOpen ? (
       <ul
         ref={menuRef}
         id={menuId}
         className={styles.menu}
         role="menu"
-        style={{
-          position: "fixed",
-          top: `${menuPos.top}px`,
-          left: `${menuPos.left}px`,
-          transform: "translateX(-100%)",
-        }}
+        style={menuStyle}
         aria-labelledby={triggerId}
         onKeyDown={handleMenuKeyDown}
       >

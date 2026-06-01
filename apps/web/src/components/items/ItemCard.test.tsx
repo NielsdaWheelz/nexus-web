@@ -30,7 +30,7 @@ describe("ItemCard", () => {
     expect(screen.getByText("No selectable text").tagName).not.toBe("MARK");
   });
 
-  it("calls onActivate on body click but not on the menu trigger or a linked-chat button", async () => {
+  it("calls onActivate on body click but not on an action control or a linked-chat button", async () => {
     const user = userEvent.setup();
     const onActivate = vi.fn();
     const onLinkedActivate = vi.fn();
@@ -40,7 +40,7 @@ describe("ItemCard", () => {
           kind: "highlight",
           snippet: { exact: "selected text", color: "green" },
         }}
-        actions={[{ id: "del", label: "Delete", onSelect: () => {} }]}
+        actions={<button type="button">Delete</button>}
         linkedItems={[{ id: "c1", label: "First chat", onActivate: onLinkedActivate }]}
         expanded
         onActivate={onActivate}
@@ -50,7 +50,7 @@ describe("ItemCard", () => {
     await user.click(screen.getByText("selected text"));
     expect(onActivate).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(onActivate).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "First chat" }));

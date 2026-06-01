@@ -11,17 +11,12 @@ import {
   type RefObject,
 } from "react";
 import { MessageSquare } from "lucide-react";
-import {
-  FeedbackNotice,
-  toFeedback,
-  useFeedback,
-} from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import Button from "@/components/ui/Button";
-import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
+import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import ItemCard from "@/components/items/ItemCard";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
@@ -49,6 +44,7 @@ interface ReaderHighlightsSurfaceProps {
   onHoverHighlight: (highlightId: string | null) => void;
   measureKey?: string | number;
   isMobile: boolean;
+  isReflowable: boolean;
   isEditingBounds: boolean;
   canQuoteToChat: boolean;
   onQuoteToNewChat: (highlightId: string) => void;
@@ -85,6 +81,7 @@ export default function ReaderHighlightsSurface({
   onHoverHighlight,
   measureKey = 0,
   isMobile,
+  isReflowable,
   isEditingBounds,
   canQuoteToChat,
   onQuoteToNewChat,
@@ -98,7 +95,6 @@ export default function ReaderHighlightsSurface({
   onOpenConversation,
   onOpenNoteLink,
 }: ReaderHighlightsSurfaceProps) {
-  const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const noteLayoutTimerRef = useRef<number | null>(null);
@@ -109,8 +105,6 @@ export default function ReaderHighlightsSurface({
   const [overflowCount, setOverflowCount] = useState(0);
   const [secondaryLayoutVersion, setSecondaryLayoutVersion] = useState(0);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
-  const [changingColor, setChangingColor] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const draftNoteEditorKeysRef = useRef(new Map<string, string>());
   const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
 
@@ -121,12 +115,6 @@ export default function ReaderHighlightsSurface({
     viewportState,
     hasMeasuredTargets,
   } = useAnchoredHighlightProjection({ contentRef, highlights, measureKey });
-
-  const focusedHighlight = useMemo(
-    () =>
-      orderedHighlights.find((highlight) => highlight.id === focusedId) ?? null,
-    [focusedId, orderedHighlights],
-  );
 
   useEffect(() => {
     return () => {
@@ -263,15 +251,6 @@ export default function ReaderHighlightsSurface({
     isMobile,
     noteLayoutVersion,
     orderedHighlights,
-  ]);
-
-  useEffect(() => {
-    setChangingColor(false);
-    setDeleting(false);
-  }, [
-    focusedHighlight?.id,
-    focusedHighlight?.linked_note_blocks,
-    focusedHighlight?.updated_at,
   ]);
 
   useEffect(() => {
@@ -500,55 +479,6 @@ export default function ReaderHighlightsSurface({
     [getDraftNoteEditorKey, onNoteSave],
   );
 
-  const handleDelete = useCallback(
-    async (highlight: AnchoredHighlightRow) => {
-      if (highlight.is_owner === false || deleting) {
-        return;
-      }
-      if (!window.confirm("Delete this highlight?")) {
-        return;
-      }
-
-      setDeleting(true);
-      try {
-        await onDelete(highlight.id);
-      } catch (error) {
-        feedback.show(
-          toFeedback(error, { fallback: "Failed to delete highlight" }),
-        );
-        console.error("anchored_highlights_delete_failed", error);
-      } finally {
-        setDeleting(false);
-      }
-    },
-    [deleting, feedback, onDelete],
-  );
-
-  const handleColorChange = useCallback(
-    async (highlight: AnchoredHighlightRow, color: HighlightColor) => {
-      if (
-        highlight.is_owner === false ||
-        changingColor ||
-        highlight.color === color
-      ) {
-        return;
-      }
-
-      setChangingColor(true);
-      try {
-        await onColorChange(highlight.id, color);
-      } catch (error) {
-        feedback.show(
-          toFeedback(error, { fallback: "Failed to change color" }),
-        );
-        console.error("anchored_highlights_color_change_failed", error);
-      } finally {
-        setChangingColor(false);
-      }
-    },
-    [changingColor, feedback, onColorChange],
-  );
-
   const renderRow = useCallback(
     (
       highlight: AnchoredHighlightRow,
@@ -556,64 +486,8 @@ export default function ReaderHighlightsSurface({
       style?: CSSProperties,
     ) => {
       const isFocused = focusedId === highlight.id;
-      const canEditHighlight = highlight.is_owner !== false;
-      const hasQuoteText = highlight.exact.trim().length > 0;
       const linkedNotes = highlight.linked_note_blocks ?? [];
       const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
-
-      const actions: ActionMenuOption[] = [];
-      if (canQuoteToChat && hasQuoteText) {
-        actions.push({
-          id: "quote-new",
-          label: "Quote to new chat",
-          onSelect: () => onQuoteToNewChat(highlight.id),
-        });
-        actions.push({
-          id: "quote-existing",
-          label: "Quote to existing chat",
-          onSelect: () => onQuoteToExtantChat(highlight.id),
-        });
-      }
-      if (canEditHighlight) {
-        actions.push({
-          id: "edit-bounds",
-          label:
-            isFocused && isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
-          onSelect: () => {
-            if (isFocused && isEditingBounds) {
-              onCancelEditBounds();
-            } else {
-              onFocusHighlight(highlight.id);
-              onStartEditBounds();
-            }
-          },
-        });
-        actions.push({
-          id: "color",
-          label: "Highlight color",
-          render: ({ closeMenu }) => (
-            <HighlightColorPicker
-              selectedColor={highlight.color}
-              disabled={changingColor}
-              disabledColors={[highlight.color]}
-              onSelectColor={(color) => {
-                void handleColorChange(highlight, color);
-                closeMenu();
-              }}
-            />
-          ),
-        });
-        actions.push({
-          id: "delete",
-          label: deleting ? "Deleting…" : "Delete highlight",
-          tone: "danger",
-          separatorBefore: true,
-          disabled: deleting,
-          onSelect: () => {
-            void handleDelete(highlight);
-          },
-        });
-      }
 
       return (
         <ItemCard
@@ -622,7 +496,27 @@ export default function ReaderHighlightsSurface({
             kind: "highlight",
             snippet: { exact: highlight.exact, color: highlight.color },
           }}
-          actions={actions.length ? actions : undefined}
+          actions={
+            <HighlightActionBar
+              variant="existing"
+              highlight={highlight}
+              canQuoteToChat={canQuoteToChat}
+              isReflowable={isReflowable}
+              isEditingBounds={isFocused && isEditingBounds}
+              onSelectColor={(color) => onColorChange(highlight.id, color)}
+              onDelete={() => onDelete(highlight.id)}
+              onQuoteToNewChat={() => onQuoteToNewChat(highlight.id)}
+              onQuoteToExistingChat={() => onQuoteToExtantChat(highlight.id)}
+              onToggleEditBounds={() => {
+                if (isFocused && isEditingBounds) {
+                  onCancelEditBounds();
+                } else {
+                  onFocusHighlight(highlight.id);
+                  onStartEditBounds();
+                }
+              }}
+            />
+          }
           note={notesToRender.map((note) => {
             const noteEditorKey = getNoteEditorKey(highlight.id, note);
             return (
@@ -674,17 +568,16 @@ export default function ReaderHighlightsSurface({
     },
     [
       canQuoteToChat,
-      changingColor,
-      deleting,
+      isReflowable,
       focusedId,
       hoveredId,
-      handleColorChange,
-      handleDelete,
       handleRowClick,
       handleNoteSave,
       isEditingBounds,
       getNoteEditorKey,
       onCancelEditBounds,
+      onColorChange,
+      onDelete,
       onFocusHighlight,
       onHoverHighlight,
       onNoteDelete,

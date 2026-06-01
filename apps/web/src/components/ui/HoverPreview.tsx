@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import styles from "./HoverPreview.module.css";
 
 interface HoverPreviewAnchor {
@@ -18,8 +19,6 @@ export default function HoverPreview({
   children: ReactNode;
   onClose: () => void;
 }) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const [touchSheet, setTouchSheet] = useState(false);
 
   useEffect(() => {
@@ -33,31 +32,28 @@ export default function HoverPreview({
     return () => query.removeEventListener("change", onChange);
   }, []);
 
-  useLayoutEffect(() => {
-    if (touchSheet || anchor === "auto") {
-      setPosition(null);
-      return;
-    }
-    const card = cardRef.current;
-    if (!card) return;
-    const cardRect = card.getBoundingClientRect();
-    const margin = 8;
-    let left = anchor.x - cardRect.width / 2;
-    let top = anchor.y - cardRect.height - margin;
-    if (left < margin) left = margin;
-    if (left + cardRect.width > window.innerWidth - margin) {
-      left = window.innerWidth - margin - cardRect.width;
-    }
-    if (top < margin) {
-      top = anchor.y + margin;
-    }
-    setPosition({ left, top });
-  }, [anchor, touchSheet]);
+  // Key on the x/y primitives so a fresh {x,y} from the caller can't churn the
+  // position effect into a loop; a point is a zero-size rect to anchor to.
+  const pointX = anchor === "auto" ? null : anchor.x;
+  const pointY = anchor === "auto" ? null : anchor.y;
+  const anchorRect = useMemo(
+    () =>
+      pointX === null || pointY === null
+        ? null
+        : new DOMRect(pointX, pointY, 0, 0),
+    [pointX, pointY],
+  );
+  const { ref: cardRef, style } = useAnchoredPosition(anchorRect, {
+    enabled: !touchSheet && anchor !== "auto",
+    placement: "above",
+    align: "center",
+    gap: 8,
+    flip: true,
+  });
 
   const preview = touchSheet ? (
       <div className={styles.sheetBackdrop} onClick={onClose} role="presentation">
         <div
-          ref={cardRef}
           className={styles.sheet}
           role="dialog"
           aria-modal="true"
@@ -71,7 +67,7 @@ export default function HoverPreview({
       ref={cardRef}
       className={styles.card}
       role="tooltip"
-      style={position ? { left: position.left, top: position.top } : { visibility: "hidden" }}
+      style={style}
       onPointerLeave={onClose}
     >
       {children}

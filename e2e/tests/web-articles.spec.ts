@@ -126,7 +126,11 @@ test.describe("web articles", () => {
     ).toBeVisible({ timeout: 5_000 });
 
     const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
-    const greenButton = highlightActions.getByRole("button", { name: /^Green/ }).first();
+    await highlightActions.getByRole("button", { name: "Highlight color" }).click();
+    const greenButton = page
+      .getByRole("dialog", { name: "Highlight color" })
+      .getByRole("button", { name: /^Green/ })
+      .first();
     await expect(greenButton).toBeEnabled();
     const createHighlightResponse = page.waitForResponse(
       (response) =>

@@ -925,13 +925,15 @@ export async function createPdfHighlightThroughVisibleSelection(
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
+  await highlightActions.getByRole("button", { name: "Highlight color" }).click();
   const [createdHighlightResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         response.url().includes(`/api/media/${mediaId}/pdf-highlights`),
     ),
-    highlightActions
+    page
+      .getByRole("dialog", { name: "Highlight color" })
       .getByRole("button", { name: /^Yellow/ })
       .first()
       .click(),
@@ -1024,6 +1026,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
+  await highlightActions.getByRole("button", { name: "Highlight color" }).click();
   const [createdHighlightResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -1031,7 +1034,8 @@ export async function createFragmentHighlightThroughVisibleSelection(
         response.url().includes("/api/fragments/") &&
         response.url().includes("/highlights"),
     ),
-    highlightActions
+    page
+      .getByRole("dialog", { name: "Highlight color" })
       .getByRole("button", { name: /^Green/ })
       .first()
       .click(),

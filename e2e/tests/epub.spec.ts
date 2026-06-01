@@ -400,10 +400,6 @@ async function readLinkedItemOrder(
   }, highlightIds);
 }
 
-function rowActionsButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Actions" });
-}
-
 async function rowContainsVisibleTextOrFieldValue(
   row: Locator,
   expectedValue: string
@@ -434,7 +430,6 @@ async function rowContainsVisibleTextOrFieldValue(
 }
 
 async function expectHighlightRowVisible(
-  page: Page,
   row: Locator,
   noteText: string
 ): Promise<void> {
@@ -442,21 +437,13 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await rowActionsButton(row).click();
-  const actionsMenu = page.getByRole("menu");
+  const actions = row.getByRole("group", { name: "Highlight actions" });
+  await expect(actions.getByRole("button", { name: "Quote to new chat" })).toBeVisible();
   await expect(
-    actionsMenu.getByRole("menuitem", { name: "Quote to new chat" })
+    actions.getByRole("button", { name: "Quote to existing chat" })
   ).toBeVisible();
-  await expect(
-    actionsMenu.getByRole("menuitem", { name: "Quote to existing chat" })
-  ).toBeVisible();
-  await expect(
-    actionsMenu.getByRole("menuitem", { name: "Edit bounds" })
-  ).toBeVisible();
-  await expect(
-    actionsMenu.getByRole("menuitem", { name: "Delete highlight" })
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(actions.getByRole("button", { name: "Edit bounds" })).toBeVisible();
+  await expect(actions.getByRole("button", { name: "Delete highlight" })).toBeVisible();
 }
 
 async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<number | null> {
@@ -1001,7 +988,12 @@ test.describe("epub", () => {
         response.request().method() === "POST" &&
         response.url().includes(`/api/fragments/${section.data.fragment_id}/highlights`)
     );
-    await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
+    await highlightActions.getByRole("button", { name: "Highlight color" }).click();
+    await page
+      .getByRole("dialog", { name: "Highlight color" })
+      .getByRole("button", { name: /^Green/ })
+      .first()
+      .click();
     const createdHighlightResponse = await createHighlightResponse;
     expect(createdHighlightResponse.ok()).toBeTruthy();
     const createdHighlightPayload = (await createdHighlightResponse.json()) as {
@@ -1201,7 +1193,6 @@ test.describe("epub", () => {
       .toBeLessThan(170);
     await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
-      page,
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
     );
@@ -1221,7 +1212,6 @@ test.describe("epub", () => {
       .toBeLessThan(170);
     await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
-      page,
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
     );
@@ -1237,7 +1227,6 @@ test.describe("epub", () => {
     });
     await chapter1PrimaryAnchor.click();
     await expectHighlightRowVisible(
-      page,
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
     );
@@ -1254,6 +1243,6 @@ test.describe("epub", () => {
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
     await chapter2RowInView.click();
-    await expectHighlightRowVisible(page, chapter2RowInView, "EPUB chapter two inspector note.");
+    await expectHighlightRowVisible(chapter2RowInView, "EPUB chapter two inspector note.");
   });
 });

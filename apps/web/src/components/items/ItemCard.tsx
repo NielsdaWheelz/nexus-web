@@ -1,7 +1,6 @@
 "use client";
 
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { pluralize } from "@/lib/text/pluralize";
@@ -22,7 +21,7 @@ interface ItemCardLinkedItem {
 interface ItemCardProps {
   content: ItemCardContent;
   meta?: ReactNode;
-  actions?: ActionMenuOption[];
+  actions?: ReactNode;
   note?: ReactNode;
   linkedItems?: ItemCardLinkedItem[];
   expanded?: boolean;
@@ -106,7 +105,7 @@ export default function ItemCard({
         ) : (
           <div className={cx(styles.body, styles.staticBody)}>{bodyContent}</div>
         )}
-        {actions?.length ? <ActionMenu options={actions} /> : null}
+        {actions ? <div className={styles.actions}>{actions}</div> : null}
       </div>
       {meta ? <div className={styles.meta}>{meta}</div> : null}
       {note ? <div className={styles.note}>{note}</div> : null}

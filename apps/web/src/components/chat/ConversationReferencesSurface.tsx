@@ -1,6 +1,7 @@
 "use client";
 
 import ItemCard from "@/components/items/ItemCard";
+import ActionMenu from "@/components/ui/ActionMenu";
 import type { ConversationReference } from "@/lib/conversations/types";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import styles from "./ConversationReferencesSurface.module.css";
@@ -36,23 +37,27 @@ export default function ConversationReferencesSurface({
                 ? () => onOpenResource(reference.resource_uri)
                 : undefined
             }
-            actions={[
-              {
-                id: "open",
-                label: "Open",
-                disabled: !onOpenResource || reference.missing,
-                onSelect: () => onOpenResource?.(reference.resource_uri),
-              },
-              {
-                id: "remove",
-                label: "Remove",
-                tone: "danger",
-                separatorBefore: true,
-                onSelect: () => {
-                  void removeReference(reference.id);
-                },
-              },
-            ]}
+            actions={
+              <ActionMenu
+                options={[
+                  {
+                    id: "open",
+                    label: "Open",
+                    disabled: !onOpenResource || reference.missing,
+                    onSelect: () => onOpenResource?.(reference.resource_uri),
+                  },
+                  {
+                    id: "remove",
+                    label: "Remove",
+                    tone: "danger",
+                    separatorBefore: true,
+                    onSelect: () => {
+                      void removeReference(reference.id);
+                    },
+                  },
+                ]}
+              />
+            }
           />
         );
       })}

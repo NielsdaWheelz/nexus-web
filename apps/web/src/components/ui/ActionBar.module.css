@@ -1,0 +1,27 @@
+.bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.separator {
+  align-self: stretch;
+  width: var(--stroke-hairline);
+  min-height: var(--size-xs);
+  margin-inline: var(--space-1);
+  background: var(--edge-subtle);
+}
+
+.pressed {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.popover {
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  z-index: var(--z-modal);
+}

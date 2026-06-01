@@ -34,6 +34,7 @@ import PdfReader, {
   type PdfTemporaryHighlight,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
+import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import { useApiResource } from "@/lib/api/useApiResource";
 import {
@@ -657,6 +658,12 @@ export default function MediaPaneBody({
   const [hoveredHighlightId, setHoveredHighlightId] = useState<string | null>(
     null,
   );
+  // A highlight clicked in the reader text opens an action popover anchored to
+  // its rect (PDF supplies the rect; reflowable reads the clicked element).
+  const [highlightActionAnchor, setHighlightActionAnchor] = useState<{
+    highlightId: string;
+    rect: DOMRect;
+  } | null>(null);
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
@@ -2889,7 +2896,7 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   const handleReaderContentClick = useCallback(
-    (e: React.MouseEvent): string | null => {
+    (e: React.MouseEvent) => {
       const clickTarget = e.target as Element;
       const highlightEl = findHighlightElement(clickTarget);
 
@@ -2897,7 +2904,11 @@ export default function MediaPaneBody({
         const clickData = parseHighlightElement(highlightEl);
         if (clickData) {
           handleHighlightClick(clickData);
-          return clickData.topmostId;
+          setHighlightActionAnchor({
+            highlightId: clickData.topmostId,
+            rect: highlightEl.getBoundingClientRect(),
+          });
+          return;
         }
       }
 
@@ -2905,8 +2916,8 @@ export default function MediaPaneBody({
       if (!sel || sel.isCollapsed) {
         clearFocus();
         clearTarget();
+        setHighlightActionAnchor(null);
       }
-      return null;
     },
     [clearFocus, clearTarget, handleHighlightClick],
   );
@@ -3026,7 +3037,10 @@ export default function MediaPaneBody({
       const applied = await applyHighlightMutation(() =>
         deleteHighlight(highlightId),
       );
-      if (applied) clearFocus();
+      if (applied) {
+        clearFocus();
+        setHighlightActionAnchor(null);
+      }
     },
     [applyHighlightMutation, clearFocus],
   );
@@ -3567,21 +3581,6 @@ export default function MediaPaneBody({
     onMetadataRetryEnqueued: handleMetadataRetryEnqueued,
   });
 
-  const handleContentClick = useCallback(
-    (e: React.MouseEvent) => {
-      const highlightId = handleReaderContentClick(e);
-      if (highlightId && isMobileViewport && showHighlightsPane) {
-        requestSecondarySurface?.("reader-highlights");
-      }
-    },
-    [
-      handleReaderContentClick,
-      isMobileViewport,
-      requestSecondarySurface,
-      showHighlightsPane,
-    ],
-  );
-
   // Prose mark hover → hoveredHighlightId, mirroring the click delegation above.
   // onPointerOver also fires on non-mark targets, so it clears the id when the
   // pointer moves off a mark; onPointerOut clears it when leaving the content.
@@ -3599,18 +3598,11 @@ export default function MediaPaneBody({
   }, []);
 
   const handlePdfHighlightTap = useCallback(
-    (highlightId: string, _anchorRect: DOMRect) => {
+    (highlightId: string, anchorRect: DOMRect) => {
       focusHighlight(highlightId);
-      if (isMobileViewport && showHighlightsPane) {
-        requestSecondarySurface?.("reader-highlights");
-      }
+      setHighlightActionAnchor({ highlightId, rect: anchorRect });
     },
-    [
-      focusHighlight,
-      isMobileViewport,
-      requestSecondarySurface,
-      showHighlightsPane,
-    ],
+    [focusHighlight],
   );
 
   const handleDocumentScroll = useCallback(
@@ -4552,6 +4544,7 @@ export default function MediaPaneBody({
           onHoverHighlight={setHoveredHighlightId}
           measureKey={anchoredHighlightsMeasureKey}
           isMobile={isMobileViewport}
+          isReflowable={!isPdf}
           isEditingBounds={focusState.editingBounds}
           canQuoteToChat={media?.capabilities?.can_quote ?? false}
           onQuoteToNewChat={quoteHighlightToNewChat}
@@ -4768,11 +4761,22 @@ export default function MediaPaneBody({
       contentRef={contentRef}
       onSegmentSelect={handleTranscriptSegmentSelect}
       onSeek={handleTranscriptSeek}
-      onContentClick={handleContentClick}
+      onContentClick={handleReaderContentClick}
       onContentPointerOver={handleContentPointerOver}
       onContentPointerOut={handleContentPointerOut}
     />
   );
+
+  const dismissHighlightActions = () => setHighlightActionAnchor(null);
+  // The reader-text click popover (the sidecar bar's twin, anchored to the
+  // clicked highlight). Suppressed while a selection is live or during
+  // edit-bounds — those own the surface — so the two popovers stay exclusive.
+  const highlightActionTarget =
+    highlightActionAnchor && !selection && !focusState.editingBounds
+      ? (anchoredHighlights.find(
+          (h) => h.id === highlightActionAnchor.highlightId,
+        ) ?? null)
+      : null;
 
   return (
     <>
@@ -4957,7 +4961,7 @@ export default function MediaPaneBody({
               hyphenation={hyphenationForRoot}
               contentState={epubTextDocumentContentState}
               onDocumentScroll={handleDocumentScroll}
-              onContentClick={handleContentClick}
+              onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
               onInternalLinkClick={(href) => {
@@ -4984,7 +4988,7 @@ export default function MediaPaneBody({
               hyphenation={hyphenationForRoot}
               contentState={webTextDocumentContentState}
               onDocumentScroll={handleDocumentScroll}
-              onContentClick={handleContentClick}
+              onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
             />
@@ -5025,6 +5029,33 @@ export default function MediaPaneBody({
             isCreating={isCreating}
           />
         )}
+
+      {highlightActionTarget && highlightActionAnchor ? (
+        <HighlightActionPopover
+          highlight={highlightActionTarget}
+          anchorRect={highlightActionAnchor.rect}
+          canQuoteToChat={media?.capabilities?.can_quote ?? false}
+          isReflowable={!isPdf}
+          onSelectColor={(color) =>
+            handleColorChange(highlightActionTarget.id, color)
+          }
+          onDelete={() => handleDelete(highlightActionTarget.id)}
+          onQuoteToNewChat={() => {
+            quoteHighlightToNewChat(highlightActionTarget.id);
+            dismissHighlightActions();
+          }}
+          onQuoteToExistingChat={() => {
+            quoteHighlightToExtantChat(highlightActionTarget.id);
+            dismissHighlightActions();
+          }}
+          onToggleEditBounds={() => {
+            focusHighlight(highlightActionTarget.id);
+            startEditBounds();
+            dismissHighlightActions();
+          }}
+          onDismiss={dismissHighlightActions}
+        />
+      ) : null}
     </>
   );
 }
