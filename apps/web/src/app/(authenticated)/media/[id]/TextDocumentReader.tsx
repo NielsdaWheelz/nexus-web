@@ -1,4 +1,10 @@
-import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
+import type {
+  CSSProperties,
+  MouseEvent,
+  PointerEvent,
+  RefObject,
+  UIEvent,
+} from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import styles from "./page.module.css";
 
@@ -31,6 +37,8 @@ export default function TextDocumentReader({
   contentState,
   onDocumentScroll,
   onContentClick,
+  onContentPointerOver,
+  onContentPointerOut,
   onInternalLinkClick,
 }: {
   mediaId: string;
@@ -43,6 +51,8 @@ export default function TextDocumentReader({
   contentState: TextDocumentContentState;
   onDocumentScroll: (event: UIEvent<HTMLDivElement>) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
+  onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
+  onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
@@ -92,6 +102,8 @@ export default function TextDocumentReader({
                 ref={contentRef}
                 className={styles.fragments}
                 onClick={handleRenderedContentClick}
+                onPointerOver={onContentPointerOver}
+                onPointerOut={onContentPointerOut}
               >
                 <HtmlRenderer
                   htmlSanitized={contentState.renderedHtml}

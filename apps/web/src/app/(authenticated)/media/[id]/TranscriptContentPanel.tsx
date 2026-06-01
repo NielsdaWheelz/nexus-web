@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, MouseEvent, RefObject } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
@@ -29,6 +29,8 @@ interface TranscriptContentPanelProps {
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
+  onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
+  onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
 }
 
 export default function TranscriptContentPanel({
@@ -46,6 +48,8 @@ export default function TranscriptContentPanel({
   onSegmentSelect,
   onSeek,
   onContentClick,
+  onContentPointerOver,
+  onContentPointerOut,
 }: TranscriptContentPanelProps) {
   const { profile } = useReaderContext();
   const readerFontFamily =
@@ -210,7 +214,12 @@ export default function TranscriptContentPanel({
           {activeFragment ? (
             <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
               <div className={styles.readerContentInner}>
-                <div ref={contentRef} onClick={onContentClick}>
+                <div
+                  ref={contentRef}
+                  onClick={onContentClick}
+                  onPointerOver={onContentPointerOver}
+                  onPointerOut={onContentPointerOut}
+                >
                   <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
                 </div>
               </div>

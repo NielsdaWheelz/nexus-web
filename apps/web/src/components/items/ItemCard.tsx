@@ -28,6 +28,7 @@ interface ItemCardProps {
   linkedItemsSummary?: ReactNode;
   expanded?: boolean;
   selected?: boolean;
+  hovered?: boolean;
   onActivate?: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
@@ -47,6 +48,7 @@ export default function ItemCard({
   linkedItemsSummary,
   expanded,
   selected,
+  hovered,
   onActivate,
   onMouseEnter,
   onMouseLeave,
@@ -73,6 +75,7 @@ export default function ItemCard({
       className={cx(
         styles.card,
         selected && styles.selected,
+        hovered && styles.hovered,
         expanded && styles.expanded,
         className,
       )}

@@ -9,6 +9,8 @@ function renderReader(
 ) {
   const onContentClick = vi.fn();
   const onDocumentScroll = vi.fn();
+  const onContentPointerOver = vi.fn();
+  const onContentPointerOut = vi.fn();
   const props: Parameters<typeof TextDocumentReader>[0] = {
     mediaId: "media-1",
     readerRootRef: createRef<HTMLDivElement>(),
@@ -28,11 +30,13 @@ function renderReader(
     },
     onDocumentScroll,
     onContentClick,
+    onContentPointerOver,
+    onContentPointerOut,
     ...overrides,
   };
 
   render(<TextDocumentReader {...props} />);
-  return { onContentClick, onDocumentScroll };
+  return { onContentClick, onDocumentScroll, onContentPointerOver };
 }
 
 describe("TextDocumentReader", () => {
@@ -68,6 +72,20 @@ describe("TextDocumentReader", () => {
     expect(onContentClick).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards prose pointer hover to onContentPointerOver", () => {
+    const { onContentPointerOver } = renderReader({
+      contentState: {
+        status: "ready",
+        renderedHtml:
+          '<span data-active-highlight-ids="h1" data-highlight-top="h1">marked</span>',
+      },
+    });
+
+    fireEvent.pointerOver(screen.getByText("marked"));
+
+    expect(onContentPointerOver).toHaveBeenCalledTimes(1);
+  });
+
   it("centers the fixed-measure text column inside a wider reader viewport", () => {
     render(
       <div style={{ width: "900px", height: "500px", display: "flex" }}>
@@ -90,6 +108,8 @@ describe("TextDocumentReader", () => {
           }}
           onDocumentScroll={() => {}}
           onContentClick={() => {}}
+          onContentPointerOver={() => {}}
+          onContentPointerOut={() => {}}
         />
       </div>,
     );

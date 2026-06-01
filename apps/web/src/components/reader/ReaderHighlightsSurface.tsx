@@ -26,6 +26,7 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
+import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 import {
   findScrollParent,
   useAnchoredHighlightProjection,
@@ -44,6 +45,8 @@ interface ReaderHighlightsSurfaceProps {
   contentRef: RefObject<HTMLElement | null>;
   focusedId: string | null;
   onFocusHighlight: (highlightId: string) => void;
+  hoveredId: string | null;
+  onHoverHighlight: (highlightId: string | null) => void;
   measureKey?: string | number;
   isMobile: boolean;
   isEditingBounds: boolean;
@@ -78,6 +81,8 @@ export default function ReaderHighlightsSurface({
   contentRef,
   focusedId,
   onFocusHighlight,
+  hoveredId,
+  onHoverHighlight,
   measureKey = 0,
   isMobile,
   isEditingBounds,
@@ -377,9 +382,14 @@ export default function ReaderHighlightsSurface({
     };
   }, [isMobile, orderedHighlights, projections, targetRects, viewportState]);
 
-  const focusAndScrollToHighlight = useCallback(
-    (highlightId: string) => {
-      onFocusHighlight(highlightId);
+  // The only thing in the sidecar that scrolls. `onlyIfNeeded` no-ops when the
+  // anchor is already fully in view (the desktop scanline case); `align:"start"`
+  // top-aligns (mobile above/below jumps), `"nearest"` moves the minimal delta.
+  const revealHighlightInReader = useCallback(
+    (
+      highlightId: string,
+      { align, onlyIfNeeded }: { align: "nearest" | "start"; onlyIfNeeded: boolean },
+    ) => {
       const anchor = findHighlightAnchorElement(highlightId);
       if (!anchor || !contentRef.current) {
         return;
@@ -389,50 +399,36 @@ export default function ReaderHighlightsSurface({
       const scrollPaddingTop = Number.parseFloat(
         getComputedStyle(scrollParent).scrollPaddingTop,
       );
+      const padding = Number.isFinite(scrollPaddingTop) ? scrollPaddingTop : 0;
+      const anchorRect = anchor.getBoundingClientRect();
+      const parentRect = scrollParent.getBoundingClientRect();
+      const topInset = anchorRect.top - parentRect.top - padding;
+      const bottomOverflow = anchorRect.bottom - parentRect.bottom;
+
+      if (onlyIfNeeded && topInset >= 0 && bottomOverflow <= 0) {
+        return;
+      }
+
       const delta =
-        anchor.getBoundingClientRect().top -
-        scrollParent.getBoundingClientRect().top -
-        (Number.isFinite(scrollPaddingTop) ? scrollPaddingTop : 0);
-      scrollParent.scrollTop = Math.max(0, scrollParent.scrollTop + delta);
+        align === "start" || topInset < 0 ? topInset : bottomOverflow;
+      scrollParent.scrollTo({
+        top: Math.max(0, scrollParent.scrollTop + delta),
+        behavior: preferredScrollBehavior(),
+      });
     },
-    [contentRef, findHighlightAnchorElement, onFocusHighlight],
+    [contentRef, findHighlightAnchorElement],
   );
 
   const handleRowClick = useCallback(
     (highlightId: string) => {
-      focusAndScrollToHighlight(highlightId);
+      onFocusHighlight(highlightId);
+      revealHighlightInReader(highlightId, {
+        align: "nearest",
+        onlyIfNeeded: true,
+      });
     },
-    [focusAndScrollToHighlight],
+    [onFocusHighlight, revealHighlightInReader],
   );
-
-  const handleRowMouseEnter = useCallback(
-    (highlightId: string) => {
-      if (!contentRef.current) {
-        return;
-      }
-
-      const escapedId = escapeAttrValue(highlightId);
-      const segments = contentRef.current.querySelectorAll(
-        `[data-active-highlight-ids~="${escapedId}"], [data-highlight-anchor="${escapedId}"]`,
-      );
-      for (const segment of segments) {
-        segment.classList.add("hl-hover-outline");
-      }
-    },
-    [contentRef],
-  );
-
-  const handleRowMouseLeave = useCallback(() => {
-    if (!contentRef.current) {
-      return;
-    }
-
-    const outlinedElements =
-      contentRef.current.querySelectorAll(".hl-hover-outline");
-    for (const outlinedElement of outlinedElements) {
-      outlinedElement.classList.remove("hl-hover-outline");
-    }
-  }, [contentRef]);
 
   const setRowRef = useCallback(
     (highlightId: string) => (element: HTMLDivElement | null) => {
@@ -668,6 +664,7 @@ export default function ReaderHighlightsSurface({
               : undefined
           }
           selected={isFocused}
+          hovered={hoveredId === highlight.id}
           expanded={isFocused}
           rootRef={setRowRef(highlight.id)}
           style={style}
@@ -675,8 +672,8 @@ export default function ReaderHighlightsSurface({
           highlightId={highlight.id}
           testId={`anchored-highlight-row-${highlight.id}`}
           onActivate={() => handleRowClick(highlight.id)}
-          onMouseEnter={() => handleRowMouseEnter(highlight.id)}
-          onMouseLeave={handleRowMouseLeave}
+          onMouseEnter={() => onHoverHighlight(highlight.id)}
+          onMouseLeave={() => onHoverHighlight(null)}
         />
       );
     },
@@ -685,16 +682,16 @@ export default function ReaderHighlightsSurface({
       changingColor,
       deleting,
       focusedId,
+      hoveredId,
       handleColorChange,
       handleDelete,
       handleRowClick,
-      handleRowMouseEnter,
-      handleRowMouseLeave,
       handleNoteSave,
       isEditingBounds,
       getNoteEditorKey,
       onCancelEditBounds,
       onFocusHighlight,
+      onHoverHighlight,
       onNoteDelete,
       onOpenConversation,
       onOpenNoteLink,
@@ -755,7 +752,11 @@ export default function ReaderHighlightsSurface({
               className={styles.mobileIndicator}
               onClick={() => {
                 if (mobileHighlightsState.nearestAboveId) {
-                  focusAndScrollToHighlight(mobileHighlightsState.nearestAboveId);
+                  onFocusHighlight(mobileHighlightsState.nearestAboveId);
+                  revealHighlightInReader(mobileHighlightsState.nearestAboveId, {
+                    align: "start",
+                    onlyIfNeeded: false,
+                  });
                 }
               }}
             >
@@ -781,7 +782,11 @@ export default function ReaderHighlightsSurface({
               className={styles.mobileIndicator}
               onClick={() => {
                 if (mobileHighlightsState.nearestBelowId) {
-                  focusAndScrollToHighlight(mobileHighlightsState.nearestBelowId);
+                  onFocusHighlight(mobileHighlightsState.nearestBelowId);
+                  revealHighlightInReader(mobileHighlightsState.nearestBelowId, {
+                    align: "start",
+                    onlyIfNeeded: false,
+                  });
                 }
               }}
             >

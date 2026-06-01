@@ -80,6 +80,8 @@ function highlight(
 function ReaderHighlightsSurfaceHarness({
   focusedId = null,
   onFocusHighlight = () => {},
+  hoveredId = null,
+  onHoverHighlight = () => {},
   canQuoteToChat = true,
   onQuoteToNewChat = () => {},
   onQuoteToExtantChat = () => {},
@@ -94,6 +96,8 @@ function ReaderHighlightsSurfaceHarness({
 }: {
   focusedId?: string | null;
   onFocusHighlight?: (highlightId: string) => void;
+  hoveredId?: string | null;
+  onHoverHighlight?: (highlightId: string | null) => void;
   canQuoteToChat?: boolean;
   onQuoteToNewChat?: (highlightId: string) => void;
   onQuoteToExtantChat?: (highlightId: string) => void;
@@ -149,6 +153,8 @@ function ReaderHighlightsSurfaceHarness({
           contentRef={contentRef}
           focusedId={focusedId}
           onFocusHighlight={onFocusHighlight}
+          hoveredId={hoveredId}
+          onHoverHighlight={onHoverHighlight}
           measureKey="test"
           isMobile={false}
           isEditingBounds={isEditingBounds}
@@ -218,6 +224,8 @@ function StableNoteKeyHarness({
           contentRef={contentRef}
           focusedId={null}
           onFocusHighlight={() => {}}
+          hoveredId={null}
+          onHoverHighlight={() => {}}
           measureKey="stable-note-key-test"
           isMobile={false}
           isEditingBounds={false}
@@ -337,13 +345,34 @@ describe("ReaderHighlightsSurface", () => {
     ).toBeVisible();
   });
 
-  it("focuses the source highlight when the row is clicked", async () => {
+  it("focuses the source highlight on row click without scrolling an in-view anchor", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
+    const scrollTo = vi.fn();
+    const originalScrollTo = Element.prototype.scrollTo;
+    Element.prototype.scrollTo = scrollTo as typeof Element.prototype.scrollTo;
     render(<ReaderHighlightsSurfaceHarness onFocusHighlight={onFocusHighlight} />);
 
     await user.click(await screen.findByTestId("anchored-highlight-row-h1"));
+
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
+    expect(scrollTo).not.toHaveBeenCalled();
+    Element.prototype.scrollTo = originalScrollTo;
+  });
+
+  it("reports card hover through onHoverHighlight", async () => {
+    const user = userEvent.setup();
+    const onHoverHighlight = vi.fn();
+    render(
+      <ReaderHighlightsSurfaceHarness onHoverHighlight={onHoverHighlight} />,
+    );
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.hover(row);
+    expect(onHoverHighlight).toHaveBeenCalledWith("h1");
+
+    await user.unhover(row);
+    expect(onHoverHighlight).toHaveBeenLastCalledWith(null);
   });
 
   it("quotes the highlight to a new or existing chat from the action menu", async () => {

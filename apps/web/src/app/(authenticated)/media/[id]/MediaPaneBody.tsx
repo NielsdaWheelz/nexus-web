@@ -652,10 +652,14 @@ export default function MediaPaneBody({
     startEditBounds,
     cancelEditBounds,
   } = useHighlightInteraction();
+  // Which highlight's prose mark is hovered → emphasizes both the mark and its
+  // sidecar card. Mirrors focusState.focusedId; never affects the viewport.
+  const [hoveredHighlightId, setHoveredHighlightId] = useState<string | null>(
+    null,
+  );
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
-  const secondaryFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
   const webSectionScrollKeyRef = useRef<string | null>(null);
@@ -2499,6 +2503,13 @@ export default function MediaPaneBody({
     applyFocusClass(contentRef.current, focusState.focusedId);
   }, [focusState.focusedId]);
 
+  // Hover emphasis: prose marks (here) and the sidecar card (via the RHS prop)
+  // share one hoveredHighlightId. Same applier as focus, different class.
+  useEffect(() => {
+    if (!contentRef.current) return;
+    applyFocusClass(contentRef.current, hoveredHighlightId, "hl-hover-outline");
+  }, [hoveredHighlightId]);
+
   useEffect(() => {
     if (!requestedHighlightId) {
       urlHighlightAppliedRef.current = null;
@@ -3365,59 +3376,6 @@ export default function MediaPaneBody({
     ? OVERVIEW_RULER_WIDTH_PX
     : 0;
 
-  useEffect(() => {
-    if (
-      !showHighlightsPane ||
-      isPdf ||
-      isMobileViewport ||
-      activeReaderSecondarySurface !== "reader-highlights" ||
-      !focusState.focusedId ||
-      !activeContent ||
-      !contentRef.current
-    ) {
-      secondaryFocusScrollAppliedRef.current = null;
-      return;
-    }
-
-    const scrollKey = [
-      activeContent.fragmentId,
-      focusState.focusedId,
-    ].join(":");
-    if (secondaryFocusScrollAppliedRef.current === scrollKey) {
-      return;
-    }
-    secondaryFocusScrollAppliedRef.current = scrollKey;
-
-    const frameId = window.requestAnimationFrame(() => {
-      if (!contentRef.current || !focusState.focusedId) {
-        return;
-      }
-      const escapedId = escapeAttrValue(focusState.focusedId);
-      const anchor =
-        contentRef.current.querySelector<HTMLElement>(
-          `[data-highlight-anchor="${escapedId}"]`,
-        ) ??
-        contentRef.current.querySelector<HTMLElement>(
-          `[data-active-highlight-ids~="${escapedId}"]`,
-        );
-      anchor?.scrollIntoView({
-        behavior: "auto",
-        block: "center",
-        inline: "nearest",
-      });
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [
-    activeContent,
-    activeReaderSecondarySurface,
-    focusState.focusedId,
-    isMobileViewport,
-    isPdf,
-    renderedHtml,
-    showHighlightsPane,
-  ]);
-
   const readerRootRef = useRef<HTMLDivElement | null>(null);
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
@@ -3623,6 +3581,22 @@ export default function MediaPaneBody({
       showHighlightsPane,
     ],
   );
+
+  // Prose mark hover → hoveredHighlightId, mirroring the click delegation above.
+  // onPointerOver also fires on non-mark targets, so it clears the id when the
+  // pointer moves off a mark; onPointerOut clears it when leaving the content.
+  const handleContentPointerOver = useCallback((e: React.PointerEvent) => {
+    const mark = findHighlightElement(e.target as Element | null);
+    setHoveredHighlightId(
+      mark ? (parseHighlightElement(mark)?.topmostId ?? null) : null,
+    );
+  }, []);
+
+  const handleContentPointerOut = useCallback((e: React.PointerEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setHoveredHighlightId(null);
+    }
+  }, []);
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
@@ -4574,6 +4548,8 @@ export default function MediaPaneBody({
           contentRef={isPdf ? pdfContentRef : contentRef}
           focusedId={focusState.focusedId}
           onFocusHighlight={focusHighlight}
+          hoveredId={hoveredHighlightId}
+          onHoverHighlight={setHoveredHighlightId}
           measureKey={anchoredHighlightsMeasureKey}
           isMobile={isMobileViewport}
           isEditingBounds={focusState.editingBounds}
@@ -4598,6 +4574,7 @@ export default function MediaPaneBody({
       focusHighlight,
       focusState.editingBounds,
       focusState.focusedId,
+      hoveredHighlightId,
       handleColorChange,
       handleDelete,
       handleNoteDelete,
@@ -4792,6 +4769,8 @@ export default function MediaPaneBody({
       onSegmentSelect={handleTranscriptSegmentSelect}
       onSeek={handleTranscriptSeek}
       onContentClick={handleContentClick}
+      onContentPointerOver={handleContentPointerOver}
+      onContentPointerOut={handleContentPointerOut}
     />
   );
 
@@ -4979,6 +4958,8 @@ export default function MediaPaneBody({
               contentState={epubTextDocumentContentState}
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
+              onContentPointerOver={handleContentPointerOver}
+              onContentPointerOut={handleContentPointerOut}
               onInternalLinkClick={(href) => {
                 const target = resolveEpubInternalLinkTarget(
                   href,
@@ -5004,6 +4985,8 @@ export default function MediaPaneBody({
               contentState={webTextDocumentContentState}
               onDocumentScroll={handleDocumentScroll}
               onContentClick={handleContentClick}
+              onContentPointerOver={handleContentPointerOver}
+              onContentPointerOut={handleContentPointerOut}
             />
           )}
         </div>

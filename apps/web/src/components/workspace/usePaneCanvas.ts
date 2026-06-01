@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 const PANE_CANVAS_DRAG_THRESHOLD_PX = 4;
 
@@ -200,13 +201,13 @@ export function usePaneCanvas({
   }, [enabled, paneIdsKey, markPaneInView, markPaneOutOfView]);
 
   const scrollPaneIntoView = useCallback((paneId: string) => {
-    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)")
-      .matches
-      ? "auto"
-      : "smooth";
     canvasRef.current
       ?.querySelector('[data-pane-id="' + CSS.escape(paneId) + '"]')
-      ?.scrollIntoView({ inline: "center", block: "nearest", behavior });
+      ?.scrollIntoView({
+        inline: "center",
+        block: "nearest",
+        behavior: preferredScrollBehavior(),
+      });
   }, []);
 
   return {

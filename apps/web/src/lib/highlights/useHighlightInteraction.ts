@@ -123,6 +123,10 @@ export function useHighlightInteraction(
 
   /**
    * Focus a specific highlight.
+   *
+   * Invariant: focus changes emphasis, never the viewport. This only updates
+   * focusState and notifies onFocusChange — it must never scroll. Navigation
+   * (reveal/jump) is a separate verb owned by the caller.
    */
   const focusHighlight = useCallback(
     (highlightId: string | null) => {

@@ -17,6 +17,12 @@
   border-color: var(--accent);
 }
 
+/* Driven by prose-mark hover; matches the mouse-hover look, but never the accent
+   ring (that stays reserved for .selected/focus). */
+.hovered {
+  background: var(--surface-2);
+}
+
 .header {
   display: flex;
   align-items: flex-start;
