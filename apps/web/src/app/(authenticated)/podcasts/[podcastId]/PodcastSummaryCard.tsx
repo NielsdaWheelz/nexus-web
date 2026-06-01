@@ -4,6 +4,7 @@ import Image from "next/image";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
+import { pluralize } from "@/lib/text/pluralize";
 import type { PodcastDetailResponse } from "../podcastSubscriptions";
 import styles from "./page.module.css";
 
@@ -55,8 +56,7 @@ export default function PodcastSummaryCard({
           {activeSubscription ? "Subscribed" : "Not subscribed"}
         </span>
         <span className={styles.summaryMetaBadge}>
-          In {podcastLibraryCount} librar
-          {podcastLibraryCount === 1 ? "y" : "ies"}
+          In {pluralize(podcastLibraryCount, "library", "libraries")}
         </span>
         {activeSubscription ? (
           <span className={styles.summaryMetaBadge}>

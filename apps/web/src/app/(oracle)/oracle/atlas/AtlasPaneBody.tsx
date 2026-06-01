@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useApiResource } from "@/lib/api/useApiResource";
 import { toRoman } from "@/lib/toRoman";
+import { pluralize } from "@/lib/text/pluralize";
 import { useStickyHeadline } from "../../OracleShell";
 import styles from "./atlas.module.css";
 import StarLabel from "./StarLabel";
@@ -534,7 +535,7 @@ export default function AtlasPaneBody() {
             ? "drawing the dome…"
             : empty
               ? "no stars yet"
-              : `${readings.length} ${readings.length === 1 ? "star" : "stars"}`}
+              : pluralize(readings.length, "star")}
         </span>
       </div>
 

@@ -30,6 +30,7 @@ import type {
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import { pluralize } from "@/lib/text/pluralize";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -292,9 +293,7 @@ export default function PaneShell({
     typeof mobileCommandPalettePaneCount === "number" &&
     mobileCommandPalettePaneCount > 0;
   const mobileCommandPaletteLabel = showMobileCommandPalettePaneCount
-    ? `Open command palette (${mobileCommandPalettePaneCount} open ${
-        mobileCommandPalettePaneCount === 1 ? "tab" : "tabs"
-      })`
+    ? `Open command palette (${pluralize(mobileCommandPalettePaneCount, "open tab")})`
     : "Open command palette";
 
   const showMobileChromeNow = useCallback(() => {

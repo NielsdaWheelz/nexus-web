@@ -508,11 +508,12 @@ describe("ReaderHighlightsSurface", () => {
     confirmSpy.mockRestore();
   });
 
-  it("opens a linked conversation from the card disclosure", async () => {
+  it("opens a linked conversation from a focused card", async () => {
     const user = userEvent.setup();
     const onOpenConversation = vi.fn();
     render(
       <ReaderHighlightsSurfaceHarness
+        focusedId="h1"
         linkedConversations={[
           { conversation_id: "c1", title: "Linked chat" },
         ]}
@@ -521,7 +522,6 @@ describe("ReaderHighlightsSurface", () => {
     );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    await user.click(within(row).getByRole("button", { name: "1 linked chats" }));
     await user.click(within(row).getByRole("button", { name: "Linked chat" }));
     expect(onOpenConversation).toHaveBeenCalledWith("c1", "Linked chat");
   });

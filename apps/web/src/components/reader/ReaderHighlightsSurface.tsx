@@ -653,11 +653,6 @@ export default function ReaderHighlightsSurface({
                 conversation.title,
               ),
           }))}
-          linkedItemsSummary={
-            highlight.linked_conversations?.length
-              ? `${highlight.linked_conversations.length} linked chats`
-              : undefined
-          }
           meta={
             isFocused && isEditingBounds
               ? "Select new text in the reader to replace this highlight."

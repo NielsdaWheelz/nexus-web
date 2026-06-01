@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { filterNodes, flattenVisibleRows } from "@/lib/conversations/forkTree";
 import type { BranchGraph, ForkOption } from "@/lib/conversations/types";
+import { pluralize } from "@/lib/text/pluralize";
 import Button from "@/components/ui/Button";
 import ForkGraphOverview from "./ForkGraphOverview";
 import ForkTreeView from "./ForkTreeView";
@@ -114,7 +115,7 @@ export default function ConversationForksPanel({
         </Button>
       </form>
       <div className={styles.liveCount} aria-live="polite">
-        {visibleCount} fork{visibleCount === 1 ? "" : "s"} found
+        {pluralize(visibleCount, "fork")} found
       </div>
 
       {panel.error ? <div className={styles.error}>{panel.error}</div> : null}

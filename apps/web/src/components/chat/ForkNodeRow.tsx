@@ -10,6 +10,7 @@ import type {
   VisibleForkRow,
 } from "@/lib/conversations/forkTree";
 import type { ForkOption } from "@/lib/conversations/types";
+import { pluralize } from "@/lib/text/pluralize";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import styles from "./ConversationForksPanel.module.css";
@@ -206,7 +207,7 @@ export default function ForkNodeRow({
           aria-describedby={deleteDescriptionId}
         >
           <div aria-hidden="true">
-            Delete this fork and {messageCountLabel(node.message_count)}?
+            Delete this fork and {pluralize(node.message_count, "message")}?
           </div>
           <span id={deleteDescriptionId} className="sr-only">
             {deleteConfirmationDescription(node)}
@@ -253,10 +254,6 @@ export default function ForkNodeRow({
   );
 }
 
-function messageCountLabel(count: number): string {
-  return `${count} message${count === 1 ? "" : "s"}`;
-}
-
 function deleteConfirmationLabel(node: ConversationForkNode): string {
   return `Confirm delete fork. ${deleteConfirmationDescription(node)}`;
 }
@@ -266,7 +263,7 @@ function deleteConfirmationDescription(node: ConversationForkNode): string {
     `Title: ${node.title?.trim() || "Untitled fork"}`,
     `Reply: ${node.preview}`,
     node.branch_anchor_preview ? `Quote: ${node.branch_anchor_preview}` : null,
-    `Subtree: ${messageCountLabel(node.message_count)}`,
+    `Subtree: ${pluralize(node.message_count, "message")}`,
   ]
     .filter(Boolean)
     .join(". ");

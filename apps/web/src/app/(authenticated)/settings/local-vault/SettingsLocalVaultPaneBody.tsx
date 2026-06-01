@@ -5,6 +5,7 @@ import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell } from "@/lib/androidShell";
 import { useAsyncResource } from "@/lib/useAsyncResource";
+import { pluralize } from "@/lib/text/pluralize";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
   getVaultAutoSync,
@@ -167,7 +168,7 @@ export default function SettingsLocalVaultPaneBody({
       setStatus(response.data.conflicts.length ? "conflicts" : "synced");
       setMessage(
         response.data.conflicts.length
-          ? `${response.data.conflicts.length} conflict file${response.data.conflicts.length === 1 ? "" : "s"} written.`
+          ? `${pluralize(response.data.conflicts.length, "conflict file")} written.`
           : "Vault written to the connected folder."
       );
     } catch (error) {
@@ -200,8 +201,8 @@ export default function SettingsLocalVaultPaneBody({
       setStatus(response.data.conflicts.length ? "conflicts" : "synced");
       setMessage(
         response.data.conflicts.length
-          ? `${response.data.conflicts.length} conflict file${response.data.conflicts.length === 1 ? "" : "s"} written.`
-          : `Applied ${files.length} local edit${files.length === 1 ? "" : "s"} and refreshed the folder.`
+          ? `${pluralize(response.data.conflicts.length, "conflict file")} written.`
+          : `Applied ${pluralize(files.length, "local edit")} and refreshed the folder.`
       );
     } catch (error) {
       showError(error, "Failed to sync vault");

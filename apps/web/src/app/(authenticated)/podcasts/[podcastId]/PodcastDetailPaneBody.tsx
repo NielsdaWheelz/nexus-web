@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
+import { pluralize } from "@/lib/text/pluralize";
 import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { retryMediaSource } from "@/lib/media/retryClient";
@@ -1035,7 +1036,7 @@ export default function PodcastDetailPaneBody() {
     }
     if (
       !window.confirm(
-        `Mark ${visibleUnplayedEpisodeIds.length} visible episode${visibleUnplayedEpisodeIds.length === 1 ? "" : "s"} as played?`,
+        `Mark ${pluralize(visibleUnplayedEpisodeIds.length, "visible episode")} as played?`,
       )
     ) {
       return;

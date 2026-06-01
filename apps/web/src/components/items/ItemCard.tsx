@@ -2,9 +2,9 @@
 
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
-import Disclosure from "@/components/ui/Disclosure";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { pluralize } from "@/lib/text/pluralize";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ItemCard.module.css";
 
@@ -25,7 +25,6 @@ interface ItemCardProps {
   actions?: ActionMenuOption[];
   note?: ReactNode;
   linkedItems?: ItemCardLinkedItem[];
-  linkedItemsSummary?: ReactNode;
   expanded?: boolean;
   selected?: boolean;
   hovered?: boolean;
@@ -45,7 +44,6 @@ export default function ItemCard({
   actions,
   note,
   linkedItems,
-  linkedItemsSummary,
   expanded,
   selected,
   hovered,
@@ -113,17 +111,26 @@ export default function ItemCard({
       {meta ? <div className={styles.meta}>{meta}</div> : null}
       {note ? <div className={styles.note}>{note}</div> : null}
       {linkedItems?.length ? (
-        <Disclosure
-          className={styles.linked}
-          summary={linkedItemsSummary ?? `${linkedItems.length} linked`}
-        >
-          {linkedItems.map((item) => (
-            <button key={item.id} type="button" onClick={item.onActivate}>
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </Disclosure>
+        expanded ? (
+          <ul
+            className={styles.linkedList}
+            aria-label={pluralize(linkedItems.length, "linked chat")}
+          >
+            {linkedItems.map((item) => (
+              <li key={item.id}>
+                <button type="button" onClick={item.onActivate}>
+                  {item.icon}
+                  <span>{item.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className={styles.linkedScent}>
+            {linkedItems[0].icon}
+            <span>{linkedItems.map((item) => item.label).join(" · ")}</span>
+          </div>
+        )
       ) : null}
     </div>
   );

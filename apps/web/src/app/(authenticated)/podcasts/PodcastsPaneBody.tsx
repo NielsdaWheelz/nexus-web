@@ -8,6 +8,7 @@ import { useAsyncResource } from "@/lib/useAsyncResource";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { pluralize } from "@/lib/text/pluralize";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -542,7 +543,7 @@ export default function PodcastsPaneBody() {
 
           <div className={styles.summaryRow}>
             <span className={styles.summaryCount}>
-              {activeCount} followed show{activeCount === 1 ? "" : "s"}
+              {pluralize(activeCount, "followed show")}
             </span>
             {hasActiveFilters ? (
               <Button

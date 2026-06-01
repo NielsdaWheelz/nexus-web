@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell } from "@/lib/androidShell";
+import { pluralize } from "@/lib/text/pluralize";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -52,7 +53,7 @@ async function runLocalVaultSync(feedback: ReturnType<typeof useFeedback>): Prom
 
   feedback.show({
     severity: "warning",
-    title: `${response.data.conflicts.length} Local Vault conflict file${response.data.conflicts.length === 1 ? "" : "s"} written.`,
+    title: `${pluralize(response.data.conflicts.length, "Local Vault conflict file")} written.`,
     dedupeKey: "local-vault-conflicts",
   });
 }

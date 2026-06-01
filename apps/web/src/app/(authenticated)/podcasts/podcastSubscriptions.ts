@@ -1,6 +1,7 @@
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { pluralize } from "@/lib/text/pluralize";
 
 export type PodcastSubscriptionSyncStatus =
   | "pending"
@@ -311,11 +312,11 @@ export function buildPodcastUnsubscribeConfirmation(
     `Unsubscribe from "${title}"?`,
     removableLibraries.length === 0
       ? "This podcast is not in any libraries you can change."
-      : `This will remove the podcast from ${removableLibraries.length} librar${removableLibraries.length === 1 ? "y" : "ies"}.`,
+      : `This will remove the podcast from ${pluralize(removableLibraries.length, "library", "libraries")}.`,
   ];
   if (retainedLibraries.length > 0) {
     confirmationLines.push(
-      `It will remain in ${retainedLibraries.length} shared librar${retainedLibraries.length === 1 ? "y" : "ies"} you cannot administer.`,
+      `It will remain in ${pluralize(retainedLibraries.length, "shared library", "shared libraries")} you cannot administer.`,
     );
   }
   return confirmationLines.join("\n\n");

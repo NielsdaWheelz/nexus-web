@@ -1,6 +1,7 @@
 "use client";
 
 import type { ConversationListItem } from "@/lib/conversations/types";
+import { pluralize } from "@/lib/text/pluralize";
 import styles from "./ReferencingChatRow.module.css";
 
 interface ReferencingChatRowProps {
@@ -36,7 +37,7 @@ export default function ReferencingChatRow({
   item,
   onTap,
 }: ReferencingChatRowProps) {
-  const subtitle = `${item.message_count} ${item.message_count === 1 ? "message" : "messages"} • ${formatRelativeTime(item.updated_at)}`;
+  const subtitle = `${pluralize(item.message_count, "message")} • ${formatRelativeTime(item.updated_at)}`;
 
   return (
     <button type="button" className={styles.row} onClick={onTap}>

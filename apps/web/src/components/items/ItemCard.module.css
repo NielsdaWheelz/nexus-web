@@ -78,11 +78,33 @@
   overflow: hidden;
 }
 
-.linked {
+/* Blurred: one muted line of chat titles as scent. */
+.linkedScent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* Single-line ellipsis, shared by the scent line and each focused row. */
+.linkedScent span,
+.linkedList button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Focused: each chat is its own clickable row. */
+.linkedList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   font-size: var(--text-xs);
 }
 
-.linked button {
+.linkedList button {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -97,14 +119,7 @@
   cursor: pointer;
 }
 
-.linked button:hover {
+.linkedList button:hover {
   background: var(--surface-2);
   color: var(--ink);
-}
-
-.linked button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

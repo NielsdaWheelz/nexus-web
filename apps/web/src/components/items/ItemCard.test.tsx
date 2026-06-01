@@ -30,7 +30,7 @@ describe("ItemCard", () => {
     expect(screen.getByText("No selectable text").tagName).not.toBe("MARK");
   });
 
-  it("calls onActivate on body click but not on the menu trigger or a linked-item button", async () => {
+  it("calls onActivate on body click but not on the menu trigger or a linked-chat button", async () => {
     const user = userEvent.setup();
     const onActivate = vi.fn();
     const onLinkedActivate = vi.fn();
@@ -42,7 +42,7 @@ describe("ItemCard", () => {
         }}
         actions={[{ id: "del", label: "Delete", onSelect: () => {} }]}
         linkedItems={[{ id: "c1", label: "First chat", onActivate: onLinkedActivate }]}
-        linkedItemsSummary="1 linked chat"
+        expanded
         onActivate={onActivate}
       />,
     );
@@ -53,36 +53,60 @@ describe("ItemCard", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(onActivate).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "1 linked chat" }));
     await user.click(screen.getByRole("button", { name: "First chat" }));
     expect(onLinkedActivate).toHaveBeenCalledTimes(1);
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
-  it("renders linked items inside a details disclosure", async () => {
-    const user = userEvent.setup();
-    const onLinkedActivate = vi.fn();
+  it("shows linked chats as a scent line when blurred and a clickable list when focused", () => {
+    const content = {
+      kind: "highlight" as const,
+      snippet: { exact: "selected text", color: "blue" as const },
+    };
+    const linkedItems = [
+      { id: "c1", label: "First chat", onActivate: () => {} },
+      { id: "c2", label: "Second chat", onActivate: () => {} },
+    ];
+    const { rerender } = render(<ItemCard content={content} linkedItems={linkedItems} />);
+
+    expect(screen.getByText("First chat · Second chat")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "First chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /linked/ })).toBeNull();
+
+    rerender(<ItemCard content={content} linkedItems={linkedItems} expanded />);
+
+    expect(screen.getByRole("list", { name: "2 linked chats" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "First chat" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Second chat" })).toBeVisible();
+    expect(screen.queryByText("First chat · Second chat")).toBeNull();
+  });
+
+  it("labels a single focused chat with singular grammar", () => {
     render(
       <ItemCard
-        content={{
-          kind: "highlight",
-          snippet: { exact: "selected text", color: "blue" },
-        }}
-        linkedItems={[
-          { id: "c1", label: "First chat", onActivate: onLinkedActivate },
-          { id: "c2", label: "Second chat", onActivate: () => {} },
-        ]}
+        content={{ kind: "highlight", snippet: { exact: "selected text", color: "blue" } }}
+        linkedItems={[{ id: "c1", label: "Only chat", onActivate: () => {} }]}
+        expanded
       />,
     );
 
-    const summary = screen.getByRole("button", { name: "2 linked" });
-    expect(summary).toHaveAttribute("aria-expanded", "false");
-    expect(summary).toHaveAttribute("aria-controls");
+    expect(screen.getByRole("list", { name: "1 linked chat" })).toBeVisible();
+  });
 
-    await user.click(summary);
-    expect(summary).toHaveAttribute("aria-expanded", "true");
-    await user.click(screen.getByRole("button", { name: "First chat" }));
-    expect(onLinkedActivate).toHaveBeenCalledTimes(1);
+  it("renders no linked-chat element when there are none, blurred or focused", () => {
+    const content = {
+      kind: "highlight" as const,
+      snippet: { exact: "selected text", color: "blue" as const },
+    };
+    const { rerender } = render(<ItemCard content={content} />);
+
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.queryByRole("listitem")).toBeNull();
+
+    rerender(<ItemCard content={content} expanded />);
+
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.queryByRole("listitem")).toBeNull();
   });
 
   it("renders the resource title", () => {
