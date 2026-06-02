@@ -16,7 +16,7 @@ import {
 } from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
-import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
+import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import {
   PDF_WORKER_SRC,
   getPdfSelection,

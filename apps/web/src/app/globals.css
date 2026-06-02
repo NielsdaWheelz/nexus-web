@@ -99,8 +99,9 @@
   /* Layout */
   --navbar-width: 240px;
   --navbar-collapsed-width: 48px;
+  --appnav-bar-height: 52px;
   --tabsbar-height: 40px;
-  --mobile-bottom-nav-height: 64px;
+  --mobile-bottom-obstruction: 64px;
   --resize-handle-width: 8px;
   --content-max-width: 700px;
 
@@ -131,7 +132,7 @@
   --accent-hover: #d4b687;
   --accent-active: #b8965f;
   --accent-muted: rgba(196, 164, 114, 0.16);
-  --ring: rgba(196, 164, 114, 0.55);
+  --ring: #d4b687;
   --success: #6ec07a;
   --warning: #d4b066;
   --danger: #d96a73;
@@ -163,7 +164,7 @@
   --accent-hover: #634a29;
   --accent-active: #4a371d;
   --accent-muted: rgba(125, 94, 53, 0.12);
-  --ring: rgba(125, 94, 53, 0.45);
+  --ring: #4a371d;
   --success: #2f7a3e;
   --warning: #8a6618;
   --danger: #a83a44;
@@ -196,7 +197,7 @@
     --accent-hover: #634a29;
     --accent-active: #4a371d;
     --accent-muted: rgba(125, 94, 53, 0.12);
-    --ring: rgba(125, 94, 53, 0.45);
+    --ring: #4a371d;
     --success: #2f7a3e;
     --warning: #8a6618;
     --danger: #a83a44;

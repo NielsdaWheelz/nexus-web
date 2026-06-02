@@ -31,7 +31,7 @@ interface SelectionPopoverProps {
 const DEFAULT_COLOR: HighlightColor = "yellow";
 const VIEWPORT_PADDING_PX = 8;
 const POPOVER_GAP_PX = 8;
-const MOBILE_BOTTOM_NAV_HEIGHT_VAR = "--mobile-bottom-nav-height";
+const MOBILE_BOTTOM_OBSTRUCTION_VAR = "--mobile-bottom-obstruction";
 
 function readPx(rawValue: string | null | undefined): number {
   if (!rawValue) {
@@ -113,7 +113,7 @@ export default function SelectionPopover({
       ? (visualViewport?.height ?? window.innerHeight)
       : window.innerHeight;
     const mobileBottomNavHeight = isMobileViewport
-      ? readPx(rootStyle.getPropertyValue(MOBILE_BOTTOM_NAV_HEIGHT_VAR))
+      ? readPx(rootStyle.getPropertyValue(MOBILE_BOTTOM_OBSTRUCTION_VAR))
       : 0;
     const minLeft = viewportLeft + VIEWPORT_PADDING_PX + safeAreaInsets.left;
     const minTop = viewportTop + VIEWPORT_PADDING_PX + safeAreaInsets.top;

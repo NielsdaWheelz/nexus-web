@@ -54,7 +54,11 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
 }));
 
 vi.mock("@/components/workspace/PaneShell", () => ({
-  ...paneShellMocks,
+  usePaneChromeOverride: paneShellMocks.usePaneChromeOverride,
+}));
+
+vi.mock("@/lib/workspace/mobileChrome", () => ({
+  usePaneMobileChromeController: paneShellMocks.usePaneMobileChromeController,
 }));
 
 vi.mock("@/lib/reader/ReaderContext", () => ({

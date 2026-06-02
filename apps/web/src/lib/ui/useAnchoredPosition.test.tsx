@@ -79,6 +79,48 @@ describe("useAnchoredPosition", () => {
     );
   });
 
+  it("places to the right of the anchor with start alignment", async () => {
+    render(
+      <Host
+        anchor={new DOMRect(50, 100, 80, 20)}
+        opts={{ enabled: true, placement: "right", align: "start", gap: 4 }}
+      />,
+    );
+    await waitFor(() => {
+      expect(floating().style.left).toBe("134px"); // anchor.right(130) + gap(4)
+      expect(floating().style.top).toBe("100px"); // anchor.top (align: start)
+    });
+  });
+
+  it("places to the left of the anchor with center alignment", async () => {
+    render(
+      <Host
+        anchor={new DOMRect(300, 100, 80, 20)}
+        opts={{ enabled: true, placement: "left", align: "center", gap: 4 }}
+      />,
+    );
+    await waitFor(() => {
+      // left = anchor.left(300) - float.width(100) - gap(4)
+      expect(floating().style.left).toBe("196px");
+      // top = anchor.top(100) + anchor.height/2(10) - float.height/2(20)
+      expect(floating().style.top).toBe("90px");
+    });
+  });
+
+  it("flips right to the left side when near the right edge", async () => {
+    const anchorLeft = window.innerWidth - 30;
+    render(
+      <Host
+        anchor={new DOMRect(anchorLeft, 100, 20, 20)}
+        opts={{ enabled: true, placement: "right", gap: 4, flip: true }}
+      />,
+    );
+    // left = anchor.left - float.width(100) - gap(4)
+    await waitFor(() =>
+      expect(floating().style.left).toBe(`${anchorLeft - FLOAT_W - 4}px`),
+    );
+  });
+
   it("stays hidden and unpositioned while disabled", async () => {
     render(
       <Host

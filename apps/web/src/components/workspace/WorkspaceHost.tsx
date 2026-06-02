@@ -619,7 +619,7 @@ function buildHostPane(input: {
 // builds pane descriptors, and renders the shell layout with pane strip.
 // ---------------------------------------------------------------------------
 
-export default function WorkspaceHost() {
+function WorkspaceHost() {
   const {
     state,
     runtimeTitleByPaneId,
@@ -1169,7 +1169,6 @@ export default function WorkspaceHost() {
                   onChromeMouseDown={handleChromeMouseDown}
                   isActive={pane.isActive}
                   isMobile={isMobile}
-                  mobileCommandPalettePaneCount={primaryPanes.length}
                 >
                   {pane.content}
                 </PaneShell>
@@ -1192,3 +1191,7 @@ export default function WorkspaceHost() {
     </section>
   );
 }
+
+// Memoized (no props) so the lifted MobileChromeProvider re-rendering on scroll
+// or pane-chrome publish never cascades back into the pane tree.
+export default memo(WorkspaceHost);

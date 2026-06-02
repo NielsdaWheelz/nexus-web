@@ -84,10 +84,8 @@ import {
   useSetPaneTitle,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import {
-  usePaneChromeOverride,
-  usePaneMobileChromeController,
-} from "@/components/workspace/PaneShell";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import {
   usePaneSecondary,
   type PaneSecondaryPublication,

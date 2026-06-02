@@ -274,9 +274,9 @@ test.describe("pane chrome", () => {
     const activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
     await expect(activePane.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
 
-    await page.locator("nav").getByRole("link", { name: "Search" }).click();
+    await page.locator("nav").getByRole("link", { name: "Notes" }).click();
 
-    await expect(page).toHaveURL(/\/search/);
+    await expect(page).toHaveURL(/\/notes/);
     await expect(activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" })).toHaveCount(0);
   });
 

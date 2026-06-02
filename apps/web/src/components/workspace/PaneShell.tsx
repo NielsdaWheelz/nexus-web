@@ -1,6 +1,5 @@
 "use client";
 
-import { Command } from "lucide-react";
 import {
   createContext,
   memo,
@@ -13,16 +12,15 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
 } from "@/components/ui/SurfaceHeader";
-import Button from "@/components/ui/Button";
 import type { PaneSecondaryPublication } from "@/components/workspace/PaneSecondary";
 import type { PaneFixedChromePublication } from "@/components/workspace/PaneFixedChrome";
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
+import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import type {
@@ -30,7 +28,6 @@ import type {
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
-import { pluralize } from "@/lib/text/pluralize";
 import styles from "./PaneShell.module.css";
 
 // ---------------------------------------------------------------------------
@@ -106,31 +103,6 @@ function areActionMenuOptionsEqual(
   });
 }
 
-export type PaneMobileChromeLockReason =
-  | "reader-restore"
-  | "pdf-selection"
-  | "text-selection"
-  | "highlight-navigation"
-  | "mobile-secondary"
-  | "library-picker"
-  | "action-menu";
-
-export interface PaneMobileChromeController {
-  onDocumentScroll: (snapshot: {
-    scrollTop: number;
-    scrollHeight: number;
-    clientHeight: number;
-  }) => void;
-  acquireVisibleLock: (reason: PaneMobileChromeLockReason) => () => void;
-}
-
-const PaneMobileChromeControllerContext =
-  createContext<PaneMobileChromeController | null>(null);
-
-const MOBILE_CHROME_SCROLL_DELTA_EPSILON_PX = 1;
-const MOBILE_CHROME_HIDE_TOLERANCE_PX = 24;
-const MOBILE_CHROME_REVEAL_TOLERANCE_PX = 16;
-
 const noopResizeSecondaryPane = () => {};
 const noopCloseSecondary = () => {};
 const noopSetActiveSecondarySurface = () => {};
@@ -169,24 +141,16 @@ export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
   }, [setOverrides]);
 }
 
-export function usePaneMobileChromeController(): PaneMobileChromeController | null {
-  return useContext(PaneMobileChromeControllerContext);
-}
-
 const PaneShellBodyProviders = memo(function PaneShellBodyProviders({
   children,
-  mobileChromeController,
   setChromeOverrides,
 }: {
   children: React.ReactNode;
-  mobileChromeController: PaneMobileChromeController | null;
   setChromeOverrides: (overrides: PaneChromeOverrides) => void;
 }) {
   return (
     <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-      <PaneMobileChromeControllerContext.Provider value={mobileChromeController}>
-        {children}
-      </PaneMobileChromeControllerContext.Provider>
+      {children}
     </PaneChromeOverrideContext.Provider>
   );
 });
@@ -221,7 +185,6 @@ interface PaneShellProps {
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
-  mobileCommandPalettePaneCount?: number;
   children: React.ReactNode;
 }
 
@@ -248,7 +211,6 @@ export default function PaneShell({
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
-  mobileCommandPalettePaneCount,
   children,
 }: PaneShellProps) {
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
@@ -259,17 +221,6 @@ export default function PaneShell({
     onResize: onResizePrimaryPane,
   });
   const chromeRef = useRef<HTMLDivElement>(null);
-  const lastScrollTopRef = useRef(0);
-  const mobileChromeScrollDirectionRef = useRef<"down" | "up" | null>(null);
-  const mobileChromeDirectionStartRef = useRef(0);
-  const mobileChromeVisibleLocksRef = useRef<Map<number, PaneMobileChromeLockReason>>(
-    new Map()
-  );
-  const nextMobileChromeLockIdRef = useRef(0);
-  const releaseActionMenuLockRef = useRef<(() => void) | null>(null);
-  const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
-  const [mobileChromeVisibleLockCount, setMobileChromeVisibleLockCount] = useState(0);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
@@ -279,75 +230,14 @@ export default function PaneShell({
       arePaneChromeOverridesEqual(current, overrides) ? current : overrides
     );
   }, []);
+  const { hidden, setPaneChrome } = useMobileChrome();
 
-  const isMobileDocumentPane = isMobile && bodyMode === "document";
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
   const effectiveActions = chromeOverrides.actions ?? actions;
   const effectiveOptions = chromeOverrides.options ?? options;
-  const effectiveMobileChromeHidden =
-    isMobileDocumentPane &&
-    mobileChromeHidden &&
-    mobileChromeVisibleLockCount === 0 &&
-    !prefersReducedMotion;
-  const showMobileCommandPalettePaneCount =
-    typeof mobileCommandPalettePaneCount === "number" &&
-    mobileCommandPalettePaneCount > 0;
-  const mobileCommandPaletteLabel = showMobileCommandPalettePaneCount
-    ? `Open command palette (${pluralize(mobileCommandPalettePaneCount, "open tab")})`
-    : "Open command palette";
+  const mobileChromeHidden = isMobile && hidden;
 
-  const showMobileChromeNow = useCallback(() => {
-    setMobileChromeHidden(false);
-    mobileChromeScrollDirectionRef.current = null;
-    mobileChromeDirectionStartRef.current = lastScrollTopRef.current;
-  }, []);
-
-  // Reset mobile chrome state when leaving mobile document mode.
-  useEffect(() => {
-    if (!isMobileDocumentPane) {
-      setMobileChromeHidden(false);
-      mobileChromeVisibleLocksRef.current.clear();
-      setMobileChromeVisibleLockCount(0);
-      releaseActionMenuLockRef.current = null;
-      lastScrollTopRef.current = 0;
-      mobileChromeScrollDirectionRef.current = null;
-      mobileChromeDirectionStartRef.current = 0;
-    }
-  }, [isMobileDocumentPane]);
-
-  // Pin reduced-motion mobile document panes visible at the shell level.
-  useEffect(() => {
-    if (!isMobileDocumentPane) {
-      setPrefersReducedMotion(false);
-      return;
-    }
-    if (typeof window.matchMedia !== "function") {
-      setPrefersReducedMotion(false);
-      return;
-    }
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      setPrefersReducedMotion(mediaQuery.matches);
-      if (mediaQuery.matches) {
-        setMobileChromeHidden(false);
-        mobileChromeScrollDirectionRef.current = null;
-        mobileChromeDirectionStartRef.current = 0;
-      }
-    };
-    update();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", update);
-      return () => {
-        mediaQuery.removeEventListener("change", update);
-      };
-    }
-    mediaQuery.addListener(update);
-    return () => {
-      mediaQuery.removeListener(update);
-    };
-  }, [isMobileDocumentPane]);
-
-  // Track the chrome height for the stable document top reservation.
+  // Measure the mobile toolbar bar so document readers can reserve top space.
   useLayoutEffect(() => {
     if (!isMobile || !chromeRef.current) {
       setMobileChromeHeight(0);
@@ -361,103 +251,8 @@ export default function PaneShell({
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isMobile]);
+  }, [isMobile, effectiveToolbar]);
 
-  // Hide after deliberate downward scroll past the reserved top space; reveal
-  // on upward scroll or when the reader returns near the top.
-  const handleDocumentScroll = useCallback(
-    (snapshot: { scrollTop: number; scrollHeight: number; clientHeight: number }) => {
-      if (!isMobileDocumentPane || prefersReducedMotion) {
-        return;
-      }
-      const maxScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
-      const scrollTop = Math.min(Math.max(0, snapshot.scrollTop), maxScrollTop);
-      const previous = lastScrollTopRef.current;
-      const delta = scrollTop - previous;
-      lastScrollTopRef.current = scrollTop;
-
-      if (scrollTop <= mobileChromeHeight) {
-        setMobileChromeHidden(false);
-        mobileChromeScrollDirectionRef.current = null;
-        mobileChromeDirectionStartRef.current = scrollTop;
-        return;
-      }
-
-      if (Math.abs(delta) < MOBILE_CHROME_SCROLL_DELTA_EPSILON_PX) {
-        return;
-      }
-
-      const direction = delta > 0 ? "down" : "up";
-      if (mobileChromeScrollDirectionRef.current !== direction) {
-        mobileChromeScrollDirectionRef.current = direction;
-        mobileChromeDirectionStartRef.current = scrollTop;
-        return;
-      }
-
-      const directionDistance = Math.abs(scrollTop - mobileChromeDirectionStartRef.current);
-
-      if (direction === "down" && directionDistance >= MOBILE_CHROME_HIDE_TOLERANCE_PX) {
-        setMobileChromeHidden(true);
-        return;
-      }
-
-      if (direction === "up" && directionDistance >= MOBILE_CHROME_REVEAL_TOLERANCE_PX) {
-        setMobileChromeHidden(false);
-      }
-    },
-    [isMobileDocumentPane, mobileChromeHeight, prefersReducedMotion]
-  );
-
-  const acquireMobileChromeVisibleLock = useCallback(
-    (reason: PaneMobileChromeLockReason) => {
-      const lockId = nextMobileChromeLockIdRef.current + 1;
-      nextMobileChromeLockIdRef.current = lockId;
-      mobileChromeVisibleLocksRef.current.set(lockId, reason);
-      setMobileChromeVisibleLockCount(mobileChromeVisibleLocksRef.current.size);
-      showMobileChromeNow();
-
-      let released = false;
-      return () => {
-        if (released) {
-          return;
-        }
-        released = true;
-        mobileChromeVisibleLocksRef.current.delete(lockId);
-        setMobileChromeVisibleLockCount(mobileChromeVisibleLocksRef.current.size);
-        if (mobileChromeVisibleLocksRef.current.size === 0) {
-          showMobileChromeNow();
-        }
-      };
-    },
-    [showMobileChromeNow]
-  );
-
-  const mobileChromeController = useMemo<PaneMobileChromeController>(
-    () => ({
-      onDocumentScroll: handleDocumentScroll,
-      acquireVisibleLock: acquireMobileChromeVisibleLock,
-    }),
-    [acquireMobileChromeVisibleLock, handleDocumentScroll]
-  );
-
-  const handleOptionsOpenChange = useCallback(
-    (open: boolean) => {
-      if (!isMobileDocumentPane) {
-        releaseActionMenuLockRef.current?.();
-        releaseActionMenuLockRef.current = null;
-        return;
-      }
-      if (!open) {
-        releaseActionMenuLockRef.current?.();
-        releaseActionMenuLockRef.current = null;
-        return;
-      }
-      releaseActionMenuLockRef.current?.();
-      releaseActionMenuLockRef.current =
-        acquireMobileChromeVisibleLock("action-menu");
-    },
-    [acquireMobileChromeVisibleLock, isMobileDocumentPane]
-  );
   const copyPaneLink = useCallback(() => {
     const link =
       typeof window === "undefined"
@@ -482,7 +277,19 @@ export default function PaneShell({
     ];
   }, [copyPaneLink, effectiveOptions]);
 
-  const shellClass = effectiveMobileChromeHidden
+  // Publish the active pane's chrome to the lifted mobile top bar.
+  useEffect(() => {
+    if (!isMobile) return;
+    setPaneChrome({
+      paneId,
+      title,
+      navigation,
+      options: paneMenuOptions,
+    });
+    return () => setPaneChrome(null);
+  }, [isMobile, paneId, title, navigation, paneMenuOptions, setPaneChrome]);
+
+  const shellClass = mobileChromeHidden
     ? `${styles.paneShell} ${styles.mobileChromeHidden}`
     : styles.paneShell;
 
@@ -552,9 +359,7 @@ export default function PaneShell({
       data-testid="pane-shell-root"
       data-pane-shell="true"
       data-active={isActive ? "true" : "false"}
-      data-mobile-chrome-hidden={
-        effectiveMobileChromeHidden ? "true" : "false"
-      }
+      data-mobile-chrome-hidden={mobileChromeHidden ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
       style={shellStyle}
     >
@@ -578,49 +383,17 @@ export default function PaneShell({
           tabIndex={-1}
           onMouseDown={onChromeMouseDown}
         >
-          <SurfaceHeader
-            title={title}
-            titlePending={titlePending}
-            subtitle={subtitle}
-            meta={chromeOverrides.meta}
-            options={paneMenuOptions}
-            actions={
-              isMobile ? (
-                <>
-                  {effectiveActions}
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    iconOnly
-                    className={styles.mobileCommandPaletteButton}
-                    onClick={() =>
-                      window.dispatchEvent(
-                        new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
-                      )
-                    }
-                    aria-label={mobileCommandPaletteLabel}
-                    aria-haspopup="dialog"
-                  >
-                    <span className={styles.mobileCommandPaletteIcon}>
-                      <Command size={16} aria-hidden="true" />
-                      {showMobileCommandPalettePaneCount ? (
-                        <span
-                          className={styles.mobileCommandPaletteBadge}
-                          aria-hidden="true"
-                        >
-                          {mobileCommandPalettePaneCount}
-                        </span>
-                      ) : null}
-                    </span>
-                  </Button>
-                </>
-              ) : (
-                effectiveActions
-              )
-            }
-            navigation={navigation}
-            onOptionsOpenChange={handleOptionsOpenChange}
-          />
+          {!isMobile ? (
+            <SurfaceHeader
+              title={title}
+              titlePending={titlePending}
+              subtitle={subtitle}
+              meta={chromeOverrides.meta}
+              options={paneMenuOptions}
+              actions={effectiveActions}
+              navigation={navigation}
+            />
+          ) : null}
           {effectiveToolbar ? (
             <div className={styles.toolbar}>{effectiveToolbar}</div>
           ) : null}
@@ -643,12 +416,7 @@ export default function PaneShell({
             data-pane-content="true"
             style={bodyStyle}
           >
-            <PaneShellBodyProviders
-              mobileChromeController={
-                isMobileDocumentPane ? mobileChromeController : null
-              }
-              setChromeOverrides={publishChromeOverrides}
-            >
+            <PaneShellBodyProviders setChromeOverrides={publishChromeOverrides}>
               {children}
             </PaneShellBodyProviders>
           </div>

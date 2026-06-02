@@ -8,6 +8,8 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type Ref,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -34,6 +36,17 @@ export interface ActionMenuOption {
   separatorBefore?: boolean;
 }
 
+/** Wiring a custom trigger must spread onto its focusable element. */
+export interface ActionMenuTriggerProps {
+  ref: Ref<HTMLButtonElement>;
+  id: string;
+  "aria-haspopup": "menu";
+  "aria-controls": string | undefined;
+  "aria-expanded": boolean;
+  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+}
+
 interface ActionMenuProps {
   options: ActionMenuOption[];
   /** Label for the trigger button (screen readers). Default: "Actions" */
@@ -41,6 +54,12 @@ interface ActionMenuProps {
   /** Optional class name for the container. */
   className?: string;
   onOpenChange?: (open: boolean) => void;
+  /** Menu placement relative to the trigger. Default "below". */
+  placement?: "below" | "above";
+  /** Menu cross-axis alignment. Default "end". */
+  align?: "start" | "center" | "end";
+  /** Render a custom trigger (e.g. an avatar); defaults to the "…" overflow button. */
+  renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
 }
 
 const MENU_ITEM_SELECTOR =
@@ -59,6 +78,9 @@ export default function ActionMenu({
   label = "Actions",
   className,
   onOpenChange,
+  placement = "below",
+  align = "end",
+  renderTrigger,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -72,8 +94,8 @@ export default function ActionMenu({
     anchorRect,
   } = useAnchoredPosition<HTMLUListElement>(toggleRef.current, {
     enabled: menuOpen,
-    placement: "below",
-    align: "end",
+    placement,
+    align,
     gap: 4,
   });
 
@@ -305,49 +327,45 @@ export default function ActionMenu({
       </ul>
     ) : null;
 
+  const triggerProps: ActionMenuTriggerProps = {
+    ref: toggleRef,
+    id: triggerId,
+    "aria-haspopup": "menu",
+    "aria-controls": menuOpen ? menuId : undefined,
+    "aria-expanded": menuOpen,
+    onClick: (event) => {
+      event.stopPropagation();
+      if (menuOpen) closeMenu(false);
+      else openMenu();
+    },
+    onKeyDown: (event) => {
+      if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenu("first");
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenu("last");
+      }
+    },
+  };
+
   return (
     <div
       className={containerClassName}
       ref={menuContainerRef}
       data-open={menuOpen ? "true" : "false"}
     >
-      <button
-        type="button"
-        id={triggerId}
-        ref={toggleRef}
-        className={styles.trigger}
-        aria-haspopup="menu"
-        aria-controls={menuOpen ? menuId : undefined}
-        aria-expanded={menuOpen}
-        aria-label={label}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (menuOpen) {
-            closeMenu(false);
-          } else {
-            openMenu();
-          }
-        }}
-        onKeyDown={(event) => {
-          if (
-            event.key === "Enter" ||
-            event.key === " " ||
-            event.key === "ArrowDown"
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            openMenu("first");
-            return;
-          }
-          if (event.key === "ArrowUp") {
-            event.preventDefault();
-            event.stopPropagation();
-            openMenu("last");
-          }
-        }}
-      >
-        &hellip;
-      </button>
+      {renderTrigger ? (
+        renderTrigger(triggerProps)
+      ) : (
+        <button {...triggerProps} type="button" className={styles.trigger} aria-label={label}>
+          &hellip;
+        </button>
+      )}
       {menu && typeof document !== "undefined"
         ? createPortal(menu, document.body)
         : null}

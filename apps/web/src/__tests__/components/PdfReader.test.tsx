@@ -22,7 +22,7 @@ function rectList(rects: DOMRect[]): DOMRectList {
   }) as unknown as DOMRectList;
 }
 
-vi.mock("@/components/workspace/PaneShell", () => ({
+vi.mock("@/lib/workspace/mobileChrome", () => ({
   usePaneMobileChromeController: () => null,
 }));
 

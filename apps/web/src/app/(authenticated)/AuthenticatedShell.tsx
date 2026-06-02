@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useState, type Dispatch, type SetStateAction } from "react";
-import Navbar from "@/components/Navbar";
+import { Suspense } from "react";
+import AppNav from "@/components/appnav/AppNav";
 import CommandPalette from "@/components/CommandPalette";
 import AddContentTray from "@/components/AddContentTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -11,33 +11,23 @@ import SessionRefresher from "@/lib/auth/SessionRefresher";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell() {
-  const [navbarCollapsed, setNavbarCollapsed] = useState(false);
-
   return (
     <>
       <SessionRefresher />
       <LocalVaultAutoSync />
       <ReaderProvider>
-        <AuthenticatedWorkspace
-          navbarCollapsed={navbarCollapsed}
-          setNavbarCollapsed={setNavbarCollapsed}
-        />
+        <AuthenticatedWorkspace />
       </ReaderProvider>
     </>
   );
 }
 
-function AuthenticatedWorkspace({
-  navbarCollapsed,
-  setNavbarCollapsed,
-}: {
-  navbarCollapsed: boolean;
-  setNavbarCollapsed: Dispatch<SetStateAction<boolean>>;
-}) {
+function AuthenticatedWorkspace() {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
   return (
@@ -45,19 +35,19 @@ function AuthenticatedWorkspace({
       {probe}
       {workspacePrimaryMetrics ? (
         <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
-          <CommandPalette />
-          <AddContentTray />
-          <div
-            className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
-          >
-            <Navbar onToggle={setNavbarCollapsed} />
-            <main className={styles.main}>
-              <GlobalPlayerProvider>
-                <WorkspaceHost />
-                <GlobalPlayerFooter />
-              </GlobalPlayerProvider>
-            </main>
-          </div>
+          <MobileChromeProvider>
+            <CommandPalette />
+            <AddContentTray />
+            <div className={styles.layout}>
+              <AppNav />
+              <main className={styles.main}>
+                <GlobalPlayerProvider>
+                  <WorkspaceHost />
+                  <GlobalPlayerFooter />
+                </GlobalPlayerProvider>
+              </main>
+            </div>
+          </MobileChromeProvider>
         </WorkspaceStoreProvider>
       ) : null}
     </Suspense>

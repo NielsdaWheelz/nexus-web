@@ -25,7 +25,7 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
   anchor: HTMLElement | DOMRect | null,
   opts: {
     enabled: boolean;
-    placement?: "below" | "above";
+    placement?: "below" | "above" | "left" | "right";
     align?: "start" | "center" | "end";
     gap?: number;
     viewportPadding?: number;
@@ -59,23 +59,47 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
     const padMaxLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - f.width);
     const padMaxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - f.height);
 
-    const below = a.bottom + gap;
-    const above = a.top - f.height - gap;
-    let top = placement === "below" ? below : above;
-    if (flip) {
-      if (placement === "below" && below + f.height > window.innerHeight - viewportPadding && above >= viewportPadding) {
-        top = above;
-      } else if (placement === "above" && above < viewportPadding && below + f.height <= window.innerHeight - viewportPadding) {
-        top = below;
-      }
-    }
+    const horizontal = placement === "left" || placement === "right";
 
-    const left =
-      align === "start"
-        ? a.left
-        : align === "end"
-          ? a.right - f.width
-          : a.left + a.width / 2 - f.width / 2;
+    let top: number;
+    let left: number;
+    if (horizontal) {
+      // `left`/`right` float beside the anchor; `align` runs the vertical axis.
+      const right = a.right + gap;
+      const leftSide = a.left - f.width - gap;
+      left = placement === "right" ? right : leftSide;
+      if (flip) {
+        if (placement === "right" && right + f.width > window.innerWidth - viewportPadding && leftSide >= viewportPadding) {
+          left = leftSide;
+        } else if (placement === "left" && leftSide < viewportPadding && right + f.width <= window.innerWidth - viewportPadding) {
+          left = right;
+        }
+      }
+      top =
+        align === "start"
+          ? a.top
+          : align === "end"
+            ? a.bottom - f.height
+            : a.top + a.height / 2 - f.height / 2;
+    } else {
+      // `below`/`above` float under/over the anchor; `align` runs the horizontal axis.
+      const below = a.bottom + gap;
+      const above = a.top - f.height - gap;
+      top = placement === "below" ? below : above;
+      if (flip) {
+        if (placement === "below" && below + f.height > window.innerHeight - viewportPadding && above >= viewportPadding) {
+          top = above;
+        } else if (placement === "above" && above < viewportPadding && below + f.height <= window.innerHeight - viewportPadding) {
+          top = below;
+        }
+      }
+      left =
+        align === "start"
+          ? a.left
+          : align === "end"
+            ? a.right - f.width
+            : a.left + a.width / 2 - f.width / 2;
+    }
 
     setStyle({
       position: "fixed",

@@ -35,7 +35,8 @@ test.describe("authentication", () => {
     try {
       await bootstrapMagicLinkSession(page, context.request);
       await page.goto("/libraries");
-      const signOutBtn = page.getByRole("button", { name: /sign out|log out/i });
+      await page.getByRole("button", { name: "Account" }).click();
+      const signOutBtn = page.getByRole("menuitem", { name: /sign out|log out/i });
       await expect(signOutBtn).toBeVisible();
       await signOutBtn.click();
       await expect(page).toHaveURL(/\/login/);

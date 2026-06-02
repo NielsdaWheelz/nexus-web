@@ -3,7 +3,6 @@
 import { forwardRef, useId, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
@@ -23,7 +22,6 @@ interface SurfaceHeaderProps {
   navigation: SurfaceHeaderNavigation;
   headingLevel?: 1 | 2;
   className?: string;
-  onOptionsOpenChange?: (open: boolean) => void;
 }
 
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
@@ -37,7 +35,6 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
     navigation,
     headingLevel = 2,
     className,
-    onOptionsOpenChange,
   }: SurfaceHeaderProps,
   ref
 ) {
@@ -45,17 +42,13 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
   const hasOptions = options.length > 0;
   const subtitleId = useId();
   const hasSubtitle = Boolean(subtitle);
-  const isMobile = useIsMobileViewport();
-  const headerClassName = [styles.header, isMobile ? styles.mobile : "", className]
-    .filter(Boolean)
-    .join(" ");
+  const headerClassName = [styles.header, className].filter(Boolean).join(" ");
 
   return (
     <header
       ref={ref}
       className={headerClassName}
       data-surface-header="true"
-      data-mobile={isMobile ? "true" : undefined}
       aria-describedby={hasSubtitle ? subtitleId : undefined}
     >
       <div className={styles.leading}>
@@ -107,7 +100,6 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
             options={options}
             label="Options"
             className={styles.optionsContainer}
-            onOpenChange={onOptionsOpenChange}
           />
         )}
       </div>

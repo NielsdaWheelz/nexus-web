@@ -92,86 +92,40 @@
   padding: var(--space-1) var(--space-2);
 }
 
+/* The pane toolbar bar sits just below the fixed app top bar and hides with it. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
-  top: 0;
+  top: calc(env(safe-area-inset-top) + var(--appnav-bar-height));
   left: 0;
   right: 0;
-  z-index: 12;
-  padding-top: env(safe-area-inset-top);
+  z-index: 11;
+  background: var(--surface-2);
   transition: transform var(--duration-base) var(--ease-glide), opacity var(--duration-fast) var(--ease-glide);
-  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
-  backdrop-filter: blur(8px);
-  box-shadow: var(--shadow-2);
   will-change: transform, opacity;
 }
 
+.paneShell[data-mobile="true"] .chrome:empty {
+  border-bottom: none;
+}
+
 .mobileChromeHidden .chrome {
-  transform: translateY(calc(-1 * var(--mobile-pane-chrome-height)));
+  transform: translateY(
+    calc(-1 * (env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height)))
+  );
   opacity: 0;
   pointer-events: none;
 }
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],
 .paneShell[data-mobile="true"] .body[data-body-mode="contained"] {
-  padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
-}
-
-.mobileCommandPaletteButton {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  background: var(--surface-canvas);
-  color: var(--ink-muted);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-glide), color var(--duration-fast) var(--ease-glide);
-}
-
-.mobileCommandPaletteButton:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.mobileCommandPaletteButton:active {
-  background: var(--surface-active);
-}
-
-.mobileCommandPaletteIcon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mobileCommandPaletteBadge {
-  position: absolute;
-  top: -9px;
-  right: -10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 var(--space-1);
-  border: 1px solid var(--surface-canvas);
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--ink-on-accent);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  pointer-events: none;
+  padding-top: calc(
+    env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height) +
+      var(--space-2)
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .paneShell[data-mobile="true"] .chrome,
-  .mobileCommandPaletteButton {
+  .paneShell[data-mobile="true"] .chrome {
     transition: none;
   }
 }

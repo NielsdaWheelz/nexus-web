@@ -215,8 +215,9 @@ test.describe("password auth", () => {
       await page.getByRole("button", { name: /create account/i }).click();
       await expect(page).toHaveURL(/\/libraries/);
 
-      // Sign out via the Navbar form.
-      await page.getByRole("button", { name: /sign out/i }).click();
+      // Sign out via the account menu.
+      await page.getByRole("button", { name: "Account" }).click();
+      await page.getByRole("menuitem", { name: /sign out/i }).click();
       await expect(page).toHaveURL(/\/login/);
 
       // Sign back in with the same credentials.
@@ -262,7 +263,8 @@ test.describe("password auth", () => {
       await expect(dialog).toBeHidden();
 
       // Sign out.
-      await page.getByRole("button", { name: /sign out/i }).click();
+      await page.getByRole("button", { name: "Account" }).click();
+      await page.getByRole("menuitem", { name: /sign out/i }).click();
       await expect(page).toHaveURL(/\/login/);
 
       // Old password is rejected with the whitelisted message.
@@ -321,7 +323,8 @@ test.describe("password auth", () => {
       });
 
       // Sign out.
-      await page.getByRole("button", { name: /sign out/i }).click();
+      await page.getByRole("button", { name: "Account" }).click();
+      await page.getByRole("menuitem", { name: /sign out/i }).click();
       await expect(page).toHaveURL(/\/login/);
 
       // Old email is rejected.
@@ -398,7 +401,8 @@ test.describe("password auth", () => {
       await expect(page).toHaveURL(/\/libraries/);
 
       // Sign out.
-      await page.getByRole("button", { name: /sign out/i }).click();
+      await page.getByRole("button", { name: "Account" }).click();
+      await page.getByRole("menuitem", { name: /sign out/i }).click();
       await expect(page).toHaveURL(/\/login/);
 
       // Wrong password is rejected with the exact whitelisted constant.
