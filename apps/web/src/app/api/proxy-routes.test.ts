@@ -2,13 +2,18 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 125;
+const API_ROUTE_COUNT = 126;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
   "src/app/api/media/capture/file/route.ts",
   "src/app/api/media/capture/url/route.ts",
 ]);
+// Routes that intentionally are NOT FastAPI proxies. The CSP violation sink must accept
+// unauthenticated browser report POSTs (CSP reports are sent without credentials, including
+// from public pages) and returns a local 204; it has no backend counterpart by design.
+// See docs/cutovers/csp-and-security-headers-hardening.md.
+const LOCAL_ROUTES = new Set(["src/app/api/csp-report/route.ts"]);
 
 function routeFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -29,6 +34,12 @@ describe("BFF API route shape", () => {
       const relativePath = relative(process.cwd(), route).split(sep).join("/");
       const usesAppProxy = source.includes("proxyToFastAPI");
       const usesExtensionProxy = source.includes("proxyExtensionToFastAPI");
+
+      if (LOCAL_ROUTES.has(relativePath)) {
+        // Local sink: must handle the request in Next, never proxy to FastAPI.
+        expect(usesAppProxy || usesExtensionProxy, relativePath).toBe(false);
+        continue;
+      }
 
       expect(usesAppProxy || usesExtensionProxy, relativePath).toBe(true);
       expect(usesAppProxy && usesExtensionProxy, relativePath).toBe(false);

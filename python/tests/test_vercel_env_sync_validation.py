@@ -30,6 +30,7 @@ _REQUIRED_ENV = {
     "AUTH_ALLOWED_REDIRECT_ORIGINS": "https://app.nexus.test",
     "STREAM_CORS_ORIGINS": "https://app.nexus.test",
     "FASTAPI_BASE_URL": "https://api.nexus.test",
+    "CSP_EXTRA_CONNECT_ORIGINS": "https://acct.r2.nexus.test",
     "NEXT_PUBLIC_SUPABASE_URL": "https://ref.supabase.co",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "anon-key-value",
 }
