@@ -55,9 +55,10 @@ export default function AppNav() {
     });
   }, []);
 
+  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const activePane = useMemo(
-    () => getWorkspacePrimaryPanes(state).find((p) => p.id === state.activePrimaryPaneId) ?? null,
-    [state],
+    () => primaryPanes.find((p) => p.id === state.activePrimaryPaneId) ?? null,
+    [primaryPanes, state.activePrimaryPaneId],
   );
   const activePathname = activePane ? parseWorkspaceHref(activePane.href)?.pathname ?? "" : "";
 
@@ -120,7 +121,12 @@ export default function AppNav() {
   if (isMobile) {
     return (
       <>
-        <NavTopBar onOpenSheet={() => setSheetOpen(true)} onOpenCommand={openCommand} onOpenAdd={openAdd} />
+        <NavTopBar
+          onOpenSheet={() => setSheetOpen(true)}
+          onOpenCommand={openCommand}
+          onOpenAdd={openAdd}
+          paneCount={primaryPanes.length}
+        />
         <NavSheet
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}

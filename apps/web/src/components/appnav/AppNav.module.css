@@ -557,3 +557,31 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+.topBarCommandIcon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Open-tab count anchored to the command symbol, ringed against the bar. */
+.topBarCommandBadge {
+  position: absolute;
+  top: -7px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--ink-on-accent);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  pointer-events: none;
+}

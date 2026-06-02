@@ -1,25 +1,33 @@
 "use client";
 
 import { useRef } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
 
 export default function NavTopBar({
   onOpenSheet,
   onOpenCommand,
   onOpenAdd,
+  paneCount,
 }: {
   onOpenSheet: () => void;
   onOpenCommand: () => void;
   onOpenAdd: () => void;
+  paneCount: number;
 }) {
   const { hidden, paneChrome, acquireVisibleLock } = useMobileChrome();
   const navigation = paneChrome?.navigation;
   const options = paneChrome?.options ?? [];
   const releaseLockRef = useRef<(() => void) | null>(null);
+
+  const showPaneCount = paneCount > 0;
+  const commandLabel = showPaneCount
+    ? `Search or ask anything (${pluralize(paneCount, "open tab")})`
+    : "Search or ask anything";
 
   return (
     <header className={styles.topBar} data-hidden={hidden ? "true" : "false"}>
@@ -57,10 +65,17 @@ export default function NavTopBar({
         type="button"
         className={styles.topBarButton}
         onClick={onOpenCommand}
-        aria-label="Search or ask anything"
+        aria-label={commandLabel}
         aria-haspopup="dialog"
       >
-        <Search size={20} aria-hidden="true" />
+        <span className={styles.topBarCommandIcon}>
+          <Command size={20} aria-hidden="true" />
+          {showPaneCount ? (
+            <span className={styles.topBarCommandBadge} aria-hidden="true">
+              {paneCount}
+            </span>
+          ) : null}
+        </span>
       </button>
       <button
         type="button"
