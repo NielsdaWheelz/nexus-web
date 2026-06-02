@@ -121,4 +121,10 @@ e2e/playwright-report/
 
 # Lock files that shouldn't be edited manually
 # (uv.lock and bun.lock SHOULD be committed)
+# This is a Bun project: ignore stray lockfiles from other package managers so a
+# wrong `npm`/`pnpm`/`yarn` run can't reintroduce them (see commit 3162e528).
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
 .vercel
