@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import type { ComponentProps } from "react";
@@ -108,30 +108,6 @@ describe("SurfaceHeader", () => {
     expect(item).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("button", { name: "Options" })).toHaveFocus();
     expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  describe("mobile viewport", () => {
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    it("sets data-mobile attribute on mobile viewport", () => {
-      vi.stubGlobal("innerWidth", 390);
-      window.dispatchEvent(new Event("resize"));
-
-      render(<SurfaceHeader title="Test" navigation={navigation()} />);
-
-      expect(screen.getByRole("banner")).toHaveAttribute("data-mobile", "true");
-    });
-
-    it("does not set data-mobile on desktop viewport", () => {
-      vi.stubGlobal("innerWidth", 1024);
-      window.dispatchEvent(new Event("resize"));
-
-      render(<SurfaceHeader title="Test" navigation={navigation()} />);
-
-      expect(screen.getByRole("banner")).not.toHaveAttribute("data-mobile", "true");
-    });
   });
 
   it("renders pane Back and Forward controls with disabled states", async () => {

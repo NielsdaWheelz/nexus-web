@@ -1192,6 +1192,8 @@ function WorkspaceHost() {
   );
 }
 
-// Memoized (no props) so the lifted MobileChromeProvider re-rendering on scroll
-// or pane-chrome publish never cascades back into the pane tree.
-export default memo(WorkspaceHost);
+// Not memo()'d: MobileChromeProvider owns the volatile chrome state and receives
+// this whole subtree as stable `children`, so its scroll/publish re-renders never
+// reconcile through here — only its context consumers (AppNav, PaneShell) re-render.
+// Wrapping a zero-prop component in memo() would also turn rerender() into a no-op.
+export default WorkspaceHost;

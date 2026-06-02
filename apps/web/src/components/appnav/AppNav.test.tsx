@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import AppNav from "./AppNav";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
@@ -42,9 +42,6 @@ describe("AppNav (desktop rail)", () => {
   beforeEach(() => {
     localStorage.clear();
     mockWorkspaceStore.navigatePane.mockClear();
-  });
-  afterEach(() => {
-    document.body.innerHTML = "";
   });
 
   it("renders grouped destinations and marks the active one with aria-current", () => {
