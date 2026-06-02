@@ -174,13 +174,15 @@ Key Vercel values:
 
 ```bash
 FASTAPI_BASE_URL=https://api.example.com
+R2_S3_API_ORIGIN=https://<cloudflare-account-id>.r2.cloudflarestorage.com
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 NEXUS_INTERNAL_SECRET=<same value as VPS>
 ```
 
-`NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase database or
-storage service-role keys to Vercel.
+`R2_S3_API_ORIGIN` is a public shared origin used by backend signing and
+frontend CSP. `NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase
+database, storage service-role keys, R2 credentials, or bucket names to Vercel.
 
 Current frontend values should use:
 
@@ -253,7 +255,8 @@ curl https://api.nexus.nielseriknandal.com/health
 Before switching production traffic:
 
 1. Provision Hetzner and DNS.
-2. Create the production R2 bucket, access keys, and browser CORS policy.
+2. Create the production R2 bucket, shared S3 API origin, access keys, and
+   browser CORS policy.
    Apply the CORS policy as code with
    `CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... R2_BUCKET=... ./deploy/cloudflare/apply-r2-cors.sh`.
 3. Stop or disable old backend writers and workers before starting the Hetzner

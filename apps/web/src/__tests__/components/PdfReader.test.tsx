@@ -326,6 +326,73 @@ describe("PdfReader selection chat destinations", () => {
     });
   });
 
+  it("keeps captured PDF selection actions usable after transient selection collapse", async () => {
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(110, 140, 160, 20),
+    );
+    vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
+      rectList([new DOMRect(110, 140, 160, 20)]),
+    );
+
+    render(<PdfReader mediaId="media-1" />);
+
+    const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
+    await waitFor(() => {
+      expect(textLayer.textContent).toContain("selected quote");
+    });
+
+    const textNode = pdfRuntimeState.textNode;
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.setStart(textNode!, "Alpha ".length);
+    range.setEnd(textNode!, "Alpha selected quote".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const colorButton = await screen.findByRole("button", {
+      name: "Highlight color",
+    });
+    selection?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+
+    expect(
+      screen.getByRole("dialog", { name: "Selection actions" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(colorButton);
+    fireEvent.click(await screen.findByRole("button", { name: "Green" }));
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(apiFetch).mock.calls.some(
+          ([path, init]) =>
+            path === "/api/media/media-1/pdf-highlights" &&
+            init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    const postCall = vi
+      .mocked(apiFetch)
+      .mock.calls.find(
+        ([path, init]) =>
+          path === "/api/media/media-1/pdf-highlights" &&
+          init?.method === "POST",
+      );
+    expect(postCall).toBeDefined();
+    const postBody = JSON.parse(String(postCall![1]!.body)) as {
+      page_number: number;
+      color: string;
+      exact: string;
+    };
+    expect(postBody).toMatchObject({
+      page_number: 1,
+      color: "green",
+      exact: "selected quote",
+    });
+  });
+
   it("publishes the widest rendered page width", async () => {
     pdfRuntimeState.numPages = 2;
     pdfRuntimeState.pageWidths = [600, 735.4];

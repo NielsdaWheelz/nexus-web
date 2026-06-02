@@ -19,6 +19,19 @@ function paletteListbox(root: Page | Locator): Locator {
   return root.getByRole("listbox");
 }
 
+function keyboardShortcutsSettingsOption(root: Page | Locator): Locator {
+  return paletteListbox(root).getByRole("option", {
+    name: /^Keyboard Shortcuts Settings\b/,
+  });
+}
+
+async function expectKeyboardShortcutsPage(page: Page): Promise<void> {
+  await expect(page).toHaveURL(/\/settings\/keybindings$/);
+  await expect(
+    page.getByRole("button", { name: "Reset to defaults" }),
+  ).toBeVisible({ timeout: 15_000 });
+}
+
 // Seeds the workspace with a second open pane (/search → "Search") on top of
 // the visited route, so the palette's open-tabs section contains a Search row.
 function workspaceWithSearchPane(): WorkspaceState {
@@ -50,9 +63,7 @@ test.describe("command palette", () => {
     // Querying exposes commands as a listbox of options.
     const listbox = paletteListbox(dialog);
     await expect(listbox.getByRole("option").first()).toBeVisible();
-    const keybindingsOption = listbox.getByRole("option", {
-      name: /^Keyboard Shortcuts\b/,
-    });
+    const keybindingsOption = keyboardShortcutsSettingsOption(dialog);
     await expect(keybindingsOption).toBeVisible();
 
     // Drive the active option onto the Keyboard Shortcuts row, then Enter runs it.
@@ -67,9 +78,7 @@ test.describe("command palette", () => {
 
     // Enter executes the active command: the palette closes and the target opens.
     await expect(dialog).toBeHidden();
-    await expect(
-      page.getByRole("heading", { name: "Keyboard Shortcuts" }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expectKeyboardShortcutsPage(page);
   });
 
   test("desktop: inline close button removes the open-tab row without dismissing the palette", async ({
@@ -123,16 +132,12 @@ test.describe("command palette mobile", () => {
     await input.fill("keyboard shortcuts");
 
     // Tapping a result option executes it: the palette closes and the target opens.
-    const keybindingsOption = paletteListbox(dialog).getByRole("option", {
-      name: /^Keyboard Shortcuts\b/,
-    });
+    const keybindingsOption = keyboardShortcutsSettingsOption(dialog);
     await expect(keybindingsOption).toBeVisible();
     await keybindingsOption.tap();
 
     await expect(dialog).toBeHidden();
-    await expect(
-      page.getByRole("heading", { name: "Keyboard Shortcuts" }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expectKeyboardShortcutsPage(page);
   });
 
   test("mobile: tapping the inline close button removes the open-tab row without dismissing the palette", async ({

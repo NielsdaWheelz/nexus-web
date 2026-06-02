@@ -101,12 +101,9 @@ describe("buildContentSecurityPolicy", () => {
 describe("getConnectOriginsFromEnv", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("returns FastAPI + extra origins (origin-only, deduped)", () => {
+  it("returns FastAPI + R2 origins", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
-    vi.stubEnv(
-      "CSP_EXTRA_CONNECT_ORIGINS",
-      "https://acc.r2.cloudflarestorage.com, https://api.example.com",
-    );
+    vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
     expect(getConnectOriginsFromEnv()).toEqual([
       "https://api.example.com",
       "https://acc.r2.cloudflarestorage.com",
@@ -115,42 +112,43 @@ describe("getConnectOriginsFromEnv", () => {
 
   it("skips entries with a path/query outside production", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com/v1");
-    vi.stubEnv("CSP_EXTRA_CONNECT_ORIGINS", "");
+    vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com/path");
     expect(getConnectOriginsFromEnv()).toEqual([]);
   });
 
   it("allows http localhost", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "http://localhost:8000");
+    vi.stubEnv("R2_S3_API_ORIGIN", "http://127.0.0.1:9000");
     expect(getConnectOriginsFromEnv()).toContain("http://localhost:8000");
+    expect(getConnectOriginsFromEnv()).toContain("http://127.0.0.1:9000");
   });
 
   it("throws in production when FASTAPI_BASE_URL is missing", () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "");
-    vi.stubEnv(
-      "CSP_EXTRA_CONNECT_ORIGINS",
-      "https://acc.r2.cloudflarestorage.com",
-    );
+    vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
     expect(() => getConnectOriginsFromEnv()).toThrow(/FASTAPI_BASE_URL/);
   });
 
-  it("throws in production when CSP_EXTRA_CONNECT_ORIGINS is missing", () => {
-    vi.stubEnv("NODE_ENV", "production");
+  it("throws in production when R2_S3_API_ORIGIN is missing", () => {
+    vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
-    vi.stubEnv("CSP_EXTRA_CONNECT_ORIGINS", "");
-    expect(() => getConnectOriginsFromEnv()).toThrow(
-      /CSP_EXTRA_CONNECT_ORIGINS/,
-    );
+    vi.stubEnv("R2_S3_API_ORIGIN", "");
+    expect(() => getConnectOriginsFromEnv()).toThrow(/R2_S3_API_ORIGIN/);
   });
 
   it("throws in production on a non-HTTPS, non-localhost origin", () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "http://api.example.com");
-    vi.stubEnv(
-      "CSP_EXTRA_CONNECT_ORIGINS",
-      "https://acc.r2.cloudflarestorage.com",
-    );
+    vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
     expect(() => getConnectOriginsFromEnv()).toThrow(/FASTAPI_BASE_URL/);
+  });
+
+  it("throws in production when R2_S3_API_ORIGIN is not the Cloudflare R2 origin", () => {
+    vi.stubEnv("NEXUS_ENV", "prod");
+    vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
+    vi.stubEnv("R2_S3_API_ORIGIN", "https://storage.example.com");
+    expect(() => getConnectOriginsFromEnv()).toThrow(/R2_S3_API_ORIGIN/);
   });
 });
 
@@ -163,7 +161,7 @@ describe("shouldDisableCspForE2E", () => {
   });
 
   it("is false in production even when E2E_DISABLE_CSP=1", () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("E2E_DISABLE_CSP", "1");
     expect(shouldDisableCspForE2E()).toBe(false);
   });

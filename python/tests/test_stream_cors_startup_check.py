@@ -28,7 +28,7 @@ _BASE_ENV = {
 _DEPLOY_ENV = {
     "NEXUS_INTERNAL_SECRET": "internal-secret",
     "BILLING_ENABLED": "false",
-    "R2_ENDPOINT_URL": "https://abc123.r2.cloudflarestorage.com",
+    "R2_S3_API_ORIGIN": "https://abc123.r2.cloudflarestorage.com",
     "R2_ACCESS_KEY_ID": "r2-access",
     "R2_SECRET_ACCESS_KEY": "r2-secret",
     "R2_BUCKET": "media",

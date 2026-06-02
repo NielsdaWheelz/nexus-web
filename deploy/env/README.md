@@ -3,7 +3,8 @@
 The tracked `*.example` files define the env contract. The untracked files next
 to them hold real values:
 
-- `env-prod`: shared values used by frontend and backend/runtime
+- `env-prod`: shared values used by frontend and backend/runtime, including
+  public deployment coordinates such as `R2_S3_API_ORIGIN`
 - `env-prod-frontend`: Vercel-only values
 - `env-prod-backend`: FastAPI/Caddy values
 - `env-prod-worker`: worker-only values
@@ -43,7 +44,8 @@ for that bounded sync.
 Cutover checks before syncing env:
 
 - `POSTGRES_PASSWORD` is set and backed up in the password manager.
-- R2 bucket, access key, endpoint, and browser upload CORS policy are created.
+- R2 bucket, backend access key, shared S3 API origin, and browser upload CORS
+  policy are created.
 - Supabase Auth callback URLs point only at the production app origins.
 - `NEXUS_INTERNAL_SECRET` matches between Vercel and the VPS.
 - Old backend writers and workers are stopped before the Hetzner worker starts.

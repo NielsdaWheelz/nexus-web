@@ -8,7 +8,7 @@ from nexus.config import Settings
 pytestmark = pytest.mark.unit
 
 _REQUIRED_R2_SETTINGS = {
-    "R2_ENDPOINT_URL": "https://abc123.r2.cloudflarestorage.com",
+    "R2_S3_API_ORIGIN": "https://abc123.r2.cloudflarestorage.com",
     "R2_ACCESS_KEY_ID": "r2-access",
     "R2_SECRET_ACCESS_KEY": "r2-secret",
     "R2_BUCKET": "media",
@@ -297,7 +297,7 @@ class TestR2StorageConfiguration:
     @pytest.mark.parametrize("env", ["staging", "prod"])
     @pytest.mark.parametrize(
         "setting_name",
-        ["R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
+        ["R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
     )
     def test_staging_and_prod_require_r2_settings(self, env: str, setting_name: str):
         values = {
@@ -314,7 +314,7 @@ class TestR2StorageConfiguration:
     def test_staging_and_prod_accept_complete_r2_settings(self, env: str):
         settings = _make_deploy_settings(NEXUS_ENV=env)
 
-        assert settings.r2_endpoint_url == "https://abc123.r2.cloudflarestorage.com"
+        assert settings.r2_s3_api_origin == "https://abc123.r2.cloudflarestorage.com"
         assert settings.r2_access_key_id == "r2-access"
         assert settings.r2_secret_access_key == "r2-secret"
         assert settings.r2_bucket == "media"
@@ -350,9 +350,17 @@ class TestR2StorageConfiguration:
             "https://abc123.r2.cloudflarestorage.com/#fragment",
         ],
     )
-    def test_staging_and_prod_reject_invalid_r2_endpoint(self, env: str, endpoint: str):
-        with pytest.raises(ValidationError, match="Cloudflare R2 S3 API endpoint"):
-            _make_deploy_settings(NEXUS_ENV=env, R2_ENDPOINT_URL=endpoint)
+    def test_staging_and_prod_reject_invalid_r2_s3_api_origin(self, env: str, endpoint: str):
+        with pytest.raises(ValidationError, match="Cloudflare R2 S3 API origin"):
+            _make_deploy_settings(NEXUS_ENV=env, R2_S3_API_ORIGIN=endpoint)
+
+    def test_rejects_removed_r2_endpoint_url_env(self):
+        with pytest.raises(ValidationError, match="R2_ENDPOINT_URL"):
+            _make_settings(R2_ENDPOINT_URL="https://abc123.r2.cloudflarestorage.com")
+
+    def test_rejects_removed_csp_extra_connect_origins_env(self):
+        with pytest.raises(ValidationError, match="CSP_EXTRA_CONNECT_ORIGINS"):
+            _make_settings(CSP_EXTRA_CONNECT_ORIGINS="https://abc123.r2.cloudflarestorage.com")
 
 
 class TestSupabaseServiceRoleConfiguration:

@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import func, null
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import Media, MediaKind, ReaderMediaState, ReaderProfile
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch, ReaderResumeState
@@ -21,6 +21,46 @@ DEFAULT_COLUMN_WIDTH_CH = 65
 DEFAULT_FOCUS_MODE = "off"
 DEFAULT_HYPHENATION = "auto"
 READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
+_VISIBLE_MEDIA_IDS_CTE_SQL = visible_media_ids_cte_sql().strip()
+_UPSERT_READER_MEDIA_STATE_SQL = text(f"""
+WITH visible_media AS (
+    {_VISIBLE_MEDIA_IDS_CTE_SQL}
+),
+upserted AS (
+    INSERT INTO reader_media_state (user_id, media_id, locator)
+    SELECT :viewer_id, :media_id, CAST(:locator AS jsonb)
+    WHERE EXISTS (
+        SELECT 1 FROM visible_media WHERE media_id = :media_id
+    )
+    ON CONFLICT (user_id, media_id)
+    DO UPDATE SET
+        locator = EXCLUDED.locator,
+        updated_at = now()
+    RETURNING 1
+)
+SELECT
+    EXISTS (SELECT 1 FROM visible_media WHERE media_id = :media_id) AS visible,
+    EXISTS (SELECT 1 FROM upserted) AS written
+""").bindparams(bindparam("locator", type_=JSONB))
+
+_CLEAR_READER_MEDIA_STATE_SQL = text(f"""
+WITH visible_media AS (
+    {_VISIBLE_MEDIA_IDS_CTE_SQL}
+),
+updated AS (
+    UPDATE reader_media_state
+    SET locator = NULL, updated_at = now()
+    WHERE user_id = :viewer_id
+      AND media_id = :media_id
+      AND EXISTS (
+          SELECT 1 FROM visible_media WHERE media_id = :media_id
+      )
+    RETURNING 1
+)
+SELECT
+    EXISTS (SELECT 1 FROM visible_media WHERE media_id = :media_id) AS visible,
+    EXISTS (SELECT 1 FROM updated) AS written
+""")
 
 
 def _expected_reader_state_kind(media_kind: str) -> str | None:
@@ -168,45 +208,32 @@ def put_reader_media_state(
         _validate_reader_state_for_media(media.kind, locator)
 
     locator_payload = locator.model_dump(mode="json") if locator else None
-    state = (
-        db.query(ReaderMediaState)
-        .filter(
-            ReaderMediaState.user_id == viewer_id,
-            ReaderMediaState.media_id == media_id,
-        )
-        .first()
-    )
 
     if locator_payload is None:
-        if state is None:
-            return None
-        state.locator = null()
-        state.updated_at = func.now()
+        result = (
+            db.execute(
+                _CLEAR_READER_MEDIA_STATE_SQL,
+                {"viewer_id": viewer_id, "media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+        if not result["visible"]:
+            db.rollback()
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         db.commit()
         return None
 
-    if state is None:
-        state = ReaderMediaState(
-            user_id=viewer_id,
-            media_id=media_id,
-            locator=locator_payload,
+    result = (
+        db.execute(
+            _UPSERT_READER_MEDIA_STATE_SQL,
+            {"viewer_id": viewer_id, "media_id": media_id, "locator": locator_payload},
         )
-        db.add(state)
-        try:
-            db.commit()
-            return locator
-        except IntegrityError:
-            db.rollback()
-            state = (
-                db.query(ReaderMediaState)
-                .filter(
-                    ReaderMediaState.user_id == viewer_id,
-                    ReaderMediaState.media_id == media_id,
-                )
-                .one()
-            )
-
-    state.locator = locator_payload
-    state.updated_at = func.now()
+        .mappings()
+        .one()
+    )
+    if not result["visible"]:
+        db.rollback()
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     db.commit()
     return locator

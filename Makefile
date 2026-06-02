@@ -34,7 +34,7 @@ DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT
 DATABASE_URL_TEST ?= postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/nexus_test
 DATABASE_URL_TEST_MIGRATIONS ?= postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/nexus_test_migrations
 
-R2_ENDPOINT_URL ?= http://127.0.0.1:$(MINIO_PORT)
+R2_S3_API_ORIGIN ?= http://127.0.0.1:$(MINIO_PORT)
 R2_ACCESS_KEY_ID ?= nexus-local-access-key
 R2_SECRET_ACCESS_KEY ?= nexus-local-secret-key
 R2_BUCKET ?= media
@@ -158,7 +158,7 @@ dev:
 			echo "DATABASE_URL_TEST=postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/nexus_test"; \
 			echo "DATABASE_URL_TEST_MIGRATIONS=postgresql+psycopg://postgres:postgres@localhost:$(POSTGRES_PORT)/nexus_test_migrations"; \
 			echo "MINIO_PORT=$(MINIO_PORT)"; \
-			echo "R2_ENDPOINT_URL=http://127.0.0.1:$(MINIO_PORT)"; \
+			echo "R2_S3_API_ORIGIN=http://127.0.0.1:$(MINIO_PORT)"; \
 			echo "R2_ACCESS_KEY_ID=$(R2_ACCESS_KEY_ID)"; \
 			echo "R2_SECRET_ACCESS_KEY=$(R2_SECRET_ACCESS_KEY)"; \
 			echo "R2_BUCKET=$(R2_BUCKET)"; \

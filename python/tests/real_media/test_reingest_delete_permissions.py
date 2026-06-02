@@ -6,7 +6,6 @@ from uuid import UUID
 
 import pytest
 
-from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.factories import create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (
@@ -21,6 +20,7 @@ from tests.real_media.conftest import (
     capture_nasa_water_article,
     ensure_real_media_prerequisites,
     grant_ai_plus,
+    ingest_web_article_fixture_with_dedupe_resolution,
     register_background_job_cleanup,
     register_media_cleanup,
     write_trace,
@@ -59,15 +59,12 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     media_id = UUID(create_response.json()["data"]["media_id"])
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    with direct_db.session() as session:
-        first_ingest_result = run_web_article_ingest_sync(
-            session,
-            media_id,
-            user_id,
-            "real-media-web-url-initial-fixture",
-        )
-        session.commit()
-    assert first_ingest_result["status"] == "success", first_ingest_result
+    media_id, first_ingest_result = ingest_web_article_fixture_with_dedupe_resolution(
+        direct_db,
+        media_id,
+        user_id,
+        "real-media-web-url-initial-fixture",
+    )
 
     media_trace = assert_media_ready(auth_client, headers, media_id)
     first_evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "web_article", "web")
@@ -76,6 +73,8 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     refresh_response = auth_client.post(f"/media/{media_id}/refresh", headers=headers)
     assert refresh_response.status_code == 202, refresh_response.text
     assert refresh_response.json()["data"]["refresh_enqueued"] is True, refresh_response.json()
+    from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
+
     with direct_db.session() as session:
         result = run_web_article_ingest_sync(
             session,

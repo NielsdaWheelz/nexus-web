@@ -1516,7 +1516,7 @@ def main() -> None:
         os.environ.pop(key, None)
     missing_r2 = [
         key
-        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
         if not os.environ.get(key)
     ]
     if missing_r2:

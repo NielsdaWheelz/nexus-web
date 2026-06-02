@@ -402,13 +402,13 @@ def _ensure_real_media_prerequisites() -> None:
         )
     missing_r2 = [
         key
-        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
         if not os.environ.get(key)
     ]
     if missing_r2:
         raise RuntimeError(f"Cloudflare R2 storage env is required: {', '.join(missing_r2)}")
     if settings.nexus_env.value == "local" and os.environ.get(NON_LOCAL_STORAGE_OPT_IN) != "1":
-        endpoint_url = settings.r2_endpoint_url or os.environ.get("R2_ENDPOINT_URL") or ""
+        endpoint_url = settings.r2_s3_api_origin or os.environ.get("R2_S3_API_ORIGIN") or ""
         if not _is_local_storage_endpoint(endpoint_url):
             raise RuntimeError(
                 "Refusing local real-media seeding against non-local R2/MinIO endpoint "

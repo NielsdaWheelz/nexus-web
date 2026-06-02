@@ -44,13 +44,13 @@ def ensure_real_media_prerequisites() -> None:
         pytest.fail(f"REAL_MEDIA_FIXTURE_DIR does not exist: {fixture_dir}")
     missing_r2 = [
         key
-        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
         if not os.environ.get(key)
     ]
     if missing_r2:
         pytest.fail(f"Cloudflare R2 storage env is required: {', '.join(missing_r2)}")
     if settings.nexus_env.value == "local" and os.environ.get(NON_LOCAL_STORAGE_OPT_IN) != "1":
-        endpoint_url = settings.r2_endpoint_url or os.environ.get("R2_ENDPOINT_URL") or ""
+        endpoint_url = settings.r2_s3_api_origin or os.environ.get("R2_S3_API_ORIGIN") or ""
         if not _is_local_storage_endpoint(endpoint_url):
             pytest.fail(
                 "Refusing local real-media tests against non-local R2/MinIO endpoint "
@@ -126,6 +126,81 @@ def capture_nasa_water_article(
     return media_id
 
 
+def ingest_web_article_fixture_with_dedupe_resolution(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+    user_id: UUID,
+    request_id: str,
+) -> tuple[UUID, dict]:
+    """Run the NASA web fixture ingest and resolve valid production dedupe.
+
+    Web article canonical URLs are globally unique. If another test-owned row
+    already owns the NASA fixture URL, production ingest attaches that canonical
+    winner to the requesting user's default library and deletes the provisional
+    loser. The real-media tests should exercise that contract instead of
+    assuming a pristine database.
+    """
+    from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
+
+    with direct_db.session() as session:
+        result = run_web_article_ingest_sync(
+            session,
+            media_id,
+            user_id,
+            request_id,
+        )
+        session.commit()
+    status = result.get("status")
+    if status == "success":
+        return media_id, result
+    if status != "deduped":
+        raise AssertionError(f"URL article fixture ingest failed: {result}")
+
+    canonical_url = result.get("canonical_url")
+    if not isinstance(canonical_url, str) or not canonical_url:
+        raise AssertionError(f"URL article fixture dedupe missing canonical URL: {result}")
+
+    with direct_db.session() as session:
+        winner_id = session.execute(
+            text(
+                """
+                SELECT m.id
+                FROM libraries dl
+                JOIN default_library_intrinsics dli
+                  ON dli.default_library_id = dl.id
+                JOIN library_entries le
+                  ON le.library_id = dl.id
+                 AND le.media_id = dli.media_id
+                JOIN media m
+                  ON m.id = dli.media_id
+                JOIN media_content_index_states mcis
+                  ON mcis.media_id = m.id
+                WHERE dl.owner_user_id = :user_id
+                  AND dl.is_default = true
+                  AND m.kind = 'web_article'
+                  AND m.canonical_url = :canonical_url
+                  AND m.processing_status = 'ready_for_reading'
+                  AND mcis.status = 'ready'
+                ORDER BY m.created_at ASC
+                LIMIT 1
+                """
+            ),
+            {"user_id": user_id, "canonical_url": canonical_url},
+        ).scalar_one_or_none()
+    if winner_id is None:
+        raise AssertionError(
+            f"URL article fixture deduped without an indexed default-library winner: {result}"
+        )
+
+    resolved_media_id = UUID(str(winner_id))
+    register_media_cleanup(direct_db, resolved_media_id)
+    register_background_job_cleanup(direct_db, resolved_media_id)
+    return resolved_media_id, {
+        **result,
+        "deduped_media_id": str(resolved_media_id),
+    }
+
+
 def create_nasa_captioned_video(
     auth_client,
     direct_db: DirectSessionManager,
@@ -164,7 +239,7 @@ def create_nasa_captioned_video(
         assert result.get("reason") == "already_ready", result
         with direct_db.session() as session:
             result["segment_count"] = session.execute(
-                text("SELECT count(*) FROM transcript_segments WHERE media_id = :media_id"),
+                text("SELECT count(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
                 {"media_id": media_id},
             ).scalar_one()
     else:

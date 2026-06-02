@@ -128,9 +128,7 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
 }
 
 function isProduction(): boolean {
-  return (
-    process.env.NODE_ENV === "production" || process.env.NEXUS_ENV === "prod"
-  );
+  return process.env.NEXUS_ENV === "prod";
 }
 
 /**
@@ -159,8 +157,8 @@ function parseConnectOrigin(value: string): string | null {
 
 /**
  * External browser-connect origins from frontend env: the `FASTAPI_BASE_URL` origin plus
- * comma-separated, origin-only `CSP_EXTRA_CONNECT_ORIGINS` (presigned storage, and any
- * stream origin distinct from FastAPI). Throws in production if either is unset/invalid —
+ * the shared `R2_S3_API_ORIGIN` origin for presigned storage. Throws in production if
+ * either is unset/invalid —
  * a misconfiguration is a hard error, never a silent `connect-src 'self'` fallback.
  */
 export function getConnectOriginsFromEnv(): readonly string[] {
@@ -181,22 +179,25 @@ export function getConnectOriginsFromEnv(): readonly string[] {
     );
   }
 
-  const extra = process.env.CSP_EXTRA_CONNECT_ORIGINS?.trim();
-  if (extra) {
-    for (const part of extra.split(",")) {
-      const candidate = part.trim();
-      if (!candidate) continue;
-      const origin = parseConnectOrigin(candidate);
-      if (origin) origins.add(origin);
-      else if (isProduction()) {
+  const r2S3ApiOrigin = process.env.R2_S3_API_ORIGIN?.trim();
+  if (r2S3ApiOrigin) {
+    const origin = parseConnectOrigin(r2S3ApiOrigin);
+    if (origin) {
+      const hostname = new URL(origin).hostname;
+      if (isProduction() && !hostname.endsWith(".r2.cloudflarestorage.com")) {
         throw new Error(
-          `Invalid CSP_EXTRA_CONNECT_ORIGINS entry for connect-src: ${candidate}`,
+          `Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`,
         );
       }
+      origins.add(origin);
+    } else if (isProduction()) {
+      throw new Error(
+        `Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`,
+      );
     }
   } else if (isProduction()) {
     throw new Error(
-      "CSP_EXTRA_CONNECT_ORIGINS is required in production (presigned storage origin)",
+      "R2_S3_API_ORIGIN is required in production for CSP connect-src",
     );
   }
 

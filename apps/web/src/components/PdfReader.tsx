@@ -1020,12 +1020,12 @@ export default function PdfReader({
   );
 
   const resetSelectionState = useCallback(
-    (keepVisibleMobileSelection = false) => {
+    (keepVisibleCapturedSelection = false) => {
       clearPendingMobileSelectionPublish();
       if (
-        keepVisibleMobileSelection &&
-        isMobileRef.current &&
-        selectionVisibleRef.current
+        keepVisibleCapturedSelection &&
+        selectionVisibleRef.current &&
+        selectionSnapshotRef.current
       ) {
         return;
       }

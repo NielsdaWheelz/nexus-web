@@ -18,7 +18,7 @@ NEXUS_INTERNAL_SECRET
 AUTH_ALLOWED_REDIRECT_ORIGINS
 STREAM_CORS_ORIGINS
 FASTAPI_BASE_URL
-CSP_EXTRA_CONNECT_ORIGINS
+R2_S3_API_ORIGIN
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 "
@@ -36,6 +36,7 @@ R2_ENDPOINT_URL
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 R2_BUCKET
+CSP_EXTRA_CONNECT_ORIGINS
 SUPABASE_DATABASE_URL
 SUPABASE_AUTH_ADMIN_KEY
 SUPABASE_SERVICE_KEY
@@ -123,6 +124,32 @@ require_prod_env() {
   [ "$value" = "prod" ] || die "NEXUS_ENV must be prod for Vercel production sync"
 }
 
+require_cloudflare_r2_s3_api_origin() {
+  local file="$1"
+  local value
+
+  value="$(normalize_env_value "$(env_value "R2_S3_API_ORIGIN" "$file" || true)")"
+  R2_S3_API_ORIGIN="$value" python3 - <<'PY' || die "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin"
+import os
+import sys
+from urllib.parse import urlparse
+
+origin = os.environ["R2_S3_API_ORIGIN"]
+parsed = urlparse(origin)
+host = parsed.hostname or ""
+if (
+    parsed.scheme != "https"
+    or parsed.username
+    or parsed.password
+    or parsed.path not in ("", "/")
+    or parsed.query
+    or parsed.fragment
+    or not host.endswith(".r2.cloudflarestorage.com")
+):
+    sys.exit(1)
+PY
+}
+
 reject_backend_runtime_keys() {
   local file="$1"
   local key value
@@ -175,6 +202,7 @@ verify_pulled_vercel_env() {
 }
 
 command -v vercel >/dev/null 2>&1 || die "vercel CLI is not installed"
+command -v python3 >/dev/null 2>&1 || die "python3 is not installed locally"
 for file in "$SHARED_ENV" "$FRONTEND_ENV"; do
   [ -f "$file" ] || die "missing env file: $file"
 done
@@ -195,6 +223,7 @@ fi
 
 require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
+require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_backend_runtime_keys "$tmp_file"
 
 cd "$VERCEL_PROJECT_DIR"

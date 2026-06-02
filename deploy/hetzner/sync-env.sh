@@ -30,7 +30,7 @@ DATABASE_URL
 POSTGRES_USER
 POSTGRES_DB
 POSTGRES_PASSWORD
-R2_ENDPOINT_URL
+R2_S3_API_ORIGIN
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 R2_BUCKET
@@ -181,18 +181,18 @@ PY
   [ "$db_url_name" = "$db_name" ] || die "DATABASE_URL database name must match POSTGRES_DB"
 }
 
-require_cloudflare_r2_endpoint() {
+require_cloudflare_r2_s3_api_origin() {
   local file="$1"
   local value
 
-  value="$(normalize_env_value "$(env_value "R2_ENDPOINT_URL" "$file" || true)")"
-  R2_ENDPOINT_URL="$value" python3 - <<'PY' || die "R2_ENDPOINT_URL must be the Cloudflare R2 S3 API endpoint"
+  value="$(normalize_env_value "$(env_value "R2_S3_API_ORIGIN" "$file" || true)")"
+  R2_S3_API_ORIGIN="$value" python3 - <<'PY' || die "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin"
 import os
 import sys
 from urllib.parse import urlparse
 
-endpoint = os.environ["R2_ENDPOINT_URL"]
-parsed = urlparse(endpoint)
+origin = os.environ["R2_S3_API_ORIGIN"]
+parsed = urlparse(origin)
 host = parsed.hostname or ""
 if (
     parsed.scheme != "https"
@@ -211,7 +211,7 @@ reject_legacy_runtime_keys() {
   local file="$1"
   local key value
 
-  for key in SUPABASE_DATABASE_URL SUPABASE_AUTH_ADMIN_KEY SUPABASE_SERVICE_KEY SUPABASE_SERVICE_ROLE_KEY SERVICE_ROLE_KEY STORAGE_PROVIDER STORAGE_BUCKET; do
+  for key in R2_ENDPOINT_URL CSP_EXTRA_CONNECT_ORIGINS SUPABASE_DATABASE_URL SUPABASE_AUTH_ADMIN_KEY SUPABASE_SERVICE_KEY SUPABASE_SERVICE_ROLE_KEY SERVICE_ROLE_KEY STORAGE_PROVIDER STORAGE_BUCKET; do
     if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
       die "${key} must not be present in production runtime env after the R2/Hetzner Postgres cutover"
     fi
@@ -272,7 +272,7 @@ fi
 require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_local_database_url "$tmp_file"
-require_cloudflare_r2_endpoint "$tmp_file"
+require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
 require_safe_worker_defaults "$tmp_file"
 

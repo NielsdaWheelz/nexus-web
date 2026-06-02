@@ -30,7 +30,7 @@ _REQUIRED_ENV = {
     "AUTH_ALLOWED_REDIRECT_ORIGINS": "https://app.nexus.test",
     "STREAM_CORS_ORIGINS": "https://app.nexus.test",
     "FASTAPI_BASE_URL": "https://api.nexus.test",
-    "CSP_EXTRA_CONNECT_ORIGINS": "https://acct.r2.nexus.test",
+    "R2_S3_API_ORIGIN": "https://acct.r2.cloudflarestorage.com",
     "NEXT_PUBLIC_SUPABASE_URL": "https://ref.supabase.co",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "anon-key-value",
 }
@@ -110,3 +110,44 @@ def test_sync_env_passes_validation_when_all_required_values_are_present(
     result = _run_sync_env(shared_env, frontend_env, fake_bin_dir)
 
     assert "missing or empty" not in result.stderr
+
+
+def test_sync_env_rejects_invalid_r2_s3_api_origin(tmp_path: Path):
+    """The shared public R2 origin must be Cloudflare's origin-only S3 API URL."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_vercel_cli(fake_bin_dir)
+
+    shared = dict(_REQUIRED_ENV)
+    shared["R2_S3_API_ORIGIN"] = "https://storage.nexus.test/path"
+    shared_env = tmp_path / "env-prod"
+    frontend_env = tmp_path / "env-prod-frontend"
+    _write_env(shared_env, shared)
+    frontend_env.write_text("")
+
+    result = _run_sync_env(shared_env, frontend_env, fake_bin_dir)
+
+    assert result.returncode != 0, result.stdout
+    assert "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin" in result.stderr
+    assert "vercel CLI must not run" not in result.stderr
+
+
+@pytest.mark.parametrize("removed_key", ["R2_ENDPOINT_URL", "CSP_EXTRA_CONNECT_ORIGINS"])
+def test_sync_env_rejects_removed_storage_origin_keys(tmp_path: Path, removed_key: str):
+    """Removed storage-origin env names cannot be present in the Vercel env set."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_vercel_cli(fake_bin_dir)
+
+    shared = dict(_REQUIRED_ENV)
+    shared[removed_key] = "https://acct.r2.cloudflarestorage.com"
+    shared_env = tmp_path / "env-prod"
+    frontend_env = tmp_path / "env-prod-frontend"
+    _write_env(shared_env, shared)
+    frontend_env.write_text("")
+
+    result = _run_sync_env(shared_env, frontend_env, fake_bin_dir)
+
+    assert result.returncode != 0, result.stdout
+    assert f"{removed_key} must not be present" in result.stderr
+    assert "vercel CLI must not run" not in result.stderr

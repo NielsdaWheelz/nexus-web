@@ -132,11 +132,23 @@ class Settings(BaseSettings):
     )
 
     # Cloudflare R2 object storage settings.
-    r2_endpoint_url: str | None = Field(default=None, alias="R2_ENDPOINT_URL")
+    r2_s3_api_origin: str | None = Field(default=None, alias="R2_S3_API_ORIGIN")
     r2_access_key_id: str | None = Field(default=None, alias="R2_ACCESS_KEY_ID")
     r2_secret_access_key: str | None = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
     r2_bucket: str | None = Field(default=None, alias="R2_BUCKET")
     r2_region: str = Field(default="auto", alias="R2_REGION")
+    r2_endpoint_url_rejected: str | None = Field(
+        default=None,
+        alias="R2_ENDPOINT_URL",
+        exclude=True,
+        repr=False,
+    )
+    csp_extra_connect_origins_rejected: str | None = Field(
+        default=None,
+        alias="CSP_EXTRA_CONNECT_ORIGINS",
+        exclude=True,
+        repr=False,
+    )
 
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
@@ -439,6 +451,24 @@ class Settings(BaseSettings):
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
 
+        rejected_storage_origin_settings = [
+            alias
+            for alias, value in (
+                ("R2_ENDPOINT_URL", self.r2_endpoint_url_rejected),
+                (
+                    "CSP_EXTRA_CONNECT_ORIGINS",
+                    self.csp_extra_connect_origins_rejected,
+                ),
+            )
+            if value
+        ]
+        if rejected_storage_origin_settings:
+            raise ValueError(
+                "Removed storage-origin env settings are not supported: "
+                f"{', '.join(rejected_storage_origin_settings)}. "
+                "Use R2_S3_API_ORIGIN."
+            )
+
         if self.database_pool_size < 1:
             raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
         if self.database_max_overflow < 0:
@@ -459,8 +489,8 @@ class Settings(BaseSettings):
                     f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
                 )
             missing_r2 = []
-            if not self.r2_endpoint_url:
-                missing_r2.append("R2_ENDPOINT_URL")
+            if not self.r2_s3_api_origin:
+                missing_r2.append("R2_S3_API_ORIGIN")
             if not self.r2_access_key_id:
                 missing_r2.append("R2_ACCESS_KEY_ID")
             if not self.r2_secret_access_key:
@@ -472,19 +502,19 @@ class Settings(BaseSettings):
                     "Cloudflare R2 storage settings are required in staging/prod: "
                     f"{', '.join(missing_r2)}"
                 )
-            parsed_r2_endpoint = urlparse(self.r2_endpoint_url or "")
-            r2_host = parsed_r2_endpoint.hostname or ""
+            parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
+            r2_host = parsed_r2_origin.hostname or ""
             if (
-                parsed_r2_endpoint.scheme != "https"
-                or parsed_r2_endpoint.username
-                or parsed_r2_endpoint.password
-                or parsed_r2_endpoint.path not in ("", "/")
-                or parsed_r2_endpoint.query
-                or parsed_r2_endpoint.fragment
+                parsed_r2_origin.scheme != "https"
+                or parsed_r2_origin.username
+                or parsed_r2_origin.password
+                or parsed_r2_origin.path not in ("", "/")
+                or parsed_r2_origin.query
+                or parsed_r2_origin.fragment
                 or not r2_host.endswith(".r2.cloudflarestorage.com")
             ):
                 raise ValueError(
-                    "R2_ENDPOINT_URL must be the Cloudflare R2 S3 API endpoint for staging/prod."
+                    "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
                 )
 
         for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():

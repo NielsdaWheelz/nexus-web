@@ -3,8 +3,8 @@ import type {
   MouseEvent,
   PointerEvent,
   RefObject,
-  UIEvent,
 } from "react";
+import { useEffect, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import styles from "./page.module.css";
 
@@ -25,6 +25,12 @@ type TextDocumentContentState =
       status: "ready";
       renderedHtml: string;
     };
+
+export interface DocumentScrollSnapshot {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+}
 
 export default function TextDocumentReader({
   mediaId,
@@ -49,12 +55,34 @@ export default function TextDocumentReader({
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
-  onDocumentScroll: (event: UIEvent<HTMLDivElement>) => void;
+  onDocumentScroll: (snapshot: DocumentScrollSnapshot) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const onDocumentScrollRef = useRef(onDocumentScroll);
+  onDocumentScrollRef.current = onDocumentScroll;
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const publishScroll = () => {
+      onDocumentScrollRef.current({
+        scrollTop: viewport.scrollTop,
+        scrollHeight: viewport.scrollHeight,
+        clientHeight: viewport.clientHeight,
+      });
+    };
+
+    viewport.addEventListener("scroll", publishScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", publishScroll);
+  }, []);
+
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
     if (onInternalLinkClick) {
       const target = event.target;
@@ -76,10 +104,10 @@ export default function TextDocumentReader({
   return (
     <div className={styles.readerFrame}>
       <div
+        ref={viewportRef}
         className={styles.documentViewport}
         data-testid="document-viewport"
         data-pane-content="true"
-        onScroll={onDocumentScroll}
       >
         <div
           ref={readerRootRef}

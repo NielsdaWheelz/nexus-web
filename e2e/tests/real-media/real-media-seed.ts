@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -149,10 +149,13 @@ export async function uploadFreshRealMediaFileThroughUi({
   expect(createHash("sha256").update(fixtureBytes).digest("hex")).toBe(
     expectedSha256,
   );
-  const uploadBytes = artifactSalt
+  const uploadSalt = artifactSalt
+    ? `${artifactSalt}:${process.pid}:${Date.now()}:${randomUUID()}`
+    : null;
+  const uploadBytes = uploadSalt
     ? Buffer.concat([
         fixtureBytes,
-        Buffer.from(`\n% nexus-real-media-e2e:${artifactSalt}\n`, "utf-8"),
+        Buffer.from(`\n% nexus-real-media-e2e:${uploadSalt}\n`, "utf-8"),
       ])
     : fixtureBytes;
   const artifactSha256 = createHash("sha256").update(uploadBytes).digest("hex");
@@ -668,16 +671,16 @@ function assertRealMediaStorageIsLocal() {
   if (process.env[NON_LOCAL_STORAGE_OPT_IN] === "1") {
     return;
   }
-  const endpointUrl = process.env.R2_ENDPOINT_URL;
+  const endpointUrl = process.env.R2_S3_API_ORIGIN;
   if (!endpointUrl) {
-    throw new Error("R2_ENDPOINT_URL is required for real-media E2E tests.");
+    throw new Error("R2_S3_API_ORIGIN is required for real-media E2E tests.");
   }
   let host = "";
   try {
     host = new URL(endpointUrl).hostname;
   } catch (error) {
     throw new Error(
-      `R2_ENDPOINT_URL is not a valid URL: ${
+      `R2_S3_API_ORIGIN is not a valid URL: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -926,18 +929,20 @@ export async function createPdfHighlightThroughVisibleSelection(
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
   await highlightActions.getByRole("button", { name: "Highlight color" }).click();
-  const [createdHighlightResponse] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        response.url().includes(`/api/media/${mediaId}/pdf-highlights`),
-    ),
-    page
-      .getByRole("dialog", { name: "Highlight color" })
-      .getByRole("button", { name: /^Yellow/ })
-      .first()
-      .click(),
-  ]);
+  const highlightColorDialog = page.getByRole("dialog", {
+    name: "Highlight color",
+  });
+  await expect(highlightColorDialog).toBeVisible({ timeout: 5_000 });
+  const createdHighlightResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes(`/api/media/${mediaId}/pdf-highlights`),
+  );
+  await highlightColorDialog
+    .getByRole("button", { name: /^Green/ })
+    .first()
+    .click();
+  const createdHighlightResponse = await createdHighlightResponsePromise;
   const createdHighlightBody = await createdHighlightResponse.text();
   expect(
     createdHighlightResponse.ok(),
@@ -975,7 +980,7 @@ export async function createPdfHighlightThroughVisibleSelection(
     selected_text: selectedText,
     container_selector: textLayerSelector,
     action_selector:
-      'dialog[aria-label="selection actions"] button[aria-label^="Yellow"]',
+      'dialog[aria-label="Highlight color"] button[aria-label^="Green"]',
     request_url: createdHighlightResponse.url(),
   };
 }

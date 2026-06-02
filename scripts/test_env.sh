@@ -343,7 +343,7 @@ test_env_export_r2_env() {
         exit 1
     fi
 
-    export R2_ENDPOINT_URL="http://127.0.0.1:${MINIO_PORT}"
+    export R2_S3_API_ORIGIN="http://127.0.0.1:${MINIO_PORT}"
     export R2_ACCESS_KEY_ID="nexus-test-access-key"
     export R2_SECRET_ACCESS_KEY="nexus-test-secret-key"
     export R2_BUCKET="media"

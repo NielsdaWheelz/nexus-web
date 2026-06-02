@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { signOutViaAccountMenu } from "./app-nav";
 
 /**
  * Password authentication E2E coverage for docs/password-auth.md.
@@ -216,8 +217,7 @@ test.describe("password auth", () => {
       await expect(page).toHaveURL(/\/libraries/);
 
       // Sign out via the account menu.
-      await page.getByRole("button", { name: "Account" }).click();
-      await page.getByRole("menuitem", { name: /sign out/i }).click();
+      await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
       // Sign back in with the same credentials.
@@ -263,8 +263,7 @@ test.describe("password auth", () => {
       await expect(dialog).toBeHidden();
 
       // Sign out.
-      await page.getByRole("button", { name: "Account" }).click();
-      await page.getByRole("menuitem", { name: /sign out/i }).click();
+      await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
       // Old password is rejected with the whitelisted message.
@@ -323,8 +322,7 @@ test.describe("password auth", () => {
       });
 
       // Sign out.
-      await page.getByRole("button", { name: "Account" }).click();
-      await page.getByRole("menuitem", { name: /sign out/i }).click();
+      await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
       // Old email is rejected.
@@ -401,8 +399,7 @@ test.describe("password auth", () => {
       await expect(page).toHaveURL(/\/libraries/);
 
       // Sign out.
-      await page.getByRole("button", { name: "Account" }).click();
-      await page.getByRole("menuitem", { name: /sign out/i }).click();
+      await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
       // Wrong password is rejected with the exact whitelisted constant.

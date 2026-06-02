@@ -362,29 +362,19 @@ describe("middleware CSP", () => {
     ).toBeNull();
   });
 
-  it("never throws when CSP connect-origins env is missing in production (fail-open, logged)", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.stubEnv("NODE_ENV", "production");
+  it("throws when CSP connect-origins env is missing in production", async () => {
+    vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "");
-    vi.stubEnv("CSP_EXTRA_CONNECT_ORIGINS", "");
+    vi.stubEnv("R2_S3_API_ORIGIN", "");
     try {
       const { middleware } = await import("@/middleware");
-      const response = middleware(
-        new NextRequest("http://localhost:3000/libraries", {
-          headers: { cookie: activeCookie() },
-        })
-      );
-
-      // The site stays up: a response is produced with no dynamic CSP, and the misconfig
-      // is logged loudly — never a MIDDLEWARE_INVOCATION_FAILED 500 on every route.
-      expect(response.headers.get("location")).toBeNull();
-      expect(response.headers.get("Content-Security-Policy")).toBeNull();
-      expect(error).toHaveBeenCalledWith(
-        "csp_connect_origins_misconfigured",
-        expect.objectContaining({
-          message: expect.stringContaining("FASTAPI_BASE_URL"),
-        })
-      );
+      expect(() =>
+        middleware(
+          new NextRequest("http://localhost:3000/libraries", {
+            headers: { cookie: activeCookie() },
+          })
+        )
+      ).toThrow(/FASTAPI_BASE_URL/);
     } finally {
       vi.unstubAllEnvs();
     }

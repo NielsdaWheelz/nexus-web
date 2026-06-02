@@ -13,6 +13,7 @@ import {
   useCallback,
   useRef,
   useMemo,
+  type UIEvent,
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
@@ -129,7 +130,9 @@ import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
-import TextDocumentReader from "./TextDocumentReader";
+import TextDocumentReader, {
+  type DocumentScrollSnapshot,
+} from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import TranscriptStatePanel from "./TranscriptStatePanel";
@@ -3604,14 +3607,21 @@ export default function MediaPaneBody({
   );
 
   const handleDocumentScroll = useCallback(
-    (event: React.UIEvent<HTMLDivElement>) => {
-      paneMobileChrome?.onDocumentScroll({
+    (snapshot: DocumentScrollSnapshot) => {
+      paneMobileChrome?.onDocumentScroll(snapshot);
+    },
+    [paneMobileChrome],
+  );
+
+  const handleDocumentScrollEvent = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      handleDocumentScroll({
         scrollTop: event.currentTarget.scrollTop,
         scrollHeight: event.currentTarget.scrollHeight,
         clientHeight: event.currentTarget.clientHeight,
       });
     },
-    [paneMobileChrome],
+    [handleDocumentScroll],
   );
 
   const handleOpenFullChat = useCallback(
@@ -4839,7 +4849,7 @@ export default function MediaPaneBody({
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
-                onScroll={handleDocumentScroll}
+                onScroll={handleDocumentScrollEvent}
               >
                 <div className={styles.transcriptPane}>
                   <TranscriptPlaybackPanel

@@ -1087,6 +1087,61 @@ describe("WorkspaceStoreProvider", () => {
     expect(sessionCalls).toEqual(["GET"]);
   });
 
+  it("captures pane changes after the workspace restore phase is armed", async () => {
+    window.history.replaceState({}, "", "/libraries");
+    const savedStates: WorkspaceState[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { state: WorkspaceState };
+        savedStates.push(body.state);
+        return jsonResponse({ data: null });
+      }
+      if (url.pathname === "/api/me/workspace-session") {
+        return jsonResponse({
+          data: {
+            own: {
+              state: workspaceState({
+                activePrimaryPaneId: "pane-libraries",
+                primaryPanes: [pane("pane-libraries", "/libraries")],
+              }),
+            },
+            most_recent_elsewhere: null,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    });
+
+    let store: WorkspaceStore | null = null;
+    render(
+      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
+      </WorkspaceStoreProvider>,
+    );
+    const workspace = () => {
+      if (!store) {
+        throw new Error("Workspace store has not mounted yet");
+      }
+      return store;
+    };
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(1);
+    });
+
+    act(() => {
+      workspace().openPane({ href: "/libraries/library-1" });
+    });
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+    });
+    flushWorkspaceSession();
+
+    expect(savedStates.at(-1)?.primaryPaneOrder).toHaveLength(2);
+  });
+
   it("projects the active pane href to the address bar via replaceState, never pushState", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
     const pushStateSpy = vi.spyOn(window.history, "pushState");

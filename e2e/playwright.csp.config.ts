@@ -23,10 +23,8 @@ const API_PORT = process.env.API_PORT ?? "8000";
 const MINIO_PORT = process.env.MINIO_PORT ?? "9000";
 
 // Presigned-storage origin the browser fetches directly (upload PUT, PDF.js download).
-// Derived from the same R2_ENDPOINT_URL the backend signs against; the CSP connect-src
-// must include it (set via CSP_EXTRA_CONNECT_ORIGINS on the web server below).
-const STORAGE_ORIGIN = process.env.R2_ENDPOINT_URL
-  ? new URL(process.env.R2_ENDPOINT_URL).origin
+const STORAGE_ORIGIN = process.env.R2_S3_API_ORIGIN
+  ? new URL(process.env.R2_S3_API_ORIGIN).origin
   : `http://127.0.0.1:${MINIO_PORT}`;
 
 const SUPABASE_URL =
@@ -89,7 +87,7 @@ export default defineConfig({
         NEXUS_INTERNAL_SECRET:
           process.env.NEXUS_INTERNAL_SECRET ?? "test-internal-secret",
         E2E_DISABLE_CSP: "0",
-        CSP_EXTRA_CONNECT_ORIGINS: STORAGE_ORIGIN,
+        R2_S3_API_ORIGIN: STORAGE_ORIGIN,
       },
     },
     {

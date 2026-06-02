@@ -5,6 +5,7 @@ import {
   runGitHubProviderRoundTrip,
 } from "./provider-roundtrip";
 import { bootstrapMagicLinkSession } from "./auth-bootstrap";
+import { signOutViaAccountMenu } from "./app-nav";
 
 test.describe("authentication", () => {
   test("authenticated user lands in the app", async ({ page }) => {
@@ -35,10 +36,7 @@ test.describe("authentication", () => {
     try {
       await bootstrapMagicLinkSession(page, context.request);
       await page.goto("/libraries");
-      await page.getByRole("button", { name: "Account" }).click();
-      const signOutBtn = page.getByRole("menuitem", { name: /sign out|log out/i });
-      await expect(signOutBtn).toBeVisible();
-      await signOutBtn.click();
+      await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
       await expect(
         page.getByRole("button", { name: /continue with google/i })

@@ -17,7 +17,6 @@ DATABASE_POOL_TIMEOUT_SECONDS=30
 # Cloudflare R2. No Supabase Storage fallback exists after cutover.
 R2_ACCESS_KEY_ID=<r2-access-key-id>
 R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
-R2_ENDPOINT_URL=https://<cloudflare-account-id>.r2.cloudflarestorage.com
 R2_BUCKET=media
 # R2_REGION=auto
 

@@ -411,24 +411,24 @@ class TestGetStorageClient:
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
     def test_test_env_without_r2_fails_closed(self, monkeypatch):
-        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
             monkeypatch.setenv(key, "")
         monkeypatch.setenv("NEXUS_ENV", "test")
 
-        with pytest.raises(StorageError, match="R2_ENDPOINT_URL"):
+        with pytest.raises(StorageError, match="R2_S3_API_ORIGIN"):
             get_storage_client()
 
     def test_local_without_r2_fails_closed(self, monkeypatch):
-        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
             monkeypatch.setenv(key, "")
         monkeypatch.setenv("NEXUS_ENV", "local")
 
-        with pytest.raises(StorageError, match="R2_ENDPOINT_URL"):
+        with pytest.raises(StorageError, match="R2_S3_API_ORIGIN"):
             get_storage_client()
 
     def test_partial_r2_env_fails_closed(self, monkeypatch):
         monkeypatch.setenv("NEXUS_ENV", "local")
-        monkeypatch.setenv("R2_ENDPOINT_URL", "https://r2.test")
+        monkeypatch.setenv("R2_S3_API_ORIGIN", "https://r2.test")
         monkeypatch.setenv("R2_ACCESS_KEY_ID", "access")
         monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "")
         monkeypatch.setenv("R2_BUCKET", "")
@@ -444,7 +444,7 @@ class TestGetStorageClient:
             return RecordingS3Client()
 
         monkeypatch.setenv("NEXUS_ENV", "test")
-        monkeypatch.setenv("R2_ENDPOINT_URL", "https://abc123.r2.cloudflarestorage.com")
+        monkeypatch.setenv("R2_S3_API_ORIGIN", "https://abc123.r2.cloudflarestorage.com")
         monkeypatch.setenv("R2_ACCESS_KEY_ID", "access")
         monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
         monkeypatch.setenv("R2_BUCKET", "media")

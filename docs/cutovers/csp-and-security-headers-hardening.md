@@ -7,9 +7,7 @@ no back-compat) · Created: 2026-06-01
 > Implementation note (2026-06-01): all §12 files landed. Verified locally: `test:unit`
 > 34/34 (incl. CSP-Evaluator no-HIGH gate), eslint clean, Playwright collects all CSP
 > specs, `actionlint` clean, `bash -n`/`make -n` clean. Not yet run: the full
-> stack-backed `make test-csp` (CI `test-e2e-csp`) and a clean-tree `make build` — local
-> `tsc`/`build` is blocked only by a pre-existing foreign-`pnpm` `prosemirror-model@1.25.7`
-> copy in `node_modules` (not in `bun.lock`; unrelated to this work).
+> stack-backed `make test-csp` (CI `test-e2e-csp`) and a clean-tree `make build`.
 >
 > Review note (2026-06-01, post-implementation): a multi-agent review found and fixed a
 > **critical nonce-propagation defect** — the CSP was set only on the *response*, but Next
@@ -20,7 +18,7 @@ no back-compat) · Created: 2026-06-01
 > seeding would crash; `make api` → `make api-e2e`); `/api/csp-report` gained `runtime`/
 > `dynamic` exports + a pre-buffer body cap + assertion-free parsing; YouTube embed origins
 > centralized to `lib/security/youtube.ts` (was duplicated across csp.ts/headers.ts/the embed
-> component); `CSP_EXTRA_CONNECT_ORIGINS`/`E2E_DISABLE_CSP` added to `.env.example`. Deferred
+> component); `R2_S3_API_ORIGIN`/`E2E_DISABLE_CSP` added to `.env.example`. Deferred
 > (documented, not defects): `style-src` elem/attr split, dropping `img-src data:`, an
 > SSE-open e2e assertion, the oracle `images.remotePatterns` gap (pre-existing, non-CSP).
 
@@ -159,13 +157,12 @@ Runtime facts that constrain the policy (derived from code, not guessed):
    This eliminates the Firefox warning. The CSP E2E gate is Chromium-only, so Android WebView
    and Safari/WebKit smoke checks remain release verification.
 3. **`connect-src 'self' {CONNECT_ORIGINS}`**, where `{CONNECT_ORIGINS}` includes the origin
-   of `process.env.FASTAPI_BASE_URL` plus an origin-only frontend env
-   (`CSP_EXTRA_CONNECT_ORIGINS`, comma-separated) for presigned storage and any stream origin
-   that differs from FastAPI. Required for SSE and signed storage. Current deploys keep
-   `STREAM_BASE_URL` on the same origin as `FASTAPI_BASE_URL`; if they diverge, add the stream
-   origin to `CSP_EXTRA_CONNECT_ORIGINS` and `connect-src` must list both. Missing/malformed
-   `FASTAPI_BASE_URL` or required extra origins in production is a configuration error, not a
-   silent `connect-src 'self'` fallback.
+   of `process.env.FASTAPI_BASE_URL` plus the shared origin-only `R2_S3_API_ORIGIN` for
+   presigned storage. Required for SSE and signed storage. Current deploys keep
+   `STREAM_BASE_URL` on the same origin as `FASTAPI_BASE_URL`; if they diverge, add a
+   dedicated named stream-origin env contract and `connect-src` must list both.
+   Missing/malformed `FASTAPI_BASE_URL` or `R2_S3_API_ORIGIN` in production is a
+   configuration error, not a silent `connect-src 'self'` fallback.
 4. **`media-src 'self' https:`.** Podcast enclosures are unbounded third-party HTTPS origins;
    `https:` is a domain-driven functional requirement, not a fallback. `'self'` covers dev
    `http://localhost` and any same-origin media.
@@ -281,9 +278,8 @@ export interface CspBuildOptions {
 export function buildContentSecurityPolicy(opts: CspBuildOptions): string;
 
 /** External browser-connect origins from frontend env. Throws in production if FASTAPI_BASE_URL
- *  or CSP_EXTRA_CONNECT_ORIGINS are unset/invalid. The extra-origin env is comma-separated,
- *  origin-only, non-secret config for presigned storage and any stream origin distinct from
- *  FASTAPI_BASE_URL. */
+ *  or R2_S3_API_ORIGIN are unset/invalid. R2_S3_API_ORIGIN is origin-only, non-secret
+ *  shared config for presigned storage. */
 export function getConnectOriginsFromEnv(): readonly string[];
 
 /** Test-only CSP bypass; returns false in production even if E2E_DISABLE_CSP=1. */
@@ -413,10 +409,10 @@ enabled for app copy actions. Features the app and embed do not use are explicit
   must allow; the CSP smoke test must actually open chat/media/oracle direct streams, not only
   visit pages.
 - **R2/S3 signed storage:** browser direct upload and PDF.js signed-download fetches require
-  the storage endpoint origin in `connect-src`. Configure that with
-  `CSP_EXTRA_CONNECT_ORIGINS` as an origin-only value; keep backend storage env names and
-  credentials out of Vercel. The CSP smoke test must exercise one upload and one PDF open, or
-  assert the configured storage origin through focused unit coverage. Addressing is path-style
+  the storage endpoint origin in `connect-src`. Configure that with shared
+  `R2_S3_API_ORIGIN` as an origin-only value; keep R2 credentials and bucket names out of
+  Vercel. The CSP smoke test must exercise one upload and one PDF open, or assert the
+  configured storage origin through focused unit coverage. Addressing is path-style
   (`storage/client.py:120`), so this is a single origin
   (`https://<account>.r2.cloudflarestorage.com`), not per-bucket subdomains; PDF.js range/GET
   fetches run in its same-origin worker, which inherits the document `connect-src`.
@@ -468,13 +464,13 @@ enabled for app copy actions. Features the app and embed do not use are explicit
   assertion; policy-content assertions live in `csp.test.ts`.
 - `apps/web/package.json` — add `csp_evaluator` devDependency.
 - `apps/web/bun.lock` — lock the `csp_evaluator` dependency.
-- `deploy/env/env-prod-frontend.example` — add `CSP_EXTRA_CONNECT_ORIGINS` with the
-  presigned-storage origin(s) and any non-FastAPI stream origin.
-- `deploy/vercel/sync-env.sh` — require/allow `CSP_EXTRA_CONNECT_ORIGINS` while keeping
-  backend R2/S3 env names forbidden.
+- `deploy/env/env-prod.example` — add shared `R2_S3_API_ORIGIN` with the presigned-storage
+  origin.
+- `deploy/vercel/sync-env.sh` — require/allow `R2_S3_API_ORIGIN` while keeping R2
+  credentials and bucket names forbidden.
 - `e2e/playwright.csp.config.ts` — either restrict `chromium-csp` to `*.csp.spec.ts` or leave
-  filtering to the root Makefile target; set `CSP_EXTRA_CONNECT_ORIGINS` in its `webServer`
-  env to the test storage origin (local MinIO/S3) so the upload/PDF smoke passes under the
+  filtering to the root Makefile target; set `R2_S3_API_ORIGIN` in its `webServer` env to
+  the test storage origin (local MinIO/S3) so the upload/PDF smoke passes under the
   enforced `connect-src`.
 - `.github/workflows/ci.yml` — add `test-e2e-csp` job (depends on `test-front`).
 - `Makefile` — add `test-csp` target (wraps the existing CSP Playwright profile with
@@ -489,9 +485,8 @@ enabled for app copy actions. Features the app and embed do not use are explicit
 1. Add `lib/security/{csp,headers}.ts` + `csp.test.ts`; wire `middleware.ts` and
    `next.config.ts`; delete inlined policy + `X-Frame-Options` after production cannot disable
    CSP. (Single PR.)
-2. Add `CSP_EXTRA_CONNECT_ORIGINS` to the frontend env example and Vercel sync allowlist;
-   populate it in production with the presigned-storage origin(s), plus a stream origin only
-   if it differs from `FASTAPI_BASE_URL`.
+2. Add `R2_S3_API_ORIGIN` to the shared env example and Vercel sync allowlist; populate it
+   in production with the presigned-storage origin.
 3. Add `/api/csp-report/route.ts`.
 4. Add the `security-headers.csp.spec.ts` smoke test; add the `test-csp` Makefile target and
    the `test-e2e-csp` CI job; add the `csp_evaluator` assertion.
@@ -500,7 +495,7 @@ enabled for app copy actions. Features the app and embed do not use are explicit
    - Ensure `make test-csp` runs only CSP specs, e.g.
      `cd e2e && bun run test:csp -- tests/*.csp.spec.ts --project=chromium-csp`, unless the
      CSP config itself gets `testMatch`.
-   - Set `CSP_EXTRA_CONNECT_ORIGINS` in the CSP test env to the local storage origin so the
+   - Set `R2_S3_API_ORIGIN` in the CSP test env to the local storage origin so the
      upload + PDF smoke can fetch signed URLs under enforced `connect-src` (the parser allows
      localhost HTTP in test mode).
 5. **Local bring-up validation:** run `make test-csp`. The smoke test runs against the
@@ -518,9 +513,9 @@ enabled for app copy actions. Features the app and embed do not use are explicit
       nonce and the resolved `connect-src` origins); contains `default-src`, `connect-src`,
       `img-src`, `media-src`, `manifest-src`, `base-uri 'none'`, `report-to csp`, and
       `report-uri /api/csp-report`.
-- [ ] Production frontend env includes `CSP_EXTRA_CONNECT_ORIGINS` with origin-only
-      presigned-storage origin(s); parser rejects paths, queries, fragments, duplicates, and
-      non-HTTPS origins outside localhost/test mode.
+- [ ] Production shared env includes `R2_S3_API_ORIGIN` with the origin-only
+      presigned-storage origin; parser rejects paths, queries, fragments, and non-HTTPS
+      origins outside localhost/test mode.
 - [ ] `script-src` contains `'nonce-…'` and `'strict-dynamic'` and **no** `'self'`,
       `'unsafe-inline'`, or host/scheme source; `'unsafe-eval'` present only when `isDev`.
 - [ ] `Reporting-Endpoints: csp="…/api/csp-report"` present on document responses.
@@ -577,6 +572,6 @@ enabled for app copy actions. Features the app and embed do not use are explicit
 | `next.config.ts` cannot import from `./src/lib/security/headers` | low | Next 15 TS-config supports relative TS imports; if not, the only fallback is to inline the array in config while keeping CSP in the module (verify in step 1) |
 | `connect-src` wrong if `STREAM_BASE_URL` ≠ `FASTAPI_BASE_URL` origin | low | Direct SSE smoke test fails loudly; list both origins if they diverge |
 | `connect-src` misses presigned storage origin | med | upload + PDF signed-download smoke test gates merge; storage origins are explicit config |
-| Upload/PDF smoke fails because the test storage origin isn't in `connect-src` | med | set `CSP_EXTRA_CONNECT_ORIGINS` in the CSP test env to the local MinIO/S3 origin (parser allows localhost HTTP in test mode) |
-| Backend storage env leaks into frontend config | low | expose only derived `CSP_EXTRA_CONNECT_ORIGINS`; keep R2/S3 backend env names forbidden in Vercel sync |
+| Upload/PDF smoke fails because the test storage origin isn't in `connect-src` | med | set `R2_S3_API_ORIGIN` in the CSP test env to the local MinIO/S3 origin (parser allows localhost HTTP in test mode) |
+| Backend storage env leaks into frontend config | low | expose only shared public `R2_S3_API_ORIGIN`; keep R2 credentials and bucket names forbidden in Vercel sync |
 | HSTS preload is confused with normal HSTS | med | no preload change in this cutover; document as separate opt-in ops work |

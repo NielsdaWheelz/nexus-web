@@ -237,7 +237,7 @@ class StorageClient(StorageClientBase):
 
 def get_storage_client() -> StorageClientBase:
     settings = get_settings()
-    endpoint_url = settings.r2_endpoint_url
+    endpoint_url = settings.r2_s3_api_origin
     access_key_id = settings.r2_access_key_id
     secret_access_key = settings.r2_secret_access_key
     bucket = settings.r2_bucket
@@ -246,7 +246,7 @@ def get_storage_client() -> StorageClientBase:
     resolved: dict[str, str] = {}
     missing: list[str] = []
     for key, value in (
-        ("R2_ENDPOINT_URL", endpoint_url),
+        ("R2_S3_API_ORIGIN", endpoint_url),
         ("R2_ACCESS_KEY_ID", access_key_id),
         ("R2_SECRET_ACCESS_KEY", secret_access_key),
         ("R2_BUCKET", bucket),
@@ -259,7 +259,7 @@ def get_storage_client() -> StorageClientBase:
         raise StorageError(f"Missing R2 storage settings: {', '.join(missing)}")
 
     return StorageClient(
-        endpoint_url=resolved["R2_ENDPOINT_URL"],
+        endpoint_url=resolved["R2_S3_API_ORIGIN"],
         access_key_id=resolved["R2_ACCESS_KEY_ID"],
         secret_access_key=resolved["R2_SECRET_ACCESS_KEY"],
         bucket=resolved["R2_BUCKET"],

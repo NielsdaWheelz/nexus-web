@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 
 from nexus.storage.client import get_storage_client
-from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (
     assert_complete_evidence_trace,
@@ -24,6 +23,7 @@ from tests.real_media.conftest import (
     create_nasa_captioned_video,
     create_nasa_podcast_episode,
     ensure_real_media_prerequisites,
+    ingest_web_article_fixture_with_dedupe_resolution,
     register_background_job_cleanup,
     register_media_cleanup,
     upload_file_media,
@@ -274,15 +274,12 @@ def test_real_url_web_article_indexes_through_provider_boundary(
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
 
-    with direct_db.session() as session:
-        result = run_web_article_ingest_sync(
-            session,
-            media_id,
-            user_id,
-            "real-media-web-url-fixture",
-        )
-        session.commit()
-    assert result["status"] == "success", result
+    media_id, result = ingest_web_article_fixture_with_dedupe_resolution(
+        direct_db,
+        media_id,
+        user_id,
+        "real-media-web-url-fixture",
+    )
 
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "web_article", "web")

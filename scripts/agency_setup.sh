@@ -227,7 +227,7 @@ DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_P
 DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test_migrations"
 
 # Local MinIO values use the same R2-compatible storage interface as production.
-R2_ENDPOINT_URL="http://127.0.0.1:${MINIO_PORT}"
+R2_S3_API_ORIGIN="http://127.0.0.1:${MINIO_PORT}"
 
 # Derived Supabase auth settings
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
@@ -293,7 +293,7 @@ STREAM_BASE_URL=${STREAM_BASE_URL}
 STREAM_CORS_ORIGINS=${STREAM_CORS_ORIGINS}
 
 # R2-compatible object storage (MinIO in local development)
-R2_ENDPOINT_URL=${R2_ENDPOINT_URL}
+R2_S3_API_ORIGIN=${R2_S3_API_ORIGIN}
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
 R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
 R2_BUCKET=${R2_BUCKET}

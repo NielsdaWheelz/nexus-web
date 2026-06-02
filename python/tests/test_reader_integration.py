@@ -3,8 +3,10 @@
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import event, text
 
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
+from nexus.services import reader as reader_service
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -467,6 +469,83 @@ class TestReaderState:
 
         assert get_resp.status_code == 200
         assert get_resp.json()["data"] is None
+
+    def test_put_reader_state_does_not_stale_update_when_existing_row_is_deleted(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        set_resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+        assert set_resp.status_code == 200
+
+        replacement_payload = {
+            **payload,
+            "locations": {**payload["locations"], "text_offset": 99, "position": 4},
+        }
+        replacement = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
+            replacement_payload
+        )
+
+        with direct_db.session() as session:
+            deleted_before_flush = False
+
+            def delete_existing_row_before_orm_flush(
+                _orm_session,
+                _flush_context,
+                _instances,
+            ):
+                nonlocal deleted_before_flush
+                if deleted_before_flush:
+                    return
+                deleted_before_flush = True
+                with direct_db.session() as cleanup_session:
+                    cleanup_session.execute(
+                        text("""
+                            DELETE FROM reader_media_state
+                            WHERE user_id = :user_id AND media_id = :media_id
+                        """),
+                        {"user_id": user_id, "media_id": media_id},
+                    )
+                    cleanup_session.commit()
+
+            event.listen(session, "before_flush", delete_existing_row_before_orm_flush)
+            try:
+                result = reader_service.put_reader_media_state(
+                    session,
+                    user_id,
+                    media_id,
+                    replacement,
+                )
+            finally:
+                event.remove(session, "before_flush", delete_existing_row_before_orm_flush)
+
+        assert result == replacement
+        with direct_db.session() as session:
+            stored = session.execute(
+                text("""
+                    SELECT locator
+                    FROM reader_media_state
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+
+        assert stored == replacement_payload
 
     def test_put_reader_state_rejects_missing_body_without_clearing(
         self, auth_client, direct_db: DirectSessionManager

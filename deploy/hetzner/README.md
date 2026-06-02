@@ -51,7 +51,8 @@ Fill in the real values:
 
 - Supabase Auth issuer, JWKS, and audiences, not Supabase DB or Storage secrets.
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` for the VPS Postgres.
-- Cloudflare R2 bucket, endpoint, access keys, and browser upload CORS policy.
+- Cloudflare R2 bucket, shared S3 API origin, backend access keys, and browser
+  upload CORS policy.
 
 Then upload the merged backend runtime env:
 
@@ -70,6 +71,7 @@ Important matching Vercel env vars:
 
 ```bash
 FASTAPI_BASE_URL=https://api.example.com
+R2_S3_API_ORIGIN=https://<cloudflare-account-id>.r2.cloudflarestorage.com
 NEXUS_INTERNAL_SECRET=<same value as /etc/nexus/nexus.env>
 ```
 

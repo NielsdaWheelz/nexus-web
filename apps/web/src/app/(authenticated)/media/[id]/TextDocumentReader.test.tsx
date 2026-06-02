@@ -86,6 +86,24 @@ describe("TextDocumentReader", () => {
     expect(onContentPointerOver).toHaveBeenCalledTimes(1);
   });
 
+  it("publishes document viewport scroll snapshots", () => {
+    const { onDocumentScroll } = renderReader();
+    const viewport = screen.getByTestId("document-viewport");
+    Object.defineProperties(viewport, {
+      scrollTop: { value: 120, configurable: true },
+      scrollHeight: { value: 1_000, configurable: true },
+      clientHeight: { value: 400, configurable: true },
+    });
+
+    fireEvent.scroll(viewport);
+
+    expect(onDocumentScroll).toHaveBeenCalledWith({
+      scrollTop: 120,
+      scrollHeight: 1_000,
+      clientHeight: 400,
+    });
+  });
+
   it("centers the fixed-measure text column inside a wider reader viewport", () => {
     render(
       <div style={{ width: "900px", height: "500px", display: "flex" }}>

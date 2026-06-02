@@ -21,3 +21,8 @@ NEXUS_INTERNAL_SECRET=<generate-a-long-random-secret>
 AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-vercel-app.example.com
 STREAM_CORS_ORIGINS=https://your-vercel-app.example.com
 NEXUS_EXTENSION_REDIRECT_ORIGINS=
+
+# Public R2 S3 API origin. Shared because the backend signs presigned URLs
+# against this origin and the frontend CSP must allow browsers to connect to it.
+# Credentials and bucket names stay backend-only.
+R2_S3_API_ORIGIN=https://<cloudflare-account-id>.r2.cloudflarestorage.com

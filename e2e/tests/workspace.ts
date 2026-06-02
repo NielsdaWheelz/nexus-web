@@ -15,7 +15,6 @@ type WorkspacePaneVisibility = "visible" | "minimized";
 export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
-const DEVICE_ID_WINDOW_NAME_PREFIX = "nexus:e2e:workspace-device:";
 const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
   back: ["/browse"],
@@ -122,28 +121,25 @@ export function singlePaneWorkspaceState(
 // the test controls. Runs as an init script, i.e. before any page load.
 export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
   await page.addInitScript(
-    ([key, prefix]) => {
+    ([key, id]) => {
       try {
-        if (window.name.startsWith(prefix)) {
-          localStorage.setItem(key, window.name.slice(prefix.length));
-        }
+        localStorage.setItem(key, id);
       } catch {
         /* private mode / quota - ignored */
       }
     },
-    [INSTALLATION_ID_STORAGE_KEY, DEVICE_ID_WINDOW_NAME_PREFIX],
+    [INSTALLATION_ID_STORAGE_KEY, deviceId],
   );
   try {
     await page.evaluate(
-      ([key, id, prefix]) => {
-        window.name = `${prefix}${id}`;
+      ([key, id]) => {
         try {
           localStorage.setItem(key, id);
         } catch {
           /* private mode / quota - ignored */
         }
       },
-      [INSTALLATION_ID_STORAGE_KEY, deviceId, DEVICE_ID_WINDOW_NAME_PREFIX],
+      [INSTALLATION_ID_STORAGE_KEY, deviceId],
     );
   } catch {
     // about:blank and early cross-origin documents may not expose localStorage.
