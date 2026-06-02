@@ -35,7 +35,22 @@ export function middleware(request: NextRequest) {
   return response;
 }
 
-function buildCsp(request: NextRequest, nonce: string): string {
+// A missing/invalid CSP connect-origins env must never take down the whole site. If
+// getConnectOriginsFromEnv throws (it is strict in production), log loudly and serve the
+// request WITHOUT the dynamic CSP — the static header suite from next.config still applies —
+// instead of throwing MIDDLEWARE_INVOCATION_FAILED on every route. The fix is then to set
+// the env (CSP returns automatically); availability is never traded for a header.
+function buildCsp(request: NextRequest, nonce: string): string | null {
+  let connectOrigins: readonly string[];
+  try {
+    connectOrigins = getConnectOriginsFromEnv();
+  } catch (error) {
+    console.error("csp_connect_origins_misconfigured", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+
   const isDev = process.env.NODE_ENV === "development";
   const isHttpsRequest =
     request.headers.get("x-forwarded-proto") === "https" ||
@@ -45,7 +60,7 @@ function buildCsp(request: NextRequest, nonce: string): string {
     nonce,
     isDev,
     isHttpsRequest,
-    connectOrigins: getConnectOriginsFromEnv(),
+    connectOrigins,
     devWebSocketOrigins: isDev ? devWebSocketOrigins(request) : undefined,
   });
 }
