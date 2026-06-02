@@ -134,10 +134,10 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
+- `docs/architecture.md` -> system architecture & orientation guide: start here to learn how everything fits together
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
-- `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/reader-design-rationale.md` -> current reader behavior rationale and reader-to-chat quote contract
-- `docs/chat-quote-context-cutover.md` -> chat quote-context, document-map, and citation cutover contract
+- `docs/modules/reader-implementation.md` -> current reader behavior contract
+- `docs/modules/reader-design-rationale.md` -> current reader behavior rationale and reader-to-chat quote contract
 
 ## Documentation Rules
 
