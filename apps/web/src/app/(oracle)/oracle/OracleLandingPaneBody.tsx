@@ -59,7 +59,7 @@ export default function OracleLandingPaneBody() {
   const remaining = QUESTION_MAX - question.length;
 
   return (
-    <div data-theme="oracle" className={styles.surface}>
+    <div className={styles.surface}>
       <div className={styles.landing}>
         <div className={styles.epigraph}>Black Forest Oracle</div>
         <p className={styles.epigraphSub}>

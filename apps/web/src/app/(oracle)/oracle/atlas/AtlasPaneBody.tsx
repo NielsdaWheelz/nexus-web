@@ -135,7 +135,13 @@ function drawCardinal(d: DrawContext): void {
   const x = centerX + (radius + 14) * Math.sin(theta);
   const y = centerY - (radius + 14) * Math.cos(theta);
   ctx.fillStyle = "rgba(142, 120, 72, 0.85)"; // --oracle-marginalia-fg
-  ctx.font = '11px var(--font-oracle-display), serif';
+  // Canvas parses ctx.font as a plain CSS font string and is not part of the
+  // CSS cascade, so a var(--…) reference is unparseable: the assignment is
+  // silently dropped and ctx.font keeps its 10px sans-serif default. ✦ (U+2726)
+  // is a Dingbats glyph that the oracle display serif's latin subset does not
+  // contain, so it always renders from a fallback regardless of family — serif
+  // is that intended fallback voice, stated directly here.
+  ctx.font = "11px serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("✦", x, y);
@@ -518,7 +524,7 @@ export default function AtlasPaneBody() {
   const empty = readings !== null && readings.length === 0;
 
   return (
-    <div data-theme="oracle" className={styles.surface}>
+    <div className={styles.surface}>
       {selectedId !== null && (
         <AtlasConcordancePeerLoader
           key={selectedId}

@@ -589,7 +589,7 @@ export default function OracleReadingPaneBody({
       : null;
 
   return (
-    <div data-theme="oracle" className={styles.surface}>
+    <div className={styles.surface}>
       <article className={styles.reading}>
         <BorderFrame />
 

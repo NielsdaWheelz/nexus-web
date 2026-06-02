@@ -3,11 +3,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("next/font/google", () => {
   const loadFont = () => ({ variable: "test-font-variable" });
   return {
-    EB_Garamond: loadFont,
-    IM_Fell_English: loadFont,
     Inter: loadFont,
     JetBrains_Mono: loadFont,
-    UnifrakturMaguntia: loadFont,
   };
 });
 

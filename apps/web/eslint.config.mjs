@@ -19,6 +19,17 @@ const eslintConfig = [
           selector: "CallExpression[callee.name='setInterval']",
           message: "Product polling must go through useIntervalPoll.",
         },
+        {
+          // Canvas context properties are NOT part of the CSS cascade, so a
+          // var(--…) string is unparseable and silently ignored (the assignment
+          // is dropped). Resolve the design token via getComputedStyle, or
+          // assign a literal value. (`el.style.font` is excluded — inline styles
+          // do resolve var().)
+          selector:
+            "AssignmentExpression[left.property.name=/^(font|fillStyle|strokeStyle)$/][right.value=/var\\(--/]:not([left.object.property.name='style'])",
+          message:
+            "Canvas ctx.font/fillStyle/strokeStyle cannot resolve CSS custom properties; a var(--…) string is silently ignored. Resolve the token via getComputedStyle, or assign a literal value.",
+        },
       ],
       "@typescript-eslint/no-unused-vars": [
         "error",
