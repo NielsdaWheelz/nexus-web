@@ -437,13 +437,17 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  const actions = row.getByRole("group", { name: "Highlight actions" });
-  await expect(actions.getByRole("button", { name: "Quote to new chat" })).toBeVisible();
+  const page = row.page();
+  const trigger = row.getByRole("button", { name: "Highlight actions" });
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+  await trigger.click();
+  await expect(page.getByRole("menuitem", { name: "Quote to new chat" })).toBeVisible();
   await expect(
-    actions.getByRole("button", { name: "Quote to existing chat" })
+    page.getByRole("menuitem", { name: "Quote to existing chat" })
   ).toBeVisible();
-  await expect(actions.getByRole("button", { name: "Edit bounds" })).toBeVisible();
-  await expect(actions.getByRole("button", { name: "Delete highlight" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Edit bounds" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Delete highlight" })).toBeVisible();
 }
 
 async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<number | null> {

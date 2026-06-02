@@ -299,7 +299,9 @@ describe("ReaderHighlightsSurface", () => {
     expect(within(row).getByText("Visible quote")).toBeVisible();
     expect(within(row).queryByText("Before visible context")).toBeNull();
     expect(within(row).queryByText("after visible context.")).toBeNull();
-    expect(within(row).getByRole("button", { name: "Delete highlight" })).toBeVisible();
+    const trigger = within(row).getByRole("button", { name: "Highlight actions" });
+    expect(trigger).toBeVisible();
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
     expect(
       within(row).getByRole("textbox", { name: "Highlight note" }),
     ).toBeVisible();
@@ -324,18 +326,31 @@ describe("ReaderHighlightsSurface", () => {
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
   });
 
-  it("exposes highlight actions as an icon bar on the row", async () => {
+  it("exposes highlight actions behind one overflow menu on the row", async () => {
+    const user = userEvent.setup();
     render(<ReaderHighlightsSurfaceHarness />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    expect(within(row).getByRole("button", { name: "Highlight color" })).toBeVisible();
-    expect(within(row).getByRole("button", { name: "Quote to new chat" })).toBeVisible();
+    const trigger = within(row).getByRole("button", { name: "Highlight actions" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+
+    // None of the individual actions is directly present on the row; they live
+    // behind the single overflow trigger.
+    expect(within(row).queryByRole("button", { name: "Highlight color" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Quote to new chat" })).toBeNull();
     expect(
-      within(row).getByRole("button", { name: "Quote to existing chat" }),
-    ).toBeVisible();
-    expect(within(row).getByRole("button", { name: "Edit bounds" })).toBeVisible();
-    expect(within(row).getByRole("button", { name: "Delete highlight" })).toBeVisible();
+      within(row).queryByRole("button", { name: "Quote to existing chat" }),
+    ).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Edit bounds" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Delete highlight" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+
+    await user.click(trigger);
+    // The menu is portaled to the body; query its contents via screen.
+    expect(screen.getByRole("group", { name: "Highlight color" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
   });
 
   it("focuses the source highlight on row click without scrolling an in-view anchor", async () => {
@@ -381,13 +396,16 @@ describe("ReaderHighlightsSurface", () => {
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
 
-    await user.click(within(row).getByRole("button", { name: "Quote to new chat" }));
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Quote to new chat" }));
     expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
     expect(onQuoteToNewChat).toHaveBeenCalledWith("h1");
     expect(onQuoteToExtantChat).not.toHaveBeenCalled();
 
+    // The menu closes on select, so reopen the trigger before the next action.
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
     await user.click(
-      within(row).getByRole("button", { name: "Quote to existing chat" }),
+      screen.getByRole("menuitem", { name: "Quote to existing chat" }),
     );
     expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
     expect(onQuoteToExtantChat).toHaveBeenCalledWith("h1");
@@ -395,19 +413,24 @@ describe("ReaderHighlightsSurface", () => {
   });
 
   it("hides the quote-to-chat actions when quoting is disabled", async () => {
+    const user = userEvent.setup();
     render(<ReaderHighlightsSurfaceHarness canQuoteToChat={false} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
     expect(
-      within(row).queryByRole("button", { name: "Quote to new chat" }),
+      screen.queryByRole("menuitem", { name: "Quote to new chat" }),
     ).toBeNull();
     expect(
-      within(row).queryByRole("button", { name: "Quote to existing chat" }),
+      screen.queryByRole("menuitem", { name: "Quote to existing chat" }),
     ).toBeNull();
-    expect(within(row).getByRole("button", { name: "Delete highlight" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
   });
 
   it("hides quote-to-chat actions for highlights without exact text", async () => {
+    const user = userEvent.setup();
     render(
       <ReaderHighlightsSurfaceHarness
         highlights={[
@@ -422,23 +445,27 @@ describe("ReaderHighlightsSurface", () => {
     );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
     expect(
-      within(row).queryByRole("button", { name: "Quote to new chat" }),
+      screen.queryByRole("menuitem", { name: "Quote to new chat" }),
     ).toBeNull();
     expect(
-      within(row).queryByRole("button", { name: "Quote to existing chat" }),
+      screen.queryByRole("menuitem", { name: "Quote to existing chat" }),
     ).toBeNull();
-    expect(within(row).getByRole("button", { name: "Delete highlight" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "Delete highlight" }),
+    ).toBeVisible();
   });
 
-  it("applies a new highlight color from the color picker popover", async () => {
+  it("applies a new highlight color from the color picker menu", async () => {
     const user = userEvent.setup();
     const onColorChange = vi.fn(async () => undefined);
     render(<ReaderHighlightsSurfaceHarness onColorChange={onColorChange} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    await user.click(within(row).getByRole("button", { name: "Highlight color" }));
-    await user.click(await screen.findByRole("button", { name: "Green" }));
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
+    // The color picker renders inline in the menu; the swatch is a direct button.
+    await user.click(screen.getByRole("button", { name: "Green" }));
 
     expect(onColorChange).toHaveBeenCalledWith("h1", "green");
   });
@@ -457,7 +484,8 @@ describe("ReaderHighlightsSurface", () => {
     );
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    await user.click(within(row).getByRole("button", { name: "Cancel edit bounds" }));
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Cancel edit bounds" }));
 
     expect(onCancelEditBounds).toHaveBeenCalledTimes(1);
     expect(onStartEditBounds).not.toHaveBeenCalled();
@@ -470,7 +498,8 @@ describe("ReaderHighlightsSurface", () => {
     render(<ReaderHighlightsSurfaceHarness onDelete={onDelete} />);
 
     const row = await screen.findByTestId("anchored-highlight-row-h1");
-    await user.click(within(row).getByRole("button", { name: "Delete highlight" }));
+    await user.click(within(row).getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete highlight" }));
 
     // The confirm copy is owned by HighlightActionBar's own test; here we only
     // assert the surface wires delete to this row's id.

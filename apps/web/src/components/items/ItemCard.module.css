@@ -51,6 +51,13 @@
   }
 }
 
+/* While the overflow menu is open, keyboard focus sits on a portaled menuitem
+   (outside the card), so :focus-within is false; keep the trigger full-opacity
+   via the data-open ActionMenu sets on its container. */
+.card[data-content-kind="highlight"]:has(.actions [data-open="true"]) .actions {
+  opacity: 1;
+}
+
 .body {
   flex: 1;
   min-width: 0;

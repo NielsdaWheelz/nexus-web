@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import ActionBar from "@/components/ui/ActionBar";
+import ActionMenu from "@/components/ui/ActionMenu";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { buildHighlightActions } from "./highlightActions";
 
 type ExistingProps = {
   variant: "existing";
+  presentation: "bar" | "menu";
   highlight: AnchoredHighlightRow;
   canQuoteToChat: boolean;
   isReflowable: boolean;
@@ -108,5 +110,9 @@ function ExistingActionBar(props: ExistingProps) {
       onDelete: () => void deleteHighlight(),
     },
   });
-  return <ActionBar options={options} label="Highlight actions" className={props.className} />;
+  return props.presentation === "menu" ? (
+    <ActionMenu options={options} label="Highlight actions" className={props.className} />
+  ) : (
+    <ActionBar options={options} label="Highlight actions" className={props.className} />
+  );
 }

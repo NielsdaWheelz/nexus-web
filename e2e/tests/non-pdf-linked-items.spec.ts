@@ -49,11 +49,15 @@ function linkedItemRowByHighlightId(highlightId: string): string {
 }
 
 async function quoteRowToNewChat(row: Locator): Promise<void> {
-  const quoteButton = row.getByRole("button", { name: "Quote to new chat" });
-  await quoteButton.scrollIntoViewIfNeeded();
-  await expect(quoteButton).toBeVisible();
-  await expect(quoteButton).toBeEnabled();
-  await quoteButton.click();
+  const actionsTrigger = row.getByRole("button", { name: "Highlight actions" });
+  await actionsTrigger.scrollIntoViewIfNeeded();
+  await expect(actionsTrigger).toBeVisible();
+  await expect(actionsTrigger).toBeEnabled();
+  await actionsTrigger.click();
+  const quoteItem = row.page().getByRole("menuitem", { name: "Quote to new chat" });
+  await expect(quoteItem).toBeVisible();
+  await expect(quoteItem).toBeEnabled();
+  await quoteItem.click();
 }
 
 async function rowContainsVisibleTextOrFieldValue(
@@ -93,9 +97,9 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await expect(
-    row.getByRole("group", { name: "Highlight actions" }),
-  ).toHaveCount(1);
+  const actionsTrigger = row.getByRole("button", { name: "Highlight actions" });
+  await expect(actionsTrigger).toBeVisible();
+  await expect(actionsTrigger).toHaveAttribute("aria-haspopup", "menu");
 }
 
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {

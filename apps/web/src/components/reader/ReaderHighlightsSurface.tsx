@@ -520,6 +520,7 @@ export default function ReaderHighlightsSurface({
           actions={
             <HighlightActionBar
               variant="existing"
+              presentation="menu"
               highlight={highlight}
               canQuoteToChat={canQuoteToChat}
               isReflowable={isReflowable}

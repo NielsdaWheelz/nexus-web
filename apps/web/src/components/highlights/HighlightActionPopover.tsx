@@ -55,6 +55,7 @@ export default function HighlightActionPopover({
     <div ref={ref} style={style} className={styles.popover} role="dialog" aria-label="Highlight actions">
       <HighlightActionBar
         variant="existing"
+        presentation="bar"
         highlight={highlight}
         canQuoteToChat={canQuoteToChat}
         isReflowable={isReflowable}

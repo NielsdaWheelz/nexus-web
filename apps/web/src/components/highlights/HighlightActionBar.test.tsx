@@ -11,7 +11,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function setupExisting(overrides: Record<string, unknown> = {}) {
+function setupExisting(
+  overrides: Record<string, unknown> = {},
+  presentation: "bar" | "menu" = "bar",
+) {
   const handlers = {
     onSelectColor: vi.fn(async () => {}),
     onDelete: vi.fn(async () => {}),
@@ -23,6 +26,7 @@ function setupExisting(overrides: Record<string, unknown> = {}) {
     <FeedbackProvider>
       <HighlightActionBar
         variant="existing"
+        presentation={presentation}
         highlight={highlight}
         canQuoteToChat
         isReflowable
@@ -70,6 +74,75 @@ describe("HighlightActionBar — existing", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit bounds" }));
     expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("HighlightActionBar — existing (menu)", () => {
+  it("collapses into a single trigger with no inline buttons", () => {
+    setupExisting({}, "menu");
+
+    const trigger = screen.getByRole("button", { name: "Highlight actions" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.queryByRole("button", { name: "Highlight color" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Quote to new chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Quote to existing chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit bounds" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete highlight" })).toBeNull();
+  });
+
+  it("reveals the full action set once opened", async () => {
+    const user = userEvent.setup();
+    setupExisting({}, "menu");
+
+    await user.click(screen.getByRole("button", { name: "Highlight actions" }));
+
+    expect(screen.getByRole("group", { name: "Highlight color" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Quote to new chat" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Quote to existing chat" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Edit bounds" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete highlight" })).toBeInTheDocument();
+  });
+
+  it("deletes only after the confirm prompt is accepted", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const handlers = setupExisting({}, "menu");
+
+    await user.click(screen.getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete highlight" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(handlers.onDelete).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not delete when the confirm prompt is dismissed", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const handlers = setupExisting({}, "menu");
+
+    await user.click(screen.getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete highlight" }));
+    expect(handlers.onDelete).not.toHaveBeenCalled();
+  });
+
+  it("toggles edit-bounds", async () => {
+    const user = userEvent.setup();
+    const handlers = setupExisting({}, "menu");
+
+    await user.click(screen.getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit bounds" }));
+    expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no trigger when there are no actions", () => {
+    setupExisting(
+      {
+        highlight: { id: "h1", exact: "hello", color: "yellow", is_owner: false },
+        canQuoteToChat: false,
+      },
+      "menu",
+    );
+
+    expect(screen.queryByRole("button", { name: "Highlight actions" })).toBeNull();
   });
 });
 
