@@ -476,7 +476,7 @@ make verify-android-release # signed Android release APK build + signer verifica
 make test-migrations     # migration/schema tests only
 make test-supabase       # Supabase-local Auth tests only
 make test-e2e-ui    # Playwright UI mode
-cd e2e && bun run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp # strict CSP runtime assertions
+make test-csp           # strict CSP profile: enforced-policy runtime assertions (all *.csp.spec.ts)
 ```
 
 Command semantics:
@@ -493,7 +493,7 @@ Command semantics:
 - `make verify-android`: Android static and build verification only; does not require a connected device
 - `make verify-android-release`: signed APK verification; requires release signing env vars/secrets
 - `make test-e2e-ui`: interactive Playwright UI mode
-- `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
+- `make test-csp`: strict CSP profile (enforced policy) — runs every `*.csp.spec.ts` against the production Next runtime, asserting the full header suite and zero `securitypolicyviolation` events across the major routes. Gated in CI via the `test-e2e-csp` job.
 
 Port ownership:
 

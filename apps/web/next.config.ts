@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 
 const nextConfig: NextConfig = {
   // `make check` owns lint and type verification. `make build` only verifies buildability.
@@ -24,25 +25,13 @@ const nextConfig: NextConfig = {
     },
   },
 
-  // Headers for security (CSP with nonces handled in middleware)
+  // Static security headers (dynamic CSP + Reporting-Endpoints are set in middleware).
+  // Single source of truth: src/lib/security/headers.ts.
   async headers() {
     return [
       {
         source: "/:path*",
-        headers: [
-          {
-            key: "X-Frame-Options",
-            value: "DENY",
-          },
-          {
-            key: "X-Content-Type-Options",
-            value: "nosniff",
-          },
-          {
-            key: "Referrer-Policy",
-            value: "strict-origin-when-cross-origin",
-          },
-        ],
+        headers: [...STATIC_SECURITY_HEADERS],
       },
     ];
   },

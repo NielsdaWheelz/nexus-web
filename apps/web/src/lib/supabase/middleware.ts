@@ -16,6 +16,7 @@ import {
 
 const REQUEST_PATH_HEADER = "x-nexus-request-path";
 const NONCE_HEADER = "x-nonce";
+const CSP_REQUEST_HEADER = "content-security-policy";
 const PREFETCH_HEADER = "Next-Router-Prefetch";
 const TEMPORARY_REDIRECT = 307;
 
@@ -70,12 +71,21 @@ function clearAndRedirectToLogin(
 
 export function updateSession(
   request: NextRequest,
-  nonce: string
+  nonce: string,
+  contentSecurityPolicy?: string | null
 ): NextResponse {
   const pathname = request.nextUrl.pathname;
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(NONCE_HEADER, nonce);
+  // Next.js extracts the script nonce from the *request* Content-Security-Policy header
+  // (app-render `parseRequestHeaders`), NOT from `x-nonce`. Forwarding the policy on the
+  // request is what makes Next stamp the nonce onto its framework/RSC scripts; without it,
+  // `strict-dynamic` (which ignores `'self'`) blocks every Next script. The same policy is
+  // set on the response for browser enforcement by the caller (middleware.ts).
+  if (contentSecurityPolicy) {
+    requestHeaders.set(CSP_REQUEST_HEADER, contentSecurityPolicy);
+  }
   const passThrough = () =>
     NextResponse.next({ request: { headers: requestHeaders } });
 

@@ -3,21 +3,36 @@ import path from "node:path";
 import { applyResolvedSupabaseEnv, loadRootFileEnv } from "./supabase-env.mjs";
 
 const ROOT_DIR = path.resolve(__dirname, "..");
+// Keep this env preamble in parity with playwright.config.ts: hydrate process.env from the
+// root env file (local runs) before resolving Supabase env, then apply the same test-only
+// defaults. The seed step (global-setup) and both web servers below inherit these; omitting
+// NEXUS_KEY_ENCRYPTION_KEY here previously crashed seeding. The only intentional differences
+// from the base config are the enforced-CSP production web server and the *.csp.* projects.
+for (const [key, value] of Object.entries(loadRootFileEnv(ROOT_DIR))) {
+  process.env[key] ??= String(value);
+}
 applyResolvedSupabaseEnv(ROOT_DIR, process.env);
-const fileEnv = loadRootFileEnv(ROOT_DIR) as Record<string, string>;
-const WEB_PORT = process.env.WEB_PORT ?? fileEnv.WEB_PORT ?? "3000";
-const API_PORT = process.env.API_PORT ?? fileEnv.API_PORT ?? "8000";
+
+process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+process.env.RATE_LIMIT_RPM ??= "240";
+process.env.RATE_LIMIT_CONCURRENT ??= "8";
+
+const WEB_PORT = process.env.WEB_PORT ?? "3000";
+const API_PORT = process.env.API_PORT ?? "8000";
+const MINIO_PORT = process.env.MINIO_PORT ?? "9000";
+
+// Presigned-storage origin the browser fetches directly (upload PUT, PDF.js download).
+// Derived from the same R2_ENDPOINT_URL the backend signs against; the CSP connect-src
+// must include it (set via CSP_EXTRA_CONNECT_ORIGINS on the web server below).
+const STORAGE_ORIGIN = process.env.R2_ENDPOINT_URL
+  ? new URL(process.env.R2_ENDPOINT_URL).origin
+  : `http://127.0.0.1:${MINIO_PORT}`;
 
 const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ??
-  process.env.SUPABASE_URL ??
-  fileEnv.NEXT_PUBLIC_SUPABASE_URL ??
-  fileEnv.SUPABASE_URL;
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  process.env.SUPABASE_ANON_KEY ??
-  fileEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  fileEnv.SUPABASE_ANON_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error(
@@ -51,6 +66,7 @@ export default defineConfig({
     { name: "setup-csp", testMatch: /.*\.csp\.setup\.ts/ },
     {
       name: "chromium-csp",
+      testMatch: /.*\.csp\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: ".auth/user-csp.json",
@@ -70,16 +86,20 @@ export default defineConfig({
         FASTAPI_BASE_URL: `http://localhost:${API_PORT}`,
         NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL,
         NEXT_PUBLIC_SUPABASE_ANON_KEY: SUPABASE_ANON_KEY,
+        NEXUS_INTERNAL_SECRET:
+          process.env.NEXUS_INTERNAL_SECRET ?? "test-internal-secret",
         E2E_DISABLE_CSP: "0",
+        CSP_EXTRA_CONNECT_ORIGINS: STORAGE_ORIGIN,
       },
     },
     {
-      command: `cd .. && make api`,
+      command: `cd .. && make api-e2e`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
       timeout: 30_000,
       env: {
         ...appRuntimeEnv,
+        NEXUS_ENV: "test",
         SIGNED_URL_EXPIRY_S: process.env.SIGNED_URL_EXPIRY_S ?? "8",
       },
     },

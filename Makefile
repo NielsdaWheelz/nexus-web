@@ -4,12 +4,12 @@
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
+	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
 	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
-	_seed-real-media-e2e-raw _test-e2e-raw _test-real-media-e2e-raw _test-e2e-ui-raw
+	_seed-real-media-e2e-raw _test-e2e-raw _test-csp-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -71,6 +71,7 @@ help:
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make test-e2e           - Default Playwright E2E tests"
+	@echo "  make test-csp           - Strict-CSP Playwright profile (enforced policy)"
 	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
 	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
@@ -402,6 +403,15 @@ _test-e2e-raw:
 	cd e2e && \
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+
+test-csp: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-csp-raw
+
+_test-csp-raw:
+	@echo "Running strict-CSP e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
+	cd e2e && \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:csp -- $(PLAYWRIGHT_ARGS)
 
 _test-real-media-e2e-raw:
 	@echo "Running real-media e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \

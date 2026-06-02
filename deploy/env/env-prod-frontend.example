@@ -5,6 +5,13 @@ FASTAPI_BASE_URL=https://api.example.com
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 
+# Browser-visible connect-src origins beyond FASTAPI_BASE_URL, for the CSP set in
+# middleware: the presigned R2/S3 storage endpoint (direct upload PUT + PDF.js
+# download) and any stream origin distinct from FASTAPI_BASE_URL. Origin-only,
+# comma-separated. Required in production. Never put R2/S3 credentials or bucket
+# names here — only the public S3-API endpoint origin.
+CSP_EXTRA_CONNECT_ORIGINS=https://<cloudflare-account-id>.r2.cloudflarestorage.com
+
 # Also present in env-prod; repeated here because Vercel imports a flat env set.
 AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-vercel-app.example.com
 NEXUS_EXTENSION_REDIRECT_ORIGINS=

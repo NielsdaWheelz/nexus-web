@@ -287,11 +287,12 @@ describe("middleware CSP", () => {
     const scriptSrc = csp!
       .split("; ")
       .find((directive) => directive.startsWith("script-src "));
-    const nonceMatch = scriptSrc!.match(/^script-src 'self' 'nonce-([^']+)'/);
+    const nonceMatch = scriptSrc!.match(
+      /^script-src 'nonce-([^']+)' 'strict-dynamic'/
+    );
     expect(nonceMatch).not.toBeNull();
-    expect(scriptSrc).toContain("'strict-dynamic'");
-    // 'unsafe-inline' must be gone from script-src — a present nonce would
-    // otherwise make the browser ignore it anyway.
+    // Under strict-dynamic there is no CSP2 'self' fallback and no script unsafe-inline.
+    expect(scriptSrc).not.toContain("'self'");
     expect(scriptSrc).not.toContain("'unsafe-inline'");
 
     // The CSP nonce is the same fresh per-request nonce set on the request.
@@ -300,7 +301,7 @@ describe("middleware CSP", () => {
     );
   });
 
-  it("restricts frame-src to an exact youtube allowlist with no wildcard", async () => {
+  it("forwards the Content-Security-Policy on the request headers so Next stamps the script nonce", async () => {
     const { middleware } = await import("@/middleware");
     const response = middleware(
       new NextRequest("http://localhost:3000/libraries", {
@@ -308,17 +309,27 @@ describe("middleware CSP", () => {
       })
     );
 
-    const directives = new Map(
-      (response.headers.get("Content-Security-Policy") ?? "")
-        .split("; ")
-        .map((entry) => {
-          const [name, ...valueParts] = entry.split(" ");
-          return [name, valueParts.join(" ")] as const;
-        })
+    // Next.js reads the nonce from the request-side CSP (not x-nonce), so the forwarded
+    // request header must equal the enforced response policy. Without this, strict-dynamic
+    // blocks every framework script. Regression guard.
+    const responseCsp = response.headers.get("Content-Security-Policy");
+    const requestCsp = response.headers.get(
+      "x-middleware-request-content-security-policy"
     );
-    expect(directives.get("worker-src")).toBe("'self'");
-    expect(directives.get("frame-src")).toBe(
-      "https://www.youtube.com https://www.youtube-nocookie.com"
+    expect(requestCsp).toBe(responseCsp);
+    expect(requestCsp).toMatch(/script-src 'nonce-[^']+' 'strict-dynamic'/);
+  });
+
+  it("sets a Reporting-Endpoints header pointing at the same-origin sink", async () => {
+    const { middleware } = await import("@/middleware");
+    const response = middleware(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: activeCookie() },
+      })
+    );
+
+    expect(response.headers.get("Reporting-Endpoints")).toBe(
+      'csp="http://localhost:3000/api/csp-report"'
     );
   });
 
@@ -345,5 +356,9 @@ describe("middleware CSP", () => {
     );
 
     expect(response.headers.get("Content-Security-Policy")).toBeNull();
+    // No request-side CSP either, so Next leaves scripts un-nonced (nothing to enforce).
+    expect(
+      response.headers.get("x-middleware-request-content-security-policy")
+    ).toBeNull();
   });
 });

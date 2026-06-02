@@ -5,6 +5,7 @@ import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   normalizeTrackChapters,
@@ -17,10 +18,9 @@ import {
 } from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
-const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
-  "www.youtube.com",
-  "www.youtube-nocookie.com",
-]);
+// Host allowlist derived from the shared CSP frame-src origins (lib/security/youtube.ts);
+// the iframe `allow="…"` feature list below mirrors the Permissions-Policy delegation.
+const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set(YOUTUBE_EMBED_HOSTS);
 const SHOW_NOTES_TIMESTAMP_REGEX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 
 function toSeekSeconds(timestampMs: number | null | undefined): number | null {

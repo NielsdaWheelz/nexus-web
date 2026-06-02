@@ -1,45 +1,59 @@
 import { type NextRequest } from "next/server";
-import { createRandomId } from "@/lib/createRandomId";
+import {
+  buildContentSecurityPolicy,
+  buildReportingEndpoints,
+  generateNonce,
+  getConnectOriginsFromEnv,
+  shouldDisableCspForE2E,
+} from "@/lib/security/csp";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**
  * Middleware for:
  * - Four-state session classification and auth redirects (network-free)
- * - Nonce-based Content-Security-Policy headers
+ * - Nonce-based Content-Security-Policy headers (see lib/security/csp.ts)
  */
 export function middleware(request: NextRequest) {
-  // A fresh per-request nonce. updateSession sets it on the request `x-nonce`
-  // header; it is also placed in the CSP below so Next.js applies it to
-  // framework and page scripts automatically.
-  const nonce = Buffer.from(createRandomId()).toString("base64");
+  // A fresh per-request nonce, stamped into the CSP. The policy is set on BOTH the
+  // forwarded request headers — Next.js reads the nonce from the request-side CSP
+  // (`parseRequestHeaders` in app-render) to stamp its framework/RSC scripts; `x-nonce`
+  // alone is not read for that — and the response, for browser enforcement. The E2E runner
+  // may disable CSP entirely (null policy); never honored in production.
+  const nonce = generateNonce();
+  const csp = shouldDisableCspForE2E() ? null : buildCsp(request, nonce);
 
-  const response = updateSession(request, nonce);
+  const response = updateSession(request, nonce, csp);
 
-  // E2E runner can disable CSP to allow stable Playwright auth/session bootstrapping.
-  if (process.env.E2E_DISABLE_CSP === "1") {
-    return response;
+  if (csp) {
+    response.headers.set("Content-Security-Policy", csp);
+    response.headers.set(
+      "Reporting-Endpoints",
+      buildReportingEndpoints(request.nextUrl.origin),
+    );
   }
 
-  // Next.js dev mode requires 'unsafe-eval' for hot module reloading (HMR).
-  const isDev = process.env.NODE_ENV === "development";
-  const cspHeader = [
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${
-      isDev ? " 'unsafe-eval'" : ""
-    }`,
-    `style-src 'self' 'unsafe-inline'`,
-    `font-src 'self'`,
-    `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
-    `worker-src 'self'`,
-    `object-src 'none'`,
-    `base-uri 'self'`,
-    `frame-ancestors 'none'`,
-    `form-action 'self'`,
-    `upgrade-insecure-requests`,
-  ].join("; ");
-
-  response.headers.set("Content-Security-Policy", cspHeader);
-
   return response;
+}
+
+function buildCsp(request: NextRequest, nonce: string): string {
+  const isDev = process.env.NODE_ENV === "development";
+  const isHttpsRequest =
+    request.headers.get("x-forwarded-proto") === "https" ||
+    request.nextUrl.protocol === "https:";
+
+  return buildContentSecurityPolicy({
+    nonce,
+    isDev,
+    isHttpsRequest,
+    connectOrigins: getConnectOriginsFromEnv(),
+    devWebSocketOrigins: isDev ? devWebSocketOrigins(request) : undefined,
+  });
+}
+
+// Next dev HMR uses a same-host websocket; allow it in connect-src under `next dev` only.
+function devWebSocketOrigins(request: NextRequest): string[] {
+  const host = request.nextUrl.host;
+  return [`ws://${host}`, `wss://${host}`];
 }
 
 export const config = {

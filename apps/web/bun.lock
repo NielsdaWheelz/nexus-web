@@ -33,14 +33,15 @@
         "@types/react": "^19.2.14",
         "@types/react-dom": "^19.2.3",
         "@vitejs/plugin-react": "^6.0.1",
-        "@vitest/browser": "4.1.6",
-        "@vitest/browser-playwright": "4.1.6",
+        "@vitest/browser": "^4.1.6",
+        "@vitest/browser-playwright": "^4.1.6",
+        "csp_evaluator": "^1.1.8",
         "eslint": "^9.17.0",
         "eslint-config-next": "^15.5.16",
         "eslint-plugin-testing-library": "^7.16.2",
         "playwright": "^1.59.1",
         "typescript": "^6.0.2",
-        "vitest": "4.1.6",
+        "vitest": "^4.1.6",
       },
     },
   },
@@ -472,6 +473,8 @@
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
+
+    "csp_evaluator": ["csp_evaluator@1.1.8", "", {}, "sha512-EwOnfYuNbTytvbMKsLixTrRgnjOa0WZCxGy8A9nnSYAicrdwn+T/epU/yjgymmOxlgKnvH+8wXt+7p/8ak5Feg=="],
 
     "css.escape": ["css.escape@1.5.1", "", {}, "sha512-YUifsXXuknHlUsmlgyY0PKzgPOr7/FjCePfHNt0jxm83wHZi44VDMQ7/fGNkjY3/jV1MC+1CmZbaHzugyeRtpg=="],
 
