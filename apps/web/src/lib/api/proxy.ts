@@ -86,6 +86,22 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   "set-cookie",
 ]);
 
+/**
+ * Response headers forwarded for PUBLIC owned assets (oracle plates).
+ * Unlike ALLOWED_RESPONSE_HEADERS this INCLUDES content-length because the
+ * public asset proxy streams the upstream body through without recomputing it.
+ * set-cookie/authorization/x-internal-* are implicitly blocked because only
+ * allowlisted headers are forwarded.
+ */
+const PUBLIC_ASSET_RESPONSE_HEADERS = new Set([
+  "content-type",
+  "content-length",
+  "cache-control",
+  "etag",
+  "x-content-type-options",
+  "x-request-id",
+]);
+
 interface ProxyDeps {
   readSession: (request: Request) => SessionState;
   fetch: typeof fetch;
@@ -483,6 +499,83 @@ export async function proxyToFastAPI(
 ): Promise<Response> {
   const deps = await createDefaultDeps();
   return proxyToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyPublicToFastAPI(
+  request: Request,
+  path: string
+): Promise<Response> {
+  if (path.includes("?")) {
+    throw new Error(
+      "Path must not contain query string. Query params are extracted from request URL."
+    );
+  }
+
+  const requestId = getOrGenerateRequestId(request, createRandomId);
+  const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
+  if (!fastApiBaseUrl || (isDeployed() && !internalSecret)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      { status: 500, headers: { [REQUEST_ID_HEADER]: requestId } }
+    );
+  }
+
+  const queryString = new URL(request.url).search;
+  const headers = new Headers();
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (ifNoneMatch) {
+    headers.set("if-none-match", ifNoneMatch);
+  }
+  headers.set(REQUEST_ID_HEADER, requestId);
+  if (internalSecret) {
+    headers.set("X-Nexus-Internal", internalSecret);
+  }
+
+  const ctl = createTimedFetchController(request.signal, FASTAPI_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${fastApiBaseUrl}${path}${queryString}`, {
+      method: "GET",
+      headers,
+      signal: ctl.signal,
+    });
+
+    const responseHeaders = new Headers();
+    response.headers.forEach((value, key) => {
+      if (PUBLIC_ASSET_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders.set(key, value);
+      }
+    });
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
+    responseHeaders.set(
+      REQUEST_ID_HEADER,
+      isValidRequestId(backendRequestId) ? backendRequestId : requestId
+    );
+
+    // 304 carries no body; everything else streams straight through.
+    const body = response.status === 304 ? null : response.body;
+    return new NextResponse(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      if (ctl.timedOut()) {
+        return upstreamTimeoutResponse(requestId);
+      }
+      return new Response(null, { status: 499 });
+    }
+    console.error("FastAPI public proxy error:", error);
+    return upstreamUnavailableResponse(requestId);
+  } finally {
+    ctl.cleanup();
+  }
 }
 
 export async function proxyExtensionToFastAPI(

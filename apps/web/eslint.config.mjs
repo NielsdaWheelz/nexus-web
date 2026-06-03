@@ -8,6 +8,12 @@ const __dirname = dirname(__filename);
 
 const compat = new FlatCompat({ baseDirectory: __dirname });
 
+const NEXT_IMAGE_BAN = {
+  name: "next/image",
+  message:
+    "Use <MediaImage> (src/components/ui/MediaImage.tsx); bare next/image is forbidden so the proxied-vs-owned/unoptimized invariant is enforced in one place.",
+};
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -47,6 +53,21 @@ const eslintConfig = [
     rules: { "react/no-danger": "off" },
   },
   {
+    // R1 (docs/cutovers/oracle-plate-owned-asset-cutover.md): MediaImage is the
+    // sole sanctioned importer of next/image. Banning the bare import everywhere
+    // else keeps the proxied-vs-owned + `unoptimized` decision in one place.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/components/ui/MediaImage.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [NEXT_IMAGE_BAN],
+        },
+      ],
+    },
+  },
+  {
     // R4 (docs/cutovers/authenticated-shell-first-paint-and-pane-splitting.md):
     // the always-loaded shell must never statically import a pane body, or pane
     // code (markdown, ProseMirror, the reader stack) lands in first-load JS.
@@ -64,6 +85,7 @@ const eslintConfig = [
       "no-restricted-imports": [
         "error",
         {
+          paths: [NEXT_IMAGE_BAN],
           patterns: [
             {
               group: ["@/app/**/*PaneBody", "@/components/chat/Conversation"],

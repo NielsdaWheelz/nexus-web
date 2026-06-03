@@ -955,7 +955,7 @@ class TestSanitizationSecurityRegression:
         ).fetchone()
 
         html = row[0]
-        assert "/media/image?url=" in html
+        assert "/api/media/image?url=" in html
 
     def test_external_links_have_security_attrs(
         self,

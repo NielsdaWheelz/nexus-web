@@ -8,6 +8,7 @@ Path Invariants:
     - Media original: media/{media_id}/original.{ext}
     - Upload staging: uploads/media/{media_id}/original.{ext}
     - EPUB asset: media/{media_id}/assets/{asset_key}
+    - Oracle plate: oracle/plates/{sha256}.{ext}
 
 Rules:
     - No leading slash
@@ -15,6 +16,7 @@ Rules:
     - Storage paths are independent of test environment state
 """
 
+import re
 from uuid import UUID
 
 
@@ -72,3 +74,23 @@ def build_epub_asset_storage_path(media_id: UUID | str, asset_key: str) -> str:
     if any(part in {"", ".", ".."} for part in asset_key.split("/")):
         raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
     return f"media/{media_id}/assets/{asset_key}"
+
+
+PLATE_CONTENT_TYPE_TO_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+
+
+def ext_for_content_type(content_type: str) -> str:
+    """Map a plate content-type to its storage extension; raise on unsupported types."""
+    ext = PLATE_CONTENT_TYPE_TO_EXT.get(content_type)
+    if ext is None:
+        raise ValueError(f"unsupported oracle plate content-type: {content_type}")
+    return ext
+
+
+def build_oracle_plate_storage_path(sha256: str, ext: str) -> str:
+    """Build the content-addressed storage path for an oracle corpus plate."""
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("oracle plate sha256 must be 64 lowercase hex chars")
+    if ext not in set(PLATE_CONTENT_TYPE_TO_EXT.values()):
+        raise ValueError("oracle plate ext must be jpg|png|webp")
+    return f"oracle/plates/{sha256}.{ext}"

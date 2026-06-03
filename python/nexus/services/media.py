@@ -7,7 +7,6 @@ Routes may not contain domain logic or raw DB access - they must call these func
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import posixpath
 import re
@@ -106,6 +105,7 @@ from nexus.storage.paths import (
     build_upload_staging_storage_path,
     get_file_extension,
 )
+from nexus.storage.read import read_object_checked
 
 logger = get_logger(__name__)
 
@@ -961,7 +961,7 @@ def _remote_file_name(url: str, kind: str) -> str:
 
 
 def _download_remote_file(url: str, kind: str) -> tuple[bytes, str]:
-    from nexus.services.image_proxy import (
+    from nexus.services.image_validation import (
         check_hostname_denylist,
         validate_dns_resolution,
         validate_url,
@@ -2629,18 +2629,12 @@ def get_epub_asset_for_viewer(
 
     sc = storage_client or get_storage_client()
     try:
-        hasher = hashlib.sha256()
-        chunks = []
-        total_bytes = 0
-        for chunk in sc.stream_object(asset_metadata.storage_path):
-            total_bytes += len(chunk)
-            if total_bytes > asset_metadata.size_bytes:
-                raise StorageError("Stored EPUB asset is larger than persisted metadata")
-            hasher.update(chunk)
-            chunks.append(chunk)
-        if total_bytes != asset_metadata.size_bytes or hasher.hexdigest() != asset_metadata.sha256:
-            raise StorageError("Stored EPUB asset integrity mismatch")
-        data = b"".join(chunks)
+        data = read_object_checked(
+            sc,
+            asset_metadata.storage_path,
+            expected_sha256=asset_metadata.sha256,
+            expected_size=asset_metadata.size_bytes,
+        )
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,

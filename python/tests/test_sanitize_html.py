@@ -114,7 +114,7 @@ class TestImageProxy:
         """Image src should be rewritten to proxy endpoint."""
         html = '<img src="https://example.com/image.jpg" alt="Test" />'
         result = sanitize_html(html, "https://example.com")
-        assert "/media/image?url=" in result
+        assert "/api/media/image?url=" in result
         assert "https%3A%2F%2Fexample.com%2Fimage.jpg" in result
         assert 'alt="Test"' in result
 
@@ -122,7 +122,7 @@ class TestImageProxy:
         """Relative image URLs should be resolved before proxying."""
         html = '<img src="/images/photo.png" />'
         result = sanitize_html(html, "https://example.com/article")
-        assert "/media/image?url=" in result
+        assert "/api/media/image?url=" in result
         # URL should be resolved to absolute
         assert "https%3A%2F%2Fexample.com%2Fimages%2Fphoto.png" in result
 

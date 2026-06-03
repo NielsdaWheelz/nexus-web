@@ -9,7 +9,6 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
@@ -28,6 +27,7 @@ from nexus.db.models import (
     OracleReading,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.image_validation import ValidatedImage
 from nexus.services.oracle import (
     ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
@@ -43,6 +43,7 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     to_pgvector_literal,
 )
+from nexus.storage.client import ObjectMetadata
 from nexus.tasks.oracle_reading import oracle_reading_generate
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers
@@ -206,6 +207,10 @@ def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
             attribution_text=f"Test Engraver, The Test Plate {index}, test collection.",
             width=800,
             height=1200,
+            sha256=f"{index:064x}",
+            storage_key=f"oracle/plates/{index:064x}.jpg",
+            content_type="image/jpeg",
+            byte_size=1000 + index,
             tags=["forest", "lamp"],
         )
         db.add(image)
@@ -854,36 +859,67 @@ def test_build_corpus_refuses_to_mutate_existing_version(
 def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
     db_session: Session,
     oracle_schema,
+    monkeypatch,
 ) -> None:
     oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
     corpus_set_version_id = _seed_oracle_corpus_version(db_session)
 
+    fake_data = b"\xff\xd8\xff" + b"x" * 100
+
+    class _FakeStorage:
+        def __init__(self) -> None:
+            self.put_calls: list[tuple[str, bytes, str]] = []
+
+        def head_object(self, path):
+            return None
+
+        def put_object(self, path, content, content_type):
+            self.put_calls.append((path, content, content_type))
+
+    storage = _FakeStorage()
+
+    monkeypatch.setattr(
+        oracle_build_corpus,
+        "fetch_validated_image",
+        lambda url, client: ValidatedImage(
+            data=fake_data,
+            content_type="image/jpeg",
+            sha256="a" * 64,
+            width=640,
+            height=960,
+        ),
+    )
+
+    manifest = [
+        {
+            "source_repository": "wikimedia_commons",
+            "source_url": "https://commons.wikimedia.org/wiki/File:Oracle_Audit.jpg",
+            "resolved_source_url": "https://upload.wikimedia.org/oracle-asset.jpg",
+            "license_text": "public domain",
+            "artist": "Test Artist",
+            "work_title": "Audit Plate",
+            "year": "1888",
+            "attribution_text": "Test Artist, Audit Plate. Public domain.",
+            "width": 640,
+            "height": 960,
+            "tags": ["audit"],
+        }
+    ]
+
     oracle_build_corpus._seed_plates(
         db_session,
         client=None,
+        storage=storage,
         corpus_set_version_id=corpus_set_version_id,
-        manifest=[
-            {
-                "source_repository": "wikimedia_commons",
-                "source_url": "https://commons.wikimedia.org/wiki/File:Oracle_Audit.jpg",
-                "resolved_source_url": "https://upload.wikimedia.org/oracle-asset.jpg",
-                "license_text": "public domain",
-                "artist": "Test Artist",
-                "work_title": "Audit Plate",
-                "year": "1888",
-                "attribution_text": "Test Artist, Audit Plate. Public domain.",
-                "width": 640,
-                "height": 960,
-                "tags": ["audit"],
-            }
-        ],
+        manifest=manifest,
     )
 
     row = (
         db_session.execute(
             text(
                 """
-                SELECT source_page_url, source_url, license_text, attribution_text
+                SELECT source_page_url, source_url, license_text, attribution_text,
+                       storage_key, content_type, byte_size, sha256
                 FROM oracle_corpus_images
                 WHERE corpus_set_version_id = :corpus_set_version_id
                 """
@@ -898,6 +934,33 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
     assert row["source_url"] == "https://upload.wikimedia.org/oracle-asset.jpg"
     assert row["license_text"] == "public domain"
     assert row["attribution_text"] == "Test Artist, Audit Plate. Public domain."
+
+    # New owned-asset columns are derived from the decoded image bytes.
+    expected_storage_key = "oracle/plates/" + "a" * 64 + ".jpg"
+    assert row["storage_key"] == expected_storage_key
+    assert row["content_type"] == "image/jpeg"
+    assert row["sha256"] == "a" * 64
+    assert row["byte_size"] == len(fake_data)
+
+    # The validated bytes are uploaded exactly once, to the content-addressed key.
+    assert storage.put_calls == [(expected_storage_key, fake_data, "image/jpeg")]
+
+    # A re-seed against an existing object skips the upload (idempotent), while the
+    # immutable-release guard still refuses to mutate the row.
+    class _ExistingStorage(_FakeStorage):
+        def head_object(self, path):
+            return ObjectMetadata(content_type="image/jpeg", size_bytes=len(fake_data))
+
+    existing_storage = _ExistingStorage()
+    with pytest.raises(SystemExit):
+        oracle_build_corpus._seed_plates(
+            db_session,
+            client=None,
+            storage=existing_storage,
+            corpus_set_version_id=corpus_set_version_id,
+            manifest=manifest,
+        )
+    assert existing_storage.put_calls == []
 
 
 def test_oracle_migration_does_not_load_seed_manifests_at_import(monkeypatch) -> None:
@@ -1319,12 +1382,13 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     plate_events = [event for event in data["events"] if event["event_type"] == "plate"]
-    assert data["image"]["source_url"] == (f"/api/media/image?url={quote(raw_source_url, safe='')}")
+    assert data["image"]["url"] == f"/api/oracle/plates/{reading.image_id}"
     assert plate_events, f"expected a plate event in reading detail, got {data['events']}"
-    assert plate_events[0]["payload"]["source_url"] == data["image"]["source_url"]
+    assert plate_events[0]["payload"]["url"] == data["image"]["url"]
     serialized = json.dumps(data)
     assert raw_source_url not in serialized, (
-        "Oracle detail DTO/events should expose the image proxy URL, not the raw image URL"
+        "Oracle detail DTO/events should expose the owned same-origin plate URL, "
+        "not the raw upstream image URL"
     )
 
     direct_db.register_cleanup("users", "id", user_id)
@@ -2105,6 +2169,8 @@ def test_list_oracle_readings_returns_all_readings(
     assert "folio_motto_gloss" in first
     assert "folio_theme" in first
     assert "plate_thumbnail_url" in first
+    if first["plate_thumbnail_url"] is not None:
+        assert first["plate_thumbnail_url"].startswith("/api/oracle/plates/")
     assert "plate_alt_text" in first
     assert "folio_title" not in first
 

@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import Image from "next/image";
+import MediaImage from "@/components/ui/MediaImage";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -423,13 +422,13 @@ export default function TranscriptPlaybackPanel({
                   className={styles.chapterItem}
                 >
                   {chapter.image_url ? (
-                    <Image
-                      src={buildMediaImageProxySrc(chapter.image_url)}
+                    <MediaImage
+                      kind="proxied"
+                      remoteUrl={chapter.image_url}
                       alt={`${chapter.title} thumbnail`}
                       width={40}
                       height={40}
                       className={styles.chapterThumbnail}
-                      unoptimized
                     />
                   ) : null}
                   <div className={styles.chapterBody}>

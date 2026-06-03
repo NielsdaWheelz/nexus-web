@@ -1,5 +1,7 @@
 """Tests for storage clients and path utilities."""
 
+import hashlib
+from collections.abc import Iterator
 from io import BytesIO
 from uuid import uuid4
 
@@ -10,15 +12,20 @@ from nexus.storage.client import (
     ObjectMetadata,
     SignedUpload,
     StorageClient,
+    StorageClientBase,
     StorageError,
     get_storage_client,
 )
 from nexus.storage.paths import (
+    PLATE_CONTENT_TYPE_TO_EXT,
     build_epub_asset_storage_path,
+    build_oracle_plate_storage_path,
     build_storage_path,
     build_upload_staging_storage_path,
+    ext_for_content_type,
     get_file_extension,
 )
+from nexus.storage.read import read_object_checked
 from tests.support.storage import FakeStorageClient
 
 pytestmark = pytest.mark.unit
@@ -141,6 +148,37 @@ class TestPathBuilding:
     def test_build_epub_asset_storage_path_rejects_unsafe_asset_key(self, asset_key: str):
         with pytest.raises(ValueError, match="EPUB asset key"):
             build_epub_asset_storage_path(uuid4(), asset_key)
+
+    def test_build_oracle_plate_storage_path(self):
+        sha = "a" * 64
+
+        assert build_oracle_plate_storage_path(sha, "jpg") == f"oracle/plates/{sha}.jpg"
+
+    def test_build_oracle_plate_storage_path_rejects_short_sha(self):
+        with pytest.raises(ValueError, match="64 lowercase hex chars"):
+            build_oracle_plate_storage_path("a" * 63, "jpg")
+
+    def test_build_oracle_plate_storage_path_rejects_uppercase_sha(self):
+        with pytest.raises(ValueError, match="64 lowercase hex chars"):
+            build_oracle_plate_storage_path("A" * 64, "jpg")
+
+    def test_build_oracle_plate_storage_path_rejects_unsupported_ext(self):
+        with pytest.raises(ValueError, match="jpg|png|webp"):
+            build_oracle_plate_storage_path("a" * 64, "gif")
+
+    @pytest.mark.parametrize(
+        ("content_type", "ext"),
+        [("image/jpeg", "jpg"), ("image/png", "png"), ("image/webp", "webp")],
+    )
+    def test_ext_for_content_type(self, content_type: str, ext: str):
+        assert ext_for_content_type(content_type) == ext
+        assert PLATE_CONTENT_TYPE_TO_EXT[content_type] == ext
+
+    @pytest.mark.parametrize("content_type", ["image/gif", "image/svg+xml"])
+    def test_ext_for_content_type_rejects_unsupported(self, content_type: str):
+        with pytest.raises(ValueError, match="unsupported oracle plate content-type"):
+            ext_for_content_type(content_type)
+        assert content_type not in PLATE_CONTENT_TYPE_TO_EXT
 
 
 class TestFakeStorageClient:
@@ -459,3 +497,92 @@ class TestGetStorageClient:
         assert calls[0][1]["aws_access_key_id"] == "access"
         assert calls[0][1]["aws_secret_access_key"] == "secret"
         assert calls[0][1]["region_name"] == "auto"
+
+
+class ChunkedStorageClient(StorageClientBase):
+    """Minimal storage client that streams a caller-supplied list of chunks.
+
+    Unlike FakeStorageClient (which only yields 8MB chunks), this lets a test
+    pin exact chunk boundaries so the streaming loop in read_object_checked is
+    exercised across more than one chunk.
+    """
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+
+    def stream_object(self, path: str) -> Iterator[bytes]:
+        yield from self._chunks
+
+    def sign_upload(self, *args, **kwargs) -> SignedUpload:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def sign_download(self, *args, **kwargs) -> str:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def head_object(self, path: str) -> ObjectMetadata | None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def put_object(self, *args, **kwargs) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def copy_object(self, *args, **kwargs) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def delete_object(self, path: str) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+class TestReadObjectChecked:
+    def test_happy_multi_chunk_joins_and_verifies(self):
+        chunks = [b"hello ", b"checked ", b"world"]
+        payload = b"".join(chunks)
+        client = ChunkedStorageClient(chunks)
+
+        result = read_object_checked(
+            client,
+            "oracle/plates/x.jpg",
+            expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload),
+        )
+
+        assert result == payload
+
+    def test_silent_corruption_same_size_wrong_sha_raises(self):
+        # Tampered content with the SAME byte length: only the hash check can
+        # catch this. This is the integrity branch that was previously untested.
+        original = b"the real plate bytes!!"
+        tampered = b"the FAKE plate bytes!!"
+        assert len(tampered) == len(original)
+        client = ChunkedStorageClient([tampered])
+
+        with pytest.raises(StorageError, match="integrity mismatch"):
+            read_object_checked(
+                client,
+                "oracle/plates/x.jpg",
+                expected_sha256=hashlib.sha256(original).hexdigest(),
+                expected_size=len(original),
+            )
+
+    def test_oversize_payload_raises(self):
+        original = b"abc"
+        client = ChunkedStorageClient([b"abc", b"extra"])
+
+        with pytest.raises(StorageError, match="larger than persisted metadata"):
+            read_object_checked(
+                client,
+                "oracle/plates/x.jpg",
+                expected_sha256=hashlib.sha256(original).hexdigest(),
+                expected_size=len(original),
+            )
+
+    def test_undersize_payload_raises(self):
+        original = b"abcdef"
+        client = ChunkedStorageClient([b"abc"])
+
+        with pytest.raises(StorageError, match="integrity mismatch"):
+            read_object_checked(
+                client,
+                "oracle/plates/x.jpg",
+                expected_sha256=hashlib.sha256(original).hexdigest(),
+                expected_size=len(original),
+            )

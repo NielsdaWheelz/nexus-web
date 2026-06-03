@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
+import MediaImage from "@/components/ui/MediaImage";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
 import { pluralize } from "@/lib/text/pluralize";
 import type { PodcastDetailResponse } from "../podcastSubscriptions";
@@ -21,13 +20,13 @@ export default function PodcastSummaryCard({
     <div className={styles.summaryCard}>
       <div className={styles.summaryHeader}>
         {detail.podcast.image_url ? (
-          <Image
-            src={buildMediaImageProxySrc(detail.podcast.image_url)}
+          <MediaImage
+            kind="proxied"
+            remoteUrl={detail.podcast.image_url}
             alt=""
             width={88}
             height={88}
             className={styles.summaryArtwork}
-            unoptimized
           />
         ) : (
           <span className={styles.summaryArtworkFallback} aria-hidden="true">

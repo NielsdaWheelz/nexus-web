@@ -17,11 +17,13 @@ from httpx import Response
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.image_proxy import (
     ImageCache,
-    check_hostname_denylist,
     compute_etag,
     etags_match,
     fetch_image,
     get_cache,
+)
+from nexus.services.image_validation import (
+    check_hostname_denylist,
     is_private_ip,
     normalize_image_url,
     sniff_magic_bytes,
@@ -427,15 +429,15 @@ class TestImageDecoding:
     """Tests for image decoding with Pillow."""
 
     def test_decodes_valid_png(self):
-        content_type = validate_and_decode_image(TINY_PNG, "image/png")
+        content_type, _width, _height = validate_and_decode_image(TINY_PNG, "image/png")
         assert content_type == "image/png"
 
     def test_decodes_valid_jpeg(self):
-        content_type = validate_and_decode_image(TINY_JPEG, "image/jpeg")
+        content_type, _width, _height = validate_and_decode_image(TINY_JPEG, "image/jpeg")
         assert content_type == "image/jpeg"
 
     def test_decodes_valid_gif(self):
-        content_type = validate_and_decode_image(TINY_GIF, "image/gif")
+        content_type, _width, _height = validate_and_decode_image(TINY_GIF, "image/gif")
         assert content_type == "image/gif"
 
     def test_rejects_invalid_image_data(self):
@@ -445,12 +447,14 @@ class TestImageDecoding:
 
     def test_derives_content_type_from_pillow(self):
         # When upstream sends wrong content type, derive from Pillow
-        content_type = validate_and_decode_image(TINY_PNG, "application/octet-stream")
+        content_type, _width, _height = validate_and_decode_image(
+            TINY_PNG, "application/octet-stream"
+        )
         assert content_type == "image/png"
 
     def test_uses_valid_upstream_content_type(self):
         # When upstream sends valid image type, use it
-        content_type = validate_and_decode_image(TINY_PNG, "image/png")
+        content_type, _width, _height = validate_and_decode_image(TINY_PNG, "image/png")
         assert content_type == "image/png"
 
 

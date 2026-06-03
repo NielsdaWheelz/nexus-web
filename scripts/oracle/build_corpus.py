@@ -8,6 +8,10 @@ and oracle_corpus_images.
 Corpus releases are immutable: if the version already exists, choose a new
 ORACLE_CORPUS_VERSION instead of mutating it in place.
 
+The build now downloads, validates, and uploads each plate's bytes into R2
+object storage, so it requires the R2 storage env (R2_S3_API_ORIGIN,
+R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET).
+
 Run: `cd python && uv run python ../scripts/oracle/build_corpus.py`
 """
 
@@ -33,6 +37,7 @@ from nexus.db.models import (
     OracleCorpusWork,
 )
 from nexus.db.session import get_session_factory
+from nexus.services.image_validation import fetch_validated_image
 from nexus.services.oracle import (
     ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
@@ -43,6 +48,8 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     to_pgvector_literal,
 )
+from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 MANIFEST_DIR = Path(__file__).resolve().parent
 WORKS_PATH = MANIFEST_DIR / "manifest_works.json"
@@ -226,6 +233,7 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
 def _seed_plates(
     db: Any,
     client: httpx.Client,
+    storage: StorageClientBase,
     corpus_set_version_id: Any,
     manifest: list[dict[str, Any]],
 ) -> None:
@@ -233,7 +241,7 @@ def _seed_plates(
     for entry in manifest:
         file_page_url = entry["source_url"]
         try:
-            resolved, width, height = _plate_image_metadata(client, entry)
+            resolved, _w, _h = _plate_image_metadata(client, entry)
         except (httpx.HTTPError, RuntimeError, KeyError) as exc:
             print(
                 f"warn: skipping plate {entry['work_title']!r}: "
@@ -241,6 +249,11 @@ def _seed_plates(
                 file=sys.stderr,
             )
             continue
+        validated = fetch_validated_image(resolved, client)
+        ext = ext_for_content_type(validated.content_type)
+        storage_key = build_oracle_plate_storage_path(validated.sha256, ext)
+        if storage.head_object(storage_key) is None:
+            storage.put_object(storage_key, validated.data, validated.content_type)
         time.sleep(0.2)  # be polite to Wikimedia
         resolved_entries.append(
             {
@@ -248,8 +261,12 @@ def _seed_plates(
                 "source_page_url": entry["source_url"],
                 "resolved_source_url": resolved,
                 "license_text": str(entry.get("license_text") or "public domain"),
-                "width": width,
-                "height": height,
+                "width": validated.width,
+                "height": validated.height,
+                "storage_key": storage_key,
+                "content_type": validated.content_type,
+                "byte_size": len(validated.data),
+                "sha256": validated.sha256,
             }
         )
 
@@ -282,6 +299,10 @@ def _seed_plates(
                         attribution_text,
                         width,
                         height,
+                        storage_key,
+                        content_type,
+                        byte_size,
+                        sha256,
                         tags,
                         embedding_model,
                         embedding
@@ -298,6 +319,10 @@ def _seed_plates(
                         :attribution_text,
                         :width,
                         :height,
+                        :storage_key,
+                        :content_type,
+                        :byte_size,
+                        :sha256,
                         :tags,
                         :embedding_model,
                         CAST(:embedding AS vector(256))
@@ -316,6 +341,10 @@ def _seed_plates(
                     "attribution_text": entry["attribution_text"],
                     "width": entry["width"],
                     "height": entry["height"],
+                    "storage_key": entry["storage_key"],
+                    "content_type": entry["content_type"],
+                    "byte_size": entry["byte_size"],
+                    "sha256": entry["sha256"],
                     "tags": entry["tags"],
                     "embedding_model": embedding_model,
                     "embedding": to_pgvector_literal(embedding),
@@ -463,13 +492,14 @@ def main() -> None:
     expected_passages = max(manifest_passage_count, ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES)
     expected_images = max(manifest_image_count, ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES)
     session_factory = get_session_factory()
+    storage = get_storage_client()
     with httpx.Client(
         headers={"User-Agent": "nexus-oracle-seed/0.1 (https://nexus.example)"}
     ) as client:
         with session_factory() as db:
             corpus_set_version = _ensure_corpus_set_version(db)
             _seed_works(db, corpus_set_version.id, works)
-            _seed_plates(db, client, corpus_set_version.id, plates)
+            _seed_plates(db, client, storage, corpus_set_version.id, plates)
             _validate_corpus_counts(
                 db,
                 corpus_set_version.id,

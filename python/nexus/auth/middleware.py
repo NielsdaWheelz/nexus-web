@@ -165,6 +165,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in INTERNAL_ONLY_PATHS:
             return await call_next(request)
 
+        # Owned oracle plate bytes are public-domain and need no per-user auth, but
+        # the route stays BFF-only: the internal-header check above already ran, so
+        # reaching here means the request came through the BFF. Bearer-exempt.
+        if request.url.path.startswith("/oracle/plates/"):
+            return await call_next(request)
+
         # Step 2: Extract bearer token
         token, error_response_obj = self._extract_bearer_token(request)
         if error_response_obj:

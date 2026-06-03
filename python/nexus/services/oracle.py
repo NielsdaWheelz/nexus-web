@@ -10,10 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -56,6 +55,8 @@ from nexus.services.semantic_chunks import (
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
+from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.read import read_object_checked
 
 logger = get_logger(__name__)
 
@@ -94,7 +95,6 @@ ORACLE_THEMES: tuple[str, ...] = (
     "Of Justice",
     "Of Mercy",
 )  # 24 entries; mirrors the DB CHECK
-ORACLE_IMAGE_PROXY_PATH = "/api/media/image"
 ORACLE_UNEXPECTED_FAILURE_MESSAGE = "The reading could not be completed. Please try again."
 ORACLE_MODEL_UNAVAILABLE_MESSAGE = "The Oracle model is temporarily unavailable."
 ORACLE_LLM_CONFIGURATION_MESSAGE = "The Oracle is not configured to complete readings."
@@ -140,6 +140,10 @@ ORACLE_CITATION_MARKER_RE = re.compile(
     r"|\b\d+:\d+(?:[-–]\d+)?\b)",
     re.IGNORECASE,
 )
+
+
+def oracle_plate_path(image_id: UUID) -> str:
+    return f"/api/oracle/plates/{image_id}"
 
 
 # ---------- create / fetch / list -------------------------------------------
@@ -408,7 +412,6 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
                     r.completed_at,
                     r.failed_at,
                     r.image_id,
-                    img.source_url AS image_source_url,
                     img.work_title AS image_work_title,
                     img.attribution_text AS image_attribution_text
                 FROM oracle_readings r
@@ -426,8 +429,8 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
     for row in rows:
         plate_thumbnail_url: str | None = None
         plate_alt_text: str | None = None
-        if row["image_id"] is not None and row["image_source_url"] is not None:
-            plate_thumbnail_url = _oracle_image_proxy_url(str(row["image_source_url"]))
+        if row["image_id"] is not None:
+            plate_thumbnail_url = oracle_plate_path(row["image_id"])
             plate_alt_text = (
                 f"{row['image_work_title']} — {row['image_attribution_text']}"
                 if row["image_work_title"] and row["image_attribution_text"]
@@ -450,6 +453,37 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
             )
         )
     return out
+
+
+@dataclass(frozen=True)
+class OraclePlateBytes:
+    data: bytes
+    content_type: str
+    etag: str  # quoted sha256
+
+
+def get_oracle_plate_bytes(
+    *,
+    session_factory: Callable[[], Session],
+    image_id: UUID,
+    storage_client: StorageClientBase | None = None,
+) -> OraclePlateBytes:
+    with session_factory() as db:
+        img = db.get(OracleCorpusImage, image_id)
+        if img is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Oracle plate not found")
+        storage_key = img.storage_key
+        sha256 = img.sha256
+        byte_size = img.byte_size
+        content_type = img.content_type
+    sc = storage_client or get_storage_client()
+    try:
+        data = read_object_checked(sc, storage_key, expected_sha256=sha256, expected_size=byte_size)
+    except StorageError as exc:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is missing or unreadable"
+        ) from exc
+    return OraclePlateBytes(data=data, content_type=content_type, etag=f'"{sha256}"')
 
 
 def compute_concordance(
@@ -982,17 +1016,9 @@ def _usage_total_tokens(usage: Any) -> int | None:
 # ---------- internal: SSE event emit ----------------------------------------
 
 
-def _oracle_image_proxy_url(source_url: str) -> str:
-    if source_url.startswith(f"{ORACLE_IMAGE_PROXY_PATH}?url="):
-        return source_url
-    if source_url.startswith("/media/image?url="):
-        return f"/api{source_url}"
-    return f"{ORACLE_IMAGE_PROXY_PATH}?url={quote(source_url, safe='')}"
-
-
 def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
     return {
-        "source_url": _oracle_image_proxy_url(image.source_url),
+        "url": oracle_plate_path(image.id),
         "attribution_text": image.attribution_text,
         "artist": image.artist,
         "work_title": image.work_title,
@@ -1004,11 +1030,7 @@ def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
 
 def _oracle_event_out(row: OracleReadingEvent) -> OracleReadingEventOut:
     payload = dict(row.payload or {})
-    if row.event_type == "plate":
-        raw_source_url = payload.get("source_url")
-        if isinstance(raw_source_url, str):
-            payload["source_url"] = _oracle_image_proxy_url(raw_source_url)
-    elif row.event_type == "error":
+    if row.event_type == "error":
         code = str(payload.get("code") or "E_INTERNAL")
         payload = {"code": code, "message": _oracle_failure_message(code)}
     return OracleReadingEventOut(seq=row.seq, event_type=row.event_type, payload=payload)

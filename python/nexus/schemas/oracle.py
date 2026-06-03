@@ -69,7 +69,7 @@ class OracleReadingPassageOut(BaseModel):
 class OracleReadingImageOut(BaseModel):
     """Plate displayed atop a reading."""
 
-    source_url: str
+    url: str
     attribution_text: str
     artist: str
     work_title: str

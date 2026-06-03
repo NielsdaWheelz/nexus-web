@@ -710,6 +710,380 @@ class TestMigrationUpgradeDowngrade:
             engine.dispose()
             reset_test_schema()
 
+    def test_0127_rewrites_plate_event_payloads(self):
+        """Plate SSE events gain the owned ``url`` route; non-plate and
+        null-image events are left untouched (oracle-plate-owned-asset-cutover)."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0126")
+            assert result.returncode == 0, f"upgrade to 0126 failed: {result.stderr}"
+
+            user_id = uuid4()
+            corpus_set_version_id = uuid4()
+            image_id = uuid4()
+            reading_id = uuid4()
+            null_image_reading_id = uuid4()
+            plate_event_id = uuid4()
+            argument_event_id = uuid4()
+            null_image_plate_event_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_corpus_set_versions (
+                            id, version, label, embedding_model
+                        )
+                        VALUES (:id, :version, 'Migration Test Corpus', 'test_hash_v2_256')
+                        """
+                    ),
+                    {
+                        "id": corpus_set_version_id,
+                        "version": f"migration-test-{corpus_set_version_id}",
+                    },
+                )
+                # 0126-era oracle_corpus_images row: only the columns that exist at
+                # 0126 (the four owned-asset columns are added by 0127).
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_corpus_images (
+                            id,
+                            corpus_set_version_id,
+                            source_repository,
+                            source_url,
+                            artist,
+                            work_title,
+                            attribution_text,
+                            width,
+                            height
+                        )
+                        VALUES (
+                            :id,
+                            :corpus_set_version_id,
+                            'wikimedia',
+                            'https://example.test/plate.jpg',
+                            'Anon',
+                            'Plate',
+                            'Attribution',
+                            1,
+                            1
+                        )
+                        """
+                    ),
+                    {"id": image_id, "corpus_set_version_id": corpus_set_version_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id,
+                            user_id,
+                            corpus_set_version_id,
+                            folio_number,
+                            question_text,
+                            prompt_version,
+                            image_id
+                        )
+                        VALUES (
+                            :id,
+                            :user_id,
+                            :corpus_set_version_id,
+                            1,
+                            'what now?',
+                            'v1',
+                            :image_id
+                        )
+                        """
+                    ),
+                    {
+                        "id": reading_id,
+                        "user_id": user_id,
+                        "corpus_set_version_id": corpus_set_version_id,
+                        "image_id": image_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_readings (
+                            id,
+                            user_id,
+                            corpus_set_version_id,
+                            folio_number,
+                            question_text,
+                            prompt_version,
+                            image_id
+                        )
+                        VALUES (
+                            :id,
+                            :user_id,
+                            :corpus_set_version_id,
+                            2,
+                            'and then?',
+                            'v1',
+                            NULL
+                        )
+                        """
+                    ),
+                    {
+                        "id": null_image_reading_id,
+                        "user_id": user_id,
+                        "corpus_set_version_id": corpus_set_version_id,
+                    },
+                )
+                # A plate event whose reading has an image_id (should be rewritten).
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_reading_events (
+                            id, reading_id, seq, event_type, payload
+                        )
+                        VALUES (:id, :reading_id, 1, 'plate', CAST(:payload AS jsonb))
+                        """
+                    ),
+                    {
+                        "id": plate_event_id,
+                        "reading_id": reading_id,
+                        "payload": json.dumps(
+                            {
+                                "source_url": "/api/media/image?url=x",
+                                "attribution_text": "t",
+                                "width": 1,
+                                "height": 1,
+                            }
+                        ),
+                    },
+                )
+                # A non-plate event on the same reading (should be untouched).
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_reading_events (
+                            id, reading_id, seq, event_type, payload
+                        )
+                        VALUES (:id, :reading_id, 2, 'argument', CAST(:payload AS jsonb))
+                        """
+                    ),
+                    {
+                        "id": argument_event_id,
+                        "reading_id": reading_id,
+                        "payload": json.dumps({"text": "keep me"}),
+                    },
+                )
+                # A plate event whose reading has no image_id (should be untouched).
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO oracle_reading_events (
+                            id, reading_id, seq, event_type, payload
+                        )
+                        VALUES (:id, :reading_id, 1, 'plate', CAST(:payload AS jsonb))
+                        """
+                    ),
+                    {
+                        "id": null_image_plate_event_id,
+                        "reading_id": null_image_reading_id,
+                        "payload": json.dumps(
+                            {
+                                "source_url": "/api/media/image?url=y",
+                                "attribution_text": "t",
+                                "width": 1,
+                                "height": 1,
+                            }
+                        ),
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0127")
+            assert result.returncode == 0, f"upgrade to 0127 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                plate_payload = session.execute(
+                    text("SELECT payload FROM oracle_reading_events WHERE id = :id"),
+                    {"id": plate_event_id},
+                ).scalar_one()
+                argument_payload = session.execute(
+                    text("SELECT payload FROM oracle_reading_events WHERE id = :id"),
+                    {"id": argument_event_id},
+                ).scalar_one()
+                null_image_payload = session.execute(
+                    text("SELECT payload FROM oracle_reading_events WHERE id = :id"),
+                    {"id": null_image_plate_event_id},
+                ).scalar_one()
+
+            # Plate event on a reading with an image_id gains the owned url route
+            # and loses the legacy source_url.
+            assert plate_payload["url"] == f"/api/oracle/plates/{image_id}"
+            assert "source_url" not in plate_payload
+            assert plate_payload["attribution_text"] == "t"
+
+            # Non-plate events are untouched.
+            assert argument_payload == {"text": "keep me"}
+
+            # Plate events whose reading has no image_id are left as-is.
+            assert null_image_payload["source_url"] == "/api/media/image?url=y"
+            assert "url" not in null_image_payload
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_0127_backfills_owned_asset_columns(self):
+        """The 0072 seed plates are backfilled to the bundled owned-asset fixture
+        and the four object-provenance columns become NOT NULL at head."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = (
+                    session.execute(
+                        text(
+                            """
+                            SELECT storage_key, content_type, byte_size, sha256
+                            FROM oracle_corpus_images
+                            """
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+
+            assert rows, "expected at least one seeded oracle_corpus_images row"
+            for row in rows:
+                assert (
+                    row["storage_key"]
+                    == "oracle/plates/451cc39a41ea2a2b1bb0dccc9e58df2c7908bd0bac67d219878bf767234a8fa3.jpg"
+                )
+                assert row["content_type"] == "image/jpeg"
+                assert row["byte_size"] == 9382
+                assert (
+                    row["sha256"]
+                    == "451cc39a41ea2a2b1bb0dccc9e58df2c7908bd0bac67d219878bf767234a8fa3"
+                )
+                assert row["storage_key"] is not None
+                assert row["content_type"] is not None
+                assert row["byte_size"] is not None
+                assert row["sha256"] is not None
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_0127_owned_asset_schema_contract_is_enforced(self):
+        """The four object-provenance columns are not merely backfilled — the
+        head schema enforces the invariants. Each negative insert below is valid
+        EXCEPT for the one field under test and must be rejected by the matching
+        NOT NULL / CHECK constraint. This guards against a regression that
+        dropped ``SET NOT NULL`` or any of the four 0127 CHECK constraints while
+        leaving the backfill (and thus ``test_0127_backfills_owned_asset_columns``)
+        passing. (§6 DB-constraint testing exception.)"""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            # The deterministic 0072 seed plates exist at head; reuse an existing
+            # corpus_set_version_id so every negative insert is FK-valid and
+            # differs from a good row by exactly the one field under test.
+            with Session(engine) as session:
+                corpus_set_version_id = session.execute(
+                    text("SELECT corpus_set_version_id FROM oracle_corpus_images LIMIT 1")
+                ).scalar_one()
+
+            # Known-good column template (everything but ``id``/``created_at``/``tags``,
+            # which carry server defaults). Each case overrides exactly one binding.
+            def good_params() -> dict:
+                return {
+                    "id": uuid4(),
+                    "corpus_set_version_id": corpus_set_version_id,
+                    "source_repository": "wikimedia",
+                    "source_url": f"https://example.test/{uuid4()}.jpg",
+                    "artist": "Anon",
+                    "work_title": "Plate",
+                    "attribution_text": "Attribution",
+                    "width": 1,
+                    "height": 1,
+                    "storage_key": "oracle/plates/contract-test.jpg",
+                    "content_type": "image/jpeg",
+                    "byte_size": 1,
+                    "sha256": "0" * 64,
+                }
+
+            insert_sql = text(
+                """
+                INSERT INTO oracle_corpus_images (
+                    id,
+                    corpus_set_version_id,
+                    source_repository,
+                    source_url,
+                    artist,
+                    work_title,
+                    attribution_text,
+                    width,
+                    height,
+                    storage_key,
+                    content_type,
+                    byte_size,
+                    sha256
+                )
+                VALUES (
+                    :id,
+                    :corpus_set_version_id,
+                    :source_repository,
+                    :source_url,
+                    :artist,
+                    :work_title,
+                    :attribution_text,
+                    :width,
+                    :height,
+                    :storage_key,
+                    :content_type,
+                    :byte_size,
+                    :sha256
+                )
+                """
+            )
+
+            # Sanity check: the known-good template inserts cleanly, so each
+            # failure below is attributable to the single mutated field.
+            with Session(engine) as session:
+                session.execute(insert_sql, good_params())
+                session.commit()
+
+            negative_cases: list[tuple[dict, str]] = [
+                # 1) storage_key NULL -> NOT NULL violation.
+                ({"storage_key": None}, "storage_key"),
+                # 2) byte_size = 0 -> ck_oracle_images_byte_size_positive.
+                ({"byte_size": 0}, "ck_oracle_images_byte_size_positive"),
+                # 3) disallowed content_type -> ck_oracle_images_content_type.
+                ({"content_type": "image/svg+xml"}, "ck_oracle_images_content_type"),
+                # 4) sha256 not 64 chars -> ck_oracle_images_sha256_length.
+                ({"sha256": "short"}, "ck_oracle_images_sha256_length"),
+                # 5) wrong storage_key prefix -> ck_oracle_images_storage_key_prefix.
+                ({"storage_key": "media/x"}, "ck_oracle_images_storage_key_prefix"),
+            ]
+
+            for override, expected_constraint in negative_cases:
+                params = good_params()
+                params.update(override)
+                with Session(engine) as session:
+                    with pytest.raises(IntegrityError) as exc_info:
+                        session.execute(insert_sql, params)
+                        session.commit()
+                    session.rollback()
+                assert expected_constraint in str(exc_info.value), (
+                    f"expected {expected_constraint!r} violation for override {override!r}, "
+                    f"got: {exc_info.value}"
+                )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
     def test_0084_rewrites_tool_result_events_without_dropping_replay_data(self):
         """Chat event cutover preserves replay payloads while renaming tool_result."""
         reset_test_schema()

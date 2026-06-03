@@ -6173,6 +6173,10 @@ class OracleCorpusImage(Base):
     attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
@@ -6192,6 +6196,15 @@ class OracleCorpusImage(Base):
             "embedding_model IS NULL OR char_length(embedding_model) BETWEEN 1 AND 128",
             name="ck_oracle_images_embedding_model_length",
         ),
+        CheckConstraint(
+            "storage_key LIKE 'oracle/plates/%'", name="ck_oracle_images_storage_key_prefix"
+        ),
+        CheckConstraint(
+            "content_type IN ('image/jpeg', 'image/png', 'image/webp')",
+            name="ck_oracle_images_content_type",
+        ),
+        CheckConstraint("byte_size > 0", name="ck_oracle_images_byte_size_positive"),
+        CheckConstraint("char_length(sha256) = 64", name="ck_oracle_images_sha256_length"),
         UniqueConstraint(
             "corpus_set_version_id",
             "source_url",

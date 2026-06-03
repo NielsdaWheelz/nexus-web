@@ -113,6 +113,7 @@ include = [
     "nexus/services/extension_sessions.py",
     "nexus/services/fragment_blocks.py",
     "nexus/services/image_proxy.py",
+    "nexus/services/image_validation.py",
     "nexus/services/ingest_recovery.py",
     "nexus/services/media_processing_state.py",
     "nexus/services/metadata_enrichment.py",

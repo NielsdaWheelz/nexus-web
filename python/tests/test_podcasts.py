@@ -8338,7 +8338,7 @@ class TestPodcastShowNotesAndBatchCutover:
             "show notes links should open in a new tab with explicit target contract"
         )
         assert "episode details" in row["description_html"]
-        assert "/media/image?url=" in row["description_html"], (
+        assert "/api/media/image?url=" in row["description_html"], (
             "show notes images should route through image proxy sanitization"
         )
 
