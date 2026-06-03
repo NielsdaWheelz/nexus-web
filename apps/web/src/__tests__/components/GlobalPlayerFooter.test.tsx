@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { setAudioMetrics, setViewportWidth } from "../helpers/audio";
@@ -59,6 +59,24 @@ function RouteHarness() {
       <GlobalPlayerFooter />
     </GlobalPlayerProvider>
   );
+}
+
+function mountMobileFooter() {
+  setViewportWidth(390);
+  render(
+    <GlobalPlayerProvider>
+      <RouteA />
+      <GlobalPlayerFooter />
+    </GlobalPlayerProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
+  return screen.getByRole("button", { name: "Expand player" });
+}
+
+function expandSheet(opener: HTMLElement) {
+  opener.focus();
+  fireEvent.click(opener);
+  return screen.getByRole("dialog", { name: "Expanded player" });
 }
 
 function mockAudioTransport(audio: HTMLAudioElement) {
@@ -261,5 +279,57 @@ describe("GlobalPlayerFooter", () => {
     await waitFor(() => {
       expect(screen.queryByText("Buffering...")).toBeNull();
     });
+  });
+});
+
+describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    document.body.style.overflow = "";
+  });
+
+  it("locks body scroll while expanded and restores it on collapse", async () => {
+    const opener = mountMobileFooter();
+    expandSheet(opener);
+
+    await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(document.body.style.overflow).toBe(""));
+  });
+
+  it("moves focus into the expanded sheet on open", async () => {
+    const opener = mountMobileFooter();
+    expandSheet(opener);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Collapse player" })).toHaveFocus(),
+    );
+  });
+
+  it("closes the expanded sheet on Escape", async () => {
+    const opener = mountMobileFooter();
+    expandSheet(opener);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Expanded player" })).toBeNull(),
+    );
+  });
+
+  it("restores focus to the opener after the sheet closes", async () => {
+    const opener = mountMobileFooter();
+    const dialog = expandSheet(opener);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Collapse player" })).toHaveFocus(),
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Collapse player" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Expand player" })).toHaveFocus(),
+    );
   });
 });

@@ -6,7 +6,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(2px);
 }
 

@@ -15,7 +15,10 @@ import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
+import { useFocusTrap } from "@/lib/ui/useFocusTrap";
+import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useReturnFocus } from "@/lib/ui/useReturnFocus";
 import {
   getModelSourceLabel,
   isReasoningMode,
@@ -62,6 +65,9 @@ export default function ModelSettingsPopover({
   });
 
   useBodyOverflowLock(open && isMobile);
+  useFocusTrap(panelRef, open && isMobile);
+  useReturnFocus(open && isMobile);
+  useInitialFocus(panelRef, open && isMobile);
 
   const {
     availableModels,

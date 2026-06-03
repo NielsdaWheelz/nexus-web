@@ -96,6 +96,10 @@
   --z-modal: 1000;
   --z-toast: 10000;
 
+  /* Overlay scrims */
+  --overlay-scrim: rgb(0 0 0 / 0.5);        /* default modal scrim */
+  --overlay-scrim-soft: rgb(0 0 0 / 0.24);  /* light scrim — mobile secondary sheet */
+
   /* Layout */
   --navbar-width: 240px;
   --navbar-collapsed-width: 48px;

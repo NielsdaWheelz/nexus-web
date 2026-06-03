@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
@@ -168,6 +168,7 @@ export default function GlobalPlayerFooter() {
   const [moreOpen, setMoreOpen] = useState(false);
   const morePopoverRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const expandedSheetRef = useRef<HTMLElement>(null);
   const {
     track,
     bindAudioElement,
@@ -208,7 +209,17 @@ export default function GlobalPlayerFooter() {
     void refreshQueue();
   }, [queueOpen, refreshQueue, trackMediaId]);
 
-  useBodyOverflowLock(mobileExpanded && isMobile);
+  const closeMobileExpanded = () => {
+    setMobileExpanded(false);
+    setQueueOpen(false);
+    setEffectsOpen(false);
+  };
+
+  useDialogOverlay({
+    ref: expandedSheetRef,
+    active: mobileExpanded && isMobile,
+    onDismiss: closeMobileExpanded,
+  });
 
   useDismissOnOutsideOrEscape({
     enabled: moreOpen,
@@ -244,12 +255,6 @@ export default function GlobalPlayerFooter() {
   };
 
   const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
-
-  const closeMobileExpanded = () => {
-    setMobileExpanded(false);
-    setQueueOpen(false);
-    setEffectsOpen(false);
-  };
 
   return (
     <footer
@@ -313,14 +318,12 @@ export default function GlobalPlayerFooter() {
           {mobileExpanded && (
             <div className={styles.expandedBackdrop} onClick={closeMobileExpanded}>
               <section
+                ref={expandedSheetRef}
                 className={styles.expandedSheet}
                 role="dialog"
                 aria-modal="true"
                 aria-label="Expanded player"
                 onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") closeMobileExpanded();
-                }}
               >
                 <div className={styles.expandedHandle} aria-hidden="true" />
                 <Button
@@ -477,7 +480,10 @@ export default function GlobalPlayerFooter() {
                     variant="secondary"
                     size="sm"
                     className={styles.queueButton}
-                    onClick={() => setQueueOpen(true)}
+                    onClick={() => {
+                      setQueueOpen(true);
+                      setMobileExpanded(false);
+                    }}
                     aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                   >
                     Queue

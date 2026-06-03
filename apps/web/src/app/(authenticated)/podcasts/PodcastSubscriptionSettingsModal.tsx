@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef } from "react";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -7,31 +9,35 @@ import {
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import type { PodcastSubscriptionListItem } from "./podcastSubscriptions";
 import type { PodcastSubscriptionSettingsModal as PodcastSubscriptionSettingsModalState } from "./usePodcastSubscriptionSettingsModal";
 import styles from "./page.module.css";
 
 export default function PodcastSubscriptionSettingsModal({
-  settingsRow,
+  podcastTitle,
   settingsModal,
 }: {
-  settingsRow: PodcastSubscriptionListItem | null;
+  podcastTitle: string | null;
   settingsModal: PodcastSubscriptionSettingsModalState;
 }) {
-  if (!settingsRow) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useDialogOverlay({ ref: cardRef, active: podcastTitle !== null, onDismiss: settingsModal.close });
+  if (podcastTitle === null) {
     return null;
   }
   return (
     <div className={styles.modalBackdrop} role="presentation" onClick={settingsModal.close}>
       <div
+        ref={cardRef}
         className={styles.modalCard}
         role="dialog"
         aria-modal="true"
-        aria-label="Podcast settings"
+        aria-label="Subscription settings"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className={styles.modalTitle}>Podcast settings</h2>
-        <p className={styles.modalDescription}>{settingsRow.podcast.title}</p>
+        <h2 className={styles.modalTitle}>Subscription settings</h2>
+        <p className={styles.modalDescription}>
+          Configure default playback behavior for <strong>{podcastTitle}</strong>.
+        </p>
         <label className={styles.settingsFieldLabel}>
           Default playback speed
           <Select
@@ -39,7 +45,7 @@ export default function PodcastSubscriptionSettingsModal({
             onChange={(event) => settingsModal.setDefaultSpeed(event.target.value)}
             aria-label="Default playback speed"
           >
-            <option value="default">Use player default</option>
+            <option value="default">Default (1.0x)</option>
             {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
               <option key={option} value={String(option)}>
                 {formatPlaybackSpeedLabel(option)}
@@ -56,6 +62,10 @@ export default function PodcastSubscriptionSettingsModal({
           />
           Automatically add new episodes to my queue
         </label>
+        <p className={styles.modalDescription}>
+          New episodes from this podcast will be added to the end of your playback
+          queue when they&apos;re synced.
+        </p>
         {settingsModal.error ? <FeedbackNotice feedback={settingsModal.error} /> : null}
         <div className={styles.modalActions}>
           <Button
@@ -65,16 +75,18 @@ export default function PodcastSubscriptionSettingsModal({
               void settingsModal.save();
             }}
             disabled={settingsModal.busy}
+            aria-label="Save subscription settings"
           >
-            {settingsModal.busy ? "Saving..." : "Save subscription settings"}
+            {settingsModal.busy ? "Saving..." : "Save"}
           </Button>
           <Button
             variant="secondary"
             size="md"
             onClick={settingsModal.close}
             disabled={settingsModal.busy}
+            aria-label="Close subscription settings"
           >
-            Cancel
+            Close
           </Button>
         </div>
       </div>

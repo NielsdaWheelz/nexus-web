@@ -34,10 +34,12 @@ import {
 } from "@/lib/media/ingestionClient";
 import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
+import { useInitialFocus } from "@/lib/ui/useInitialFocus";
+import { useReturnFocus } from "@/lib/ui/useReturnFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -302,31 +304,11 @@ export default function AddContentTray() {
     return () => window.removeEventListener("paste", onPaste);
   }, [enqueueUrls]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
   useBodyOverflowLock(isMobile && open);
-
   useFocusTrap(trayRef, isMobile && open);
-
-  useEffect(() => {
-    if (!isMobile || !open || !trayRef.current) {
-      return;
-    }
-    const firstFocusable = getFocusableElements(trayRef.current)[0];
-    (firstFocusable ?? trayRef.current).focus();
-  }, [isMobile, open]);
+  useReturnFocus(isMobile && open);
+  useInitialFocus(trayRef, isMobile && open);
+  useEscapeKey(open, () => setOpen(false));
 
   const submitUrls = useCallback(
     (event: React.FormEvent) => {

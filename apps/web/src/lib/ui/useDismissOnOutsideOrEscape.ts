@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type RefObject } from "react";
+import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 
 type DismissReason = "outside-click" | "escape";
 
@@ -33,6 +34,8 @@ export function useDismissOnOutsideOrEscape(args: {
   const refsRef = useRef(refs);
   refsRef.current = refs;
 
+  useEscapeKey(enabled, () => onDismissRef.current("escape"));
+
   useEffect(() => {
     if (!enabled) return;
     const handlePointerDown = (event: PointerEvent) => {
@@ -45,16 +48,7 @@ export function useDismissOnOutsideOrEscape(args: {
       if (el?.closest("[data-dismiss-ignore]")) return;
       onDismissRef.current("outside-click");
     };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onDismissRef.current("escape");
-    };
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [enabled]);
 }

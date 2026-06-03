@@ -84,7 +84,7 @@
   .settingsBackdrop {
     position: absolute;
     inset: 0;
-    background: rgb(0 0 0 / 32%);
+    background: var(--overlay-scrim-soft);
   }
 
   .settingsPanel {

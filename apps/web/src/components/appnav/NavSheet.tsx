@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useRef, type MouseEvent } from "react";
+import { useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { LogOut, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
-import { useFocusTrap } from "@/lib/ui/useFocusTrap";
-import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
-import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import type { NavGroup, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -36,28 +33,8 @@ export default function NavSheet({
   onNavigate: (event: MouseEvent<HTMLElement>, href: string) => void;
 }) {
   const sheetRef = useRef<HTMLElement>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
 
-  useBodyOverflowLock(open);
-  useFocusTrap(sheetRef, open);
-  useDismissOnOutsideOrEscape({ enabled: open, refs: [sheetRef], onDismiss: onClose });
-
-  useEffect(() => {
-    if (!open) return;
-    returnFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => {
-      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const frame = window.requestAnimationFrame(() => {
-      if (sheetRef.current) (getFocusableElements(sheetRef.current)[0] ?? sheetRef.current).focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [open]);
+  useDialogOverlay({ ref: sheetRef, active: open, onDismiss: onClose });
 
   if (!open) return null;
 
@@ -68,7 +45,7 @@ export default function NavSheet({
   const AccountIcon = account.icon;
 
   return createPortal(
-    <div className={styles.sheetBackdrop} role="presentation">
+    <div className={styles.sheetBackdrop} role="presentation" onClick={onClose}>
       <aside
         ref={sheetRef}
         className={styles.sheet}
@@ -76,6 +53,7 @@ export default function NavSheet({
         aria-modal="true"
         aria-label="Navigation"
         tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.brand}>
           <Link

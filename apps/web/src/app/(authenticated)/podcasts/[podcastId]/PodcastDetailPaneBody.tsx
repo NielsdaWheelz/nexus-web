@@ -19,7 +19,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -32,10 +32,7 @@ import {
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import PodcastSummaryCard from "./PodcastSummaryCard";
-import {
-  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
-  formatPlaybackSpeedLabel,
-} from "@/lib/player/subscriptionPlaybackSpeed";
+import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
@@ -474,20 +471,12 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
-  useBodyOverflowLock(episodesDrawerOpen);
-
-  useEffect(() => {
-    if (!episodesDrawerOpen) {
-      return;
-    }
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setEpisodesDrawerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [episodesDrawerOpen]);
+  const episodesDrawerRef = useRef<HTMLElement>(null);
+  useDialogOverlay({
+    ref: episodesDrawerRef,
+    active: isMobileViewport && episodesDrawerOpen,
+    onDismiss: () => setEpisodesDrawerOpen(false),
+  });
 
   useEffect(() => {
     if (episodesDrawerOpen && !isMobileViewport) {
@@ -1996,75 +1985,14 @@ export default function PodcastDetailPaneBody() {
         }}
       />
 
-      {settingsModal.podcastId !== null && detail && activeSubscription && (
-        <div
-          className={styles.modalBackdrop}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Subscription settings"
-        >
-          <div className={styles.modalCard}>
-            <h3 className={styles.modalTitle}>Subscription settings</h3>
-            <p className={styles.modalDescription}>
-              Configure default playback behavior for{" "}
-              <strong>{detail.podcast.title}</strong>.
-            </p>
-            <label
-              htmlFor="detail-default-playback-speed"
-              className={styles.settingsFieldLabel}
-            >
-              Default playback speed
-            </label>
-            <Select
-              id="detail-default-playback-speed"
-              value={settingsModal.defaultSpeed}
-              onChange={(event) => settingsModal.setDefaultSpeed(event.target.value)}
-              aria-label="Default playback speed"
-            >
-              <option value="default">Default (1.0x)</option>
-              {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
-                <option key={speed} value={String(speed)}>
-                  {formatPlaybackSpeedLabel(speed)}
-                </option>
-              ))}
-            </Select>
-            <label className={styles.settingsToggleLabel}>
-              <input
-                type="checkbox"
-                checked={settingsModal.autoQueue}
-                onChange={(event) => settingsModal.setAutoQueue(event.target.checked)}
-                aria-label="Automatically add new episodes to my queue"
-              />
-              <span>Automatically add new episodes to my queue</span>
-            </label>
-            <p className={styles.modalDescription}>
-              New episodes from this podcast will be added to the end of your
-              playback queue when they&apos;re synced.
-            </p>
-            {settingsModal.error && <FeedbackNotice feedback={settingsModal.error} />}
-            <div className={styles.modalActions}>
-              <Button
-                variant="primary"
-                size="md"
-                onClick={() => void settingsModal.save()}
-                disabled={settingsModal.busy}
-                aria-label="Save subscription settings"
-              >
-                {settingsModal.busy ? "Saving..." : "Save"}
-              </Button>
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={closeSettingsModal}
-                disabled={settingsModal.busy}
-                aria-label="Close subscription settings"
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PodcastSubscriptionSettingsModal
+        podcastTitle={
+          settingsModal.podcastId !== null && detail && activeSubscription
+            ? detail.podcast.title
+            : null
+        }
+        settingsModal={settingsModal}
+      />
 
       {isMobileViewport && episodesDrawerOpen ? (
         <div
@@ -2073,6 +2001,7 @@ export default function PodcastDetailPaneBody() {
           onClick={() => setEpisodesDrawerOpen(false)}
         >
           <aside
+            ref={episodesDrawerRef}
             className={styles.episodesDrawer}
             role="dialog"
             aria-modal="true"

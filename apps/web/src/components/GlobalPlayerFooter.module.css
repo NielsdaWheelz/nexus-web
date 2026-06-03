@@ -474,7 +474,7 @@
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: flex-end;
@@ -570,7 +570,7 @@
 .queueOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-scrim);
   display: flex;
   justify-content: flex-end;
   z-index: var(--z-overlay);

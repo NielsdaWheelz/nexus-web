@@ -758,7 +758,10 @@ export default function PodcastsPaneBody() {
         }}
       />
 
-      <PodcastSubscriptionSettingsModal settingsRow={settingsRow} settingsModal={settingsModal} />
+      <PodcastSubscriptionSettingsModal
+        podcastTitle={settingsRow?.podcast.title ?? null}
+        settingsModal={settingsModal}
+      />
     </>
   );
 }

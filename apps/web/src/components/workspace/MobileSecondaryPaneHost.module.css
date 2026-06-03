@@ -5,7 +5,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgb(0 0 0 / 0.24);
+  background: var(--overlay-scrim-soft);
 }
 
 .sheet {

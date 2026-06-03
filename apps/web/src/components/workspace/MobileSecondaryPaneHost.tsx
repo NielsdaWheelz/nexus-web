@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { useId, useRef } from "react";
 import Button from "@/components/ui/Button";
 import SecondarySurfaceTabs, {
   secondarySurfacePanelId,
@@ -13,9 +13,7 @@ import {
   type WorkspaceSecondaryState,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import { getFocusableElements } from "@/lib/ui/getFocusableElements";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
-import { useFocusTrap } from "@/lib/ui/useFocusTrap";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import styles from "./MobileSecondaryPaneHost.module.css";
 
 interface MobileSecondaryPaneHostProps {
@@ -38,7 +36,6 @@ export default function MobileSecondaryPaneHost({
 }: MobileSecondaryPaneHostProps) {
   const baseId = useId();
   const sheetRef = useRef<HTMLElement>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
   const activeSurface =
     publication?.surfaces.find((surface) => surface.id === secondary?.activeSurfaceId) ??
     null;
@@ -50,54 +47,15 @@ export default function MobileSecondaryPaneHost({
       activeSurface,
   );
 
-  useBodyOverflowLock(active);
-  useFocusTrap(sheetRef, active);
-
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
-    returnFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => {
-      const returnTarget = returnFocusRef.current;
-      if (returnTarget?.isConnected) {
-        returnTarget.focus();
-        return;
-      }
-      document
-        .querySelector<HTMLElement>('[data-active="true"] [data-pane-chrome-focus="true"]')
-        ?.focus();
-    };
-  }, [active]);
-
-  useEffect(() => {
-    if (!active || !sheetRef.current) {
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      const tab = sheetRef.current?.querySelector<HTMLElement>(
-        '[role="tab"][aria-selected="true"]',
-      );
-      const firstFocusable = getFocusableElements(sheetRef.current!)[0];
-      (tab ?? firstFocusable ?? sheetRef.current)?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [active, activeSurfaceId]);
-
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose(secondaryPaneId);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [active, onClose, secondaryPaneId]);
+  useDialogOverlay({
+    ref: sheetRef,
+    active,
+    onDismiss: () => onClose(secondaryPaneId),
+    initialFocus: (c) => c.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'),
+    returnFocusFallback: () =>
+      document.querySelector<HTMLElement>('[data-active="true"] [data-pane-chrome-focus="true"]'),
+    focusKey: activeSurfaceId,
+  });
 
   if (!active || !publication || !secondary || !activeSurface) {
     return null;
