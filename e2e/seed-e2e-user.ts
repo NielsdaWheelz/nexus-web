@@ -8,17 +8,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
+import supabaseEnv from "./supabase-env.cjs";
+
+const { requireSupabaseAdminEnv } = supabaseEnv;
 
 const ROOT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const SEED_USER_FILE = path.join(ROOT_DIR, "e2e/.seed/e2e-user.json");
-applyResolvedSupabaseEnv(ROOT_DIR, process.env, { includeAdminKey: true });
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_AUTH_ADMIN_KEY = process.env.SUPABASE_AUTH_ADMIN_KEY;
+const resolvedSupabaseEnv = requireSupabaseAdminEnv(ROOT_DIR, process.env);
 
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 const USERS_PER_PAGE = 200;
@@ -33,22 +32,15 @@ interface AdminListUsersResponse {
   users?: AdminUser[];
 }
 
-if (!SUPABASE_URL || !SUPABASE_AUTH_ADMIN_KEY) {
-  throw new Error(
-    "Missing Supabase admin configuration. Expected live values from `supabase status` " +
-      "or SUPABASE_URL plus command-scoped SUPABASE_AUTH_ADMIN_KEY.",
-  );
-}
-
 const authAdminHeaders = {
-  Authorization: `Bearer ${SUPABASE_AUTH_ADMIN_KEY}`,
-  apikey: SUPABASE_AUTH_ADMIN_KEY,
+  Authorization: `Bearer ${resolvedSupabaseEnv.adminKey}`,
+  apikey: resolvedSupabaseEnv.adminKey,
 };
 
 async function findExistingUserByEmail(): Promise<AdminUser | null> {
   for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
     const listRes = await fetch(
-      `${SUPABASE_URL}/auth/v1/admin/users?page=${page}&per_page=${USERS_PER_PAGE}`,
+      `${resolvedSupabaseEnv.supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=${USERS_PER_PAGE}`,
       {
         headers: authAdminHeaders,
       },
@@ -85,7 +77,7 @@ async function seedUser() {
     return;
   }
 
-  const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+  const createRes = await fetch(`${resolvedSupabaseEnv.supabaseUrl}/auth/v1/admin/users`, {
     method: "POST",
     headers: {
       ...authAdminHeaders,

@@ -8,6 +8,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "../api";
+import supabaseEnv from "../../supabase-env.cjs";
 import { openHighlightsPane as openReaderHighlightsPane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
 import {
@@ -16,6 +17,7 @@ import {
   gotoSinglePaneWorkspace,
 } from "../workspace";
 
+const { buildE2eAppRuntimeEnv } = supabaseEnv;
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
   pdf: "PDFs",
@@ -258,7 +260,7 @@ function runRealMediaWorkerOnce(mediaId?: string): RealMediaWorkerResult {
   }
 
   const workerEnv = {
-    ...process.env,
+    ...buildE2eAppRuntimeEnv(process.env),
     DATABASE_URL: databaseUrl,
     NEXUS_ENV: nexusEnv,
     REAL_MEDIA_PROVIDER_FIXTURES: "1",
@@ -266,11 +268,6 @@ function runRealMediaWorkerOnce(mediaId?: string): RealMediaWorkerResult {
       process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
     ...(mediaId ? { NEXUS_REAL_MEDIA_READY_MEDIA_ID: mediaId } : {}),
   };
-  delete workerEnv.SERVICE_ROLE_KEY;
-  delete workerEnv.SUPABASE_AUTH_ADMIN_KEY;
-  delete workerEnv.SUPABASE_DATABASE_URL;
-  delete workerEnv.SUPABASE_SERVICE_KEY;
-  delete workerEnv.SUPABASE_SERVICE_ROLE_KEY;
 
   const child = spawnSync(
     "uv",

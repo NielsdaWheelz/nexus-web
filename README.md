@@ -88,7 +88,11 @@ make seed-real-media-e2e
 
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
-- `make dev` writes the live Supabase Auth URL and keys to `.dev-ports`.
+- `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
+- `make test-e2e` owns local Supabase startup, admin bootstrap, and E2E user
+  seeding. Direct Playwright commands from `e2e/` require an already-running
+  local Supabase stack; pass `SUPABASE_AUTH_ADMIN_KEY` only as command-scoped
+  shell env, never through app or deploy env files.
 - Test wrappers choose and hold free Postgres, MinIO, API, and web ports for
   each run. `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and
   `TEST_WEB_PORT` force an exact port and fail if it cannot bind.

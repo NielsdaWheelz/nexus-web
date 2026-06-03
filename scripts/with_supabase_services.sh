@@ -5,10 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/test_env.sh"
 
-if [ $# -lt 1 ]; then
-    echo "Usage: $0 <command...>" >&2
+require_admin=0
+if [ "${1:-}" = "--require-admin" ]; then
+    require_admin=1
+    shift
+elif [ "${1:-}" = "--help" ] || [[ "${1:-}" == --* ]]; then
+    echo "Usage: $0 [--require-admin] <command...>" >&2
     exit 1
 fi
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 [--require-admin] <command...>" >&2
+    exit 1
+fi
+
+for key in SERVICE_ROLE_KEY SUPABASE_DATABASE_URL SUPABASE_SERVICE_KEY SUPABASE_SERVICE_ROLE_KEY; do
+    if [ -n "${!key:-}" ]; then
+        echo "Error: $key is not accepted by E2E Supabase bootstrap; use command-scoped SUPABASE_AUTH_ADMIN_KEY." >&2
+        exit 1
+    fi
+done
 
 cd "$PROJECT_ROOT"
 
@@ -118,7 +134,13 @@ for attempt in 1 2; do
     cleanup_supabase_project
     wait_for_supabase_ports_to_close
 done
-test_env_export_supabase_env
+
+resolver_args=(--print-shell)
+if [ "$require_admin" = "1" ]; then
+    resolver_args+=(--require-admin)
+fi
+test_env_require_tool node
+eval "$(node e2e/supabase-env.cjs "${resolver_args[@]}")"
 
 status=0
 "$@" || status=$?

@@ -17,6 +17,7 @@ This script:
 
 from __future__ import annotations
 
+# ruff: noqa: E402
 import base64
 import json
 import os
@@ -33,6 +34,17 @@ import fitz
 import httpx
 from sqlalchemy import select, text
 from supabase_auth_config import load_supabase_auth_config_or_exit
+
+E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
+SUPABASE_URL, SUPABASE_AUTH_ADMIN_KEY = load_supabase_auth_config_or_exit()
+for key in (
+    "SUPABASE_AUTH_ADMIN_KEY",
+    "SUPABASE_DATABASE_URL",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SERVICE_ROLE_KEY",
+):
+    os.environ.pop(key, None)
 
 from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus, UserApiKey
 from nexus.db.session import create_session_factory
@@ -56,7 +68,6 @@ from nexus.storage.paths import build_upload_staging_storage_path, get_file_exte
 from nexus.tasks.ingest_epub import persist_epub_metadata, run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
-E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
 PDF_PAGE_COUNT = 80
 SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
 NON_PDF_SEED_FILE_RELATIVE = Path("e2e/.seed/non-pdf-media.json")
@@ -1506,14 +1517,6 @@ def main() -> None:
         print("ERROR: DATABASE_URL must be set")
         sys.exit(1)
 
-    supabase_url, supabase_auth_admin_key = load_supabase_auth_config_or_exit()
-    for key in (
-        "SUPABASE_AUTH_ADMIN_KEY",
-        "SUPABASE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SERVICE_ROLE_KEY",
-    ):
-        os.environ.pop(key, None)
     missing_r2 = [
         key
         for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
@@ -1524,8 +1527,8 @@ def main() -> None:
         sys.exit(1)
 
     user_id = _fetch_e2e_user_id_with_retry(
-        supabase_url=supabase_url,
-        service_key=supabase_auth_admin_key,
+        supabase_url=SUPABASE_URL,
+        service_key=SUPABASE_AUTH_ADMIN_KEY,
         email=E2E_USER_EMAIL,
     )
 

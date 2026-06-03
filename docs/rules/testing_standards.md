@@ -348,7 +348,9 @@ Rule:
 - Avoid direct DB writes from Playwright tests
 - Prefer deterministic seed inputs and idempotent setup behavior
 - Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `bun run test:e2e`, CI) share identical setup guarantees
-- `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make
+- `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make, but those files must only provide public/runtime values.
+- Local Supabase Auth bootstrap has one owner: `e2e/supabase-env.cjs` plus Playwright `globalSetup`. E2E may use the real local Supabase Admin API to create the test user and session; it must not use fake auth, fake JWTs, auth skips, or browser-held admin credentials.
+- `SUPABASE_AUTH_ADMIN_KEY` is trusted E2E bootstrap env only. Next.js, FastAPI, workers, migrations, and helper subprocesses must receive a scrubbed app runtime env without Supabase admin/service-role/database keys.
 - Do not seed fake or undecryptable BYOK rows just to expose chat models. Chat-run E2E flows require a real runnable model through platform or BYOK configuration; otherwise they must skip through the shared chat-readiness helper before attempting to send.
 
 ### E2E Determinism and Pane-Aware Assertions

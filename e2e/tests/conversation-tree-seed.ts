@@ -1,10 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { applyResolvedSupabaseEnv } from "../supabase-env.mjs";
+import supabaseEnv from "../supabase-env.cjs";
 
+const { applySupabasePublicEnv, buildE2eAppRuntimeEnv } = supabaseEnv;
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
-applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+applySupabasePublicEnv(ROOT_DIR, process.env);
 
 interface MeResponse {
   data: {
@@ -54,7 +55,7 @@ function seedConversationTree<T>(
   }
 
   const childEnv = {
-    ...process.env,
+    ...buildE2eAppRuntimeEnv(process.env),
     ...extraEnv,
     DATABASE_URL: databaseUrl.replace(
       /^postgresql:\/\//,
@@ -66,11 +67,6 @@ function seedConversationTree<T>(
     NEXUS_E2E_OWNER_USER_ID: ownerUserId,
     NEXUS_E2E_CONVERSATION_SCENARIO: scenario,
   };
-  delete childEnv.SERVICE_ROLE_KEY;
-  delete childEnv.SUPABASE_AUTH_ADMIN_KEY;
-  delete childEnv.SUPABASE_DATABASE_URL;
-  delete childEnv.SUPABASE_SERVICE_KEY;
-  delete childEnv.SUPABASE_SERVICE_ROLE_KEY;
 
   const output = execFileSync(
     "uv",

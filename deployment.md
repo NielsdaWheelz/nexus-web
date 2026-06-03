@@ -187,7 +187,8 @@ NEXUS_INTERNAL_SECRET=<same value as VPS>
 
 `R2_S3_API_ORIGIN` is a public shared origin used by backend signing and
 frontend CSP. `NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase
-database, storage service-role keys, R2 credentials, or bucket names to Vercel.
+database, storage service-role keys, `SUPABASE_AUTH_ADMIN_KEY`, R2 credentials,
+or bucket names to Vercel. `SUPABASE_AUTH_ADMIN_KEY` is local E2E bootstrap-only.
 `AUTH_ALLOWED_REDIRECT_ORIGINS` is a full URL origin allowlist for app-generated
 Supabase redirect URLs. `AUTH_TRUSTED_PROXY_ORIGINS` is only for trusted
 host-rewriting proxy hops. `SERVER_ACTION_ALLOWED_ORIGINS` is a Next.js domain

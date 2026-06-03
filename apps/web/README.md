@@ -98,6 +98,9 @@ bun run lint
 ```
 
 CI shards Playwright E2E runs; local `make test-e2e` stays single-command.
+Run E2E from the repo root so the shared harness owns local Supabase startup and
+auth bootstrap. The web app runtime must receive only public Supabase URL/anon
+env; never set `SUPABASE_AUTH_ADMIN_KEY` for Next.js.
 
 ## Highlight Libraries
 

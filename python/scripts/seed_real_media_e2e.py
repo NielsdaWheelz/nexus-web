@@ -7,6 +7,7 @@ writes only ids, hashes, and short expected needles to e2e/.seed/real-media.json
 
 from __future__ import annotations
 
+# ruff: noqa: E402
 import hashlib
 import json
 import os
@@ -16,11 +17,23 @@ from typing import NotRequired, TypedDict
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
+from supabase_auth_config import load_supabase_auth_config_or_exit
+
+E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "e2e-test@nexus.local")
+SUPABASE_URL, SUPABASE_AUTH_ADMIN_KEY = load_supabase_auth_config_or_exit()
+for key in (
+    "SUPABASE_AUTH_ADMIN_KEY",
+    "SUPABASE_DATABASE_URL",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SERVICE_ROLE_KEY",
+):
+    os.environ.pop(key, None)
+
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-from supabase_auth_config import load_supabase_auth_config
 
 from nexus.app import create_app
 from nexus.config import get_settings
@@ -40,7 +53,6 @@ from tests.utils.db import DirectSessionManager
 
 ROOT = Path(__file__).parents[2]
 SEED_PATH = ROOT / "e2e" / ".seed" / "real-media.json"
-E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "e2e-test@nexus.local")
 NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
 
 
@@ -134,19 +146,11 @@ def main() -> None:
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set for make seed-real-media-e2e.")
 
-    supabase_url, supabase_auth_admin_key = load_supabase_auth_config()
-    for key in (
-        "SUPABASE_AUTH_ADMIN_KEY",
-        "SUPABASE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SERVICE_ROLE_KEY",
-    ):
-        os.environ.pop(key, None)
     _ensure_real_media_prerequisites()
 
     user_id = _fetch_e2e_user_id_with_retry(
-        supabase_url,
-        supabase_auth_admin_key,
+        SUPABASE_URL,
+        SUPABASE_AUTH_ADMIN_KEY,
         E2E_USER_EMAIL,
     )
 
@@ -156,7 +160,7 @@ def main() -> None:
         direct_db = DirectSessionManager(engine)
 
         with TestClient(create_app()) as client:
-            headers = _real_auth_headers(supabase_url, supabase_auth_admin_key)
+            headers = _real_auth_headers(SUPABASE_URL, SUPABASE_AUTH_ADMIN_KEY)
             default_library_id = _ensure_e2e_viewer(client, headers, user_id)
             grant_ai_plus(direct_db, user_id)
 

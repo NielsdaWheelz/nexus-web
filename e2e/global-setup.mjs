@@ -9,7 +9,9 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
+import supabaseEnv from "./supabase-env.cjs";
+
+const { buildE2eAppRuntimeEnv, requireSupabaseAdminEnv } = supabaseEnv;
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(E2E_DIR, "..");
@@ -38,6 +40,13 @@ const SEED_FILES = [
   READER_OVERVIEW_RULER_SEED,
 ];
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
+const ROOT_ENV_BOOTSTRAP_SECRET_KEYS = new Set([
+  "SERVICE_ROLE_KEY",
+  "SUPABASE_AUTH_ADMIN_KEY",
+  "SUPABASE_DATABASE_URL",
+  "SUPABASE_SERVICE_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+]);
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -51,7 +60,11 @@ function loadEnvFile(filePath) {
     }
     const eqIdx = trimmed.indexOf("=");
     const key = trimmed.slice(0, eqIdx).trim();
-    if (!key || process.env[key] !== undefined) {
+    if (
+      !key ||
+      ROOT_ENV_BOOTSTRAP_SECRET_KEYS.has(key) ||
+      process.env[key] !== undefined
+    ) {
       continue;
     }
     let value = trimmed.slice(eqIdx + 1).trim();
@@ -65,13 +78,13 @@ function loadEnvFile(filePath) {
   }
 }
 
-function run(label, command, cwd, envOverrides) {
+function run(label, command, cwd, envOverrides, baseEnv = process.env) {
   console.log(`[global-setup] ${label}...`);
   try {
     execSync(command, {
       cwd,
       stdio: "inherit",
-      env: { ...process.env, ...envOverrides },
+      env: { ...baseEnv, ...envOverrides },
     });
   } catch {
     throw new Error(
@@ -224,7 +237,7 @@ function databaseHasSeededMedia(dbUrl, ownerUserId) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_MEDIA_IDS: JSON.stringify(mediaIds),
         NEXUS_E2E_OWNER_USER_ID: ownerUserId,
@@ -298,7 +311,7 @@ function databaseHasReadyEvidenceIndexes(dbUrl) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_INDEX_MEDIA_IDS: JSON.stringify(mediaIds),
       },
@@ -344,7 +357,7 @@ function databaseHasSeededBilling(dbUrl) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         E2E_USER_EMAIL,
       },
@@ -395,7 +408,7 @@ function databaseHasSeededEpubTitle(dbUrl) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_EPUB_SEED: JSON.stringify(epub),
       },
@@ -440,7 +453,7 @@ function databaseHasSeededOpenAiKey(dbUrl, ownerUserId) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_OWNER_USER_ID: ownerUserId,
       },
@@ -493,7 +506,7 @@ function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_YOUTUBE_SEED: JSON.stringify(youtube),
       },
@@ -551,7 +564,7 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
-        ...process.env,
+        ...buildE2eAppRuntimeEnv(process.env),
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_HIGHLIGHT_SEED: JSON.stringify({
           non_pdf_media_id: nonPdf.media_id,
@@ -595,7 +608,7 @@ export default function globalSetup() {
     );
   }
   process.env.NEXUS_ENV = realMediaEnabled ? "local" : "test";
-  applyResolvedSupabaseEnv(ROOT, process.env);
+  requireSupabaseAdminEnv(ROOT, process.env);
 
   // Step 1: Ensure schema is up-to-date for feature E2E coverage.
   const dbUrl = process.env.DATABASE_URL;
@@ -627,6 +640,7 @@ export default function globalSetup() {
       DATABASE_URL: dbUrl,
       NEXUS_ENV: process.env.NEXUS_ENV,
     },
+    buildE2eAppRuntimeEnv(process.env),
   );
 
   if (realMediaEnabled) {

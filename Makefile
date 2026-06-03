@@ -248,11 +248,16 @@ seed:
 		uv run python ../scripts/seed_dev.py
 
 seed-real-media-e2e: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh sh -c 'trap "rm -f e2e/.seed/real-media.json" EXIT; rm -f e2e/.seed/real-media.json; make _seed-real-media-e2e-raw'
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin sh -c 'trap "rm -f e2e/.seed/real-media.json" EXIT; rm -f e2e/.seed/real-media.json; make _seed-real-media-e2e-raw'
 
 _seed-real-media-e2e-raw:
 	cd e2e && bunx tsx seed-e2e-user.ts
 	cd migrations && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		SUPABASE_AUTH_ADMIN_KEY= \
+		SUPABASE_DATABASE_URL= \
+		SUPABASE_SERVICE_KEY= \
+		SUPABASE_SERVICE_ROLE_KEY= \
+		SERVICE_ROLE_KEY= \
 		uv run --project ../python alembic upgrade head
 	cd python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
 		REAL_MEDIA_PROVIDER_FIXTURES=1 \
@@ -363,14 +368,14 @@ _test-migrations-raw:
 		uv run pytest -v --tb=short tests/test_migrations.py
 
 test-supabase:
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-supabase-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-supabase-raw
 
 _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
 		-m "supabase and not real_media and not live_provider"
 
 test-real-media: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh sh -c 'trap "rm -f e2e/.seed/real-media.json" EXIT; rm -f e2e/.seed/real-media.json; make _test-real-media-raw'
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin sh -c 'trap "rm -f e2e/.seed/real-media.json" EXIT; rm -f e2e/.seed/real-media.json; make _test-real-media-raw'
 
 _test-real-media-raw:
 	make _test-back-db-ready _test-real-media-backend-raw
@@ -380,6 +385,11 @@ _test-real-media-backend-raw:
 	make _ensure-node-ingest
 	mkdir -p test-results
 	cd python && NEXUS_ENV=local \
+		SUPABASE_AUTH_ADMIN_KEY= \
+		SUPABASE_DATABASE_URL= \
+		SUPABASE_SERVICE_KEY= \
+		SUPABASE_SERVICE_ROLE_KEY= \
+		SERVICE_ROLE_KEY= \
 		REAL_MEDIA_PROVIDER_FIXTURES=1 \
 		REAL_MEDIA_FIXTURE_DIR=$$PWD/tests/fixtures/real_media \
 		uv run pytest -v --tb=short \
@@ -387,7 +397,7 @@ _test-real-media-backend-raw:
 		-m real_media
 
 test-live-providers:
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-live-providers-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-live-providers-raw
 
 _test-live-providers-raw:
 	make _ensure-node-ingest
@@ -397,7 +407,7 @@ _test-live-providers-raw:
 		-m live_provider
 
 test-e2e: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-e2e-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-raw
 
 _test-e2e-raw:
 	@echo "Running e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
@@ -406,7 +416,7 @@ _test-e2e-raw:
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 test-csp: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-csp-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-csp-raw
 
 _test-csp-raw:
 	@echo "Running strict-CSP e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
@@ -424,7 +434,7 @@ _test-real-media-e2e-raw:
 	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-e2e-ui-raw
+	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh --require-admin make _test-e2e-ui-raw
 
 _test-e2e-ui-raw:
 	@echo "Running e2e ui with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \

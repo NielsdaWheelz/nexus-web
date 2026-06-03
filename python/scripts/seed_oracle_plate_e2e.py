@@ -24,16 +24,30 @@ reading's ``image_id`` and the image's object, so a single seeded image suffices
 
 from __future__ import annotations
 
+# ruff: noqa: E402
 import json
 import os
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+import httpx
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from supabase_auth_config import load_supabase_auth_config_or_exit
+
+E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
+SUPABASE_URL, SUPABASE_AUTH_ADMIN_KEY = load_supabase_auth_config_or_exit()
+for key in (
+    "SUPABASE_AUTH_ADMIN_KEY",
+    "SUPABASE_DATABASE_URL",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SERVICE_ROLE_KEY",
+):
+    os.environ.pop(key, None)
 
 from nexus.db.models import (
     OracleCorpusImage,
@@ -52,15 +66,6 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.oracle import oracle_plate_path
 from nexus.services.semantic_chunks import current_transcript_embedding_model
 from nexus.storage.client import get_storage_client
-
-# Reuse the existing seed script's user-lookup so this stays in lockstep with how
-# the rest of the E2E corpus resolves the authenticated test user.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from seed_e2e_data import (  # noqa: E402
-    E2E_USER_EMAIL,
-    _fetch_e2e_user_id_with_retry,
-    _release_stale_e2e_user_email,
-)
 
 # Deterministic identifiers keep the seed idempotent across reseeds.
 CORPUS_VERSION = "oracle-e2e-owned-plate"
@@ -81,6 +86,77 @@ READING_ARGUMENT = (
 )
 
 SEED_FILE_RELATIVE = Path("e2e/.seed/oracle-plate.json")
+SUPABASE_READY_ATTEMPTS = 8
+SUPABASE_READY_DELAY_SECONDS = 1.5
+
+
+def _fetch_e2e_user_id(supabase_url: str, service_key: str, email: str) -> UUID:
+    """Lookup E2E auth user ID via Supabase admin API."""
+    url = f"{supabase_url.rstrip('/')}/auth/v1/admin/users"
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+    }
+    with httpx.Client() as client:
+        for page in range(1, 101):
+            response = client.get(
+                url,
+                headers=headers,
+                params={"page": page, "per_page": 100},
+                timeout=30.0,
+            )
+            if response.status_code in (401, 403):
+                raise PermissionError(
+                    "Supabase admin auth rejected while listing users: "
+                    f"{response.status_code} {response.text}"
+                )
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Failed to list auth users: {response.status_code} {response.text}"
+                )
+
+            users = response.json().get("users", [])
+            for user in users:
+                if user.get("email") == email:
+                    return UUID(user["id"])
+            if len(users) < 100:
+                break
+
+    raise RuntimeError(f"E2E auth user not found for {email}. Run e2e/seed-e2e-user.ts first.")
+
+
+def _fetch_e2e_user_id_with_retry(supabase_url: str, service_key: str, email: str) -> UUID:
+    last_error: Exception | None = None
+    for attempt in range(1, SUPABASE_READY_ATTEMPTS + 1):
+        try:
+            return _fetch_e2e_user_id(supabase_url, service_key, email)
+        except PermissionError:
+            raise
+        except (RuntimeError, ValueError, httpx.HTTPError) as exc:
+            last_error = exc
+            if attempt == SUPABASE_READY_ATTEMPTS:
+                break
+            print(
+                f"Fetch E2E auth user '{email}' failed "
+                f"(attempt {attempt}/{SUPABASE_READY_ATTEMPTS}): {exc}. "
+                f"Retrying in {SUPABASE_READY_DELAY_SECONDS:.1f}s..."
+            )
+            time.sleep(SUPABASE_READY_DELAY_SECONDS)
+    raise RuntimeError(
+        f"Fetch E2E auth user '{email}' failed after {SUPABASE_READY_ATTEMPTS} attempts"
+    ) from last_error
+
+
+def _release_stale_e2e_user_email(db: Session, user_id: UUID, email: str) -> None:
+    db.execute(
+        text("""
+            UPDATE users
+            SET email = 'stale-e2e-' || id::text || '@nexus.local'
+            WHERE email = :email AND id != :user_id
+        """),
+        {"email": email, "user_id": user_id},
+    )
+    db.commit()
 
 
 def _ensure_corpus_version(db: Session) -> UUID:
@@ -205,14 +281,6 @@ def main() -> None:
         print("ERROR: DATABASE_URL must be set")
         sys.exit(1)
 
-    supabase_url, supabase_auth_admin_key = load_supabase_auth_config_or_exit()
-    for key in (
-        "SUPABASE_AUTH_ADMIN_KEY",
-        "SUPABASE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SERVICE_ROLE_KEY",
-    ):
-        os.environ.pop(key, None)
     missing_r2 = [
         key
         for key in ("R2_S3_API_ORIGIN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
@@ -226,8 +294,8 @@ def main() -> None:
     ensure_oracle_seed_objects(get_storage_client())
 
     user_id = _fetch_e2e_user_id_with_retry(
-        supabase_url=supabase_url,
-        service_key=supabase_auth_admin_key,
+        supabase_url=SUPABASE_URL,
+        service_key=SUPABASE_AUTH_ADMIN_KEY,
         email=E2E_USER_EMAIL,
     )
 

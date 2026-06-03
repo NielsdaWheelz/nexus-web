@@ -1,15 +1,16 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import path from "node:path";
-import { applyResolvedSupabaseEnv } from "../supabase-env.mjs";
+import supabaseEnv from "../supabase-env.cjs";
 import {
   chunkSupabaseCookie,
   encodeSupabaseCookieValue,
   supabaseAuthCookieBaseName,
 } from "./supabase-auth-cookie";
 
+const { requireSupabaseAdminEnv } = supabaseEnv;
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
-applyResolvedSupabaseEnv(ROOT_DIR, process.env, { includeAdminKey: true });
+const resolvedSupabaseEnv = requireSupabaseAdminEnv(ROOT_DIR, process.env);
 
 interface GenerateLinkResponse {
   action_link?: string;
@@ -34,22 +35,14 @@ interface HashSessionTokens {
 }
 
 function resolveAuthEnv(): ResolvedAuthEnv {
-  const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
-  const anonKey =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
-  const adminKey = process.env.SUPABASE_AUTH_ADMIN_KEY;
   const appBaseUrl = `http://localhost:${process.env.WEB_PORT ?? "3000"}`;
 
-  if (!supabaseUrl || !anonKey || !adminKey) {
-    throw new Error(
-      "Missing Supabase admin auth env. Expected NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL " +
-        "plus NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY and command-scoped " +
-        "SUPABASE_AUTH_ADMIN_KEY.",
-    );
-  }
-
-  return { anonKey, appBaseUrl, adminKey, supabaseUrl };
+  return {
+    anonKey: resolvedSupabaseEnv.anonKey,
+    appBaseUrl,
+    adminKey: resolvedSupabaseEnv.adminKey,
+    supabaseUrl: resolvedSupabaseEnv.supabaseUrl,
+  };
 }
 
 function extractActionLink(payload: GenerateLinkResponse): string {

@@ -1,6 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
-import { applyResolvedSupabaseEnv, loadRootFileEnv } from "./supabase-env.mjs";
+import supabaseEnv from "./supabase-env.cjs";
+
+const { applySupabasePublicEnv, buildE2eAppRuntimeEnv, loadRootFileEnv } =
+  supabaseEnv;
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 // Keep this env preamble in parity with playwright.config.ts: hydrate process.env from the
@@ -11,7 +14,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 for (const [key, value] of Object.entries(loadRootFileEnv(ROOT_DIR))) {
   process.env[key] ??= String(value);
 }
-applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+applySupabasePublicEnv(ROOT_DIR, process.env);
 
 process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -38,12 +41,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   );
 }
 
-const appRuntimeEnv = { ...process.env };
-delete appRuntimeEnv.SERVICE_ROLE_KEY;
-delete appRuntimeEnv.SUPABASE_AUTH_ADMIN_KEY;
-delete appRuntimeEnv.SUPABASE_DATABASE_URL;
-delete appRuntimeEnv.SUPABASE_SERVICE_KEY;
-delete appRuntimeEnv.SUPABASE_SERVICE_ROLE_KEY;
+const appRuntimeEnv = buildE2eAppRuntimeEnv(process.env);
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",

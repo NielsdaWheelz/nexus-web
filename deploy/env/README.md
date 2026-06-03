@@ -33,6 +33,8 @@ Production is a hard cutover:
 - Hetzner Postgres is the only production database.
 - Cloudflare R2 is the only production object store.
 - Do not keep Supabase Database or Supabase Storage fallback secrets in prod env.
+- `SUPABASE_AUTH_ADMIN_KEY` is local E2E bootstrap-only; never sync it to
+  Vercel, the VPS, workers, or production env files.
 - Keep `SUPABASE_DATABASE_URL` and Supabase service-role cleanup keys in a
   separate one-off legacy file only.
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`, `AUTH_TRUSTED_PROXY_ORIGINS`,

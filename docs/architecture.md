@@ -833,6 +833,10 @@ linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedica
 Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
 flags + rate limits, Brave web search, streaming (token signing key + base URL +
 CORS), podcasts, browse providers, worker job allowlist + schedules, Stripe.
+E2E local Supabase public/admin resolution is owned by `e2e/supabase-env.cjs`:
+`SUPABASE_AUTH_ADMIN_KEY` is trusted bootstrap-only for Playwright user/session
+seeding, and Next.js/FastAPI/worker/migration runtimes scrub Supabase admin,
+database, and service-role env before startup.
 
 **CI** (`.github/workflows/ci.yml`): static checks, audit, backend unit, backend
 DB integration + migrations, frontend unit + browser, build, Android, sharded E2E,

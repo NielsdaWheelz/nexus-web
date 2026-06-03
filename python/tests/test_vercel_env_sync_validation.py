@@ -168,9 +168,7 @@ def test_sync_env_accepts_server_action_domain_patterns(tmp_path: Path):
         "localhost",
     ],
 )
-def test_sync_env_rejects_invalid_server_action_allowed_origins(
-    tmp_path: Path, value: str
-):
+def test_sync_env_rejects_invalid_server_action_allowed_origins(tmp_path: Path, value: str):
     """The optional Server Action admission list is validated before any Vercel write."""
     fake_bin_dir = tmp_path / "bin"
     fake_bin_dir.mkdir()
@@ -308,9 +306,7 @@ def test_sync_env_rejects_invalid_extension_redirect_origin(tmp_path: Path):
         ("FASTAPI_BASE_URL", "https://api.nexus.test"),
     ],
 )
-def test_sync_env_rejects_frontend_only_keys_in_shared_env(
-    tmp_path: Path, key: str, value: str
-):
+def test_sync_env_rejects_frontend_only_keys_in_shared_env(tmp_path: Path, key: str, value: str):
     """Frontend-only keys must not be hidden in env-prod and uploaded to the VPS."""
     fake_bin_dir = tmp_path / "bin"
     fake_bin_dir.mkdir()
@@ -348,4 +344,34 @@ def test_sync_env_rejects_removed_storage_origin_keys(tmp_path: Path, removed_ke
 
     assert result.returncode != 0, result.stdout
     assert f"{removed_key} must not be present" in result.stderr
+    assert "vercel CLI must not run" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "forbidden_key",
+    [
+        "SUPABASE_DATABASE_URL",
+        "SUPABASE_AUTH_ADMIN_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+    ],
+)
+def test_sync_env_rejects_supabase_admin_runtime_keys(tmp_path: Path, forbidden_key: str):
+    """Supabase admin/database env cannot be synced into Vercel production."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_vercel_cli(fake_bin_dir)
+
+    shared = dict(_REQUIRED_ENV)
+    shared[forbidden_key] = "forbidden-secret"
+    shared_env = tmp_path / "env-prod"
+    frontend_env = tmp_path / "env-prod-frontend"
+    _write_env(shared_env, shared)
+    _write_frontend_env(frontend_env)
+
+    result = _run_sync_env(shared_env, frontend_env, fake_bin_dir)
+
+    assert result.returncode != 0, result.stdout
+    assert f"{forbidden_key} must not be present" in result.stderr
     assert "vercel CLI must not run" not in result.stderr

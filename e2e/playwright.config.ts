@@ -1,12 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
-import { applyResolvedSupabaseEnv, loadRootFileEnv } from "./supabase-env.mjs";
+import supabaseEnv from "./supabase-env.cjs";
+
+const { applySupabasePublicEnv, buildE2eAppRuntimeEnv, loadRootFileEnv } =
+  supabaseEnv;
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 for (const [key, value] of Object.entries(loadRootFileEnv(ROOT_DIR))) {
   process.env[key] ??= String(value);
 }
-applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+applySupabasePublicEnv(ROOT_DIR, process.env);
 
 const WEB_PORT = process.env.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? "8000";
@@ -18,12 +21,7 @@ process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
 process.env.RATE_LIMIT_RPM ??= "240";
 process.env.RATE_LIMIT_CONCURRENT ??= "8";
 
-const appRuntimeEnv = { ...process.env };
-delete appRuntimeEnv.SERVICE_ROLE_KEY;
-delete appRuntimeEnv.SUPABASE_AUTH_ADMIN_KEY;
-delete appRuntimeEnv.SUPABASE_DATABASE_URL;
-delete appRuntimeEnv.SUPABASE_SERVICE_KEY;
-delete appRuntimeEnv.SUPABASE_SERVICE_ROLE_KEY;
+const appRuntimeEnv = buildE2eAppRuntimeEnv(process.env);
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
