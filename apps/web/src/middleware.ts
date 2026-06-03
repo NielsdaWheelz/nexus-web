@@ -3,9 +3,8 @@ import {
   buildContentSecurityPolicy,
   buildReportingEndpoints,
   generateNonce,
-  getConnectOriginsFromEnv,
-  shouldDisableCspForE2E,
 } from "@/lib/security/csp";
+import { getEnv, isDevBuild } from "@/lib/env";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**
@@ -18,9 +17,12 @@ export function middleware(request: NextRequest) {
   // forwarded request headers — Next.js reads the nonce from the request-side CSP
   // (`parseRequestHeaders` in app-render) to stamp its framework/RSC scripts; `x-nonce`
   // alone is not read for that — and the response, for browser enforcement. The E2E runner
-  // may disable CSP entirely (null policy); never honored in production.
+  // may disable CSP entirely (null policy); never honored in a deployed env.
   const nonce = generateNonce();
-  const csp = shouldDisableCspForE2E() ? null : buildCsp(request, nonce);
+  const env = getEnv();
+  const csp = env.disableCspForE2E
+    ? null
+    : buildCsp(request, nonce, env.connectOrigins);
 
   const response = updateSession(request, nonce, csp);
 
@@ -35,9 +37,12 @@ export function middleware(request: NextRequest) {
   return response;
 }
 
-function buildCsp(request: NextRequest, nonce: string): string | null {
-  const connectOrigins = getConnectOriginsFromEnv();
-  const isDev = process.env.NODE_ENV === "development";
+function buildCsp(
+  request: NextRequest,
+  nonce: string,
+  connectOrigins: readonly string[],
+): string {
+  const isDev = isDevBuild();
   const isHttpsRequest =
     request.headers.get("x-forwarded-proto") === "https" ||
     request.nextUrl.protocol === "https:";

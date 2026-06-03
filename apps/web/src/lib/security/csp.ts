@@ -127,83 +127,6 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
   return serialized.join("; ");
 }
 
-function isProduction(): boolean {
-  return process.env.NEXUS_ENV === "prod";
-}
-
-/**
- * Parse an origin-only value (scheme://host[:port], no path/query/fragment). Returns the
- * normalized origin, or null if invalid. HTTP is accepted only for localhost or outside
- * production.
- */
-function parseConnectOrigin(value: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return null;
-  }
-  if ((url.pathname && url.pathname !== "/") || url.search || url.hash) {
-    return null;
-  }
-  const isLocalhost =
-    url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol === "https:") return url.origin;
-  if (url.protocol === "http:" && (isLocalhost || !isProduction())) {
-    return url.origin;
-  }
-  return null;
-}
-
-/**
- * External browser-connect origins from frontend env: the `FASTAPI_BASE_URL` origin plus
- * the shared `R2_S3_API_ORIGIN` origin for presigned storage. Throws in production if
- * either is unset/invalid —
- * a misconfiguration is a hard error, never a silent `connect-src 'self'` fallback.
- */
-export function getConnectOriginsFromEnv(): readonly string[] {
-  const origins = new Set<string>();
-
-  const fastApiBaseUrl = process.env.FASTAPI_BASE_URL?.trim();
-  if (fastApiBaseUrl) {
-    const origin = parseConnectOrigin(fastApiBaseUrl);
-    if (origin) origins.add(origin);
-    else if (isProduction()) {
-      throw new Error(
-        `Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`,
-      );
-    }
-  } else if (isProduction()) {
-    throw new Error(
-      "FASTAPI_BASE_URL is required in production for CSP connect-src",
-    );
-  }
-
-  const r2S3ApiOrigin = process.env.R2_S3_API_ORIGIN?.trim();
-  if (r2S3ApiOrigin) {
-    const origin = parseConnectOrigin(r2S3ApiOrigin);
-    if (origin) {
-      const hostname = new URL(origin).hostname;
-      if (isProduction() && !hostname.endsWith(".r2.cloudflarestorage.com")) {
-        throw new Error(
-          `Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`,
-        );
-      }
-      origins.add(origin);
-    } else if (isProduction()) {
-      throw new Error(
-        `Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`,
-      );
-    }
-  } else if (isProduction()) {
-    throw new Error(
-      "R2_S3_API_ORIGIN is required in production for CSP connect-src",
-    );
-  }
-
-  return [...origins];
-}
-
 /** 16 random bytes, base64. Web Crypto + btoa only (edge + node safe). */
 export function generateNonce(): string {
   const bytes = new Uint8Array(16);
@@ -213,12 +136,6 @@ export function generateNonce(): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
-}
-
-/** Test-only CSP bypass; always false in production even if `E2E_DISABLE_CSP=1`. */
-export function shouldDisableCspForE2E(): boolean {
-  if (isProduction()) return false;
-  return process.env.E2E_DISABLE_CSP === "1";
 }
 
 /** `Reporting-Endpoints` header value (absolute, same-origin sink). */

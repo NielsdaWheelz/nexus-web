@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
+import { __resetEnvForTests } from "@/lib/env";
 import { callFastAPI } from "./server";
 
 // server-only is the React/Next marker package; its module body throws on
@@ -8,8 +9,9 @@ import { callFastAPI } from "./server";
 vi.mock("server-only", () => ({}));
 
 // The only external boundaries callFastAPI touches before fetch: the request
-// cookie store (next/headers), the session-cookie reader, and the internal API
-// config. Mock all three so the call reaches the real fetch + timeout path.
+// cookie store (next/headers) and the session-cookie reader. Mock those; drive
+// the internal-API config through the real getEnv() via its env-stub seam
+// (__resetEnvForTests + vi.stubEnv), so the call reaches the real fetch + timeout path.
 const cookieStore = {
   getAll: vi.fn((): { name: string; value: string }[] => []),
 };
@@ -26,21 +28,18 @@ vi.mock("@/lib/auth/session-cookie", () => ({
   })),
 }));
 
-vi.mock("@/lib/api/internal-config", () => ({
-  getInternalApiConfig: vi.fn(() => ({
-    fastApiBaseUrl: "http://x",
-    internalSecret: "",
-  })),
-}));
-
 describe("callFastAPI timeoutMs", () => {
   beforeEach(() => {
+    __resetEnvForTests();
+    vi.stubEnv("FASTAPI_BASE_URL", "http://x");
     cookieStore.getAll.mockReturnValue([]);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    __resetEnvForTests();
   });
 
   it("aborts the upstream request and rejects with a 504 E_UPSTREAM_TIMEOUT", async () => {

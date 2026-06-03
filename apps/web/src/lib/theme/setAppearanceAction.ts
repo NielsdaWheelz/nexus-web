@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { isDeployed } from "@/lib/env";
 import type { AppTheme } from "./cookie";
 
 export async function setAppearanceAction(value: AppTheme | "system") {
@@ -13,6 +14,6 @@ export async function setAppearanceAction(value: AppTheme | "system") {
     maxAge: 60 * 60 * 24 * 365,
     path: "/",
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isDeployed(),
   });
 }

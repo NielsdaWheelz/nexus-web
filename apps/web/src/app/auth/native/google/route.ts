@@ -1,7 +1,4 @@
-import {
-  getInternalApiConfig,
-  isInternalApiConfigured,
-} from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { createRandomId } from "@/lib/createRandomId";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
@@ -29,10 +26,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "invalid_request" }, { status: 400 });
     }
 
-    const config = getInternalApiConfig();
-    if (!isInternalApiConfigured(config)) {
-      return NextResponse.json({ error: "not_configured" }, { status: 500 });
-    }
+    const config = getEnv().internalApi;
 
     const { supabase } = await createRouteHandlerClient();
     const { data, error } = await supabase.auth.signInWithIdToken({

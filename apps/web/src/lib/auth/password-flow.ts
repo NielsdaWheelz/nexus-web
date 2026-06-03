@@ -1,4 +1,4 @@
-import { getInternalApiConfig } from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import {
@@ -41,7 +41,7 @@ async function patchDisplayName(
   accessToken: string,
   displayName: string,
 ): Promise<boolean> {
-  const config = getInternalApiConfig();
+  const config = getEnv().internalApi;
   try {
     const response = await boundedAuthFetch(
       `${config.fastApiBaseUrl}/me`,

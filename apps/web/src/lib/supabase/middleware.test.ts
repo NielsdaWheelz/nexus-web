@@ -48,6 +48,7 @@ describe("updateSession", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("passes an active protected request through with the request-path header", async () => {
@@ -287,6 +288,7 @@ describe("middleware CSP", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("sets a nonce-based Content-Security-Policy and matches the request x-nonce", async () => {
@@ -361,7 +363,11 @@ describe("middleware CSP", () => {
   });
 
   it("omits the Content-Security-Policy header when E2E_DISABLE_CSP is set", async () => {
-    process.env.E2E_DISABLE_CSP = "1";
+    // The original outage row: a production build (NODE_ENV=production) deployed as `test` must
+    // still honor the E2E bypass — disableCspForE2E reads NEXUS_ENV, not NODE_ENV.
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "test");
+    vi.stubEnv("E2E_DISABLE_CSP", "1");
 
     const { middleware } = await import("@/middleware");
     const response = middleware(
@@ -375,23 +381,5 @@ describe("middleware CSP", () => {
     expect(
       response.headers.get("x-middleware-request-content-security-policy")
     ).toBeNull();
-  });
-
-  it("throws when CSP connect-origins env is missing in production", async () => {
-    vi.stubEnv("NEXUS_ENV", "prod");
-    vi.stubEnv("FASTAPI_BASE_URL", "");
-    vi.stubEnv("R2_S3_API_ORIGIN", "");
-    try {
-      const { middleware } = await import("@/middleware");
-      expect(() =>
-        middleware(
-          new NextRequest("http://localhost:3000/libraries", {
-            headers: { cookie: activeCookie() },
-          })
-        )
-      ).toThrow(/FASTAPI_BASE_URL/);
-    } finally {
-      vi.unstubAllEnvs();
-    }
   });
 });

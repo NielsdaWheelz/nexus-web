@@ -5,6 +5,7 @@ import {
   readSupabaseSessionCookie,
   type SessionState,
 } from "@/lib/auth/session-cookie";
+import { __resetEnvForTests } from "@/lib/env";
 import { proxyToFastAPI, proxyToFastAPIWithDeps } from "./proxy";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -168,6 +169,7 @@ async function expectUnauthenticated(
 
 describe("proxyToFastAPI", () => {
   beforeEach(() => {
+    __resetEnvForTests();
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE_URL);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
     cookieStore.getAll.mockReturnValue([]);
@@ -233,7 +235,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("requires the internal secret in production before reading auth cookies", async () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "prod");
     const readSession = vi.fn(readSessionFromCookie);
 
     const response = await proxyToFastAPIWithDeps(
@@ -262,7 +264,7 @@ describe("proxyToFastAPI", () => {
   });
 
   it("requires the FastAPI URL in production before reading auth cookies", async () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXUS_ENV", "prod");
     const readSession = vi.fn(readSessionFromCookie);
 
     const response = await proxyToFastAPIWithDeps(

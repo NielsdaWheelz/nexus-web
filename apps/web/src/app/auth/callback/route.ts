@@ -1,7 +1,4 @@
-import {
-  getInternalApiConfig,
-  isInternalApiConfigured,
-} from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { handleAuthCallback } from "@/lib/auth/callback";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
@@ -35,11 +32,7 @@ export async function GET(request: Request) {
         }
       },
       mintHandoffCode: async ({ accessToken, refreshToken, challenge }) => {
-        const config = getInternalApiConfig();
-        if (!isInternalApiConfigured(config)) {
-          return { error: "not_configured" };
-        }
-
+        const config = getEnv().internalApi;
         const requestId = createRandomId();
 
         let response: Response;

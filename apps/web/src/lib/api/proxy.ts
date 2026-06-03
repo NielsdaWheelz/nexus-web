@@ -14,10 +14,7 @@
  */
 
 import { NextResponse } from "next/server";
-import {
-  getInternalApiConfig,
-  isInternalApiConfigured,
-} from "@/lib/api/internal-config";
+import { getEnv, isDeployed } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
 import {
   clearSupabaseAuthCookies,
@@ -253,7 +250,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
       ),
     fetch: globalThis.fetch,
     generateRequestId: createRandomId,
-    config: getInternalApiConfig(),
+    config: getEnv().internalApi,
   };
 }
 
@@ -271,7 +268,9 @@ export async function proxyToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
-  if (!isInternalApiConfigured(deps.config)) {
+  // Validate the injected config (the DI seam), not getEnv(): a base URL is required, and a
+  // missing internal secret is tolerated only outside deployed envs.
+  if (!deps.config.fastApiBaseUrl || (isDeployed() && !deps.config.internalSecret)) {
     return NextResponse.json(
       {
         error: {
@@ -510,23 +509,7 @@ export async function proxyExtensionToFastAPI(
     );
   }
 
-  const config = getInternalApiConfig();
-  const { fastApiBaseUrl, internalSecret } = config;
-  if (!isInternalApiConfigured(config)) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_INTERNAL",
-          message: "Backend service is not configured",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 500,
-        headers: { [REQUEST_ID_HEADER]: requestId },
-      }
-    );
-  }
+  const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
 
   const headers = new Headers({
     Authorization: authorization,

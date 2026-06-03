@@ -1,5 +1,11 @@
 import type { NextConfig } from "next";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
+import { assertDeploymentEnv } from "./src/lib/env";
+
+// Fail the deploy, not the request: a staging/prod build with missing/invalid connect-origin
+// or internal-secret env aborts `next build`, so Vercel never promotes the bad artifact and the
+// last-good deployment keeps serving. No-op for local/test builds.
+assertDeploymentEnv();
 
 const nextConfig: NextConfig = {
   // `make check` owns lint and type verification. `make build` only verifies buildability.

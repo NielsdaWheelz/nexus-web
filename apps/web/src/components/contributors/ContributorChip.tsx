@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { isProdBuild } from "@/lib/build-mode";
 import type { ContributorCredit, ContributorSummary } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
@@ -45,7 +46,7 @@ export default function ContributorChip({
     contributor?.handle?.trim() ||
     "";
   if (!handle) {
-    if (process.env.NODE_ENV !== "production") {
+    if (!isProdBuild()) {
       throw new Error("ContributorChip requires a contributor handle");
     }
     return null;
@@ -58,7 +59,7 @@ export default function ContributorChip({
     "";
   const label = creditedName || displayName;
   if (!label) {
-    if (process.env.NODE_ENV !== "production") {
+    if (!isProdBuild()) {
       throw new Error("ContributorChip requires a contributor display label");
     }
     return null;
@@ -83,7 +84,7 @@ export default function ContributorChip({
 
   const suppliedHref = credit?.href?.trim() || contributor?.href?.trim() || "";
   if (credit && !suppliedHref) {
-    if (process.env.NODE_ENV !== "production") {
+    if (!isProdBuild()) {
       throw new Error("ContributorChip requires a contributor href");
     }
     return null;

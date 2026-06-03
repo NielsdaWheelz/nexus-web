@@ -1,7 +1,4 @@
-import {
-  getInternalApiConfig,
-  isInternalApiConfigured,
-} from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { createRandomId } from "@/lib/createRandomId";
@@ -84,20 +81,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const config = getInternalApiConfig();
-    if (!isInternalApiConfigured(config)) {
-      return noStore(
-        NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            AUTH_CALLBACK_FAILURE_MESSAGE
-          ),
-          { status: TEMPORARY_REDIRECT }
-        )
-      );
-    }
-
+    const config = getEnv().internalApi;
     const requestId = createRandomId();
 
     let consumeResponse: Response;

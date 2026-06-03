@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { ApiError } from "@/lib/api/client";
-import { getInternalApiConfig } from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
@@ -41,10 +41,7 @@ export async function callFastAPI<T>(
   if (session.state !== "active") {
     throw new ApiError(401, "E_UNAUTHENTICATED", "Authentication required");
   }
-  const config = getInternalApiConfig();
-  if (!config.fastApiBaseUrl) {
-    throw new ApiError(500, "E_INTERNAL", "Backend service is not configured");
-  }
+  const config = getEnv().internalApi;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${session.accessToken}`,
   };

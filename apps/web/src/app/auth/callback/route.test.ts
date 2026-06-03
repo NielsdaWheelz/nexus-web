@@ -284,49 +284,6 @@ describe("GET /auth/callback", () => {
       expect(response.headers.get("set-cookie")).toBeNull();
     });
 
-    it("redirects to the handoff error deep link when NEXUS_INTERNAL_SECRET is unset in production", async () => {
-      const previousNodeEnv = process.env.NODE_ENV;
-      const previousAllowedOrigins = process.env.AUTH_ALLOWED_REDIRECT_ORIGINS;
-      setNodeEnv("production");
-      process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = "https://app.example.com";
-      delete process.env.NEXUS_INTERNAL_SECRET;
-
-      try {
-        mockExchangeCodeForSession.mockResolvedValue({
-          returnValue: {
-            data: {
-              session: {
-                access_token: "ax-token",
-                refresh_token: "rx-token",
-              },
-            },
-            error: null,
-          },
-        });
-        const fetchSpy = vi.spyOn(globalThis, "fetch");
-
-        const { GET } = await import("./route");
-        const response = await GET(
-          new Request(
-            "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
-          )
-        );
-
-        expect(fetchSpy).not.toHaveBeenCalled();
-        expect(response.status).toBe(307);
-        expect(response.headers.get("location")).toBe(
-          "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
-        );
-      } finally {
-        setNodeEnv(previousNodeEnv);
-        if (previousAllowedOrigins === undefined) {
-          delete process.env.AUTH_ALLOWED_REDIRECT_ORIGINS;
-        } else {
-          process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = previousAllowedOrigins;
-        }
-      }
-    });
-
     it("redirects to the handoff error deep link when FastAPI responds non-2xx", async () => {
       mockExchangeCodeForSession.mockResolvedValue({
         returnValue: {

@@ -4,15 +4,6 @@ import {
   AUTH_CALLBACK_FAILURE_MESSAGE,
 } from "@/lib/auth/messages";
 
-function setNodeEnv(value: string | undefined) {
-  const env = process.env as Record<string, string | undefined>;
-  if (value === undefined) {
-    delete env.NODE_ENV;
-    return;
-  }
-  env.NODE_ENV = value;
-}
-
 type SetAllCookie = {
   name: string;
   value: string;
@@ -195,33 +186,6 @@ describe("GET /auth/handoff", () => {
       AUTH_CALLBACK_FAILURE_MESSAGE
     );
     expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("redirects to /login with the public failure when NEXUS_INTERNAL_SECRET is unset in production", async () => {
-    const previousNodeEnv = process.env.NODE_ENV;
-    setNodeEnv("production");
-    delete process.env.NEXUS_INTERNAL_SECRET;
-
-    try {
-      const { GET } = await import("./route");
-      const response = await GET(
-        new Request(
-          "http://localhost:3000/auth/handoff?code=handoff-code&hv=native-verifier&next=%2Flibraries"
-        )
-      );
-
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(response.status).toBe(307);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      const location = new URL(response.headers.get("location")!);
-      expect(location.pathname).toBe("/login");
-      expect(location.searchParams.get("error_description")).toBe(
-        AUTH_CALLBACK_FAILURE_MESSAGE
-      );
-      expect(setSessionSpy).not.toHaveBeenCalled();
-    } finally {
-      setNodeEnv(previousNodeEnv);
-    }
   });
 
   it("redirects to /login with the public failure when neither code nor error is present", async () => {

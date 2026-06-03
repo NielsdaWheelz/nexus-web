@@ -178,7 +178,7 @@ Runtime facts that constrain the policy (derived from code, not guessed):
    Clickjacking is owned solely by `frame-ancestors 'none'` (modern, already enforced).
    `X-Frame-Options` is its legacy predecessor and a second source of truth — removed per the
    no-legacy rule. The implementation must make `E2E_DISABLE_CSP=1` impossible in production
-   (`NEXUS_ENV=prod`/`NODE_ENV=production`) before deleting XFO.
+   (`NEXUS_ENV=prod`; `NODE_ENV` is the build axis and is irrelevant here) before deleting XFO.
 9. **Add `Permissions-Policy` (explicit allowlists)**, delegating the features the app and
    YouTube embed actually use. The top-level app keeps same-origin clipboard write for copy
    actions; the YouTube origins receive the features in the iframe `allow=""` list

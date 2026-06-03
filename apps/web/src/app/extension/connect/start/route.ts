@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  getInternalApiConfig,
-  isInternalApiConfigured,
-} from "@/lib/api/internal-config";
+import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 import { createRandomId } from "@/lib/createRandomId";
@@ -59,19 +56,7 @@ export async function GET(req: Request) {
   session.state satisfies "active";
 
   const requestId = createRandomId();
-  const config = getInternalApiConfig();
-  if (!isInternalApiConfigured(config)) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_INTERNAL",
-          message: "Backend service is not configured",
-          request_id: requestId,
-        },
-      },
-      { status: 500, headers: { "x-request-id": requestId } }
-    );
-  }
+  const config = getEnv().internalApi;
 
   const sessionFailedRedirect = () => {
     redirectUrl.hash = new URLSearchParams({
