@@ -8,6 +8,7 @@ import { useResource } from "@/lib/api/useResource";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { pluralize } from "@/lib/text/pluralize";
+import LibraryColorDot from "@/components/LibraryColorDot";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -658,13 +659,7 @@ export default function PodcastsPaneBody() {
                         ) : null}
                         {row.visible_libraries.map((library) => (
                           <span key={library.id} className={styles.libraryBadge}>
-                            {library.color ? (
-                              <span
-                                className={styles.colorDot}
-                                style={{ backgroundColor: library.color }}
-                                aria-hidden="true"
-                              />
-                            ) : null}
+                            <LibraryColorDot color={library.color} size="sm" />
                             {library.name}
                           </span>
                         ))}

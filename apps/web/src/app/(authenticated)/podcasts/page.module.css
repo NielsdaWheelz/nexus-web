@@ -131,13 +131,6 @@
   color: var(--warning);
 }
 
-.colorDot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-}
-
 .trailing {
   display: inline-flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import { useState, type ComponentProps, type RefCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import LibraryMembershipPanel from "./LibraryMembershipPanel";
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 
@@ -26,6 +27,22 @@ const libraries: LibraryTargetPickerItem[] = [
 const defaultViewportWidth = window.innerWidth;
 
 function setViewportWidth(width: number) {
+  const matchesMobile = width <= 768;
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("max-width") ? matchesMobile : false,
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent() {
+          return false;
+        },
+      }) as MediaQueryList,
+  );
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     value: width,
@@ -56,21 +73,31 @@ function Harness(props: Partial<ComponentProps<typeof LibraryMembershipPanel>>) 
   );
 }
 
+function renderHarness(
+  props: Partial<ComponentProps<typeof LibraryMembershipPanel>> = {},
+  renderEnvironment?: Parameters<typeof withRenderEnvironment>[1],
+) {
+  return render(withRenderEnvironment(<Harness {...props} />, renderEnvironment));
+}
+
 describe("LibraryMembershipPanel", () => {
   afterEach(() => {
-    setViewportWidth(defaultViewportWidth);
+    vi.restoreAllMocks();
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: defaultViewportWidth,
+    });
+    window.dispatchEvent(new Event("resize"));
   });
 
   it("filters libraries and stays open after membership changes", async () => {
     const handleAddToLibrary = vi.fn();
     const handleRemoveFromLibrary = vi.fn();
 
-    render(
-      <Harness
-        onAddToLibrary={handleAddToLibrary}
-        onRemoveFromLibrary={handleRemoveFromLibrary}
-      />
-    );
+    renderHarness({
+      onAddToLibrary: handleAddToLibrary,
+      onRemoveFromLibrary: handleRemoveFromLibrary,
+    });
 
     await screen.findByRole("dialog", { name: "Libraries" });
     fireEvent.change(screen.getByRole("searchbox", { name: "Search libraries" }), {
@@ -99,7 +126,7 @@ describe("LibraryMembershipPanel", () => {
   });
 
   it("disables membership changes while busy", async () => {
-    render(<Harness busy />);
+    renderHarness({ busy: true });
 
     expect(
       await screen.findByRole("button", { name: "Personal Remove from this library" })
@@ -108,7 +135,7 @@ describe("LibraryMembershipPanel", () => {
   });
 
   it("restores focus to the anchor when it closes", async () => {
-    render(<Harness />);
+    renderHarness();
 
     const anchor = screen.getByRole("button", { name: "Anchor" });
     await screen.findByRole("dialog", { name: "Libraries" });
@@ -123,7 +150,7 @@ describe("LibraryMembershipPanel", () => {
   it("uses the shared dialog on mobile", async () => {
     setViewportWidth(480);
 
-    render(<Harness />);
+    renderHarness({}, { initialViewport: "mobile" });
 
     expect(await screen.findByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
   });

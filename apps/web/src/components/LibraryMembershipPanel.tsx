@@ -13,6 +13,7 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import LibraryColorDot from "@/components/LibraryColorDot";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -157,13 +158,7 @@ export default function LibraryMembershipPanel({
               >
                 <span className={styles.itemText}>
                   <span className={styles.itemName}>
-                    {library.color ? (
-                      <span
-                        className={styles.colorDot}
-                        style={{ backgroundColor: library.color }}
-                        aria-hidden="true"
-                      />
-                    ) : null}
+                    <LibraryColorDot color={library.color} />
                     {library.name}
                   </span>
                   <span className={styles.itemMeta}>

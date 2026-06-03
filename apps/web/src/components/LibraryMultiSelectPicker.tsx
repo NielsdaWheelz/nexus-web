@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
+import LibraryColorDot from "@/components/LibraryColorDot";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
@@ -102,14 +103,6 @@ const ITEM_NAME_STYLE: CSSProperties = {
   minWidth: 0,
   fontSize: "var(--text-sm)",
   fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"],
-};
-
-const COLOR_DOT_STYLE: CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: "var(--radius-full)",
-  flexShrink: 0,
-  display: "inline-block",
 };
 
 const EMPTY_STATE_STYLE: CSSProperties = {
@@ -211,12 +204,7 @@ function LibraryOption({
     >
       <span style={{ display: "flex", minWidth: 0 }}>
         <span style={ITEM_NAME_STYLE}>
-          {library.color ? (
-            <span
-              style={{ ...COLOR_DOT_STYLE, backgroundColor: library.color }}
-              aria-hidden="true"
-            />
-          ) : null}
+          <LibraryColorDot color={library.color} />
           {library.name}
         </span>
       </span>

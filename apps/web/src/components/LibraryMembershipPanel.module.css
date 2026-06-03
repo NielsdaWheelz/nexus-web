@@ -106,13 +106,6 @@
   font-size: var(--text-xs);
 }
 
-.colorDot {
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-}
-
 .emptyState {
   padding: 8px 10px;
   color: var(--ink-faint);
