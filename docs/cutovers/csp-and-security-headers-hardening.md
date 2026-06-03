@@ -20,7 +20,7 @@ no back-compat) · Created: 2026-06-01
 > centralized to `lib/security/youtube.ts` (was duplicated across csp.ts/headers.ts/the embed
 > component); `R2_S3_API_ORIGIN`/`E2E_DISABLE_CSP` added to `.env.example`. Deferred
 > (documented, not defects): `style-src` elem/attr split, dropping `img-src data:`, an
-> SSE-open e2e assertion, the oracle `images.remotePatterns` gap (pre-existing, non-CSP).
+> SSE-open e2e assertion. Resolved (was a misdiagnosis): the oracle plate `next/image` 400 was not a `remotePatterns`/CSP gap but the Next.js image optimizer fetching the per-user-authenticated `/api/media/image` proxy without cookies → 401 → 400; resolved by reclassifying oracle plates as owned public same-origin assets (see `docs/cutovers/oracle-plate-owned-asset-cutover.md`).
 
 ## 1. Summary
 

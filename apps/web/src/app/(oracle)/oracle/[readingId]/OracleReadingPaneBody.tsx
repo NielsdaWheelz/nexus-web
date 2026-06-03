@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -8,6 +7,7 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import MediaImage from "@/components/ui/MediaImage";
 import { apiFetch } from "@/lib/api/client";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
@@ -34,7 +34,7 @@ const PHASE_LABEL: Record<Phase, string> = {
 };
 
 interface ImagePayload {
-  source_url: string;
+  url: string;
   attribution_text: string;
   artist: string;
   work_title: string;
@@ -137,7 +137,7 @@ function isPhase(value: unknown): value is Phase {
 }
 
 function parseImagePayload(payload: Record<string, unknown>): ImagePayload | null {
-  const sourceUrl = stringPayloadValue(payload, "source_url");
+  const url = stringPayloadValue(payload, "url");
   const attributionText = stringPayloadValue(payload, "attribution_text");
   const artist = stringPayloadValue(payload, "artist");
   const workTitle = stringPayloadValue(payload, "work_title");
@@ -145,7 +145,7 @@ function parseImagePayload(payload: Record<string, unknown>): ImagePayload | nul
   const width = payload.width;
   const height = payload.height;
   if (
-    sourceUrl === null ||
+    url === null ||
     attributionText === null ||
     artist === null ||
     workTitle === null ||
@@ -156,7 +156,7 @@ function parseImagePayload(payload: Record<string, unknown>): ImagePayload | nul
     return null;
   }
   return {
-    source_url: sourceUrl,
+    url,
     attribution_text: attributionText,
     artist,
     work_title: workTitle,
@@ -622,8 +622,9 @@ export default function OracleReadingPaneBody({
 
         {state.image !== null && (
           <figure className={styles.plate}>
-            <Image
-              src={state.image.source_url}
+            <MediaImage
+              kind="owned"
+              src={state.image.url}
               alt={`${state.image.artist}, ${state.image.work_title}`}
               width={state.image.width}
               height={state.image.height}

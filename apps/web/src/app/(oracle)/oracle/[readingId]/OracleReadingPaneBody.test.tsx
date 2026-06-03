@@ -168,9 +168,8 @@ describe("OracleReadingPaneBody", () => {
     });
   });
 
-  it("uses the backend-provided proxied plate URL without double wrapping it", async () => {
-    const proxiedUrl =
-      "/api/media/image?url=https%3A%2F%2Fimages.example.com%2Foracle-plate.jpg";
+  it("renders the owned plate URL from the backend", async () => {
+    const plateUrl = "/api/oracle/plates/123e4567-e89b-12d3-a456-426614174000";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
@@ -181,7 +180,7 @@ describe("OracleReadingPaneBody", () => {
               question: "What keeps the lamp lit?",
               folioNumber: 1,
               image: {
-                source_url: proxiedUrl,
+                url: plateUrl,
                 attribution_text: "Test Engraver, The Test Plate.",
                 artist: "Test Engraver",
                 work_title: "The Test Plate",
@@ -201,10 +200,7 @@ describe("OracleReadingPaneBody", () => {
     const plate = await screen.findByRole("img", {
       name: "Test Engraver, The Test Plate",
     });
-    expect(plate).toHaveAttribute("src", proxiedUrl);
-    expect(plate.getAttribute("src")).not.toContain(
-      "/api/media/image?url=%2Fapi%2Fmedia%2Fimage",
-    );
+    expect(plate).toHaveAttribute("src", plateUrl);
   });
 
   it("renders failed readings through feedback-safe copy", async () => {

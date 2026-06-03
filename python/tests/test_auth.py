@@ -8,7 +8,7 @@ Tests the full auth flow including:
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -245,6 +245,35 @@ class TestInternalHeaderEnforcement:
 
         assert response.status_code != 403
         assert response.json()["error"]["code"] != "E_INTERNAL_ONLY"
+
+    def test_oracle_plate_requires_internal_header_staging(self, staging_client):
+        """Oracle plate path without X-Nexus-Internal returns 403 E_INTERNAL_ONLY in staging.
+
+        The bearer-exempt lane for /oracle/plates/ sits AFTER _verify_internal_header,
+        so the internal-header check fires first and must reject the request.
+        """
+        response = staging_client.get(f"/oracle/plates/{uuid4()}")
+
+        assert response.status_code == 403
+        data = response.json()
+        assert data["error"]["code"] == "E_INTERNAL_ONLY"
+
+    def test_oracle_plate_is_bearer_exempt_with_internal_header(self, staging_client):
+        """Oracle plate path with X-Nexus-Internal but NO Authorization passes auth middleware.
+
+        A random (unknown) plate id reaches the route handler and returns 404,
+        which proves the bearer-exempt internal-gated lane let it through —
+        a bearer-required route would have returned 401 without a token.
+        """
+        response = staging_client.get(
+            f"/oracle/plates/{uuid4()}",
+            headers={"X-Nexus-Internal": "test-internal-secret"},
+        )
+
+        # The request must NOT be rejected by the auth middleware.
+        assert response.status_code not in (401, 403)
+        # The random id is unknown to the route, so we expect 404.
+        assert response.status_code == 404
 
 
 class TestBootstrap:

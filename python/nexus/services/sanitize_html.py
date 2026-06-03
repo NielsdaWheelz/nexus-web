@@ -82,7 +82,7 @@ FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
 EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 
 # Image proxy URL template
-IMAGE_PROXY_URL = "/media/image?url={encoded_url}"
+IMAGE_PROXY_URL = "/api/media/image?url={encoded_url}"
 
 
 def sanitize_html(

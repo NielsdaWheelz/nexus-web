@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import MediaImage from "@/components/ui/MediaImage";
 import { FileText, Mic, Play, Video } from "lucide-react";
 import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import {
@@ -16,7 +16,6 @@ import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
   usePaneRouter,
@@ -506,13 +505,13 @@ export default function BrowsePaneBody() {
                       >
                         <div className={styles.leading}>
                           {result.thumbnail_url ? (
-                            <Image
-                              src={buildMediaImageProxySrc(result.thumbnail_url)}
+                            <MediaImage
+                              kind="proxied"
+                              remoteUrl={result.thumbnail_url}
                               alt=""
                               width={56}
                               height={56}
                               className={styles.artwork}
-                              unoptimized
                             />
                           ) : (
                             <span
@@ -597,13 +596,13 @@ export default function BrowsePaneBody() {
                       >
                         <div className={styles.leading}>
                           {result.image_url ? (
-                            <Image
-                              src={buildMediaImageProxySrc(result.image_url)}
+                            <MediaImage
+                              kind="proxied"
+                              remoteUrl={result.image_url}
                               alt=""
                               width={56}
                               height={56}
                               className={styles.artwork}
-                              unoptimized
                             />
                           ) : (
                             <span
@@ -691,13 +690,13 @@ export default function BrowsePaneBody() {
                     >
                       <div className={styles.leading}>
                         {result.podcast_image_url ? (
-                          <Image
-                            src={buildMediaImageProxySrc(result.podcast_image_url)}
+                          <MediaImage
+                            kind="proxied"
+                            remoteUrl={result.podcast_image_url}
                             alt=""
                             width={56}
                             height={56}
                             className={styles.artwork}
-                            unoptimized
                           />
                         ) : (
                           <span className={styles.fallback} aria-hidden="true">

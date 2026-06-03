@@ -23,6 +23,7 @@ vi.mock("next/image", () => ({
       ...props,
       alt,
       src: typeof src === "string" ? src : src.src,
+      "data-unoptimized": _unoptimized ? "" : undefined,
     }),
 }));
 

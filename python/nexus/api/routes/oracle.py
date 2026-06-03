@@ -3,12 +3,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.auth.stream_token import mint_stream_token
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_session_factory
 from nexus.responses import success_response
 from nexus.schemas.oracle import (
     OracleReadingCreateRequest,
@@ -16,6 +16,7 @@ from nexus.schemas.oracle import (
     OracleStreamConnectionOut,
 )
 from nexus.services import oracle as oracle_service
+from nexus.services.image_proxy import etags_match
 
 router = APIRouter(tags=["oracle"])
 
@@ -76,3 +77,23 @@ def get_oracle_reading(
 ) -> dict:
     detail = oracle_service.get_reading_detail(db, viewer_id=viewer.user_id, reading_id=reading_id)
     return success_response(detail.model_dump(mode="json"))
+
+
+@router.get("/oracle/plates/{image_id}")
+def get_oracle_plate(image_id: UUID, request: Request) -> Response:
+    inm = request.headers.get("If-None-Match")
+    plate = oracle_service.get_oracle_plate_bytes(
+        session_factory=get_session_factory(), image_id=image_id
+    )
+    if inm and etags_match(inm, plate.etag):
+        return Response(status_code=304, headers={"ETag": plate.etag})
+    return Response(
+        content=plate.data,
+        media_type=plate.content_type,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Content-Length": str(len(plate.data)),
+            "X-Content-Type-Options": "nosniff",
+            "ETag": plate.etag,
+        },
+    )

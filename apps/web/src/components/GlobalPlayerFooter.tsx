@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -21,7 +20,7 @@ import {
   normalizeVolumeBoostLevel,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
-import Image from "next/image";
+import MediaImage from "@/components/ui/MediaImage";
 import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -240,7 +239,7 @@ export default function GlobalPlayerFooter() {
   const bufferedPercent =
     durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
   const seekSliderValue = durationSafe > 0 ? Math.min(durationSafe, currentSafe) : 0;
-  const artworkSrc = track.image_url ? buildMediaImageProxySrc(track.image_url) : null;
+  const artworkUrl = track.image_url;
   const seekTrackStyle = {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
@@ -280,14 +279,14 @@ export default function GlobalPlayerFooter() {
               onClick={() => setMobileExpanded(true)}
               aria-label="Expand player"
             >
-              {artworkSrc ? (
-                <Image
-                  src={artworkSrc}
+              {artworkUrl ? (
+                <MediaImage
+                  kind="proxied"
+                  remoteUrl={artworkUrl}
                   alt=""
                   width={40}
                   height={40}
                   className={styles.miniArtwork}
-                  unoptimized
                 />
               ) : (
                 <div className={styles.miniArtworkFallback} aria-hidden="true" />
@@ -336,14 +335,14 @@ export default function GlobalPlayerFooter() {
                   Close
                 </Button>
 
-                {artworkSrc ? (
-                  <Image
-                    src={artworkSrc}
+                {artworkUrl ? (
+                  <MediaImage
+                    kind="proxied"
+                    remoteUrl={artworkUrl}
                     alt={track.title}
                     width={240}
                     height={240}
                     className={styles.expandedArtwork}
-                    unoptimized
                   />
                 ) : (
                   <div className={styles.expandedArtworkFallback} aria-hidden="true" />
@@ -508,14 +507,14 @@ export default function GlobalPlayerFooter() {
         <>
           {/* Desktop: full footer layout */}
           <div className={styles.metaRow}>
-            {artworkSrc && (
-              <Image
-                src={artworkSrc}
+            {artworkUrl && (
+              <MediaImage
+                kind="proxied"
+                remoteUrl={artworkUrl}
                 alt=""
                 width={32}
                 height={32}
                 className={styles.desktopArtwork}
-                unoptimized
               />
             )}
             <span className={styles.kicker}>Now playing</span>

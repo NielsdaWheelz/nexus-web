@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
+import MediaImage from "@/components/ui/MediaImage";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -69,7 +69,8 @@ export default function OracleAlephGrid() {
             aria-label={`Folio ${toRoman(row.folio_number)}: ${motto}`}
           >
             {!pending && row.plate_thumbnail_url !== null && (
-              <Image
+              <MediaImage
+                kind="owned"
                 src={row.plate_thumbnail_url}
                 alt={row.plate_alt_text ?? ""}
                 fill

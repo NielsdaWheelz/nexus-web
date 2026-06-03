@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Image from "next/image";
+import MediaImage from "@/components/ui/MediaImage";
 import { formatPlaybackSpeedLabel } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { pluralize } from "@/lib/text/pluralize";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
@@ -613,13 +612,13 @@ export default function PodcastsPaneBody() {
                     paneTitleHint={row.podcast.title}
                     icon={
                       row.podcast.image_url ? (
-                        <Image
-                          src={buildMediaImageProxySrc(row.podcast.image_url)}
+                        <MediaImage
+                          kind="proxied"
+                          remoteUrl={row.podcast.image_url}
                           alt=""
                           width={32}
                           height={32}
                           className={styles.podcastArtwork}
-                          unoptimized
                         />
                       ) : (
                         <span className={styles.thumbnailFallback}>

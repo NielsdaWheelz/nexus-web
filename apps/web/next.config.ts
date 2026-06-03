@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
   images: {
     localPatterns: [
       {
-        pathname: "/api/media/image",
+        pathname: "/api/oracle/plates/**",
       },
     ],
   },

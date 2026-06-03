@@ -28,6 +28,7 @@ const READER_OVERVIEW_RULER_SEED = path.join(
   ".seed",
   "reader-overview-ruler-media.json",
 );
+const ORACLE_PLATE_SEED = path.join(E2E_DIR, ".seed", "oracle-plate.json");
 const SEED_FILES = [
   PDF_SEED,
   NON_PDF_SEED,
@@ -647,6 +648,27 @@ export default function globalSetup() {
       "[global-setup] Real-media E2E enabled - using .seed/real-media.json.",
     );
     return;
+  }
+
+  // Ensure the bundled Oracle owned-plate fixture object exists in storage and
+  // a complete reading points at it (oracle-plate-owned-asset-cutover §16). Runs
+  // unconditionally — it is hermetic + idempotent, and the reseed-skip path below
+  // must not bypass it. The script calls ensure_oracle_seed_objects(get_storage_client()).
+  run(
+    "Seed Oracle owned-plate fixture",
+    "uv run python scripts/seed_oracle_plate_e2e.py",
+    path.join(ROOT, "python"),
+    {
+      DATABASE_URL: dbUrl,
+      NEXUS_ENV: process.env.NEXUS_ENV,
+    },
+  );
+  if (!existsSync(ORACLE_PLATE_SEED)) {
+    throw new Error(
+      "[global-setup] Oracle owned-plate seed succeeded but " +
+        `${ORACLE_PLATE_SEED} was not created.\n` +
+        "  This indicates a bug in python/scripts/seed_oracle_plate_e2e.py.",
+    );
   }
 
   if (
