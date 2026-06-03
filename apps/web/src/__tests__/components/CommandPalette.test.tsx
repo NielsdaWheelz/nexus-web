@@ -31,7 +31,10 @@ function deferred<T>() {
 function renderCommandPalette() {
   return render(
     <FeedbackProvider>
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref="/libraries"
+      >
         <div data-testid="workspace-ready" />
         <CommandPalette />
       </WorkspaceStoreProvider>

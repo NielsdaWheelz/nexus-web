@@ -1,7 +1,3 @@
-"use client";
-
-import PodcastDetailPaneBody from "./PodcastDetailPaneBody";
-
-export default function PodcastDetailPage() {
-  return <PodcastDetailPaneBody />;
+export default function Page() {
+  return null;
 }

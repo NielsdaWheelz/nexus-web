@@ -1,7 +1,3 @@
-"use client";
-
-import SearchPaneBody from "./SearchPaneBody";
-
-export default function SearchPage() {
-  return <SearchPaneBody />;
+export default function Page() {
+  return null;
 }

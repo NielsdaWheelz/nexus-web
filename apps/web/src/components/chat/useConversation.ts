@@ -30,11 +30,10 @@ import {
 } from "react";
 import type { RefObject } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
-import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
   activeBranchGraphForPath,
@@ -412,11 +411,11 @@ export function useConversation(
 
   const shouldLoadConversation =
     conversationId !== null && !locallyCreatedIdsRef.current.has(conversationId);
-  const titleResource = useApiResource<{ data: { title: string } }>({
+  const titleResource = useResource<{ data: { title: string } }>({
     cacheKey: shouldLoadConversation && !branching ? conversationId : null,
     path: (id) => `/api/conversations/${id}` as ApiPath,
   });
-  const historyResource = useAsyncResource<ConversationHistorySnapshot>({
+  const historyResource = useResource<ConversationHistorySnapshot>({
     cacheKey: shouldLoadConversation
       ? `${branching ? "branching" : "linear"}:${conversationId}`
       : null,

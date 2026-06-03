@@ -1,0 +1,35 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.bar {
+  height: 0.75em;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  animation: pane-loading-pulse 1800ms ease-in-out infinite;
+}
+
+.bar:nth-child(1) {
+  width: 40%;
+}
+
+.bar:nth-child(2) {
+  width: 90%;
+}
+
+.bar:nth-child(3) {
+  width: 75%;
+}
+
+@keyframes pane-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}

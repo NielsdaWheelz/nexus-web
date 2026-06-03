@@ -1,5 +1,6 @@
-"use client";
-
+// Pure path→pane-route resolution (segment matching, no React/DOM), so the
+// server data root resolves the initial pane with the SAME resolver the client
+// uses (D-5: one resolver). No "use client" — this module is isomorphic.
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import {
   getSecondaryGroupForSurface,

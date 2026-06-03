@@ -51,7 +51,7 @@ import {
   resolvePaneRoute,
   type PaneChromeDescriptor,
   type ResolvedPaneRoute,
-} from "@/lib/panes/paneRouteRegistry";
+} from "@/lib/panes/paneRouteTable";
 import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryGroupForSurface,
@@ -914,20 +914,18 @@ const WorkspaceStoreContext = createContext<WorkspaceHostStoreValue | null>(null
 export function WorkspaceStoreProvider({
   children,
   workspacePrimaryMetrics,
+  initialHref,
 }: {
   children: React.ReactNode;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+  initialHref: string;
 }) {
   const [mounted, setMounted] = useState(false);
   const [state, dispatch] = useReducer(
     (current: WorkspaceState, action: WorkspaceAction) =>
       workspaceReducer(current, action, workspacePrimaryMetrics),
     null,
-    () =>
-      createDefaultWorkspaceState(
-        WORKSPACE_DEFAULT_FALLBACK_HREF,
-        workspacePrimaryMetrics,
-      )
+    () => createDefaultWorkspaceState(initialHref, workspacePrimaryMetrics)
   );
   const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<
     Map<string, WorkspacePaneTitleRecord>
@@ -987,20 +985,26 @@ export function WorkspaceStoreProvider({
     []
   );
 
-  // --- Hydrate from URL on mount ---
+  // --- Mark mounted; fold in a client-only URL hash ---
+  // The initial pane href came from the server (pathname+search). The URL hash
+  // never reaches the server, so if the deep link carried one, apply it now —
+  // client-side, after first paint — so it survives the state→URL projection and
+  // reaches the reader target.
   useEffect(() => {
     if (urlHydratedRef.current) {
       return;
     }
     urlHydratedRef.current = true;
-    dispatch({
-      type: "hydrate",
-      state: createDefaultWorkspaceState(
-        `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        workspacePrimaryMetrics,
-      ),
-    });
     setMounted(true);
+    if (window.location.hash) {
+      dispatch({
+        type: "hydrate",
+        state: createDefaultWorkspaceState(
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+          workspacePrimaryMetrics,
+        ),
+      });
+    }
   }, [workspacePrimaryMetrics]);
 
   // --- Event listeners: open-pane events ---
@@ -1314,8 +1318,6 @@ export function WorkspaceStoreProvider({
       publishPaneTitle,
     ]
   );
-
-  if (!mounted) return null;
 
   return <WorkspaceStoreContext.Provider value={value}>{children}</WorkspaceStoreContext.Provider>;
 }

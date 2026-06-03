@@ -50,7 +50,7 @@ import {
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -562,11 +562,11 @@ export default function PdfReader({
   } | null>(null);
   const recoveryTargetPageRef = useRef<number | null>(null);
 
-  const signedUrlResource = useAsyncResource<SignedUrlAccess>({
+  const signedUrlResource = useResource<SignedUrlAccess>({
     cacheKey: `${mediaId}:${signedUrlRefreshToken}`,
     load: (signal) => loadSignedUrlAccess(mediaId, signal),
   });
-  const pageHighlightsResource = useAsyncResource<PdfHighlightOut[]>({
+  const pageHighlightsResource = useResource<PdfHighlightOut[]>({
     cacheKey:
       documentRef.current && numPages > 0 && !loading && error === null
         ? `${mediaId}:${pageNumber}:${highlightRefreshToken}:${localHighlightRefreshToken}`

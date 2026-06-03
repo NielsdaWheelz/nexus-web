@@ -1,16 +1,17 @@
 "use client";
 
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { fetchNoteBlock } from "@/lib/notes/api";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import PagePaneBody from "../../pages/[pageId]/PagePaneBody";
 
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
 
-  const blockResource = useAsyncResource<{ blockId: string; pageId: string }>({
+  const blockResource = useResource<{ blockId: string; pageId: string }>({
     cacheKey: `note-block:${blockId}`,
     load: async () => {
       const block = await fetchNoteBlock(blockId);
@@ -29,6 +30,6 @@ export default function NotePaneBody() {
   useSetPaneTitle(feedback ? "Note" : null);
 
   if (feedback) return <FeedbackNotice {...feedback} />;
-  if (!pageId) return <FeedbackNotice severity="info" title="Loading note..." />;
+  if (!pageId) return <PaneLoadingState />;
   return <PagePaneBody pageIdOverride={pageId} focusBlockId={blockId} />;
 }

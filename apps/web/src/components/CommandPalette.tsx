@@ -15,7 +15,7 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
 import { createNotePage } from "@/lib/notes/api";
@@ -23,7 +23,7 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import {
   getPaneRouteIcon,
   resolvePaneRoute,
-} from "@/lib/panes/paneRouteRegistry";
+} from "@/lib/panes/paneRouteTable";
 import { toRoman } from "@/lib/toRoman";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
@@ -125,7 +125,7 @@ export default function CommandPalette() {
     return () => window.clearTimeout(timer);
   }, [requestedPaletteHistoryPath]);
 
-  const paletteHistoryResource = useApiResource<PaletteHistoryResponse>({
+  const paletteHistoryResource = useResource<PaletteHistoryResponse>({
     cacheKey: paletteHistoryPath,
     path: (path) => path as ApiPath,
   });
@@ -153,7 +153,7 @@ export default function CommandPalette() {
     setOracleResourceKey(`oracle-readings:${oracleLoadVersionRef.current}`);
   }, [open]);
 
-  const oracleResource = useApiResource<OracleReadingsResponse>({
+  const oracleResource = useResource<OracleReadingsResponse>({
     cacheKey: oracleResourceKey,
     path: () => "/api/oracle/readings",
   });

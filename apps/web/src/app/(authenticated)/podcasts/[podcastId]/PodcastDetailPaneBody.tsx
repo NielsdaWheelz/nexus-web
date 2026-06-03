@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import { pluralize } from "@/lib/text/pluralize";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { retryMediaSource } from "@/lib/media/retryClient";
 import {
@@ -42,6 +42,7 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -362,7 +363,7 @@ export default function PodcastDetailPaneBody() {
     ],
   );
 
-  const podcastDetailResource = useAsyncResource<PodcastDetailLoadResult>({
+  const podcastDetailResource = useResource<PodcastDetailLoadResult>({
     cacheKey: podcastDetailCacheKey,
     load: fetchPodcastDetail,
   });
@@ -1902,12 +1903,7 @@ export default function PodcastDetailPaneBody() {
               </div>
             </div>
             <SectionCard>
-              {loading && (
-                <FeedbackNotice
-                  severity="info"
-                  title="Loading podcast detail..."
-                />
-              )}
+              {loading && <PaneLoadingState />}
               {error && <FeedbackNotice feedback={error} />}
               {!loading && detail && (
                 <PodcastSummaryCard

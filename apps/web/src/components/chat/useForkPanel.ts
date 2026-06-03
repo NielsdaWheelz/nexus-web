@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   buildForkTree,
@@ -70,7 +70,7 @@ export function useForkPanel(input: {
       : "";
     return `/api/conversations/${conversationId}/forks${params}`;
   }, [conversationId, submittedQuery]);
-  const forksResource = useApiResource<ConversationForksResponse>({
+  const forksResource = useResource<ConversationForksResponse>({
     cacheKey: forksPath,
     path: (path) => path as ApiPath,
   });

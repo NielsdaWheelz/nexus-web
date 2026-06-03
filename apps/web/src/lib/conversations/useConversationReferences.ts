@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
 import type { ConversationReference } from "./types";
 
@@ -13,7 +13,7 @@ export function useConversationReferences(conversationId: string | null) {
   const refreshControllerRef = useRef<AbortController | null>(null);
   const ignoreResourceForConversationRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
-  const referencesResource = useApiResource<{ data: ConversationReference[] }>({
+  const referencesResource = useResource<{ data: ConversationReference[] }>({
     cacheKey: conversationId,
     path: (id) => `/api/conversations/${id}/references` as ApiPath,
   });

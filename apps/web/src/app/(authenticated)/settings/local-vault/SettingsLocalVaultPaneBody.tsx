@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell } from "@/lib/androidShell";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { pluralize } from "@/lib/text/pluralize";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
@@ -51,19 +51,15 @@ function statusVariant(status: VaultStatus) {
   return "neutral" as const;
 }
 
-export default function SettingsLocalVaultPaneBody({
-  initialAndroidShell = false,
-}: {
-  initialAndroidShell?: boolean;
-}) {
-  const androidShell = initialAndroidShell || isAndroidShell();
+export default function SettingsLocalVaultPaneBody() {
+  const androidShell = isAndroidShell();
   const [supported, setSupported] = useState(true);
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [autoSync, setAutoSyncState] = useState(false);
   const [status, setStatus] = useState<VaultStatus>("notConnected");
   const [message, setMessage] = useState("Choose a local folder for your Markdown vault.");
   const [busy, setBusy] = useState(false);
-  const initResource = useAsyncResource<LocalVaultInitResult>({
+  const initResource = useResource<LocalVaultInitResult>({
     cacheKey: androidShell ? null : "settings-local-vault:init",
     load: async () => {
       const localSupported = isLocalVaultSupported();

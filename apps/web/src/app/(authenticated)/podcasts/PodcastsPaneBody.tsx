@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { formatPlaybackSpeedLabel } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -21,6 +21,7 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   addPodcastToLibrary,
@@ -115,7 +116,7 @@ export default function PodcastsPaneBody() {
     },
   });
 
-  const subscriptionListResource = useAsyncResource<
+  const subscriptionListResource = useResource<
     PodcastSubscriptionListItem[]
   >({
     cacheKey: [
@@ -561,9 +562,7 @@ export default function PodcastsPaneBody() {
             ) : null}
           </div>
 
-          {loading ? (
-            <FeedbackNotice severity="info" title="Loading followed podcasts..." />
-          ) : null}
+          {loading ? <PaneLoadingState /> : null}
           {error ? <FeedbackNotice feedback={error} /> : null}
 
           {!loading && rows.length === 0 && !error ? (

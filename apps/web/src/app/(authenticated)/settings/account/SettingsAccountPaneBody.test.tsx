@@ -43,15 +43,17 @@ vi.mock("@/lib/api/client", () => ({
 import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 
 describe("SettingsAccountPaneBody", () => {
-  it("renders the Email and Display name forms with the initial email prop and the loaded display name", async () => {
+  it("renders the Email and Display name forms with the loaded email and display name", async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValue({
       data: { email: "ada@example.com", display_name: "Ada Lovelace" },
     });
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
-    expect(screen.getByText(/current: ada@example\.com/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/current: ada@example\.com/i)
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(/new email/i)).toHaveValue("ada@example.com");
     expect(
       screen.getByRole("button", { name: /update email/i })
@@ -75,7 +77,7 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
     const nameInput = await screen.findByDisplayValue("Ada");
     expect(apiFetch).toHaveBeenCalledTimes(1);
@@ -94,9 +96,9 @@ describe("SettingsAccountPaneBody", () => {
     changeEmailAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
-    const emailInput = screen.getByLabelText(/new email/i);
+    const emailInput = await screen.findByDisplayValue("ada@example.com");
     await user.clear(emailInput);
     await user.type(emailInput, "ada+new@example.com");
     await user.click(screen.getByRole("button", { name: /update email/i }));
@@ -123,9 +125,9 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
-    const emailInput = screen.getByLabelText(/new email/i);
+    const emailInput = await screen.findByDisplayValue("ada@example.com");
     await user.clear(emailInput);
     await user.type(emailInput, "taken@example.com");
     await user.click(screen.getByRole("button", { name: /update email/i }));
@@ -145,7 +147,7 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
     const nameInput = await screen.findByDisplayValue("Ada");
     await user.clear(nameInput);
@@ -173,7 +175,7 @@ describe("SettingsAccountPaneBody", () => {
     apiFetch.mockRejectedValueOnce(new Error("patch failed"));
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody initialEmail="ada@example.com" />);
+    render(<SettingsAccountPaneBody />);
 
     const nameInput = await screen.findByDisplayValue("Ada");
     await user.clear(nameInput);

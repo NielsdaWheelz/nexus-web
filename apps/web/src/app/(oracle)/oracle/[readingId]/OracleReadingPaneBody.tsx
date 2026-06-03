@@ -13,7 +13,7 @@ import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
 import { toRoman } from "@/lib/toRoman";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { isRecord } from "@/lib/validation";
 import type { OracleCreateResponse } from "../types";
 import { useStickyHeadline } from "../../OracleShell";
@@ -454,7 +454,7 @@ export default function OracleReadingPaneBody({
   const [retryNonce, setRetryNonce] = useState(0);
   const headlineRef = useStickyHeadline(state.folioMotto ?? null);
   const seededDetail = initialDetail?.id === readingId ? initialDetail : null;
-  const detailResource = useAsyncResource<ReadingDetail>({
+  const detailResource = useResource<ReadingDetail>({
     cacheKey: seededDetail === null ? `${readingId}:${retryNonce}` : null,
     load: (signal) => loadReadingDetail(readingId, signal),
   });

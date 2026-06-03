@@ -1,6 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
+
+const DEFAULT_USER_AGENT = navigator.userAgent;
+
+function setUserAgent(userAgent: string) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    value: userAgent,
+    configurable: true,
+  });
+}
 
 const {
   mockIsLocalVaultSupported,
@@ -79,6 +89,10 @@ describe("SettingsLocalVaultPaneBody", () => {
     });
   });
 
+  afterEach(() => {
+    setUserAgent(DEFAULT_USER_AGENT);
+  });
+
   it("connects a folder and exports the vault", async () => {
     const user = userEvent.setup();
     render(<SettingsLocalVaultPaneBody />);
@@ -102,7 +116,9 @@ describe("SettingsLocalVaultPaneBody", () => {
   });
 
   it("shows an unsupported message and skips local vault APIs in the android shell", () => {
-    render(<SettingsLocalVaultPaneBody initialAndroidShell />);
+    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
+
+    render(<SettingsLocalVaultPaneBody />);
 
     expect(
       screen.getByText(

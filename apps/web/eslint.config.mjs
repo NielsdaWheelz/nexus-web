@@ -47,6 +47,35 @@ const eslintConfig = [
     rules: { "react/no-danger": "off" },
   },
   {
+    // R4 (docs/cutovers/authenticated-shell-first-paint-and-pane-splitting.md):
+    // the always-loaded shell must never statically import a pane body, or pane
+    // code (markdown, ProseMirror, the reader stack) lands in first-load JS.
+    // Pane bodies are reached only through the lazy paneRenderRegistry.
+    files: [
+      "src/components/appnav/**",
+      "src/components/CommandPalette.tsx",
+      "src/components/workspace/WorkspacePaneStrip.tsx",
+      "src/components/command-palette/staticCommands.ts",
+      "src/lib/panes/paneLinkNavigation.ts",
+      "src/lib/panes/paneRouteTable.ts",
+      "src/lib/workspace/store.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/app/**/*PaneBody", "@/components/chat/Conversation"],
+              message:
+                "Shell modules must not import pane bodies — reach panes via the lazy paneRenderRegistry so pane code stays out of first-load JS.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"],
     plugins: { "testing-library": testingLibrary },
     rules: {

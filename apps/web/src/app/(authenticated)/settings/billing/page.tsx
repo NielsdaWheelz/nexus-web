@@ -1,5 +1,3 @@
-import SettingsBillingPaneBody from "./SettingsBillingPaneBody";
-
-export default function BillingPage() {
-  return <SettingsBillingPaneBody />;
+export default function Page() {
+  return null;
 }

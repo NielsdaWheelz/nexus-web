@@ -92,7 +92,6 @@ function mediaRoute(href: string) {
     staticTitle: "Media",
     titleMode: "dynamic",
     resourceRef: id ? `media:${id}` : null,
-    render: () => <TestPaneBody />,
     definition: {
       bodyMode: "document",
       maxWidthPx: 2400,
@@ -153,8 +152,8 @@ function TestPaneBody() {
   );
 }
 
-vi.mock("@/lib/panes/paneRouteRegistry", () => ({
-  resolvePaneRoute: (href: string) => mediaRoute(href),
+vi.mock("@/lib/panes/paneRenderRegistry", () => ({
+  renderPane: () => <TestPaneBody />,
 }));
 
 vi.mock("@/lib/workspace/store", async () => {

@@ -40,7 +40,7 @@ import {
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
 import LibraryChatTab from "@/components/chat/LibraryChatTab";
@@ -59,6 +59,7 @@ import {
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
   usePaneParam,
@@ -182,7 +183,7 @@ export default function LibraryPaneBody() {
   const refreshingMediaIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const libraryResource = useAsyncResource<{
+  const libraryResource = useResource<{
     library: Library;
     entries: LibraryEntry[];
   }>({
@@ -835,7 +836,7 @@ export default function LibraryPaneBody() {
   usePaneSecondary(secondaryDescriptor);
 
   if (loading) {
-    return <FeedbackNotice severity="info" title="Loading library..." />;
+    return <PaneLoadingState />;
   }
 
   if (!currentLibrary) {

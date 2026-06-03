@@ -1,27 +1,25 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import { useAsyncResource } from "./useAsyncResource";
+import { useResource } from "./useResource";
+import { BootstrapHydrationProvider } from "./hydrationCache";
 
-describe("useAsyncResource", () => {
+describe("useResource", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("is idle when cacheKey is null and does not call load", () => {
     const load = vi.fn(async () => "x");
-    const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: null, load }),
-    );
+    const { result } = renderHook(() => useResource({ cacheKey: null, load }));
     expect(result.current).toEqual({ status: "idle" });
     expect(load).not.toHaveBeenCalled();
   });
 
   it("loads on mount and transitions to ready", async () => {
     const load = vi.fn(async () => "hello");
-    const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: "k1", load }),
-    );
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }));
     expect(result.current.status).toBe("loading");
     await waitFor(() =>
       expect(result.current).toEqual({ status: "ready", data: "hello" }),
@@ -29,14 +27,42 @@ describe("useAsyncResource", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("starts ready with initialData and skips the first fetch", async () => {
-    const load = vi.fn(async () => "fetched");
+  it("loads the path form through apiFetch with a request-owned signal", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ data: "ok" }));
     const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: "k1", load, initialData: "seeded" }),
+      useResource<{ data: string }>({
+        cacheKey: "library-1",
+        path: (key) => `/api/libraries/${key}`,
+      }),
     );
-    expect(result.current).toEqual({ status: "ready", data: "seeded" });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(load).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(result.current).toEqual({ status: "ready", data: { data: "ok" } }),
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/libraries/library-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("claims a hydration-cache entry once (consume-once), then fetches", async () => {
+    const load = vi.fn(async () => "fetched");
+    const seen: string[] = [];
+    function Reader({ id }: { id: string }) {
+      const r = useResource<string>({ cacheKey: "k1", load });
+      if (r.status === "ready") seen.push(`${id}:${r.data}`);
+      return null;
+    }
+    render(
+      <BootstrapHydrationProvider value={{ k1: "cached" }}>
+        <Reader id="a" />
+        <Reader id="b" />
+      </BootstrapHydrationProvider>,
+    );
+    await waitFor(() => expect(seen).toContain("b:fetched"));
+    expect(seen).toContain("a:cached");
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a fetch that resolves after its effect was aborted (the wedge race)", async () => {
@@ -49,7 +75,7 @@ describe("useAsyncResource", () => {
     });
 
     const { result, rerender } = renderHook(
-      ({ key }: { key: string }) => useAsyncResource({ cacheKey: key, load }),
+      ({ key }: { key: string }) => useResource({ cacheKey: key, load }),
       { initialProps: { key: "k1" } },
     );
     expect(result.current.status).toBe("loading");
@@ -76,9 +102,7 @@ describe("useAsyncResource", () => {
     const load = vi.fn(async () => {
       throw new ApiError(404, "E_NOT_FOUND", "missing");
     });
-    const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: "k1", load }),
-    );
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }));
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(load).toHaveBeenCalledTimes(1);
     if (result.current.status === "error") {
@@ -94,9 +118,7 @@ describe("useAsyncResource", () => {
       if (calls === 1) throw new ApiError(400, "E_BAD", "bad");
       return "ok";
     });
-    const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: "k1", load }),
-    );
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }));
     await waitFor(() => expect(result.current.status).toBe("error"));
 
     act(() => {
@@ -117,9 +139,7 @@ describe("useAsyncResource", () => {
       if (calls < 3) throw new ApiError(503, "E_UPSTREAM", "down");
       return "recovered";
     });
-    const { result } = renderHook(() =>
-      useAsyncResource({ cacheKey: "k1", load }),
-    );
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }));
     await vi.advanceTimersByTimeAsync(2000);
     await waitFor(() =>
       expect(result.current).toEqual({ status: "ready", data: "recovered" }),

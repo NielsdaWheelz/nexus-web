@@ -14,7 +14,8 @@ import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
@@ -76,7 +77,7 @@ export default function BrowsePaneBody() {
   const [rowLibraryIds, setRowLibraryIds] = useState<Record<string, string[]>>(
     {},
   );
-  const browseResource = useApiResource<BrowseResponse>({
+  const browseResource = useResource<BrowseResponse>({
     cacheKey: appliedQuery || null,
     path: (query) => {
       const params = new URLSearchParams({ q: query, limit: "10" });
@@ -382,9 +383,7 @@ export default function BrowsePaneBody() {
           </FeedbackNotice>
         ) : null}
 
-        {searching ? (
-          <FeedbackNotice severity="info">Searching...</FeedbackNotice>
-        ) : null}
+        {searching ? <PaneLoadingState /> : null}
 
         {hasSearched && !searching && visibleSections.length === 0 ? (
           <FeedbackNotice severity="neutral">

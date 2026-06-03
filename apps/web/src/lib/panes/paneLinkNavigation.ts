@@ -1,7 +1,7 @@
 "use client";
 
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 

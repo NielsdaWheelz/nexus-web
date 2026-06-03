@@ -122,7 +122,7 @@ function normalizeBlockKind(value: unknown): NoteBlockKind {
   return value;
 }
 
-function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
+export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
   return {
     id: String(raw.id ?? ""),
     pageId: String(raw.pageId ?? raw.page_id ?? ""),
@@ -164,7 +164,7 @@ function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
   };
 }
 
-function normalizePageSummary(raw: Record<string, unknown>): NotePageSummary {
+export function normalizePageSummary(raw: Record<string, unknown>): NotePageSummary {
   return {
     id: String(raw.id ?? ""),
     title: String(raw.title ?? "Untitled"),

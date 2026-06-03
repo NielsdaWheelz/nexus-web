@@ -10,6 +10,7 @@ import {
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Pill from "@/components/ui/Pill";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import styles from "./page.module.css";
@@ -196,7 +197,7 @@ export default function SettingsBillingPaneBody() {
   return (
     <SectionCard>
       <div className={styles.content}>
-        {loading && <FeedbackNotice severity="info">Loading billing account...</FeedbackNotice>}
+        {loading && <PaneLoadingState />}
         {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
         {actionError ? <FeedbackNotice feedback={actionError} /> : null}
         {!loading && account && !billingEnabled && (

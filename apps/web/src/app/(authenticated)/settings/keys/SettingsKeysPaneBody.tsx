@@ -13,12 +13,13 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Pill from "@/components/ui/Pill";
@@ -103,7 +104,7 @@ export default function SettingsKeysPaneBody() {
   const [formError, setFormError] = useState<FeedbackContent | null>(null);
   const [formSuccess, setFormSuccess] = useState<FeedbackContent | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
-  const keysResource = useApiResource<ApiKeysResponse>({
+  const keysResource = useResource<ApiKeysResponse>({
     cacheKey: `settings-keys:${keysRefreshVersion}`,
     path: () => "/api/keys",
   });
@@ -230,7 +231,7 @@ export default function SettingsKeysPaneBody() {
   return (
     <div className={styles.content}>
       <div className={styles.messages}>
-        {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
+        {loading && <PaneLoadingState />}
         {error ? <FeedbackNotice feedback={error} /> : null}
         {formError ? <FeedbackNotice feedback={formError} /> : null}
         {formSuccess ? <FeedbackNotice feedback={formSuccess} /> : null}

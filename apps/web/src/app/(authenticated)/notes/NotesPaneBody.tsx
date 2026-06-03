@@ -5,9 +5,10 @@ import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
@@ -15,7 +16,7 @@ export default function NotesPaneBody() {
   const [pages, setPages] = useState<NotePageSummary[]>([]);
   const [title, setTitle] = useState("");
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const pagesResource = useAsyncResource<NotePageSummary[]>({
+  const pagesResource = useResource<NotePageSummary[]>({
     cacheKey: "notes:pages",
     load: () => fetchNotePages(),
   });
@@ -78,7 +79,7 @@ export default function NotesPaneBody() {
       </form>
 
       {feedback ? <FeedbackNotice {...feedback} /> : null}
-      {loading ? <FeedbackNotice severity="info" title="Loading notes..." /> : null}
+      {loading ? <PaneLoadingState /> : null}
 
       <div className={styles.pageList}>
         {pages.map((page) => (

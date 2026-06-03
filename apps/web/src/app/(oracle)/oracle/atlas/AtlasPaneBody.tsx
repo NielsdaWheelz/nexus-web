@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import { pluralize } from "@/lib/text/pluralize";
 import { useStickyHeadline } from "../../OracleShell";
@@ -246,7 +246,7 @@ export default function AtlasPaneBody() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [peerIds, setPeerIds] = useState<readonly string[]>([]);
   const headlineRef = useStickyHeadline("The Atlas");
-  const readingsResource = useApiResource<{ data: OracleSummary[] }>({
+  const readingsResource = useResource<{ data: OracleSummary[] }>({
     cacheKey: "oracle-readings",
     path: () => "/api/oracle/readings",
   });
@@ -610,7 +610,7 @@ function AtlasConcordancePeerLoader({
   readingId: string;
   onPeerIds: (peerIds: readonly string[]) => void;
 }) {
-  const concordanceResource = useApiResource<{ data: ConcordanceEntry[] }>({
+  const concordanceResource = useResource<{ data: ConcordanceEntry[] }>({
     cacheKey: readingId,
     path: (id) => `/api/oracle/readings/${id}/concordance`,
   });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { toFeedback } from "@/components/feedback/Feedback";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
@@ -40,7 +40,7 @@ interface BillingAccountResponse {
 
 export function useBillingAccount() {
   const [reloadVersion, setReloadVersion] = useState(0);
-  const accountResource = useApiResource<BillingAccountResponse>({
+  const accountResource = useResource<BillingAccountResponse>({
     cacheKey: `billing-account:${reloadVersion}`,
     path: () => "/api/billing/account",
   });

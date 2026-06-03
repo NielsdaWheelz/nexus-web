@@ -15,7 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import type { PaletteCommand } from "@/components/palette/types";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteRegistry";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 
 export const STATIC_COMMANDS: PaletteCommand[] = [
   {

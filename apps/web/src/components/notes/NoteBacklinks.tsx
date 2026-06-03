@@ -2,7 +2,7 @@
 
 import { Link2 } from "lucide-react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import type { ApiPath } from "@/lib/api/client";
 import type { HydratedObjectRef, ObjectRef } from "@/lib/objectRefs";
 import styles from "./NoteBacklinks.module.css";
@@ -30,7 +30,7 @@ interface ObjectLinksResponse {
 
 export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
   const { objectId, objectType } = objectRef;
-  const linksResource = useApiResource<ObjectLinksResponse>({
+  const linksResource = useResource<ObjectLinksResponse>({
     cacheKey: `${objectType}:${objectId}`,
     path: () => objectLinksPath({ objectId, objectType }),
   });

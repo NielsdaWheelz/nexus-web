@@ -21,7 +21,7 @@ import {
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
 } from "@/lib/auth/messages";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
 
@@ -32,18 +32,14 @@ interface AccountResponse {
   };
 }
 
-export default function SettingsAccountPaneBody({
-  initialEmail = "",
-}: {
-  initialEmail?: string;
-}) {
-  const accountResource = useApiResource<AccountResponse>({
+export default function SettingsAccountPaneBody() {
+  const accountResource = useResource<AccountResponse>({
     cacheKey: "settings-account:me",
     path: () => "/api/me",
   });
 
-  const [currentEmail, setCurrentEmail] = useState(initialEmail);
-  const [emailInput, setEmailInput] = useState(initialEmail);
+  const [currentEmail, setCurrentEmail] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const emailDirtyRef = useRef(false);
   const [emailFeedback, setEmailFeedback] = useState<FeedbackContent | null>(
     null

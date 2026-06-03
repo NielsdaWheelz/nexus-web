@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { ApiPath } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 interface ChatsByReferenceResponse {
@@ -20,7 +20,7 @@ export function useChatsByReference(resourceUri: string | null): {
         : null,
     [resourceUri],
   );
-  const conversationsResource = useApiResource<ChatsByReferenceResponse>({
+  const conversationsResource = useResource<ChatsByReferenceResponse>({
     cacheKey: conversationsPath,
     path: (path) => path as ApiPath,
   });

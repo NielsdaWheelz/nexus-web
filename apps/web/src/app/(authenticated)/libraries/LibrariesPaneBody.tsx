@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
@@ -16,6 +16,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
   fetchEditableLibrarySharing,
@@ -43,7 +44,7 @@ export default function LibrariesPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
-  const librariesResource = useApiResource<{ data: Library[] }>({
+  const librariesResource = useResource<{ data: Library[] }>({
     cacheKey: `libraries:${librariesRefreshVersion}`,
     path: () => "/api/libraries",
   });
@@ -292,7 +293,7 @@ export default function LibrariesPaneBody() {
           {error && <FeedbackNotice {...error} />}
 
           {loading ? (
-            <FeedbackNotice severity="info" title="Loading libraries..." />
+            <PaneLoadingState />
           ) : libraries.length === 0 ? (
             <FeedbackNotice
               severity="neutral"

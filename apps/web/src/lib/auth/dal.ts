@@ -8,9 +8,8 @@ import {
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { createClient } from "@/lib/supabase/server";
-
-const REQUEST_PATH_HEADER = "x-nexus-request-path";
 
 // One total deadline for the local access-token verification. getClaims()
 // verifies the ES256 signature against a cached JWKS and only fetches JWKS on a

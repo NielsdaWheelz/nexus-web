@@ -13,8 +13,8 @@ import {
   clearSupabaseAuthCookies,
   readSupabaseSessionCookie,
 } from "@/lib/auth/session-cookie";
+import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 
-const REQUEST_PATH_HEADER = "x-nexus-request-path";
 const NONCE_HEADER = "x-nonce";
 const CSP_REQUEST_HEADER = "content-security-policy";
 const PREFETCH_HEADER = "Next-Router-Prefetch";

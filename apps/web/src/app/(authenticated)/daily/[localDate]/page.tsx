@@ -1,7 +1,3 @@
-"use client";
-
-import DailyNotePaneBody from "../DailyNotePaneBody";
-
-export default function DailyDatePage() {
-  return <DailyNotePaneBody />;
+export default function Page() {
+  return null;
 }

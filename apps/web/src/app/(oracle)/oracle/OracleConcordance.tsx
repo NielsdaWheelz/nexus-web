@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -62,7 +62,7 @@ function OracleConcordanceEntries({
   readingId: string;
   onOpen: (id: string) => void;
 }) {
-  const concordanceResource = useApiResource<{ data: ConcordanceEntry[] }>({
+  const concordanceResource = useResource<{ data: ConcordanceEntry[] }>({
     cacheKey: readingId,
     path: (id) => `/api/oracle/readings/${id}/concordance`,
   });

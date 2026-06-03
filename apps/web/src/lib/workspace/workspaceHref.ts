@@ -1,4 +1,5 @@
-"use client";
+// Pure, SSR-safe href helpers (the window reads below are guarded), so both the
+// client workspace and the server bootstrap can import them.
 
 export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 

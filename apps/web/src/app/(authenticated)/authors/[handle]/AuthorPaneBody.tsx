@@ -13,6 +13,7 @@ import Pill from "@/components/ui/Pill";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { fetchContributor, fetchContributorWorks } from "@/lib/contributors/api";
+import { useResource } from "@/lib/api/useResource";
 import type {
   ContributorAlias,
   ContributorExternalId,
@@ -20,6 +21,7 @@ import type {
   ContributorWork,
 } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
@@ -77,17 +79,36 @@ function buildWorkMeta(work: ContributorWork): string {
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
+  const initialAuthor = useResource<ContributorPaneData>({
+    cacheKey: handle ? `author:${handle}` : null,
+    load: async () => {
+      const [contributorResponse, works] = await Promise.all([
+        fetchContributor(handle as string),
+        fetchContributorWorks(handle as string, { limit: AUTHOR_WORKS_LIMIT }),
+      ]);
+      return {
+        contributor: contributorResponse,
+        aliases: contributorResponse.aliases ?? [],
+        externalIds: contributorResponse.external_ids ?? [],
+        works,
+        workFilterOptions: works,
+      };
+    },
+  });
   const [data, setData] = useState<ContributorPaneData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [roleFilter, setRoleFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
   const [queryFilter, setQueryFilter] = useState("");
   const lastWorksRequestKeyRef = useRef<string | null>(null);
   const worksRequestIdRef = useRef(0);
+  const loading =
+    !!handle && !error && (data === null || data.contributor.handle !== handle);
 
   useSetPaneTitle(loading ? null : (data?.contributor.display_name ?? "Author"));
 
+  // Reset the local copy + filters whenever the route handle changes, so stale
+  // author data never bleeds across panes while the next initial load runs.
   useEffect(() => {
     setData(null);
     setRoleFilter("");
@@ -95,49 +116,29 @@ export default function AuthorPaneBody() {
     setQueryFilter("");
     lastWorksRequestKeyRef.current = null;
     worksRequestIdRef.current += 1;
-
-    if (!handle) {
-      setLoading(false);
-      setError({ severity: "error", title: "Author handle is missing" });
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void (async () => {
-      try {
-        const [contributorResponse, works] = await Promise.all([
-          fetchContributor(handle),
-          fetchContributorWorks(handle, { limit: AUTHOR_WORKS_LIMIT }),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        lastWorksRequestKeyRef.current = workRequestKey(handle, "", "", "");
-        setData({
-          contributor: contributorResponse,
-          aliases: contributorResponse.aliases ?? [],
-          externalIds: contributorResponse.external_ids ?? [],
-          works,
-          workFilterOptions: works,
-        });
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(toFeedback(loadError, { fallback: "Failed to load author" }));
-          setData(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    setError(
+      handle ? null : { severity: "error", title: "Author handle is missing" },
+    );
   }, [handle]);
+
+  // Seed the local copy from the initial resource's ready/error branch.
+  useEffect(() => {
+    if (initialAuthor.status === "ready") {
+      lastWorksRequestKeyRef.current = workRequestKey(
+        initialAuthor.data.contributor.handle,
+        "",
+        "",
+        "",
+      );
+      setData(initialAuthor.data);
+      setError(null);
+    } else if (initialAuthor.status === "error") {
+      setError(
+        toFeedback(initialAuthor.error, { fallback: "Failed to load author" }),
+      );
+      setData(null);
+    }
+  }, [initialAuthor]);
 
   useEffect(() => {
     if (!handle || !data || data.contributor.handle !== handle) {
@@ -202,7 +203,7 @@ export default function AuthorPaneBody() {
   return (
     <SectionCard>
       <div className={styles.content}>
-        {loading ? <FeedbackNotice severity="info" title="Loading author..." /> : null}
+        {loading ? <PaneLoadingState /> : null}
         {error ? <FeedbackNotice feedback={error} /> : null}
 
         {data ? (

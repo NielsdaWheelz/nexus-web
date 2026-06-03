@@ -32,7 +32,10 @@ function readApiErrorBody(body: unknown): {
  * already redirected `refreshable` sessions through `/auth/refresh`, so the
  * cookie is always `active` by the time a server component runs.
  */
-export async function callFastAPI<T>(path: string): Promise<T> {
+export async function callFastAPI<T>(
+  path: string,
+  options?: { timeoutMs?: number },
+): Promise<T> {
   const cookieStore = await cookies();
   const session = readSupabaseSessionCookie(cookieStore.getAll());
   if (session.state !== "active") {
@@ -51,7 +54,10 @@ export async function callFastAPI<T>(path: string): Promise<T> {
   const requestId = createRandomId();
   headers["X-Request-ID"] = requestId;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FASTAPI_FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
+  );
   let response: Response;
   try {
     response = await fetch(`${config.fastApiBaseUrl}${path}`, {

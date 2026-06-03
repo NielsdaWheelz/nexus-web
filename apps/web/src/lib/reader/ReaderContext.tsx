@@ -12,7 +12,6 @@ import { DEFAULT_READER_PROFILE } from "./types";
 
 interface ReaderContextValue {
   profile: ReaderProfile;
-  loading: boolean;
   error: string | null;
   saving: boolean;
   save: (updates: Partial<ReaderProfile>) => void;
@@ -27,10 +26,15 @@ const ReaderContext = createContext<ReaderContextValue | null>(null);
 
 const NOOP = () => {};
 
-export function ReaderProvider({ children }: { children: ReactNode }) {
+export function ReaderProvider({
+  children,
+  initialProfile,
+}: {
+  children: ReactNode;
+  initialProfile: ReaderProfile;
+}) {
   const {
     profile,
-    loading,
     error,
     saving,
     save,
@@ -39,12 +43,11 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
     updateFontSize,
     updateLineHeight,
     updateColumnWidth,
-  } = useReaderProfile();
+  } = useReaderProfile({ initialProfile });
 
   const value = useMemo<ReaderContextValue>(
     () => ({
-      profile: profile ?? DEFAULT_READER_PROFILE,
-      loading,
+      profile,
       error,
       saving,
       save,
@@ -56,7 +59,6 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
     }),
     [
       profile,
-      loading,
       error,
       saving,
       save,
@@ -78,7 +80,6 @@ export function useReaderContext(): ReaderContextValue {
   if (!ctx) {
     return {
       profile: DEFAULT_READER_PROFILE,
-      loading: false,
       error: null,
       saving: false,
       save: NOOP,

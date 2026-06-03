@@ -95,7 +95,10 @@ async function mountWorkspaceStore(path = "/libraries") {
   let store: WorkspaceStore | null = null;
 
   render(
-    <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+    <WorkspaceStoreProvider
+      workspacePrimaryMetrics={workspacePrimaryMetrics}
+      initialHref={path}
+    >
       <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
     </WorkspaceStoreProvider>,
   );
@@ -991,7 +994,10 @@ describe("WorkspaceStoreProvider", () => {
 
     let store: WorkspaceStore | null = null;
     render(
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref={`${window.location.pathname}${window.location.search}`}
+      >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
     );
@@ -1047,7 +1053,10 @@ describe("WorkspaceStoreProvider", () => {
 
     let store: WorkspaceStore | null = null;
     const { rerender } = render(
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref={`${window.location.pathname}${window.location.search}`}
+      >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
     );
@@ -1070,6 +1079,7 @@ describe("WorkspaceStoreProvider", () => {
     rerender(
       <WorkspaceStoreProvider
         workspacePrimaryMetrics={{ primaryMinWidthPx: 720, primaryDefaultWidthPx: 720 }}
+        initialHref={`${window.location.pathname}${window.location.search}`}
       >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
@@ -1115,7 +1125,10 @@ describe("WorkspaceStoreProvider", () => {
 
     let store: WorkspaceStore | null = null;
     render(
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics}>
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref={`${window.location.pathname}${window.location.search}`}
+      >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
     );
@@ -1158,6 +1171,77 @@ describe("WorkspaceStoreProvider", () => {
     expect(window.location.search).not.toContain("wsv");
     expect(window.location.search).not.toContain("ws=");
     expect(pushStateSpy).not.toHaveBeenCalled();
+    flushWorkspaceSession();
+  });
+
+  it("holds the state→URL projection until session restore wins, then projects the restored href", async () => {
+    window.history.replaceState({}, "", "/libraries");
+
+    // Defer the workspace-session GET behind a promise we resolve by hand so the
+    // pre-restore window is deterministic. The saved session restores an ACTIVE
+    // pane at a DIFFERENT href than initialHref, so projection and restore would
+    // disagree if projection ran before restore-ready.
+    let resolveSession: (() => void) | null = null;
+    const sessionResolved = new Promise<void>((resolve) => {
+      resolveSession = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
+        return jsonResponse({ data: null });
+      }
+      if (url.pathname === "/api/me/workspace-session") {
+        await sessionResolved;
+        return jsonResponse({
+          data: {
+            own: {
+              state: workspaceState({
+                activePrimaryPaneId: "pane-saved-notes",
+                primaryPanes: [pane("pane-saved-notes", "/notes")],
+              }),
+            },
+            most_recent_elsewhere: null,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+    render(
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref="/libraries"
+      >
+        <StoreProbe onStore={() => {}} />
+      </WorkspaceStoreProvider>,
+    );
+
+    // (a) While the GET is still pending, projection is held: it must never push
+    // the restored href (or any default href) onto the address bar.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/libraries");
+    });
+    expect(
+      replaceStateSpy.mock.calls.some(([, , url]) => url === "/notes"),
+    ).toBe(false);
+
+    // Resolve the GET so restore wins the race over the initial state.
+    await act(async () => {
+      resolveSession?.();
+      await sessionResolved;
+    });
+
+    // (b) After restore, projection runs once and projects the restored href.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/notes");
+    });
+    const notesProjections = replaceStateSpy.mock.calls.filter(
+      ([, , url]) => url === "/notes",
+    );
+    expect(notesProjections).toHaveLength(1);
+    expect(notesProjections[0]).toEqual([null, "", "/notes"]);
     flushWorkspaceSession();
   });
 });

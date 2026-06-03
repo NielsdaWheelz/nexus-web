@@ -4,9 +4,9 @@ import {
   MAX_STANDARD_PANE_WIDTH_PX,
   resolvePaneRouteWidthContract,
 } from "@/lib/panes/paneRouteModel";
-import { resolvePaneRoute } from "./paneRouteRegistry";
+import { resolvePaneRoute } from "./paneRouteTable";
 
-describe("pane route registry", () => {
+describe("pane route table", () => {
   it("uses broad search copy for evidence-backed search", () => {
     const route = resolvePaneRoute("/search");
     const chrome = route.definition?.getChrome?.({ href: "/search", params: {} });
@@ -23,7 +23,6 @@ describe("pane route registry", () => {
     expect(route.id).toBe("author");
     expect(route.params).toEqual({ handle: "ursula-k-le-guin" });
     expect(route.resourceRef).toBe("contributor:ursula-k-le-guin");
-    expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("standard");
   });
 
@@ -33,7 +32,6 @@ describe("pane route registry", () => {
     expect(route.id).toBe("page");
     expect(route.params).toEqual({ pageId: "page-1" });
     expect(route.resourceRef).toBe("page:page-1");
-    expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("document");
   });
 
@@ -43,13 +41,11 @@ describe("pane route registry", () => {
 
     expect(notesRoute.id).toBe("notes");
     expect(notesRoute.resourceRef).toBeNull();
-    expect(notesRoute.render).toEqual(expect.any(Function));
     expect(notesRoute.definition?.bodyMode).toBe("standard");
 
     expect(noteRoute.id).toBe("note");
     expect(noteRoute.params).toEqual({ blockId: "block-1" });
     expect(noteRoute.resourceRef).toBe("note_block:block-1");
-    expect(noteRoute.render).toEqual(expect.any(Function));
     expect(noteRoute.definition?.bodyMode).toBe("document");
   });
 
@@ -59,13 +55,11 @@ describe("pane route registry", () => {
 
     expect(todayRoute.id).toBe("daily");
     expect(todayRoute.resourceRef).toBeNull();
-    expect(todayRoute.render).toEqual(expect.any(Function));
     expect(todayRoute.definition?.bodyMode).toBe("document");
 
     expect(datedRoute.id).toBe("dailyDate");
     expect(datedRoute.params).toEqual({ localDate: "2026-05-06" });
     expect(datedRoute.resourceRef).toBe("daily:2026-05-06");
-    expect(datedRoute.render).toEqual(expect.any(Function));
     expect(datedRoute.definition?.bodyMode).toBe("document");
   });
 

@@ -1,7 +1,3 @@
-"use client";
-
-import SettingsIdentitiesPaneBody from "./SettingsIdentitiesPaneBody";
-
-export default function LinkedIdentitiesPage() {
-  return <SettingsIdentitiesPaneBody />;
+export default function Page() {
+  return null;
 }

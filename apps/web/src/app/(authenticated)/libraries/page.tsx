@@ -1,7 +1,3 @@
-"use client";
-
-import LibrariesPaneBody from "./LibrariesPaneBody";
-
-export default function LibrariesPage() {
-  return <LibrariesPaneBody />;
+export default function Page() {
+  return null;
 }

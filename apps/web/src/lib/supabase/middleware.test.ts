@@ -66,6 +66,21 @@ describe("updateSession", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("stamps the request-path header with the pathname and querystring verbatim", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/media/abc?view=compact&page=2", {
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
+    );
+
+    expect(
+      response.headers.get("x-middleware-request-x-nexus-request-path")
+    ).toBe("/media/abc?view=compact&page=2");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("redirects a refreshable protected navigation to /auth/refresh and keeps the cookie", async () => {
     const { updateSession } = await import("./middleware");
     const response = updateSession(

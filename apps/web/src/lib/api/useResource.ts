@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, isApiError } from "@/lib/api/client";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import { HydrationCacheContext } from "@/lib/api/hydrationCache";
 import { isAbortError } from "@/lib/errors";
 
 export type AsyncResource<T> =
@@ -14,25 +15,42 @@ const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 250;
 const MAX_DELAY_MS = 2000;
 
-export function useAsyncResource<T>(args: {
-  cacheKey: string | null;
-  load: (signal: AbortSignal) => Promise<T>;
-  initialData?: T;
-}): AsyncResource<T> {
+// The one async-resource hook: a keyed GET-or-custom-load with 3× retry/backoff
+// and abort. When the server prefetched the initial cacheKey into the hydration
+// cache, it claims that value (consume-once) and skips the first fetch.
+export function useResource<T>(
+  args:
+    | { cacheKey: string | null; path: (cacheKey: string) => ApiPath }
+    | { cacheKey: string | null; load: (signal: AbortSignal) => Promise<T> },
+): AsyncResource<T> {
   const { cacheKey } = args;
-  const loadRef = useRef(args.load);
-  loadRef.current = args.load;
+  const load: (signal: AbortSignal) => Promise<T> =
+    "load" in args
+      ? args.load
+      : (signal) => apiFetch<T>(args.path(cacheKey as string), { signal });
+  const loadRef = useRef(load);
+  loadRef.current = load;
 
   const [retryTick, setRetryTick] = useState(0);
   const retry = useCallback(() => setRetryTick((n) => n + 1), []);
 
-  const skipKeyRef = useRef(
-    args.initialData !== undefined && cacheKey !== null ? cacheKey : null,
-  );
+  // Seed "ready" and skip the first fetch for the initial cacheKey when the
+  // server prefetched it into the hydration cache (consume-once).
+  const cache = useContext(HydrationCacheContext);
+  const seededRef = useRef<{ key: string; data: T } | null>(null);
+  if (seededRef.current === null && cacheKey !== null) {
+    if (cache !== null && cache.has(cacheKey)) {
+      seededRef.current = { key: cacheKey, data: cache.get(cacheKey) as T };
+      cache.delete(cacheKey);
+    }
+  }
+  const seeded = seededRef.current;
+
+  const skipKeyRef = useRef(seeded !== null ? seeded.key : null);
 
   const [resource, setResource] = useState<AsyncResource<T>>(() => {
-    if (args.initialData !== undefined && cacheKey !== null) {
-      return { status: "ready", data: args.initialData };
+    if (seeded !== null) {
+      return { status: "ready", data: seeded.data };
     }
     return cacheKey === null ? { status: "idle" } : { status: "loading" };
   });

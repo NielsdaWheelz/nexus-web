@@ -57,7 +57,7 @@ vi.mock("@supabase/ssr", () => ({
   })),
 }));
 
-import LinkedIdentitiesPage from "./page";
+import SettingsIdentitiesPaneBody from "./SettingsIdentitiesPaneBody";
 
 function identity(
   provider: string,
@@ -72,7 +72,7 @@ function identity(
   };
 }
 
-describe("LinkedIdentitiesPage", () => {
+describe("SettingsIdentitiesPaneBody", () => {
   beforeEach(() => {
     mockCookieStore.getAll.mockReset().mockReturnValue([]);
     mockCookieStore.set.mockClear();
@@ -86,7 +86,7 @@ describe("LinkedIdentitiesPage", () => {
   it("loads linked identities server-side and renders them", async () => {
     getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
-    render(<LinkedIdentitiesPage />);
+    render(<SettingsIdentitiesPaneBody />);
 
     expect(
       await screen.findByText("owner+github@example.com")
@@ -96,11 +96,14 @@ describe("LinkedIdentitiesPage", () => {
   it("offers a connect control for each not-yet-linked provider", async () => {
     getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
-    render(<LinkedIdentitiesPage />);
+    render(<SettingsIdentitiesPaneBody />);
+
+    // Wait for the linked identity to load before asserting connectable state.
+    await screen.findByText("owner+github@example.com");
 
     // GitHub is linked; only Google remains connectable.
     expect(
-      await screen.findByRole("button", { name: /connect google/i })
+      screen.getByRole("button", { name: /connect google/i })
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /connect github/i })
@@ -110,7 +113,7 @@ describe("LinkedIdentitiesPage", () => {
   it("shows an error notice when identity loading fails", async () => {
     getUserIdentitiesOutcomes.push({ error: { message: "boom" } });
 
-    render(<LinkedIdentitiesPage />);
+    render(<SettingsIdentitiesPaneBody />);
 
     expect(
       await screen.findByText(/failed to load identities/i)
@@ -124,7 +127,7 @@ describe("LinkedIdentitiesPage", () => {
     getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     getUserIdentitiesOutcomes.push({ identities: [identity("google")] });
 
-    render(<LinkedIdentitiesPage />);
+    render(<SettingsIdentitiesPaneBody />);
 
     await screen.findByText("owner+github@example.com");
     await screen.findByText("owner+google@example.com");
@@ -149,7 +152,7 @@ describe("LinkedIdentitiesPage", () => {
     getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     unlinkOutcome = { error: { message: "unlink failed" } };
 
-    render(<LinkedIdentitiesPage />);
+    render(<SettingsIdentitiesPaneBody />);
 
     await screen.findByText("owner+github@example.com");
     const unlinkButtons = screen.getAllByRole("button", { name: /unlink/i });

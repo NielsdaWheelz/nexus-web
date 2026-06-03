@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
-import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { pinnedObjectsPath, type PinnedObject } from "@/lib/pinnedObjects";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { dispatchOpenCommandPalette } from "@/components/commandPaletteEvents";
@@ -36,7 +36,7 @@ function toNavItem(destination: NavDestination): NavItem {
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
   const { state, navigatePane } = useWorkspaceStore();
-  const pinsResource = useApiResource<PinnedObjectsResponse>({
+  const pinsResource = useResource<PinnedObjectsResponse>({
     cacheKey: "navbar",
     path: pinnedObjectsPath,
   });

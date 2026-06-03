@@ -29,31 +29,13 @@ import {
   type PaneRouteModelDefinition,
   type RouteParams,
 } from "@/lib/panes/paneRouteModel";
-import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
-import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
-import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
-import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
-import Conversation from "@/components/chat/Conversation";
-import BrowsePaneBody from "@/app/(authenticated)/browse/BrowsePaneBody";
-import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
-import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
-import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
-import AuthorPaneBody from "@/app/(authenticated)/authors/[handle]/AuthorPaneBody";
-import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
-import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
-import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
-import DailyNotePaneBody from "@/app/(authenticated)/daily/DailyNotePaneBody";
-import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
-import SettingsAccountPaneBody from "@/app/(authenticated)/settings/account/SettingsAccountPaneBody";
-import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
-import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
-import SettingsAppearancePaneBody from "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody";
-import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
-import SettingsLocalVaultPaneBody from "@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody";
-import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
-import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody";
 import { isAndroidShell } from "@/lib/androidShell";
 
+// Per-pane chrome + icon metadata. Deliberately holds NO pane-body imports so
+// the always-loaded shell (nav, command palette, store) can resolve a route's
+// icon/title without dragging the pane code into first-load JS. Pane bodies are
+// reached only through `paneRenderRegistry` (lazy). See docs/cutovers/
+// authenticated-shell-first-paint-and-pane-splitting.md (R4).
 export interface PaneChromeDescriptor {
   title: string;
   subtitle?: ReactNode;
@@ -61,13 +43,12 @@ export interface PaneChromeDescriptor {
   actions?: ReactNode;
 }
 
-interface PaneRouteBinding {
+interface PaneRouteMeta {
   icon: LucideIcon;
-  render: () => ReactNode;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
 }
 
-type ResolvedPaneRouteDefinition = PaneRouteModelDefinition & PaneRouteBinding;
+type ResolvedPaneRouteDefinition = PaneRouteModelDefinition & PaneRouteMeta;
 
 export interface ResolvedPaneRoute {
   id: PaneRouteId | "unsupported";
@@ -76,14 +57,12 @@ export interface ResolvedPaneRoute {
   staticTitle: string;
   titleMode: "static" | "dynamic";
   resourceRef: string | null;
-  render: (() => ReactNode) | null;
   definition: ResolvedPaneRouteDefinition | null;
 }
 
-const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
+const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   libraries: {
     icon: Library,
-    render: () => <LibrariesPaneBody />,
     getChrome: () => ({
       title: "Libraries",
       subtitle: "Mixed collections for podcasts and media.",
@@ -91,17 +70,14 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   library: {
     icon: Library,
-    render: () => <LibraryPaneBody />,
     getChrome: () => ({ title: "Library" }),
   },
   media: {
     icon: FileText,
-    render: () => <MediaPaneBody />,
     getChrome: () => ({ title: "Media" }),
   },
   conversations: {
     icon: MessageSquare,
-    render: () => <ConversationsPaneBody />,
     getChrome: () => ({
       title: "Chats",
       subtitle: "Recent conversations with quick-open and delete actions.",
@@ -109,12 +85,10 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   conversationNew: {
     icon: MessageSquare,
-    render: () => <Conversation />,
     getChrome: () => ({ title: "New chat" }),
   },
   conversation: {
     icon: MessageSquare,
-    render: () => <Conversation />,
     getChrome: () => ({
       title: "Chat",
       subtitle: "Conversation transcript and composer.",
@@ -122,7 +96,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   browse: {
     icon: Compass,
-    render: () => <BrowsePaneBody />,
     getChrome: () => ({
       title: "Browse",
       subtitle: "Search globally for podcasts, episodes, videos, and documents.",
@@ -130,7 +103,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   podcasts: {
     icon: Mic,
-    render: () => <PodcastsPaneBody />,
     getChrome: () => ({
       title: "Podcasts",
       subtitle: "Followed shows, library membership, and subscription controls.",
@@ -138,12 +110,10 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   podcastDetail: {
     icon: Mic,
-    render: () => <PodcastDetailPaneBody />,
     getChrome: () => ({ title: "Podcast" }),
   },
   search: {
     icon: Search,
-    render: () => <SearchPaneBody />,
     getChrome: () => ({
       title: "Search",
       subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
@@ -151,37 +121,30 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   author: {
     icon: UserRound,
-    render: () => <AuthorPaneBody />,
     getChrome: () => ({ title: "Author" }),
   },
   notes: {
     icon: FileText,
-    render: () => <NotesPaneBody />,
     getChrome: () => ({ title: "Notes" }),
   },
   page: {
     icon: FileText,
-    render: () => <PagePaneBody />,
     getChrome: () => ({ title: "Page" }),
   },
   note: {
     icon: FileText,
-    render: () => <NotePaneBody />,
     getChrome: () => ({ title: "Note" }),
   },
   daily: {
     icon: CalendarDays,
-    render: () => <DailyNotePaneBody />,
     getChrome: () => ({ title: "Today" }),
   },
   dailyDate: {
     icon: CalendarDays,
-    render: () => <DailyNotePaneBody />,
     getChrome: () => ({ title: "Daily note" }),
   },
   settings: {
     icon: Settings,
-    render: () => <SettingsPaneBody />,
     getChrome: () => ({
       title: "Settings",
       subtitle: "Account-level controls and integration configuration.",
@@ -189,7 +152,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsAccount: {
     icon: UserCog,
-    render: () => <SettingsAccountPaneBody />,
     getChrome: () => ({
       title: "Account",
       subtitle: "Email and profile settings for this account.",
@@ -197,7 +159,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsBilling: {
     icon: CreditCard,
-    render: () => <SettingsBillingPaneBody />,
     getChrome: () => ({
       title: "Billing",
       subtitle: "Plan, usage, and Stripe subscription management.",
@@ -205,7 +166,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsReader: {
     icon: BookOpen,
-    render: () => <SettingsReaderPaneBody />,
     getChrome: () => ({
       title: "Reader",
       subtitle: "Typography, layout, and display preferences for reading.",
@@ -213,7 +173,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsAppearance: {
     icon: Palette,
-    render: () => <SettingsAppearancePaneBody />,
     getChrome: () => ({
       title: "Appearance",
       subtitle: "Light, dark, or follow your operating system.",
@@ -221,7 +180,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsKeys: {
     icon: KeyRound,
-    render: () => <SettingsKeysPaneBody />,
     getChrome: () => ({
       title: "API Keys",
       subtitle: "Connect provider keys without storing plaintext in the browser.",
@@ -229,7 +187,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsLocalVault: {
     icon: FolderOpen,
-    render: () => <SettingsLocalVaultPaneBody />,
     getChrome: () =>
       isAndroidShell()
         ? {
@@ -244,7 +201,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsIdentities: {
     icon: Link2,
-    render: () => <SettingsIdentitiesPaneBody />,
     getChrome: () => ({
       title: "Linked Identities",
       subtitle: "Manage Google and GitHub identities linked to this account.",
@@ -252,7 +208,6 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
   },
   settingsKeybindings: {
     icon: Keyboard,
-    render: () => <KeybindingsPaneBody />,
     getChrome: () => ({
       title: "Keyboard Shortcuts",
       subtitle: "Customize key bindings for palette actions.",
@@ -263,19 +218,12 @@ const ROUTE_BINDINGS: Record<PaneRouteId, PaneRouteBinding> = {
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const route = resolvePaneRouteModel(href);
   if (route.definition) {
-    const binding = ROUTE_BINDINGS[route.definition.id];
     return {
       ...route,
-      render: binding.render,
-      definition: { ...route.definition, ...binding },
+      definition: { ...route.definition, ...PANE_ROUTE_META[route.definition.id] },
     };
   }
-  return {
-    ...route,
-    id: "unsupported",
-    render: null,
-    definition: null,
-  };
+  return { ...route, id: "unsupported", definition: null };
 }
 
 /**

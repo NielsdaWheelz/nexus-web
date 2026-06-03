@@ -37,7 +37,7 @@ import PdfReader, {
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import {
   FeedbackNotice,
   PDF_PASSWORD_PROTECTED_MESSAGE,
@@ -45,8 +45,8 @@ import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
-import { useAsyncResource } from "@/lib/useAsyncResource";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
   useMediaProcessingStatus,
@@ -406,13 +406,7 @@ function isUserScrollKey(event: KeyboardEvent): boolean {
   );
 }
 
-export default function MediaPaneBody({
-  initialMedia = null,
-  initialNavigation = null,
-}: {
-  initialMedia?: Media | null;
-  initialNavigation?: MediaNavigationResponse | null;
-} = {}) {
+export default function MediaPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("media route requires an id");
@@ -456,7 +450,6 @@ export default function MediaPaneBody({
   const isMobileViewport = useIsMobileViewport();
   const {
     profile: readerProfile,
-    loading: readerProfileLoading,
     save: saveReaderProfile,
     updateTheme,
   } = useReaderContext();
@@ -526,9 +519,7 @@ export default function MediaPaneBody({
   ]);
 
   // ---- Core data state ----
-  const [media, setMedia] = useState<Media | null>(
-    initialMedia && initialMedia.id === id ? initialMedia : null,
-  );
+  const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(media === null);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
@@ -588,7 +579,7 @@ export default function MediaPaneBody({
     useState<ReaderSourceTarget | null>(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
 
-  const resolvedEvidenceResource = useApiResource<EvidenceResolutionResponse>({
+  const resolvedEvidenceResource = useResource<EvidenceResolutionResponse>({
     cacheKey: requestedEvidenceId ? `${id}:${requestedEvidenceId}` : null,
     path: () => `/api/media/${id}/evidence/${requestedEvidenceId!}`,
   });
@@ -874,30 +865,7 @@ export default function MediaPaneBody({
     [id, readNavigationPayload],
   );
 
-  const initialEpubNavigation = useMemo(() => {
-    if (
-      !initialNavigation ||
-      initialNavigation.data.kind !== "epub" ||
-      initialNavigation.data.media_id !== id
-    ) {
-      return undefined;
-    }
-    const payload = readNavigationPayload(initialNavigation);
-    return { sections: payload.sections, toc: payload.toc };
-  }, [initialNavigation, id, readNavigationPayload]);
-  const initialWebNavigation = useMemo(() => {
-    if (
-      !initialNavigation ||
-      initialNavigation.data.kind !== "web_article" ||
-      initialNavigation.data.media_id !== id
-    ) {
-      return undefined;
-    }
-    const payload = readNavigationPayload(initialNavigation);
-    return { sections: payload.sections, toc: payload.toc };
-  }, [initialNavigation, id, readNavigationPayload]);
-
-  const epubNavigationResource = useAsyncResource<{
+  const epubNavigationResource = useResource<{
     sections: ReaderNavigationSection[];
     toc: NormalizedNavigationTocNode[];
   }>({
@@ -909,9 +877,8 @@ export default function MediaPaneBody({
       }
       return { sections: payload.sections, toc: payload.toc };
     },
-    initialData: initialEpubNavigation,
   });
-  const webNavigationResource = useAsyncResource<{
+  const webNavigationResource = useResource<{
     sections: ReaderNavigationSection[];
     toc: NormalizedNavigationTocNode[];
   }>({
@@ -927,7 +894,6 @@ export default function MediaPaneBody({
       }
       return { sections: payload.sections, toc: payload.toc };
     },
-    initialData: initialWebNavigation,
   });
   const epubSections =
     epubNavigationResource.status === "ready"
@@ -1109,7 +1075,7 @@ export default function MediaPaneBody({
   // Data Fetching — initial load
   // ==========================================================================
 
-  const initialMediaResource = useAsyncResource<{
+  const initialMediaResource = useResource<{
     media: Media;
     fragments: Fragment[];
   }>({
@@ -1212,7 +1178,7 @@ export default function MediaPaneBody({
     setMedia((prev) => (prev ? { ...prev, ...processingSnapshot } : prev));
   }, [processingSnapshot]);
 
-  const webFragmentsResource = useAsyncResource<Fragment[]>({
+  const webFragmentsResource = useResource<Fragment[]>({
     cacheKey:
       media?.kind === "web_article" &&
       media.capabilities?.can_read === true &&
@@ -1392,7 +1358,7 @@ export default function MediaPaneBody({
     );
   }, []);
 
-  const epubSectionResource = useAsyncResource<EpubSectionContent>({
+  const epubSectionResource = useResource<EpubSectionContent>({
     cacheKey: isEpub && activeSectionId ? `${id}:${activeSectionId}` : null,
     load: async (signal) => {
       const sectionResp = await apiFetch<{ data: EpubSectionContent }>(
@@ -1528,7 +1494,7 @@ export default function MediaPaneBody({
   const activeFragmentId = activeContent?.fragmentId ?? null;
 
   useEffect(() => {
-    if (isPdf || !activeFragmentId || readerProfileLoading) {
+    if (isPdf || !activeFragmentId) {
       setReaderLayoutReady(false);
       return;
     }
@@ -1551,7 +1517,7 @@ export default function MediaPaneBody({
         window.cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeFragmentId, id, isPdf, readerLayoutKey, readerProfileLoading]);
+  }, [activeFragmentId, id, isPdf, readerLayoutKey]);
 
   useEffect(() => {
     if (
@@ -1604,7 +1570,6 @@ export default function MediaPaneBody({
     }
     if (
       initialReaderResumeStateLoading ||
-      readerProfileLoading ||
       !readerLayoutReady
     ) {
       return;
@@ -1798,7 +1763,6 @@ export default function MediaPaneBody({
     readerResumeTotalProgression,
     readerResumePosition,
     readerLayoutReady,
-    readerProfileLoading,
     isMobileViewport,
     paneMobileChrome,
     settleRestoreSession,
@@ -1942,7 +1906,6 @@ export default function MediaPaneBody({
       !contentRef.current ||
       !activeEpubSection ||
       epubSectionLoading ||
-      readerProfileLoading ||
       !readerLayoutReady ||
       restorePhase !== "restoring_fallback"
     ) {
@@ -2033,7 +1996,6 @@ export default function MediaPaneBody({
     isMobileViewport,
     paneMobileChrome,
     readerLayoutReady,
-    readerProfileLoading,
     restorePhase,
     settleRestoreSession,
   ]);
@@ -2364,7 +2326,6 @@ export default function MediaPaneBody({
       !activeWebSectionId ||
       !contentRef.current ||
       !activeContent ||
-      readerProfileLoading ||
       !readerLayoutReady
     ) {
       return;
@@ -2453,7 +2414,6 @@ export default function MediaPaneBody({
     media?.kind,
     paneMobileChrome,
     readerLayoutReady,
-    readerProfileLoading,
     renderedHtml.length,
     webSections,
   ]);
@@ -4713,7 +4673,7 @@ export default function MediaPaneBody({
   // ==========================================================================
 
   if (loading) {
-    return <FeedbackNotice severity="info" title="Loading media..." />;
+    return <PaneLoadingState />;
   }
 
   if (error || !media) {

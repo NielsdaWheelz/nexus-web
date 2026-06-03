@@ -1,7 +1,3 @@
-"use client";
-
-import ConversationsPaneBody from "./ConversationsPaneBody";
-
-export default function ConversationsPage() {
-  return <ConversationsPaneBody />;
+export default function Page() {
+  return null;
 }

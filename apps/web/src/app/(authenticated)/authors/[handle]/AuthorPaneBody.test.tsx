@@ -56,7 +56,7 @@ describe("AuthorPaneBody", () => {
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "First Author" })).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Loading author...")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
 
     secondContributor.resolve(jsonResponse({ data: contributor("second-author", "Second Author") }));
     secondWorks.resolve(

@@ -5,6 +5,7 @@ import {
   FeedbackNotice,
   toFeedback,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { formatLocalDate, isLocalDate, todayLocalDate } from "@/lib/localDate";
 import { fetchDailyNotePage } from "@/lib/notes/api";
@@ -13,7 +14,7 @@ import {
   usePaneRuntime,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 
 export default function DailyNotePaneBody() {
@@ -23,7 +24,7 @@ export default function DailyNotePaneBody() {
   const localDate = routeLocalDate ?? todayLocalDate();
   paneRuntimeRef.current = paneRuntime;
   const validLocalDate = isLocalDate(localDate);
-  const dailyResource = useAsyncResource({
+  const dailyResource = useResource({
     cacheKey: validLocalDate ? `daily:${localDate}` : null,
     load: async () => ({
       localDate,
@@ -63,6 +64,6 @@ export default function DailyNotePaneBody() {
   if (dailyResource.status === "error") {
     return <FeedbackNotice {...toFeedback(dailyResource.error, { fallback: "Daily note could not be loaded." })} />;
   }
-  if (!page) return <FeedbackNotice severity="info" title="Loading daily note..." />;
+  if (!page) return <PaneLoadingState />;
   return <PagePaneBody pageIdOverride={page.id} initialPage={page} />;
 }

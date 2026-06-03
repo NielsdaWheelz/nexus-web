@@ -8,6 +8,8 @@ import {
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { useResource } from "@/lib/api/useResource";
 import {
   formatIdentityProvider,
   getConnectableProviders,
@@ -55,14 +57,20 @@ function ConnectProviderForm({ provider }: { provider: OAuthProvider }) {
 }
 
 export default function SettingsIdentitiesPaneBody() {
+  const initialIdentities = useResource({
+    cacheKey: "settings-identities:list",
+    load: () => loadLinkedIdentities(),
+  });
   const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [unlinkingIdentityId, setUnlinkingIdentityId] = useState<string | null>(
     null
   );
+  const loading = initialIdentities.status === "loading";
 
+  // Imperative refresh after mutations (unlink, password change). The initial
+  // load is owned by useResource above; this re-reads the server action.
   const loadIdentities = useCallback(async () => {
     const result = await loadLinkedIdentities();
     if (!result.ok) {
@@ -76,12 +84,15 @@ export default function SettingsIdentitiesPaneBody() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      setLoading(true);
-      await loadIdentities();
-      setLoading(false);
-    })();
-  }, [loadIdentities]);
+    if (initialIdentities.status !== "ready") return;
+    if (initialIdentities.data.ok) {
+      setIdentities(initialIdentities.data.identities);
+      setError(null);
+    } else {
+      setError({ severity: "error", title: LOAD_FAILED_MESSAGE });
+      setIdentities([]);
+    }
+  }, [initialIdentities]);
 
   const connectableProviders = useMemo(
     () => getConnectableProviders(identities),
@@ -124,7 +135,7 @@ export default function SettingsIdentitiesPaneBody() {
   return (
     <SectionCard>
       <div className={styles.content}>
-        {loading && <FeedbackNotice severity="info">Loading identities...</FeedbackNotice>}
+        {loading && <PaneLoadingState />}
         {error ? <FeedbackNotice feedback={error} /> : null}
         {notice ? <FeedbackNotice feedback={notice} /> : null}
 

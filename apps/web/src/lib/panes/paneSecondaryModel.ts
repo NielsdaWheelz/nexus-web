@@ -1,5 +1,5 @@
-"use client";
-
+// Pure secondary-pane metadata + helpers (no React/DOM); isomorphic so the
+// server route resolver (via paneRouteModel) can import it.
 export interface WorkspaceSecondaryWidthPolicy {
   defaultWidthPx: number;
   minWidthPx: number;

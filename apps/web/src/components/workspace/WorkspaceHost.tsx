@@ -1,7 +1,8 @@
 "use client";
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
+import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
+import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
@@ -152,8 +153,8 @@ class PaneRouteErrorBoundary extends Component<
 // ---------------------------------------------------------------------------
 
 function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
-  if (route.render) {
-    return route.render();
+  if (route.id !== "unsupported") {
+    return renderPane(route.id);
   }
   return (
     <div className={styles.unsupported}>

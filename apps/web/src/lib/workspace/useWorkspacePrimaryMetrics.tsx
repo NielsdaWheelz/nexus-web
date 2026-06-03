@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
+import type { ReaderProfile } from "@/lib/reader/types";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const probeBaseStyle: CSSProperties = {
@@ -28,20 +29,26 @@ const probeBaseStyle: CSSProperties = {
   lineHeight: "var(--reader-line-height, var(--leading-normal))",
 };
 
+// First-paint seed mirroring the probe box below: column_width_ch glyphs at
+// ~0.5em advance + --space-4 (1rem) inline padding on both sides. The live probe
+// refines this to the measured width before paint (useLayoutEffect), so the
+// approximation never causes a visible jump.
+function estimatePrimaryWidthPx(profile: ReaderProfile): number {
+  return Math.ceil(profile.column_width_ch * profile.font_size_px * 0.5 + 2 * 16);
+}
+
 export function useWorkspacePrimaryMetrics(): {
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics | null;
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   probe: ReactNode;
 } {
-  const { profile, loading } = useReaderContext();
+  const { profile } = useReaderContext();
   const probeRef = useRef<HTMLDivElement | null>(null);
-  const [primaryWidthPx, setPrimaryWidthPx] = useState<number | null>(null);
+  const [primaryWidthPx, setPrimaryWidthPx] = useState(() =>
+    estimatePrimaryWidthPx(profile),
+  );
   const readerSurfaceStyle = useMemo(() => buildReaderSurfaceStyle(profile), [profile]);
 
   useLayoutEffect(() => {
-    if (loading) {
-      setPrimaryWidthPx(null);
-      return;
-    }
     if (typeof ResizeObserver === "undefined") {
       throw new Error("ResizeObserver is required for workspace pane sizing.");
     }
@@ -59,21 +66,19 @@ export function useWorkspacePrimaryMetrics(): {
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loading, readerSurfaceStyle]);
+  }, [readerSurfaceStyle]);
 
-  const workspacePrimaryMetrics = useMemo<WorkspacePrimaryMetrics | null>(() => {
-    if (primaryWidthPx === null) {
-      return null;
-    }
-    return {
+  const workspacePrimaryMetrics = useMemo<WorkspacePrimaryMetrics>(
+    () => ({
       primaryMinWidthPx: primaryWidthPx,
       primaryDefaultWidthPx: primaryWidthPx,
-    };
-  }, [primaryWidthPx]);
+    }),
+    [primaryWidthPx],
+  );
 
   return {
     workspacePrimaryMetrics,
-    probe: loading ? null : (
+    probe: (
       <div
         ref={probeRef}
         aria-hidden="true"

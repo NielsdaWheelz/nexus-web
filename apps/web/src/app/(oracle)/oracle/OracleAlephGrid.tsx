@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -20,7 +20,7 @@ interface OracleSummary {
 
 export default function OracleAlephGrid() {
   const router = useRouter();
-  const readingsResource = useApiResource<{ data: OracleSummary[] }>({
+  const readingsResource = useResource<{ data: OracleSummary[] }>({
     cacheKey: "oracle-readings",
     path: () => "/api/oracle/readings",
   });

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { ConversationModel } from "@/lib/conversations/types";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
 
@@ -120,7 +120,7 @@ export function useChatModels({
   const [selectedReasoning, setSelectedReasoning] =
     useState<ReasoningMode>(DEFAULT_REASONING);
 
-  const modelsResource = useAsyncResource<ConversationModel[]>({
+  const modelsResource = useResource<ConversationModel[]>({
     cacheKey: cachedModels ? null : "chat-composer-models",
     load: () => loadComposerModels(),
   });

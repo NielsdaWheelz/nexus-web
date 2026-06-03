@@ -34,8 +34,8 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
 }));
 
-vi.mock("@/lib/api/useApiResource", () => ({
-  useApiResource: () => ({ status: "ready", data: { data: { pins: [] } } }),
+vi.mock("@/lib/api/useResource", () => ({
+  useResource: () => ({ status: "ready", data: { data: { pins: [] } } }),
 }));
 
 describe("AppNav (desktop rail)", () => {

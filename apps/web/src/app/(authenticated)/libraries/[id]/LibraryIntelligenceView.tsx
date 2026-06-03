@@ -8,8 +8,9 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import styles from "./page.module.css";
 
 type IntelligenceStatus =
@@ -104,7 +105,7 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const intelligenceResource = useApiResource<{ data: LibraryIntelligence }>({
+  const intelligenceResource = useResource<{ data: LibraryIntelligence }>({
     cacheKey: `library-intelligence:${libraryId}:${refreshVersion}`,
     path: () => `/api/libraries/${libraryId}/intelligence`,
   });
@@ -193,7 +194,7 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
       {error ? <FeedbackNotice {...error} /> : null}
 
       {loading && !currentIntelligence ? (
-        <FeedbackNotice severity="info" title="Loading intelligence..." />
+        <PaneLoadingState label="Loading intelligence…" />
       ) : currentIntelligence ? (
         <>
           <div className={styles.intelligenceStats}>

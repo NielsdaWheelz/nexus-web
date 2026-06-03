@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { useApiResource } from "@/lib/api/useApiResource";
+import { useResource } from "@/lib/api/useResource";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import type { ConversationSummary } from "@/lib/conversations/types";
@@ -20,7 +21,7 @@ interface ConversationsResponse {
 }
 
 export default function ConversationsPaneBody() {
-  const initialConversations = useApiResource<ConversationsResponse>({
+  const initialConversations = useResource<ConversationsResponse>({
     cacheKey: "conversations:list:initial",
     path: () => "/api/conversations?limit=50",
   });
@@ -76,9 +77,7 @@ export default function ConversationsPaneBody() {
 
   return (
     <div className={styles.body}>
-      {initialConversations.status === "loading" && (
-        <FeedbackNotice severity="info">Loading...</FeedbackNotice>
-      )}
+      {initialConversations.status === "loading" && <PaneLoadingState />}
       {error ? <FeedbackNotice feedback={error} /> : null}
 
       {initialConversations.status !== "loading" &&

@@ -11,6 +11,7 @@ import {
 import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import Button from "@/components/ui/Button";
+import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
   usePaneParam,
@@ -21,7 +22,7 @@ import {
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
-import { useAsyncResource } from "@/lib/useAsyncResource";
+import { useResource } from "@/lib/api/useResource";
 import { isRecord } from "@/lib/validation";
 import {
   createEmptyOutlineDoc,
@@ -225,7 +226,7 @@ export default function PagePaneBody({
     flush: flushSession,
     reset: resetSession,
   } = session;
-  const editorLoadResource = useAsyncResource<LoadedNoteEditorResource>({
+  const editorLoadResource = useResource<LoadedNoteEditorResource>({
     cacheKey: editorLoadKey,
     load: async () => {
       const loadedPage =
@@ -486,7 +487,7 @@ export default function PagePaneBody({
   usePaneChromeOverride({ options: paneOptions });
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
-  if (!page || !initialDoc) return <FeedbackNotice severity="info" title="Loading note..." />;
+  if (!page || !initialDoc) return <PaneLoadingState />;
 
   return (
     <div className={styles.editorShell}>
