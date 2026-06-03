@@ -21,6 +21,7 @@ import type { PaneFixedChromePublication } from "@/components/workspace/PaneFixe
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import { copyText } from "@/lib/ui/copyText";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import type {
@@ -43,27 +44,6 @@ interface PaneChromeOverrides {
 }
 
 const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
-
-function fallbackCopyText(value: string): void {
-  if (typeof document === "undefined") return;
-  const textArea = document.createElement("textarea");
-  textArea.value = value;
-  textArea.setAttribute("readonly", "true");
-  textArea.style.position = "fixed";
-  textArea.style.top = "-1000px";
-  document.body.appendChild(textArea);
-  textArea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textArea);
-}
-
-function copyText(value: string): void {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(value).catch(() => fallbackCopyText(value));
-    return;
-  }
-  fallbackCopyText(value);
-}
 
 const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null

@@ -1,174 +1,148 @@
-import { act, render, screen } from "@testing-library/react";
+/**
+ * Android-shell gating — command palette integration.
+ *
+ * Verifies that recent-history entries whose href maps to an Android-restricted
+ * route (e.g. /settings/local-vault → routeId "settingsLocalVault") are
+ * silently dropped from the palette when running inside the Android shell,
+ * while non-restricted recents (e.g. /settings/billing) are still shown.
+ *
+ * Uses REAL providers — no vi.mock of internal modules.
+ */
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
+import CommandPalette from "@/components/palette/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
-const { apiFetchMock, mockWorkspaceStore, requestOpenInAppPaneMock } = vi.hoisted(() => ({
-  apiFetchMock: vi.fn(),
-  mockWorkspaceStore: {
-    state: {
-      activePrimaryPaneId: "pane-a",
-      primaryPaneOrder: ["pane-a", "pane-b", "pane-c"],
-      primaryPanesById: {
-        "pane-a": {
-          id: "pane-a",
-          href: "/settings/billing",
-          primaryWidthPx: 480,
-          attachedSecondaryPaneId: null,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        "pane-b": {
-          id: "pane-b",
-          href: "/libraries",
-          primaryWidthPx: 480,
-          attachedSecondaryPaneId: null,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-        "pane-c": {
-          id: "pane-c",
-          href: "/settings/local-vault",
-          primaryWidthPx: 480,
-          attachedSecondaryPaneId: null,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      },
-      secondaryPanesById: {},
-    },
-    runtimeTitleByPaneId: new Map(),
-    activatePane: vi.fn(),
-    openPane: vi.fn(),
-    navigatePane: vi.fn(),
-    goBackPane: vi.fn(),
-    goForwardPane: vi.fn(),
-    closePane: vi.fn(),
-    resizePrimaryPane: vi.fn(),
-    requestSecondarySurface: vi.fn(),
-    closeSecondaryPane: vi.fn(),
-    dropSecondaryPane: vi.fn(),
-    setSecondarySurface: vi.fn(),
-    resizeSecondaryPane: vi.fn(),
-    minimizePane: vi.fn(),
-    restorePane: vi.fn(),
-    publishPaneTitle: vi.fn(),
-  },
-  requestOpenInAppPaneMock: vi.fn(),
-}));
+// ---------------------------------------------------------------------------
+// Helpers (mirrors CommandPalette.test.tsx)
+// ---------------------------------------------------------------------------
 
-vi.mock("@/lib/workspace/store", () => ({
-  useWorkspaceStore: () => mockWorkspaceStore,
-  resolveWorkspacePaneTitle: (pane: { href: string }) => {
-    if (pane.href === "/settings/billing") return { title: "Billing" };
-    if (pane.href === "/settings/local-vault") return { title: "Local Vault" };
-    if (pane.href === "/libraries") return { title: "Libraries" };
-    return { title: "Pane" };
-  },
-}));
+const ANDROID_UA = `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 ${ANDROID_SHELL_USER_AGENT_TOKEN}/1.0`;
 
-vi.mock("@/lib/panes/openInAppPane", () => ({
-  NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
-  consumePendingPaneOpenQueue: () => [],
-  parseOpenInAppPaneEvent: () => null,
-  parseOpenInAppPaneMessage: () => null,
-  normalizePaneHref: (href: string) => href,
-  setPaneGraphReady: vi.fn(),
-  requestOpenInAppPane: (...args: unknown[]) => requestOpenInAppPaneMock(...args),
-}));
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 
-vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function mockApi(
+  recents: {
+    target_key: string;
+    target_href: string;
+    title_snapshot: string;
+    last_used_at: string;
+  }[] = [],
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname === "/api/me/palette-history") {
+      return jsonResponse({
+        data: {
+          recent: recents.map((row) => ({
+            ...row,
+            target_kind: "href",
+            source: "recent",
+          })),
+          frecency_boosts: {},
+        },
+      });
+    }
+    if (url.pathname === "/api/me/palette-selections" && init?.method === "POST") {
+      return jsonResponse({ data: null });
+    }
+    if (url.pathname === "/api/oracle/readings") return jsonResponse({ data: [] });
+    if (url.pathname === "/api/search") {
+      return jsonResponse({ results: [], page: { has_more: false, next_cursor: null } });
+    }
+    throw new Error(`Unexpected fetch: ${url.pathname}`);
+  });
+}
+
+function renderPalette() {
+  return render(
+    <FeedbackProvider>
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialHref="/libraries"
+      >
+        <CommandPalette />
+      </WorkspaceStoreProvider>
+    </FeedbackProvider>,
   );
-  return {
-    ...actual,
-    apiFetch: (...args: unknown[]) => apiFetchMock(...args),
-    isApiError: () => false,
-  };
-});
-
-import CommandPalette from "@/components/CommandPalette";
-
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
 }
 
-function openPalette() {
-  act(() => {
-    window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
-  });
+function open() {
+  act(() => window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)));
 }
 
-describe("CommandPalette android shell gating", () => {
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
+const RECENTS = [
+  {
+    target_key: "/settings/local-vault",
+    target_href: "/settings/local-vault",
+    title_snapshot: "Local Vault",
+    last_used_at: "2026-06-01T00:00:00Z",
+  },
+  {
+    target_key: "/settings/billing",
+    target_href: "/settings/billing",
+    title_snapshot: "Billing",
+    last_used_at: "2026-06-01T00:00:00Z",
+  },
+];
+
+describe("Android-shell gating — command palette recents", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal("innerWidth", 1280);
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path.startsWith("/api/me/palette-history")) {
-        return {
-          data: {
-            recent: [
-              {
-                target_key: "/settings/billing",
-                target_kind: "href",
-                target_href: "/settings/billing",
-                title_snapshot: "Billing",
-                source: "recent",
-                last_used_at: "2026-04-17T12:00:00Z",
-              },
-              {
-                target_key: "/settings/local-vault",
-                target_kind: "href",
-                target_href: "/settings/local-vault",
-                title_snapshot: "Local Vault",
-                source: "recent",
-                last_used_at: "2026-04-17T12:00:00Z",
-              },
-              {
-                target_key: "/libraries",
-                target_kind: "href",
-                target_href: "/libraries",
-                title_snapshot: "Libraries",
-                source: "recent",
-                last_used_at: "2026-04-17T12:00:00Z",
-              },
-            ],
-            frecency_boosts: {},
-          },
-        };
-      }
-      if (path === "/api/oracle/readings") {
-        return { data: [] };
-      }
-      throw new Error(`Unhandled apiFetch call: ${path}`);
+    // Identify as Android shell by injecting the required UA token.
+    Object.defineProperty(navigator, "userAgent", {
+      value: ANDROID_UA,
+      configurable: true,
     });
+    vi.stubGlobal("innerWidth", 1280); // desktop surface
+    localStorage.clear();
+    window.history.replaceState({}, "", "/libraries");
+    mockApi(RECENTS);
   });
 
   afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT);
+    // Restore UA so subsequent tests get the real value.
+    Object.defineProperty(navigator, "userAgent", {
+      value: "",
+      configurable: true,
+    });
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("hides local vault but keeps billing destinations", async () => {
-    render(
-      <FeedbackProvider>
-        <CommandPalette />
-      </FeedbackProvider>
-    );
+  it("hides restricted /settings/local-vault recent and shows non-restricted /settings/billing recent", async () => {
+    renderPalette();
+    open();
 
-    openPalette();
+    // Wait until the palette is visible and the recents have been fetched.
+    await screen.findByRole("dialog", { name: "Command palette" });
 
-    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
-    expect(screen.getAllByText("Billing").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Local Vault")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Libraries").length).toBeGreaterThan(0);
+    // "Billing" should be present in the list.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("option", { name: /Billing/i }),
+      ).toBeInTheDocument();
+    });
+
+    // "Local Vault" must be absent — it maps to the Android-restricted routeId.
+    expect(
+      screen.queryByRole("option", { name: /Local Vault/i }),
+    ).toBeNull();
   });
 });

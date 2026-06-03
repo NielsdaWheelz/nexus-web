@@ -1,5 +1,5 @@
 const FOCUSABLE_SELECTORS = [
-  "button:not([disabled])",
+  "button:not([disabled]):not([tabindex='-1'])",
   "[href]",
   "input:not([disabled])",
   "select:not([disabled])",

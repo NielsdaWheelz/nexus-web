@@ -7,10 +7,16 @@ import {
   type WorkspaceState,
 } from "./workspace";
 
+// The palette is rendered as a portal'd <div role="dialog" aria-label="Command palette">
+// (PaletteSurface on desktop, PaletteSheet / <section> on mobile) — NOT a native <dialog>
+// element. getByRole("dialog") matches the ARIA role regardless of element tag, so this
+// locator is correct for both the old native-dialog shell and the new portal architecture.
 function paletteDialog(page: Page): Locator {
   return page.getByRole("dialog", { name: "Command palette" });
 }
 
+// aria-label "Search commands" is stable across the rewrite. The placeholder text changed
+// to "Search or run an action…" but selectors keyed on the aria-label are unaffected.
 function paletteInput(root: Page | Locator): Locator {
   return root.getByRole("combobox", { name: "Search commands" });
 }
@@ -19,9 +25,11 @@ function paletteListbox(root: Page | Locator): Locator {
   return root.getByRole("listbox");
 }
 
-function keyboardShortcutsSettingsOption(root: Page | Locator): Locator {
+// Row accessible name is now `${title} ${subtitle?} ${shortcut?}` (no section tag):
+// the "Keyboard Shortcuts" command has no subtitle, so its name is just the title.
+function keyboardShortcutsOption(root: Page | Locator): Locator {
   return paletteListbox(root).getByRole("option", {
-    name: /^Keyboard Shortcuts Settings\b/,
+    name: /^Keyboard Shortcuts\b/,
   });
 }
 
@@ -63,7 +71,7 @@ test.describe("command palette", () => {
     // Querying exposes commands as a listbox of options.
     const listbox = paletteListbox(dialog);
     await expect(listbox.getByRole("option").first()).toBeVisible();
-    const keybindingsOption = keyboardShortcutsSettingsOption(dialog);
+    const keybindingsOption = keyboardShortcutsOption(dialog);
     await expect(keybindingsOption).toBeVisible();
 
     // Drive the active option onto the Keyboard Shortcuts row, then Enter runs it.
@@ -132,7 +140,7 @@ test.describe("command palette mobile", () => {
     await input.fill("keyboard shortcuts");
 
     // Tapping a result option executes it: the palette closes and the target opens.
-    const keybindingsOption = keyboardShortcutsSettingsOption(dialog);
+    const keybindingsOption = keyboardShortcutsOption(dialog);
     await expect(keybindingsOption).toBeVisible();
     await keybindingsOption.tap();
 

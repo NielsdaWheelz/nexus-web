@@ -94,7 +94,11 @@
   --z-raised: 10;
   --z-overlay: 100;
   --z-modal: 1000;
+  --z-palette: 1100; /* command palette: above NavSheet (1001), below ActionMenu (1200) */
   --z-toast: 10000;
+
+  /* Command-palette glass blur (theme-invariant; tints live in each theme block) */
+  --palette-glass-blur: 20px;
 
   /* Overlay scrims */
   --overlay-scrim: rgb(0 0 0 / 0.5);        /* default modal scrim */
@@ -146,6 +150,9 @@
   --shadow-3: 0 8px 18px rgba(0, 0, 0, 0.55);
   --shadow-4: 0 18px 40px rgba(0, 0, 0, 0.6);
   --shadow-5: 0 32px 80px rgba(0, 0, 0, 0.7);
+  --palette-glass-bg: color-mix(in srgb, var(--surface-1) 82%, transparent);
+  --palette-glass-ring: rgba(255, 255, 255, 0.08);
+  --palette-glass-glow: rgba(255, 255, 255, 0.06);
 }
 
 /* === Light-mode override (explicit user choice) === */
@@ -178,6 +185,9 @@
   --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
   --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
   --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
+  --palette-glass-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
+  --palette-glass-ring: rgba(20, 20, 30, 0.1);
+  --palette-glass-glow: rgba(255, 255, 255, 0.5);
 }
 
 /* === System-preference fallback when no explicit theme is set === */
@@ -211,6 +221,9 @@
     --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
     --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
     --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
+    --palette-glass-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
+    --palette-glass-ring: rgba(20, 20, 30, 0.1);
+    --palette-glass-glow: rgba(255, 255, 255, 0.5);
   }
 }
 

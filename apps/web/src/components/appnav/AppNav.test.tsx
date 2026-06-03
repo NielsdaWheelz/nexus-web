@@ -1,51 +1,63 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, type RenderResult } from "@testing-library/react";
 import AppNav from "./AppNav";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed.v1";
 
-const { mockWorkspaceStore } = vi.hoisted(() => ({
-  mockWorkspaceStore: {
-    state: {
-      activePrimaryPaneId: "pane-a",
-      primaryPaneOrder: ["pane-a"],
-      primaryPanesById: {
-        "pane-a": {
-          id: "pane-a",
-          href: "/libraries",
-          primaryWidthPx: 480,
-          attachedSecondaryPaneId: null,
-          visibility: "visible",
-          history: { back: [], forward: [] },
-        },
-      },
-      secondaryPanesById: {},
-    },
-    navigatePane: vi.fn(),
-  },
-}));
+const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
 
-vi.mock("@/lib/workspace/store", () => ({
-  useWorkspaceStore: () => mockWorkspaceStore,
-}));
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+}
 
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => false,
-}));
+// Back AppNav's pins `useResource` through the real fetch boundary. The hook
+// hits `/api/pinned-objects?surface_key=navbar` and expects the `{ data: { pins } }`
+// envelope; an empty pins list mirrors the old internal mock's payload.
+function mockApi() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname === "/api/pinned-objects") {
+      return jsonResponse({ data: { pins: [] } });
+    }
+    throw new Error(`Unexpected fetch: ${url.pathname}`);
+  });
+}
 
-vi.mock("@/lib/api/useResource", () => ({
-  useResource: () => ({ status: "ready", data: { data: { pins: [] } } }),
-}));
+// Seed the real workspace store so the single active pane sits on /libraries —
+// the same fixture the old internal store mock hard-coded.
+function renderNav(): RenderResult {
+  return render(
+    <MobileChromeProvider>
+      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics} initialHref="/libraries">
+        <AppNav />
+      </WorkspaceStoreProvider>
+    </MobileChromeProvider>,
+  );
+}
 
 describe("AppNav (desktop rail)", () => {
   beforeEach(() => {
     localStorage.clear();
-    mockWorkspaceStore.navigatePane.mockClear();
+    window.history.replaceState({}, "", "/libraries");
+    vi.stubGlobal("innerWidth", 1280); // desktop surface drives useIsMobileViewport=false
+    mockApi();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("renders grouped destinations and marks the active one with aria-current", () => {
-    render(<AppNav />);
+    renderNav();
 
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByText("Library")).toBeInTheDocument();
@@ -57,16 +69,19 @@ describe("AppNav (desktop rail)", () => {
     expect(screen.getByRole("link", { name: "Oracle" })).toBeInTheDocument();
   });
 
-  it("intercepts a destination click into a same-pane navigation", () => {
-    render(<AppNav />);
+  it("moves aria-current when a destination click navigates the active pane", () => {
+    renderNav();
 
-    fireEvent.click(screen.getByRole("link", { name: "Libraries" }));
+    // A real store-driven navigation: clicking Browse drives navigatePane, the
+    // active pane's href becomes /browse, and AppNav recomputes the active id.
+    fireEvent.click(screen.getByRole("link", { name: "Browse" }));
 
-    expect(mockWorkspaceStore.navigatePane).toHaveBeenCalledWith("pane-a", "/libraries");
+    expect(screen.getByRole("link", { name: "Browse" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Libraries" })).not.toHaveAttribute("aria-current");
   });
 
   it("persists collapse and keeps every nav link accessibly named while collapsed", () => {
-    render(<AppNav />);
+    renderNav();
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
 
@@ -80,7 +95,7 @@ describe("AppNav (desktop rail)", () => {
   it("opens the command palette from the command bar", () => {
     const onOpen = vi.fn();
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen);
-    render(<AppNav />);
+    renderNav();
 
     fireEvent.click(screen.getByRole("button", { name: "Search or ask anything" }));
 
@@ -89,11 +104,41 @@ describe("AppNav (desktop rail)", () => {
   });
 
   it("opens an account menu with Settings and Sign Out", async () => {
-    render(<AppNav />);
+    renderNav();
 
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
 
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Sign Out" })).toBeInTheDocument();
+  });
+});
+
+describe("AppNav (mobile sheet)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, "", "/libraries");
+    vi.stubGlobal("innerWidth", 390); // mobile viewport drives useIsMobileViewport=true
+    mockApi();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("closes an open NavSheet when OPEN_COMMAND_PALETTE_EVENT fires", () => {
+    renderNav();
+
+    // Open the sheet via the mobile top-bar brand button.
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
+
+    // Dispatch the palette event — the sheet's useEffect listener calls setSheetOpen(false).
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
   });
 });
