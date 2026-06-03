@@ -1,4 +1,8 @@
 import { apiFetch } from "@/lib/api/client";
+import {
+  contributorResource,
+  contributorWorksResource,
+} from "@/lib/api/resource";
 import type { ContributorSummary, ContributorWork } from "@/lib/contributors/types";
 
 interface ContributorsResponse {
@@ -40,7 +44,7 @@ export async function fetchContributors(query: string): Promise<ContributorSumma
 
 export async function fetchContributor(handle: string): Promise<ContributorSummary> {
   const response = await apiFetch<ContributorResponse>(
-    `/api/contributors/${encodeURIComponent(handle)}`,
+    contributorResource.clientPath({ handle }),
     { cache: "no-store" }
   );
   return response.data;
@@ -50,25 +54,14 @@ export async function fetchContributorWorks(
   handle: string,
   filters: ContributorWorksFilters = {}
 ): Promise<ContributorWork[]> {
-  const params = new URLSearchParams();
-  const role = filters.role?.trim();
-  if (role) {
-    params.set("role", role);
-  }
-  const contentKind = filters.contentKind?.trim();
-  if (contentKind) {
-    params.set("content_kind", contentKind);
-  }
-  const query = filters.query?.trim();
-  if (query) {
-    params.set("q", query);
-  }
-  if (filters.limit !== undefined) {
-    params.set("limit", String(filters.limit));
-  }
-  const suffix = params.toString();
   const response = await apiFetch<ContributorWorksResponse>(
-    `/api/contributors/${encodeURIComponent(handle)}/works${suffix ? `?${suffix}` : ""}`,
+    contributorWorksResource.clientPath({
+      handle,
+      role: filters.role,
+      contentKind: filters.contentKind,
+      query: filters.query,
+      limit: filters.limit,
+    }),
     { cache: "no-store" }
   );
   return Array.isArray(response.data.works) ? response.data.works : [];

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
+import { librariesResource as librariesResourceDescriptor } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -44,9 +45,12 @@ export default function LibrariesPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
-  const librariesResource = useResource<{ data: Library[] }>({
-    cacheKey: `libraries:${librariesRefreshVersion}`,
-    path: () => "/api/libraries",
+  const librariesResource = useResource<
+    { data: Library[] },
+    { refreshVersion: number }
+  >({
+    descriptor: librariesResourceDescriptor,
+    params: { refreshVersion: librariesRefreshVersion },
   });
   const loading =
     librariesResource.status === "loading" && libraries.length === 0;

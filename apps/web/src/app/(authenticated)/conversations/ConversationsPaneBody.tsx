@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import {
+  conversationsInitialResource,
+  type NoResourceParams,
+} from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import {
@@ -21,9 +25,12 @@ interface ConversationsResponse {
 }
 
 export default function ConversationsPaneBody() {
-  const initialConversations = useResource<ConversationsResponse>({
-    cacheKey: "conversations:list:initial",
-    path: () => "/api/conversations?limit=50",
+  const initialConversations = useResource<
+    ConversationsResponse,
+    NoResourceParams
+  >({
+    descriptor: conversationsInitialResource,
+    params: {},
   });
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState<FeedbackContent | null>(null);

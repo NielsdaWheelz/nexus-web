@@ -1,6 +1,7 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
+import { libraryResource } from "@/lib/api/resource";
 import { useResource } from "./useResource";
 import { BootstrapHydrationProvider } from "./hydrationCache";
 
@@ -35,6 +36,25 @@ describe("useResource", () => {
       useResource<{ data: string }>({
         cacheKey: "library-1",
         path: (key) => `/api/libraries/${key}`,
+      }),
+    );
+    await waitFor(() =>
+      expect(result.current).toEqual({ status: "ready", data: { data: "ok" } }),
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/libraries/library-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("loads the descriptor form through apiFetch and derives the cache key", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ data: "ok" }));
+    const { result } = renderHook(() =>
+      useResource<{ data: string }, { id: string }>({
+        descriptor: libraryResource,
+        params: { id: "library-1" },
       }),
     );
     await waitFor(() =>

@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
 import { useResource } from "@/lib/api/useResource";
@@ -16,8 +17,9 @@ export default function NotesPaneBody() {
   const [pages, setPages] = useState<NotePageSummary[]>([]);
   const [title, setTitle] = useState("");
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const pagesResource = useResource<NotePageSummary[]>({
-    cacheKey: "notes:pages",
+  const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
+    descriptor: notePagesResource,
+    params: {},
     load: () => fetchNotePages(),
   });
   const loading = pagesResource.status === "loading" && pages.length === 0;

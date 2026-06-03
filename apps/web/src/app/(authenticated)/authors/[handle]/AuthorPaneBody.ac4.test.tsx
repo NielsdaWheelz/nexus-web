@@ -1,8 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import AuthorPaneBody from "./AuthorPaneBody";
 
@@ -24,58 +22,56 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
       throw new Error("unexpected client fetch on a hydration hit");
     });
 
-    render(
-      <BootstrapHydrationProvider
-        value={{
-          [`author:${handle}`]: {
-            contributor: {
-              handle,
-              display_name: "Hydrated Author",
-              sort_name: "Author, Hydrated",
-              kind: "person",
-              status: "verified",
-              disambiguation: null,
-              aliases: [],
-              external_ids: [],
-            },
+    renderHydratedPane({
+      href: `/authors/${handle}`,
+      resources: {
+        [`author:${handle}`]: {
+          contributor: {
+            handle,
+            display_name: "Hydrated Author",
+            sort_name: "Author, Hydrated",
+            kind: "person",
+            status: "verified",
+            disambiguation: null,
             aliases: [],
-            externalIds: [],
-            works: [
-              {
-                object_type: "media",
-                object_id: "work-seed-1",
-                route: "/media/work-seed-1",
-                title: "Seeded Work",
-                content_kind: "epub",
-                role: "author",
-                credited_name: "Hydrated Author",
-                published_date: null,
-                publisher: null,
-                description: null,
-                source: "local",
-              },
-            ],
-            workFilterOptions: [
-              {
-                object_type: "media",
-                object_id: "work-seed-1",
-                route: "/media/work-seed-1",
-                title: "Seeded Work",
-                content_kind: "epub",
-                role: "author",
-                credited_name: "Hydrated Author",
-                published_date: null,
-                publisher: null,
-                description: null,
-                source: "local",
-              },
-            ],
+            external_ids: [],
           },
-        }}
-      >
-        {authorPane(handle)}
-      </BootstrapHydrationProvider>,
-    );
+          aliases: [],
+          externalIds: [],
+          works: [
+            {
+              object_type: "media",
+              object_id: "work-seed-1",
+              route: "/media/work-seed-1",
+              title: "Seeded Work",
+              content_kind: "epub",
+              role: "author",
+              credited_name: "Hydrated Author",
+              published_date: null,
+              publisher: null,
+              description: null,
+              source: "local",
+            },
+          ],
+          workFilterOptions: [
+            {
+              object_type: "media",
+              object_id: "work-seed-1",
+              route: "/media/work-seed-1",
+              title: "Seeded Work",
+              content_kind: "epub",
+              role: "author",
+              credited_name: "Hydrated Author",
+              published_date: null,
+              publisher: null,
+              description: null,
+              source: "local",
+            },
+          ],
+        },
+      },
+      children: <AuthorPaneBody />,
+    });
 
     // (a) The seeded contributor's display_name and the seeded work title render.
     expect(
@@ -91,26 +87,3 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
     expect(fetchedContributor).toBe(false);
   });
 });
-
-function authorPane(handle: string) {
-  const href = `/authors/${handle}`;
-  return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      href={href}
-      routeId="author"
-      resourceRef={handle}
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      pathParams={{ handle }}
-      onNavigatePane={() => {}}
-      onReplacePane={() => {}}
-      onOpenInNewPane={() => {}}
-    >
-      <AuthorPaneBody />
-    </PaneRuntimeProvider>
-  );
-}

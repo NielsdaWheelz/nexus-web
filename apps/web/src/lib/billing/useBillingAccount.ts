@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { billingAccountResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { toFeedback } from "@/components/feedback/Feedback";
 
@@ -40,9 +41,12 @@ interface BillingAccountResponse {
 
 export function useBillingAccount() {
   const [reloadVersion, setReloadVersion] = useState(0);
-  const accountResource = useResource<BillingAccountResponse>({
-    cacheKey: `billing-account:${reloadVersion}`,
-    path: () => "/api/billing/account",
+  const accountResource = useResource<
+    BillingAccountResponse,
+    { refreshVersion: number }
+  >({
+    descriptor: billingAccountResource,
+    params: { refreshVersion: reloadVersion },
   });
   const reload = useCallback(() => {
     setReloadVersion((version) => version + 1);

@@ -12,6 +12,7 @@ import { AppList, AppListItem } from "@/components/ui/AppList";
 import Pill from "@/components/ui/Pill";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import { contributorResource } from "@/lib/api/resource";
 import { fetchContributor, fetchContributorWorks } from "@/lib/contributors/api";
 import { useResource } from "@/lib/api/useResource";
 import type {
@@ -79,12 +80,13 @@ function buildWorkMeta(work: ContributorWork): string {
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
-  const initialAuthor = useResource<ContributorPaneData>({
-    cacheKey: handle ? `author:${handle}` : null,
-    load: async () => {
+  const initialAuthor = useResource<ContributorPaneData, { handle: string }>({
+    descriptor: contributorResource,
+    params: handle ? { handle } : null,
+    load: async (params) => {
       const [contributorResponse, works] = await Promise.all([
-        fetchContributor(handle as string),
-        fetchContributorWorks(handle as string, { limit: AUTHOR_WORKS_LIMIT }),
+        fetchContributor(params.handle),
+        fetchContributorWorks(params.handle, { limit: AUTHOR_WORKS_LIMIT }),
       ]);
       return {
         contributor: contributorResponse,

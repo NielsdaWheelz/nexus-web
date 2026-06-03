@@ -37,6 +37,7 @@ import PdfReader, {
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import { mediaFragmentsResource, mediaResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import {
   FeedbackNotice,
@@ -1078,19 +1079,21 @@ export default function MediaPaneBody() {
   const initialMediaResource = useResource<{
     media: Media;
     fragments: Fragment[];
-  }>({
-    cacheKey: id,
-    load: async (signal) => {
-      const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${id}`, {
-        signal,
-      });
+  }, { id: string }>({
+    descriptor: mediaResource,
+    params: { id },
+    load: async (params, signal) => {
+      const mediaResp = await apiFetch<{ data: Media }>(
+        mediaResource.clientPath(params),
+        { signal },
+      );
       const nextMedia = mediaResp.data;
       if (!shouldLoadInitialFragments(nextMedia)) {
         return { media: nextMedia, fragments: [] };
       }
 
       const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
-        `/api/media/${id}/fragments`,
+        mediaFragmentsResource.clientPath(params),
         { signal },
       );
       return { media: nextMedia, fragments: fragmentsResp.data };

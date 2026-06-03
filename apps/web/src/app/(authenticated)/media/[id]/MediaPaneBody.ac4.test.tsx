@@ -1,11 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
-import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   fetchCallsForPath,
   fetchInputPath,
@@ -161,40 +156,11 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     });
 
     const href = `/media/${MEDIA_ID}`;
-    const identity = resolvePaneRouteIdentity(href);
-    const onSetPaneTitle = vi.fn();
-
-    render(
-      <BootstrapHydrationProvider
-        value={{ [MEDIA_ID]: { media: seededMedia(), fragments: [] } }}
-      >
-        <FeedbackProvider>
-          <PaneRuntimeProvider
-            paneId="pane-1"
-            href={href}
-            routeId={identity.routeId}
-            resourceRef={identity.resourceRef}
-            resourceKey={identity.resourceKey}
-            secondaryPane={null}
-            canGoBack={false}
-            canGoForward={false}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            pathParams={{ id: MEDIA_ID }}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
-            onSetPaneTitle={onSetPaneTitle}
-          >
-            <PaneSecondaryContext.Provider value={vi.fn()}>
-              <PaneFixedChromeContext.Provider value={vi.fn()}>
-                <MediaPaneBody />
-              </PaneFixedChromeContext.Provider>
-            </PaneSecondaryContext.Provider>
-          </PaneRuntimeProvider>
-        </FeedbackProvider>
-      </BootstrapHydrationProvider>,
-    );
+    const { onSetPaneTitle } = renderHydratedPane({
+      href,
+      resources: { [MEDIA_ID]: { media: seededMedia(), fragments: [] } },
+      children: <MediaPaneBody />,
+    });
 
     // Seed consumed: the pane left the loading state and rendered the seeded
     // media's terminal-status panel (proves resource.data.media drove render).

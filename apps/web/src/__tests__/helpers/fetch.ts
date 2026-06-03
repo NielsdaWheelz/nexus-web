@@ -1,10 +1,17 @@
 import { vi } from "vitest";
 
-export function fetchInputPath(input: RequestInfo | URL): string {
+export function fetchInputPath(input: unknown): string {
   if (input instanceof Request) {
     return new URL(input.url, "http://localhost").pathname;
   }
   return new URL(String(input), "http://localhost").pathname;
+}
+
+export function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export function stubFetch(

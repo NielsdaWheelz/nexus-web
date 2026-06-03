@@ -1,4 +1,5 @@
 import { proxyToFastAPI } from "@/lib/api/proxy";
+import { contributorWorksResource } from "@/lib/api/resource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,6 @@ export async function GET(req: Request, { params }: { params: Params }) {
   const { handle } = await params;
   return proxyToFastAPI(
     req,
-    `/contributors/${encodeURIComponent(handle)}/works`,
+    contributorWorksResource.serverPath({ handle }),
   );
 }

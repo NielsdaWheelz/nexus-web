@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { settingsKeysResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import {
   FeedbackNotice,
@@ -104,9 +105,12 @@ export default function SettingsKeysPaneBody() {
   const [formError, setFormError] = useState<FeedbackContent | null>(null);
   const [formSuccess, setFormSuccess] = useState<FeedbackContent | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
-  const keysResource = useResource<ApiKeysResponse>({
-    cacheKey: `settings-keys:${keysRefreshVersion}`,
-    path: () => "/api/keys",
+  const keysResource = useResource<
+    ApiKeysResponse,
+    { refreshVersion: number }
+  >({
+    descriptor: settingsKeysResource,
+    params: { refreshVersion: keysRefreshVersion },
   });
   const loading = keysResource.status === "loading" && keys.length === 0;
 

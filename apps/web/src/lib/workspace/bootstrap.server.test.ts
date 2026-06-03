@@ -147,6 +147,130 @@ describe("loadWorkspaceBootstrap", () => {
     });
   });
 
+  it("composes the library detail resource from library and entries paths", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
+    const library = { id: "lib-1", name: "Seeded Library" };
+    const entry = { id: "entry-1", media: { id: "media-1" } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/libraries/lib-1": { data: library },
+      "/libraries/lib-1/entries": { data: [entry] },
+    });
+
+    const result = await loadWorkspaceBootstrap();
+
+    expect(result.resources["lib-1"]).toEqual({
+      library,
+      entries: [entry],
+    });
+  });
+
+  it("normalizes and seeds the note pages resource", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/notes");
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/notes/pages": {
+        data: {
+          pages: [
+            {
+              id: "page-1",
+              title: "Seeded page",
+              description: "",
+              revision: "7",
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap();
+
+    expect(result.resources["notes:pages"]).toEqual([
+      {
+        id: "page-1",
+        title: "Seeded page",
+        description: null,
+        revision: 7,
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+  });
+
+  it("normalizes and seeds note block to page resolution", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/notes/block-1");
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/notes/blocks/block-1": {
+        data: {
+          id: "block-1",
+          page_id: "page-9",
+          revision: 1,
+        },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap();
+
+    expect(result.resources["note-block:block-1"]).toEqual({
+      blockId: "block-1",
+      pageId: "page-9",
+    });
+  });
+
+  it("seeds the initial conversations list resource", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/conversations");
+    const conversationsEnvelope = {
+      data: [{ id: "conversation-1" }],
+      page: { next_cursor: null },
+    };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/conversations?limit=50": conversationsEnvelope,
+    });
+
+    const result = await loadWorkspaceBootstrap();
+
+    expect(result.resources["conversations:list:initial"]).toEqual(
+      conversationsEnvelope,
+    );
+  });
+
+  it("seeds settings account, keys, and billing resources with their pane keys", async () => {
+    const cases = [
+      {
+        href: "/settings/account",
+        path: "/me",
+        key: "settings-account:me",
+        body: { data: { email: "seed@example.com", display_name: "Seed" } },
+      },
+      {
+        href: "/settings/keys",
+        path: "/keys",
+        key: "settings-keys:0",
+        body: { data: [] },
+      },
+      {
+        href: "/settings/billing",
+        path: "/billing/account",
+        key: "billing-account:0",
+        body: { data: { billing_plan_tier: "free" } },
+      },
+    ] as const;
+
+    for (const { href, path, key, body } of cases) {
+      requestHeaders.set(REQUEST_PATH_HEADER, href);
+      respondWith({
+        "/me/reader-profile": PROFILE_OK,
+        [path]: body,
+      });
+
+      const result = await loadWorkspaceBootstrap();
+
+      expect(result.resources[key]).toEqual(body);
+    }
+  });
+
   it("returns the fetched reader profile when /me/reader-profile resolves", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     const profile = { ...DEFAULT_READER_PROFILE, theme: "dark" as const };

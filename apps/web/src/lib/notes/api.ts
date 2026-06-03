@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { noteBlockResource, notePagesResource } from "@/lib/api/resource";
 import { todayLocalDate } from "@/lib/localDate";
 import type { ObjectRef } from "@/lib/objectRefs";
 import { isRecord } from "@/lib/validation";
@@ -210,9 +211,10 @@ function requiredString(value: unknown, label: string): string {
 }
 
 export async function fetchNotePages(): Promise<NotePageSummary[]> {
-  const response = await apiFetch<NotePagesResponse>("/api/notes/pages", {
-    cache: "no-store",
-  });
+  const response = await apiFetch<NotePagesResponse>(
+    notePagesResource.clientPath({}),
+    { cache: "no-store" },
+  );
   const data = requiredRecord(response.data, "note pages response");
   if (!Array.isArray(data.pages)) {
     throw new Error("Notes API response is missing note pages");
@@ -320,9 +322,10 @@ export async function saveNotePageDocument(
 }
 
 export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
-    cache: "no-store",
-  });
+  const response = await apiFetch<NoteBlockResponse>(
+    noteBlockResource.clientPath({ blockId }),
+    { cache: "no-store" },
+  );
   return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 

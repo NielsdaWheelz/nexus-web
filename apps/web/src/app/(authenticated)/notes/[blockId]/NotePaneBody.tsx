@@ -2,6 +2,7 @@
 
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { noteBlockResource } from "@/lib/api/resource";
 import { fetchNoteBlock } from "@/lib/notes/api";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { useResource } from "@/lib/api/useResource";
@@ -11,11 +12,15 @@ export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
 
-  const blockResource = useResource<{ blockId: string; pageId: string }>({
-    cacheKey: `note-block:${blockId}`,
-    load: async () => {
-      const block = await fetchNoteBlock(blockId);
-      return { blockId, pageId: block.pageId };
+  const blockResource = useResource<
+    { blockId: string; pageId: string },
+    { blockId: string }
+  >({
+    descriptor: noteBlockResource,
+    params: { blockId },
+    load: async (params) => {
+      const block = await fetchNoteBlock(params.blockId);
+      return { blockId: params.blockId, pageId: block.pageId };
     },
   });
   const pageId =

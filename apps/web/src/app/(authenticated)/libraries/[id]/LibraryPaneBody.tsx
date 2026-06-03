@@ -12,6 +12,10 @@ import {
 import { flushSync } from "react-dom";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  libraryEntriesResource,
+  libraryResource as libraryResourceDescriptor,
+} from "@/lib/api/resource";
 import { retryMediaSource } from "@/lib/media/retryClient";
 import {
   FeedbackNotice,
@@ -186,14 +190,19 @@ export default function LibraryPaneBody() {
   const libraryResource = useResource<{
     library: Library;
     entries: LibraryEntry[];
-  }>({
-    cacheKey: id,
-    load: async (signal) => {
+  }, { id: string }>({
+    descriptor: libraryResourceDescriptor,
+    params: { id },
+    load: async (params, signal) => {
       const [libraryResp, entriesResp] = await Promise.all([
-        apiFetch<{ data: Library }>(`/api/libraries/${id}`, { signal }),
-        apiFetch<{ data: LibraryEntry[] }>(`/api/libraries/${id}/entries`, {
-          signal,
-        }),
+        apiFetch<{ data: Library }>(
+          libraryResourceDescriptor.clientPath(params),
+          { signal },
+        ),
+        apiFetch<{ data: LibraryEntry[] }>(
+          libraryEntriesResource.clientPath(params),
+          { signal },
+        ),
       ]);
       return { library: libraryResp.data, entries: entriesResp.data };
     },

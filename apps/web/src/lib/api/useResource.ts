@@ -3,6 +3,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import { HydrationCacheContext } from "@/lib/api/hydrationCache";
+import type { ResourceDescriptor } from "@/lib/api/resource";
 import { isAbortError } from "@/lib/errors";
 
 export type AsyncResource<T> =
@@ -11,6 +12,22 @@ export type AsyncResource<T> =
   | { status: "ready"; data: T }
   | { status: "error"; error: ApiError; retry: () => void };
 
+type DescriptorResourceArgs<T, P> = {
+  descriptor: ResourceDescriptor<P>;
+  params: P | null;
+  load?: (params: P, signal: AbortSignal) => Promise<T>;
+};
+
+type PathResourceArgs = {
+  cacheKey: string | null;
+  path: (cacheKey: string) => ApiPath;
+};
+
+type LoadResourceArgs<T> = {
+  cacheKey: string | null;
+  load: (signal: AbortSignal) => Promise<T>;
+};
+
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 250;
 const MAX_DELAY_MS = 2000;
@@ -18,14 +35,31 @@ const MAX_DELAY_MS = 2000;
 // The one async-resource hook: a keyed GET-or-custom-load with 3× retry/backoff
 // and abort. When the server prefetched the initial cacheKey into the hydration
 // cache, it claims that value (consume-once) and skips the first fetch.
-export function useResource<T>(
-  args:
-    | { cacheKey: string | null; path: (cacheKey: string) => ApiPath }
-    | { cacheKey: string | null; load: (signal: AbortSignal) => Promise<T> },
+export function useResource<T, P>(
+  args: DescriptorResourceArgs<T, P>,
+): AsyncResource<T>;
+export function useResource<T>(args: PathResourceArgs): AsyncResource<T>;
+export function useResource<T>(args: LoadResourceArgs<T>): AsyncResource<T>;
+export function useResource<T, P>(
+  args: DescriptorResourceArgs<T, P> | PathResourceArgs | LoadResourceArgs<T>,
 ): AsyncResource<T> {
-  const { cacheKey } = args;
-  const load: (signal: AbortSignal) => Promise<T> =
-    "load" in args
+  const cacheKey =
+    "descriptor" in args
+      ? args.params === null
+        ? null
+        : args.descriptor.cacheKey(args.params)
+      : args.cacheKey;
+  const load: (signal: AbortSignal) => Promise<T> = "descriptor" in args
+    ? (signal) => {
+        if (args.params === null) {
+          throw new Error("Cannot load a resource with null params.");
+        }
+        if (args.load) {
+          return args.load(args.params, signal);
+        }
+        return apiFetch<T>(args.descriptor.clientPath(args.params), { signal });
+      }
+    : "load" in args
       ? args.load
       : (signal) => apiFetch<T>(args.path(cacheKey as string), { signal });
   const loadRef = useRef(load);

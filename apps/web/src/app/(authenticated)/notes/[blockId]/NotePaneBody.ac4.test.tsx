@@ -1,9 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import NotePaneBody from "./NotePaneBody";
 
@@ -36,15 +33,11 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
       () => new Promise<Response>(() => {}),
     );
 
-    render(
-      <FeedbackProvider>
-        <BootstrapHydrationProvider
-          value={{ [`note-block:${blockId}`]: { blockId, pageId } }}
-        >
-          {notePane(blockId)}
-        </BootstrapHydrationProvider>
-      </FeedbackProvider>,
-    );
+    renderHydratedPane({
+      href: `/notes/${blockId}`,
+      resources: { [`note-block:${blockId}`]: { blockId, pageId } },
+      children: <NotePaneBody />,
+    });
 
     // (a) Observable effect of the resolved page id: the composed page editor fetches
     // its page by the seeded pageId. This only happens if NotePaneBody consumed the
@@ -71,26 +64,3 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
     expect(fetchedBlock).toBe(false);
   });
 });
-
-function notePane(blockId: string) {
-  const href = `/notes/${blockId}`;
-  return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      href={href}
-      routeId="note"
-      resourceRef={`note_block:${blockId}`}
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      pathParams={{ blockId }}
-      onNavigatePane={() => {}}
-      onReplacePane={() => {}}
-      onOpenInNewPane={() => {}}
-    >
-      <NotePaneBody />
-    </PaneRuntimeProvider>
-  );
-}

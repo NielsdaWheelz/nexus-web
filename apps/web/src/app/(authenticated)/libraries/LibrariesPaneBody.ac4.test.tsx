@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import LibrariesPaneBody from "./LibrariesPaneBody";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the raw /libraries envelope
@@ -20,9 +20,9 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       throw new Error("unexpected client fetch on a hydration hit");
     });
 
-    render(
-      <BootstrapHydrationProvider
-        value={{
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
           "libraries:0": {
             data: [
               {
@@ -36,11 +36,9 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
               },
             ],
           },
-        }}
-      >
-        <LibrariesPaneBody />
-      </BootstrapHydrationProvider>,
-    );
+      },
+      children: <LibrariesPaneBody />,
+    });
 
     // (a) The seeded library's name renders from the hydration cache.
     expect(

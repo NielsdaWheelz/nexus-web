@@ -1,9 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
-import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   fetchCallsForPath,
   fetchInputPath,
@@ -55,36 +52,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     const href = `/libraries/${LIBRARY_ID}`;
-    const identity = resolvePaneRouteIdentity(href);
-    const onSetPaneTitle = vi.fn();
-
-    render(
-      <BootstrapHydrationProvider
-        value={{ [LIBRARY_ID]: { library: seededLibrary(), entries: [] } }}
-      >
-        <FeedbackProvider>
-          <PaneRuntimeProvider
-            paneId="pane-1"
-            href={href}
-            routeId={identity.routeId}
-            resourceRef={identity.resourceRef}
-            resourceKey={identity.resourceKey}
-            secondaryPane={null}
-            canGoBack={false}
-            canGoForward={false}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            pathParams={{ id: LIBRARY_ID }}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
-            onSetPaneTitle={onSetPaneTitle}
-          >
-            <LibraryPaneBody />
-          </PaneRuntimeProvider>
-        </FeedbackProvider>
-      </BootstrapHydrationProvider>,
-    );
+    const { onSetPaneTitle } = renderHydratedPane({
+      href,
+      resources: { [LIBRARY_ID]: { library: seededLibrary(), entries: [] } },
+      children: <LibraryPaneBody />,
+    });
 
     // Seed consumed: the pane left the loading state and rendered the seeded
     // library's empty body (proves resource.data.library/entries drove render).

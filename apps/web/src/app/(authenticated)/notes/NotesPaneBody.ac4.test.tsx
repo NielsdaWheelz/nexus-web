@@ -1,8 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import NotesPaneBody from "./NotesPaneBody";
 
@@ -23,9 +21,9 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
       throw new Error("unexpected client fetch on a hydration hit");
     });
 
-    render(
-      <BootstrapHydrationProvider
-        value={{
+    renderHydratedPane({
+      href: "/notes",
+      resources: {
           "notes:pages": [
             {
               id: "p1",
@@ -34,11 +32,9 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
               revision: 1,
             },
           ],
-        }}
-      >
-        {notesPane()}
-      </BootstrapHydrationProvider>,
-    );
+      },
+      children: <NotesPaneBody />,
+    });
 
     // (a) The seeded page's title renders from the hydration cache.
     expect(
@@ -50,26 +46,3 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     expect(fetchedPages).toBe(false);
   });
 });
-
-function notesPane() {
-  const href = "/notes";
-  const identity = resolvePaneRouteIdentity(href);
-  return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      href={href}
-      routeId={identity.routeId}
-      resourceRef={identity.resourceRef}
-      resourceKey={identity.resourceKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      onNavigatePane={() => {}}
-      onReplacePane={() => {}}
-      onOpenInNewPane={() => {}}
-    >
-      <NotesPaneBody />
-    </PaneRuntimeProvider>
-  );
-}
