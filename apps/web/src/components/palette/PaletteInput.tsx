@@ -3,31 +3,21 @@
 import { useRef } from "react";
 import Input from "@/components/ui/Input";
 import {
+  activePaletteItem,
   PALETTE_LISTBOX_ID,
   PALETTE_OPTION_ID_PREFIX,
   paletteRowIds,
   type PaletteLane,
-  type PaletteView,
 } from "./paletteModel";
+import { LANE_SIGIL } from "./paletteIntent";
 import type { PaletteController } from "./usePaletteController";
 import styles from "./palette.module.css";
 
-const SIGIL: Record<Exclude<PaletteLane, "all">, string> = { actions: ">", content: "@", ask: "?" };
 const LANE_LABEL: Record<Exclude<PaletteLane, "all">, string> = {
   actions: "Actions",
   content: "Content",
   ask: "Ask",
 };
-
-function activeItemOf(view: PaletteView, activeId: string | null) {
-  const items =
-    view.state === "resting"
-      ? view.groups.flatMap((group) => group.items)
-      : view.state === "querying"
-        ? view.results
-        : [];
-  return items.find((item) => item.id === activeId) ?? items[0];
-}
 
 export default function PaletteInput({ controller }: { controller: PaletteController }) {
   const { view, intent, query, activeId } = controller;
@@ -45,7 +35,7 @@ export default function PaletteInput({ controller }: { controller: PaletteContro
         const action = view.actions.find((a) => a.id === activeId) ?? view.actions[0];
         if (action) controller.runAction(action);
       } else {
-        const item = activeItemOf(view, activeId);
+        const item = activePaletteItem(view, activeId);
         if (item) controller.select(item);
       }
       return;
@@ -72,7 +62,7 @@ export default function PaletteInput({ controller }: { controller: PaletteContro
 
     if (key === "ArrowRight" || key === "Tab") {
       if (view.state !== "actions") {
-        const item = activeItemOf(view, activeId);
+        const item = activePaletteItem(view, activeId);
         if (item?.hasActions) {
           event.preventDefault();
           controller.drill(item);
@@ -103,7 +93,7 @@ export default function PaletteInput({ controller }: { controller: PaletteContro
     }
 
     if (key === "Delete" && value === "") {
-      const item = activeItemOf(view, activeId);
+      const item = activePaletteItem(view, activeId);
       if (item?.trailingAction) {
         event.preventDefault();
         controller.trailing(item);
@@ -130,7 +120,9 @@ export default function PaletteInput({ controller }: { controller: PaletteContro
         autoCorrect="off"
         spellCheck={false}
         onChange={(event) =>
-          controller.setQuery(sigilLane ? SIGIL[sigilLane] + event.target.value : event.target.value)
+          controller.setQuery(
+            sigilLane ? LANE_SIGIL[sigilLane] + event.target.value : event.target.value,
+          )
         }
         onCompositionStart={() => {
           composingRef.current = true;

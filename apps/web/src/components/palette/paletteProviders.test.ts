@@ -284,6 +284,12 @@ describe("buildPaletteItems — ask item", () => {
     expect(items.find((i) => i.id === "ask-ai")).toBeUndefined();
   });
 
+  it("is ALWAYS present in the ask lane, even when a base title equals the term", () => {
+    // The `?` lane is dedicated to Ask AI — the namesake suppression must not fire there.
+    const items = buildPaletteItems(ctx({ intent: { lane: "ask", term: "Libraries", raw: "?Libraries" } }));
+    expect(items.find((i) => i.id === "ask-ai")).toBeDefined();
+  });
+
   it("is NOT suppressed by a search result title that matches (search source excluded)", () => {
     const results = [makeSearchResult({ key: "s1", href: "/media/abc", primaryText: "quantum leap" })];
     const items = buildPaletteItems(ctx({

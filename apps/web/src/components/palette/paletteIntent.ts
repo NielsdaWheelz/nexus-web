@@ -11,11 +11,18 @@ export interface PaletteIntent {
   raw: string;
 }
 
-const SIGIL_LANE: Record<string, PaletteLane> = {
-  ">": "actions",
-  "@": "content",
-  "?": "ask",
+// Single source of truth for the lane↔sigil mapping: PaletteInput re-prefixes the
+// raw query from LANE_SIGIL, and the parser below inverts it. Keeping one map means
+// changing a lane's glyph can never desync parsing from the rendered chip.
+export const LANE_SIGIL: Record<Exclude<PaletteLane, "all">, string> = {
+  actions: ">",
+  content: "@",
+  ask: "?",
 };
+
+const SIGIL_LANE: Record<string, PaletteLane> = Object.fromEntries(
+  Object.entries(LANE_SIGIL).map(([lane, sigil]) => [sigil, lane]),
+) as Record<string, PaletteLane>;
 
 export function parsePaletteInput(raw: string): PaletteIntent {
   const lane = SIGIL_LANE[raw[0] ?? ""] ?? "all";

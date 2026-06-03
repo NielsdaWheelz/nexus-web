@@ -1,16 +1,12 @@
 "use client";
 
+import { activePaletteItem } from "./paletteModel";
 import type { PaletteController } from "./usePaletteController";
 import styles from "./palette.module.css";
 
 export default function PaletteFooter({ controller }: { controller: PaletteController }) {
   const { view, activeId } = controller;
-  const activeItem =
-    view.state === "resting"
-      ? view.groups.flatMap((group) => group.items).find((item) => item.id === activeId)
-      : view.state === "querying"
-        ? view.results.find((item) => item.id === activeId)
-        : undefined;
+  const activeItem = activePaletteItem(view, activeId);
 
   return (
     <footer className={styles.footer} aria-hidden="true">

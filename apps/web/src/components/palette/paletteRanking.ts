@@ -48,7 +48,7 @@ function scoreItem(item: PaletteItem, query: string, currentHref: string | null)
   const title = item.title.toLowerCase();
   let score: number;
   if (!query) {
-    score = item.rank.recencyBoost ?? 0;
+    score = 0;
   } else if (title === query) {
     score = 10000;
   } else if (title.startsWith(query)) {
@@ -69,7 +69,6 @@ function scoreItem(item: PaletteItem, query: string, currentHref: string | null)
 
   score += item.rank.searchScore ? item.rank.searchScore * 1000 : 0;
   score += item.rank.frecencyBoost ?? 0;
-  score += item.rank.recencyBoost ?? 0;
   score += item.rank.scopeBoost ?? 0;
   if (currentHref && item.target.kind === "href" && item.target.href === currentHref) {
     score += 250;

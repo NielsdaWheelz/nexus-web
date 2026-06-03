@@ -59,16 +59,18 @@ export default function PaletteRow({
           <X size={16} aria-hidden="true" />
         </button>
       ) : item.hasActions ? (
-        <span
+        <button
+          type="button"
+          tabIndex={-1}
           className={styles.drill}
-          aria-hidden="true"
+          aria-label="Show actions"
           onClick={(event) => {
             event.stopPropagation();
             onDrill(item);
           }}
         >
           <ChevronRight size={16} aria-hidden="true" />
-        </span>
+        </button>
       ) : item.shortcutLabel ? (
         <span className={styles.keycap}>{item.shortcutLabel}</span>
       ) : null}

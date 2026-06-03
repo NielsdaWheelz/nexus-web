@@ -90,16 +90,19 @@
   white-space: nowrap;
 }
 
-.input {
+/* Scoped under .inputRow so font-size beats the shared Input `.md` class
+   (equal single-class specificity otherwise) — the 16px is load-bearing: it
+   stops iOS Safari from zooming the page when the field focuses. */
+.inputRow .input {
   width: 100%;
   min-height: var(--size-xl);
   padding: var(--space-3) 0;
   color: var(--ink);
   background: transparent;
-  font-size: 16px; /* >=16px so iOS Safari does not zoom on focus */
+  font-size: 16px;
 }
 
-.input::placeholder {
+.inputRow .input::placeholder {
   color: var(--ink-faint);
 }
 
@@ -192,7 +195,11 @@
 .drill {
   display: inline-flex;
   justify-self: end;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--ink-faint);
+  cursor: pointer;
   opacity: 0;
 }
 

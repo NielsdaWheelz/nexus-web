@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "@/components/palette/CommandPalette";
@@ -54,6 +54,8 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
     vi.stubGlobal("innerWidth", 390); // mobile viewport
     vi.spyOn(history, "pushState").mockImplementation(() => {});
     vi.spyOn(history, "back").mockImplementation(() => {});
+    // setPointerCapture isn't implemented for synthetic pointer events in the test env.
+    vi.spyOn(Element.prototype, "setPointerCapture").mockImplementation(() => {});
     mockApi();
   });
 
@@ -111,5 +113,73 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
 
     // history.back() must have been called to pop the synthetic entry
     expect(history.back).toHaveBeenCalled();
+  });
+
+  it("drag down past the threshold on the grabber dismisses the sheet", async () => {
+    renderPalette();
+    open();
+
+    await screen.findByRole("dialog", { name: "Command palette" });
+
+    // The grabber is aria-hidden decorative, so there is no role/label to query it by.
+    // eslint-disable-next-line testing-library/no-node-access
+    const grabber = document.querySelector("[data-grabber]")!;
+
+    fireEvent.pointerDown(grabber, { clientY: 100, pointerId: 1, bubbles: true });
+    fireEvent.pointerMove(grabber, { clientY: 197, pointerId: 1, bubbles: true });
+    fireEvent.pointerUp(grabber, { clientY: 197, pointerId: 1, bubbles: true });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("a drag shorter than the threshold leaves the sheet open", async () => {
+    renderPalette();
+    open();
+
+    await screen.findByRole("dialog", { name: "Command palette" });
+
+    // eslint-disable-next-line testing-library/no-node-access
+    const grabber = document.querySelector("[data-grabber]")!;
+
+    fireEvent.pointerDown(grabber, { clientY: 100, pointerId: 1, bubbles: true });
+    fireEvent.pointerMove(grabber, { clientY: 140, pointerId: 1, bubbles: true });
+    fireEvent.pointerUp(grabber, { clientY: 140, pointerId: 1, bubbles: true });
+
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+  });
+
+  it("reduced-motion disables drag dismissal", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (q: string) =>
+        ({
+          matches: q.includes("reduce"),
+          media: q,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent() {
+            return false;
+          },
+        }) as MediaQueryList,
+    );
+
+    renderPalette();
+    open();
+
+    await screen.findByRole("dialog", { name: "Command palette" });
+
+    // eslint-disable-next-line testing-library/no-node-access
+    const grabber = document.querySelector("[data-grabber]")!;
+
+    // Same past-threshold gesture as the dismissal test; reduced motion must suppress it.
+    fireEvent.pointerDown(grabber, { clientY: 100, pointerId: 1, bubbles: true });
+    fireEvent.pointerMove(grabber, { clientY: 197, pointerId: 1, bubbles: true });
+    fireEvent.pointerUp(grabber, { clientY: 197, pointerId: 1, bubbles: true });
+
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
   });
 });

@@ -83,9 +83,9 @@ describe("rankPalette", () => {
   it("resting section is truncated at its per-section cap", () => {
     // "context" section has cap: 1 — only the top-scored item should appear.
     const items = [
-      item({ id: "ctx-1", title: "Context A", sectionId: "context", rank: { recencyBoost: 100 } }),
-      item({ id: "ctx-2", title: "Context B", sectionId: "context", rank: { recencyBoost: 50 } }),
-      item({ id: "ctx-3", title: "Context C", sectionId: "context", rank: { recencyBoost: 10 } }),
+      item({ id: "ctx-1", title: "Context A", sectionId: "context", rank: { scopeBoost: 100 } }),
+      item({ id: "ctx-2", title: "Context B", sectionId: "context", rank: { scopeBoost: 50 } }),
+      item({ id: "ctx-3", title: "Context C", sectionId: "context", rank: { scopeBoost: 10 } }),
     ];
     const view = rankPalette(ctx({}), items);
 
@@ -98,9 +98,9 @@ describe("rankPalette", () => {
 
   it("rows within a resting section are ordered by score descending", () => {
     const items = [
-      item({ id: "low", title: "Older page", sectionId: "recent", rank: { recencyBoost: 10 } }),
-      item({ id: "high", title: "Newer page", sectionId: "recent", rank: { recencyBoost: 900 } }),
-      item({ id: "mid", title: "Middle page", sectionId: "recent", rank: { recencyBoost: 400 } }),
+      item({ id: "low", title: "Older page", sectionId: "recent", rank: { frecencyBoost: 10 } }),
+      item({ id: "high", title: "Newer page", sectionId: "recent", rank: { frecencyBoost: 900 } }),
+      item({ id: "mid", title: "Middle page", sectionId: "recent", rank: { frecencyBoost: 400 } }),
     ];
     const view = rankPalette(ctx({}), items);
 

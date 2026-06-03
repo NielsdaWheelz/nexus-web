@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "@/components/palette/CommandPalette";
@@ -162,6 +162,92 @@ describe("CommandPalette", () => {
     expect(input).toHaveValue("some doc"); // query preserved across drill/back
   });
 
+  it("runs the default action on Enter from the actions page", async () => {
+    mockApi([
+      { target_key: "/some/doc", target_href: "/some/doc", title_snapshot: "Some Doc", last_used_at: "2026-01-01" },
+    ]);
+    renderPalette();
+    open();
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
+    await userEvent.type(input, "some doc");
+    await screen.findByRole("option", { name: /Some Doc/ });
+
+    await userEvent.keyboard("{ArrowRight}"); // drill into the actions page
+    await screen.findByRole("option", { name: /^Open/ }); // default (first) action
+
+    await userEvent.keyboard("{Enter}"); // runs the default "Open" action → closes
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+  });
+
+  it("drills with Tab as well as ArrowRight", async () => {
+    mockApi([
+      { target_key: "/some/doc", target_href: "/some/doc", title_snapshot: "Some Doc", last_used_at: "2026-01-01" },
+    ]);
+    renderPalette();
+    open();
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
+    await userEvent.type(input, "some doc");
+    await screen.findByRole("option", { name: /Some Doc/ });
+
+    await userEvent.keyboard("{Tab}");
+    expect(await screen.findByRole("option", { name: /^Open/ })).toBeInTheDocument();
+  });
+
+  it("Escape on the actions page pops back to the list, not closes", async () => {
+    mockApi([
+      { target_key: "/some/doc", target_href: "/some/doc", title_snapshot: "Some Doc", last_used_at: "2026-01-01" },
+    ]);
+    renderPalette();
+    open();
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
+    await userEvent.type(input, "some doc");
+    await screen.findByRole("option", { name: /Some Doc/ });
+    await userEvent.keyboard("{ArrowRight}"); // drill into the actions page
+    await screen.findByRole("option", { name: /^Open/ });
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument(); // still open
+    expect(await screen.findByRole("option", { name: /Some Doc/ })).toBeInTheDocument(); // popped back
+  });
+
+  it("runs the Copy link action on Enter and shows the Link copied toast", async () => {
+    mockApi([
+      { target_key: "/some/doc", target_href: "/some/doc", title_snapshot: "Some Doc", last_used_at: "2026-01-01" },
+    ]);
+    renderPalette();
+    open();
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
+    await userEvent.type(input, "some doc");
+    await screen.findByRole("option", { name: /Some Doc/ });
+    await userEvent.keyboard("{ArrowRight}"); // drill into the actions page
+    await screen.findByRole("option", { name: /Copy link/ });
+
+    await userEvent.keyboard("{End}"); // move active to the last action: "Copy link"
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: /Copy link/ })).toHaveAttribute("aria-selected", "true"),
+    );
+
+    await userEvent.keyboard("{Enter}"); // runs "Copy link" → feedback toast + close
+    expect(await screen.findByText("Link copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+  });
+
+  it("ignores keys fired during IME composition", async () => {
+    mockApi();
+    renderPalette();
+    open();
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
+    await userEvent.type(input, "keyboard");
+
+    fireEvent.compositionStart(input); // IME session begins
+    fireEvent.keyDown(input, { key: "Enter" }); // guarded → must NOT select
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+
+    fireEvent.compositionEnd(input); // IME session ends
+    await userEvent.keyboard("{Enter}"); // now acts → selects + closes
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+  });
+
   it("closes on Escape and on a backdrop click", async () => {
     renderPalette();
     open();
@@ -171,9 +257,7 @@ describe("CommandPalette", () => {
 
     open();
     const reopened = await screen.findByRole("dialog", { name: "Command palette" });
-    // The scrim is the dialog's portal parent; a backdrop has no ARIA role to query by.
-    // eslint-disable-next-line testing-library/no-node-access
-    await userEvent.click(reopened.parentElement as HTMLElement);
+    await userEvent.click(screen.getByRole("presentation"));
     expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
     expect(dialog).not.toBe(reopened);
   });

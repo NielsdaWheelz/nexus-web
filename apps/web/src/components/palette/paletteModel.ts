@@ -51,7 +51,6 @@ export type PaletteTarget =
 export interface PaletteRankSignals {
   searchScore?: number;
   frecencyBoost?: number;
-  recencyBoost?: number;
   scopeBoost?: number;
 }
 
@@ -340,4 +339,19 @@ export function paletteRowIds(view: PaletteView): string[] {
     case "actions":
       return view.actions.map((action) => action.id);
   }
+}
+
+// The focused PaletteItem in a root (resting|querying) view, falling back to the
+// top row. Undefined on the actions page (its rows are PaletteActions, not items).
+export function activePaletteItem(
+  view: PaletteView,
+  activeId: string | null,
+): PaletteItem | undefined {
+  const items =
+    view.state === "resting"
+      ? view.groups.flatMap((group) => group.items)
+      : view.state === "querying"
+        ? view.results
+        : [];
+  return items.find((item) => item.id === activeId) ?? items[0];
 }

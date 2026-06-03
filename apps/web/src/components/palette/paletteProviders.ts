@@ -164,7 +164,13 @@ function askItem(ctx: PaletteContext, base: PaletteItem[]): PaletteItem | null {
   const text = ctx.intent.term;
   if (text.length < 2 || !ctx.canOpenConversation) return null;
   const lower = text.toLowerCase();
-  if (base.some((item) => item.source !== "search" && item.title.toLowerCase() === lower)) return null;
+  // In the dedicated ask lane the row is always the answer; elsewhere suppress it
+  // when an exact-title local command already covers the term.
+  if (
+    ctx.intent.lane !== "ask" &&
+    base.some((item) => item.source !== "search" && item.title.toLowerCase() === lower)
+  )
+    return null;
   return {
     id: "ask-ai",
     title: `Ask AI about "${text}"`,

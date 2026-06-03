@@ -221,6 +221,9 @@
     --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
     --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
     --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
+    --palette-glass-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
+    --palette-glass-ring: rgba(20, 20, 30, 0.1);
+    --palette-glass-glow: rgba(255, 255, 255, 0.5);
   }
 }
 

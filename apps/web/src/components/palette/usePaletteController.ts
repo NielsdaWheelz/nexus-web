@@ -7,6 +7,7 @@ import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
+import { copyText } from "@/lib/ui/copyText";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
 import { createNotePage } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -36,7 +37,15 @@ import { buildItemActions } from "./paletteActions";
 interface PaletteHistoryResponse {
   data: { recent: PaletteRecentRow[]; frecency_boosts: Record<string, number> };
 }
-type OracleReadingsResponse = { data: PaletteOracleRow[] } | PaletteOracleRow[];
+interface OracleReadingsResponse {
+  data: PaletteOracleRow[];
+}
+
+function openAskConversation(text: string): void {
+  requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(text)}`, {
+    titleHint: "New chat",
+  });
+}
 
 const HISTORY_DEBOUNCE_MS = 200;
 const SEARCH_DEBOUNCE_MS = 200;
@@ -65,11 +74,6 @@ export interface PaletteController {
   runAction(action: PaletteAction): void;
   trailing(item: PaletteItem): void;
   close(): void;
-}
-
-function copyPaletteLink(href: string): void {
-  const link = new URL(href, window.location.origin).toString();
-  void navigator.clipboard?.writeText(link);
 }
 
 export function usePaletteController(): PaletteController {
@@ -140,8 +144,7 @@ export function usePaletteController(): PaletteController {
   useEffect(() => {
     if (oracleResource.status === "ready") {
       oracleFetchedAt.current = Date.now();
-      const payload = oracleResource.data;
-      setOracleRows(Array.isArray(payload) ? payload : payload.data);
+      setOracleRows(oracleResource.data.data);
     } else if (oracleResource.status === "error") {
       setOracleRows([]);
     }
@@ -255,9 +258,7 @@ export function usePaletteController(): PaletteController {
         return;
       }
       if (target.kind === "ask") {
-        requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(target.text)}`, {
-          titleHint: "New chat",
-        });
+        openAskConversation(target.text);
         return;
       }
       const actionId = target.actionId;
@@ -342,12 +343,10 @@ export function usePaletteController(): PaletteController {
           return;
         case "ask":
           setOpen(false);
-          requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(run.text)}`, {
-            titleHint: "New chat",
-          });
+          openAskConversation(run.text);
           return;
         case "copy-link":
-          copyPaletteLink(run.href);
+          copyText(new URL(run.href, window.location.origin).toString());
           feedback.show({ severity: "success", title: "Link copied" });
           setOpen(false);
           return;
