@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import LibrariesPaneBody from "./LibrariesPaneBody";
 import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
+import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the raw /libraries envelope
 // under the cacheKey the pane reads ("libraries:0"), LibrariesPaneBody must paint
@@ -9,21 +10,15 @@ import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
 // paneServerLoaders ({ data: Library[] }) against what the pane consumes
 // (librariesResource.data.data) — if either drifts, this test fails.
 
-function pathOf(input: RequestInfo | URL): string {
-  if (input instanceof Request) return new URL(input.url, "http://localhost").pathname;
-  return new URL(String(input), "http://localhost").pathname;
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
   it("paints the seeded library and never fetches /api/libraries", async () => {
-    const fetchSpy = vi.fn(async () => {
+    const fetchSpy = stubFetch(async () => {
       throw new Error("unexpected client fetch on a hydration hit");
     });
-    vi.stubGlobal("fetch", fetchSpy);
 
     render(
       <BootstrapHydrationProvider
@@ -53,9 +48,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
 
     // (b) No client fetch to the libraries list endpoint — the seed was the source.
-    const fetchedLibraries = fetchSpy.mock.calls.some(
-      ([input]) => pathOf(input as RequestInfo | URL) === "/api/libraries",
-    );
+    const fetchedLibraries = wasFetchPathCalled(fetchSpy, "/api/libraries");
     expect(fetchedLibraries).toBe(false);
   });
 });

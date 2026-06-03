@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
+import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import NotesPaneBody from "./NotesPaneBody";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the normalized note-page
@@ -18,10 +19,9 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
   });
 
   it("paints the seeded page title and never fetches /api/notes/pages", async () => {
-    const fetchSpy = vi.fn(async () => {
+    const fetchSpy = stubFetch(async () => {
       throw new Error("unexpected client fetch on a hydration hit");
     });
-    vi.stubGlobal("fetch", fetchSpy);
 
     render(
       <BootstrapHydrationProvider
@@ -46,9 +46,7 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
 
     // (b) No client fetch to the notes pages endpoint — the seed was the source.
-    const fetchedPages = fetchSpy.mock.calls.some(
-      ([input]) => pathOf(input as RequestInfo | URL) === "/api/notes/pages",
-    );
+    const fetchedPages = wasFetchPathCalled(fetchSpy, "/api/notes/pages");
     expect(fetchedPages).toBe(false);
   });
 });
@@ -74,9 +72,4 @@ function notesPane() {
       <NotesPaneBody />
     </PaneRuntimeProvider>
   );
-}
-
-function pathOf(input: RequestInfo | URL): string {
-  if (input instanceof Request) return new URL(input.url, "http://localhost").pathname;
-  return new URL(String(input), "http://localhost").pathname;
 }

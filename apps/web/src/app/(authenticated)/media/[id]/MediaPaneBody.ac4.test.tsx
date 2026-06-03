@@ -6,6 +6,11 @@ import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
+import {
+  fetchCallsForPath,
+  fetchInputPath,
+  stubFetch,
+} from "@/__tests__/helpers/fetch";
 import MediaPaneBody from "./MediaPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the media pane's primary
@@ -126,10 +131,6 @@ function seededMedia() {
   };
 }
 
-function mediaPath(input: unknown): string {
-  return new URL(String(input), "http://localhost").pathname;
-}
-
 describe("MediaPaneBody AC-4 hydration hit", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -149,8 +150,8 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     // Any fetch is a failure signal for the primary resource; reject the media
     // GET loudly and resolve everything else empty so an unrelated stray call
     // never masks the assertion.
-    const fetchMock = vi.fn(async (input: unknown) => {
-      if (mediaPath(input) === `/api/media/${MEDIA_ID}`) {
+    const fetchMock = stubFetch(async (input) => {
+      if (fetchInputPath(input) === `/api/media/${MEDIA_ID}`) {
         throw new Error(`media resource fetched: ${String(input)}`);
       }
       return new Response("{}", {
@@ -158,7 +159,6 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     const href = `/media/${MEDIA_ID}`;
     const identity = resolvePaneRouteIdentity(href);
@@ -210,9 +210,7 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     });
 
     // The hydration hit: the primary media GET never fired.
-    const mediaCalls = fetchMock.mock.calls.filter(
-      ([input]) => mediaPath(input) === `/api/media/${MEDIA_ID}`,
-    );
+    const mediaCalls = fetchCallsForPath(fetchMock, `/api/media/${MEDIA_ID}`);
     expect(mediaCalls).toHaveLength(0);
   });
 });

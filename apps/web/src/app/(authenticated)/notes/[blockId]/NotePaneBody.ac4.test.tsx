@@ -4,6 +4,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import NotePaneBody from "./NotePaneBody";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the derived note-block resource
@@ -31,10 +32,9 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
     // ProseMirror mount. PagePaneBody awaits the page fetch before the focused-block
     // fetch, so with this stub `/api/notes/blocks/<blockId>` is only ever requested if
     // NotePaneBody itself missed the seed.
-    const fetchSpy = vi.fn(
+    const fetchSpy = stubFetch(
       () => new Promise<Response>(() => {}),
     );
-    vi.stubGlobal("fetch", fetchSpy);
 
     render(
       <FeedbackProvider>
@@ -51,9 +51,9 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
     // seed and passed pageId down to PagePaneBody.
     await waitFor(() => {
       expect(
-        fetchSpy.mock.calls.some(
-          ([input]) =>
-            pathOf(input as RequestInfo | URL) === `/api/notes/pages/${pageId}`,
+        wasFetchPathCalled(
+          fetchSpy,
+          `/api/notes/pages/${pageId}`,
         ),
       ).toBe(true);
     });
@@ -64,9 +64,9 @@ describe("NotePaneBody (AC-4 hydration hit)", () => {
 
     // (b) No client fetch to the note-block endpoint — the seed was the source for the
     // block-to-page resolution (hydration hit).
-    const fetchedBlock = fetchSpy.mock.calls.some(
-      ([input]) =>
-        pathOf(input as RequestInfo | URL) === `/api/notes/blocks/${blockId}`,
+    const fetchedBlock = wasFetchPathCalled(
+      fetchSpy,
+      `/api/notes/blocks/${blockId}`,
     );
     expect(fetchedBlock).toBe(false);
   });
@@ -93,9 +93,4 @@ function notePane(blockId: string) {
       <NotePaneBody />
     </PaneRuntimeProvider>
   );
-}
-
-function pathOf(input: RequestInfo | URL): string {
-  if (input instanceof Request) return new URL(input.url, "http://localhost").pathname;
-  return new URL(String(input), "http://localhost").pathname;
 }

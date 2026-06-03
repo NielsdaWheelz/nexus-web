@@ -4,6 +4,11 @@ import { BootstrapHydrationProvider } from "@/lib/api/hydrationCache";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import {
+  fetchCallsForPath,
+  fetchInputPath,
+  stubFetch,
+} from "@/__tests__/helpers/fetch";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
@@ -31,13 +36,6 @@ function seededLibrary() {
   };
 }
 
-function pathOf(input: unknown): string {
-  if (input instanceof Request) {
-    return new URL(input.url, "http://localhost").pathname;
-  }
-  return new URL(String(input), "http://localhost").pathname;
-}
-
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -46,8 +44,8 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
   it("paints from the bootstrap seed without fetching the library resource", async () => {
     // Any fetch of the library resource is a failure signal; reject it loudly
     // and resolve everything else empty so a stray call never masks the assertion.
-    const fetchMock = vi.fn(async (input: unknown) => {
-      if (pathOf(input) === `/api/libraries/${LIBRARY_ID}`) {
+    const fetchMock = stubFetch(async (input) => {
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}`) {
         throw new Error(`library resource fetched: ${String(input)}`);
       }
       return new Response("{}", {
@@ -55,7 +53,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     const href = `/libraries/${LIBRARY_ID}`;
     const identity = resolvePaneRouteIdentity(href);
@@ -103,8 +100,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     // The hydration hit: the primary library GET never fired.
-    const libraryCalls = fetchMock.mock.calls.filter(
-      ([input]) => pathOf(input) === `/api/libraries/${LIBRARY_ID}`,
+    const libraryCalls = fetchCallsForPath(
+      fetchMock,
+      `/api/libraries/${LIBRARY_ID}`,
     );
     expect(libraryCalls).toHaveLength(0);
   });
