@@ -172,6 +172,17 @@ jobs:
       - name: Install frontend dependencies
         run: cd apps/web && bun ci
 
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(cd apps/web && node -p 'require("playwright/package.json").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
       - name: Test frontend unit
         run: make test-front-unit
 
