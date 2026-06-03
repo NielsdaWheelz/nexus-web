@@ -89,6 +89,14 @@ describe("resolveServerActionRedirectOrigin", () => {
       resolveServerActionRedirectOrigin(headersFrom({}))
     ).toThrow(/rejected/);
   });
+
+  it("throws for invalid configured redirect origins", () => {
+    vi.stubEnv(AUTH_ALLOWED_REDIRECT_ORIGINS, "https://app.example.com/path");
+
+    expect(() =>
+      resolveServerActionRedirectOrigin(headersFrom({ host: "app.example.com" }))
+    ).toThrow(/Invalid auth redirect origin/);
+  });
 });
 
 describe("resolveCallbackRedirectOrigin", () => {

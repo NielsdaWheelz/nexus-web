@@ -17,8 +17,9 @@
  *   - Build/run mode (NODE_ENV):   isDevBuild / isProdBuild — `next start` forces production
  */
 export { isDevBuild, isProdBuild } from "./build-mode";
+import { parseWebOrigin } from "./security/origin";
 
-export type NexusEnv = "local" | "test" | "staging" | "prod";
+type NexusEnv = "local" | "test" | "staging" | "prod";
 
 /** The deployment env from NEXUS_ENV. Unset → "local" (backend default). Unknown → throws. */
 export function nexusEnv(): NexusEnv {
@@ -36,10 +37,11 @@ export const isDeployed = (): boolean => {
   return env === "staging" || env === "prod";
 };
 
-export interface ResolvedEnv {
+interface ResolvedEnv {
   readonly nexusEnv: NexusEnv;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
   readonly connectOrigins: readonly string[];
+  readonly serverActionAllowedOrigins: readonly string[];
   readonly internalApi: {
     readonly fastApiBaseUrl: string;
     readonly internalSecret: string;
@@ -53,8 +55,8 @@ let resolved: ResolvedEnv | null = null;
 /**
  * Resolve + validate the deployment env once, then return the frozen result (mirrors
  * `get_settings()`). In a deployed env (staging|prod) a missing/invalid FASTAPI_BASE_URL,
- * R2_S3_API_ORIGIN, or NEXUS_INTERNAL_SECRET throws — the build gate (`assertDeploymentEnv`)
- * turns that into a failed `next build`, so a deployed runtime never reaches here with bad env.
+ * R2_S3_API_ORIGIN, or NEXUS_INTERNAL_SECRET throws. `next.config.ts` calls this during config
+ * evaluation, so a bad deployed env fails `next build` before promotion.
  */
 export function getEnv(): ResolvedEnv {
   if (resolved) return resolved;
@@ -62,6 +64,8 @@ export function getEnv(): ResolvedEnv {
   const deployed = env === "staging" || env === "prod";
 
   const connectOrigins = resolveConnectOrigins(deployed);
+  validateAuthRedirectOrigins(deployed);
+  const serverActionAllowedOrigins = resolveServerActionAllowedOrigins(deployed);
 
   const internalSecret = process.env.NEXUS_INTERNAL_SECRET?.trim() ?? "";
   if (deployed && !internalSecret) {
@@ -73,19 +77,11 @@ export function getEnv(): ResolvedEnv {
   resolved = Object.freeze({
     nexusEnv: env,
     connectOrigins,
+    serverActionAllowedOrigins,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
     disableCspForE2E: !deployed && process.env.E2E_DISABLE_CSP === "1",
   });
   return resolved;
-}
-
-/**
- * Build-time gate, called at next.config eval. On a deployed build (staging|prod) with
- * missing/invalid connect origins or internal secret, `getEnv()` throws → `next build` fails →
- * the bad artifact is never promoted (the last-good deploy keeps serving). No-op otherwise.
- */
-export function assertDeploymentEnv(): void {
-  if (isDeployed()) getEnv();
 }
 
 /** Clears the memo so `vi.stubEnv()` takes effect (mirrors clear_settings_cache). Test-only. */
@@ -104,9 +100,13 @@ function resolveConnectOrigins(deployed: boolean): readonly string[] {
 
   const fastApiBaseUrl = process.env.FASTAPI_BASE_URL?.trim();
   if (fastApiBaseUrl) {
-    const origin = parseConnectOrigin(fastApiBaseUrl, deployed);
-    if (origin) origins.add(origin);
-    else if (deployed) {
+    const origin = parseWebOrigin(fastApiBaseUrl);
+    if (origin) {
+      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
+        throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
+      }
+      origins.add(origin.origin);
+    } else if (deployed) {
       throw new Error(`Invalid FASTAPI_BASE_URL for CSP connect-src: ${fastApiBaseUrl}`);
     }
   } else if (deployed) {
@@ -115,12 +115,15 @@ function resolveConnectOrigins(deployed: boolean): readonly string[] {
 
   const r2S3ApiOrigin = process.env.R2_S3_API_ORIGIN?.trim();
   if (r2S3ApiOrigin) {
-    const origin = parseConnectOrigin(r2S3ApiOrigin, deployed);
+    const origin = parseWebOrigin(r2S3ApiOrigin);
     if (origin) {
-      if (deployed && !new URL(origin).hostname.endsWith(".r2.cloudflarestorage.com")) {
+      if (deployed && origin.protocol !== "https:" && !origin.isLocalhost) {
         throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
       }
-      origins.add(origin);
+      if (deployed && !origin.hostname.endsWith(".r2.cloudflarestorage.com")) {
+        throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
+      }
+      origins.add(origin.origin);
     } else if (deployed) {
       throw new Error(`Invalid R2_S3_API_ORIGIN for CSP connect-src: ${r2S3ApiOrigin}`);
     }
@@ -131,23 +134,92 @@ function resolveConnectOrigins(deployed: boolean): readonly string[] {
   return [...origins];
 }
 
-/**
- * Parse an origin-only value (scheme://host[:port], no path/query/fragment). Returns the
- * normalized origin, or null if invalid. HTTP is accepted only for localhost or outside a
- * deployed env.
- */
-function parseConnectOrigin(value: string, deployed: boolean): string | null {
-  let url: URL;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return null;
+function validateAuthRedirectOrigins(deployed: boolean): void {
+  resolveOriginEnv(
+    "AUTH_ALLOWED_REDIRECT_ORIGINS",
+    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS,
+    deployed,
+    deployed
+  );
+  resolveOriginEnv(
+    "AUTH_TRUSTED_PROXY_ORIGINS",
+    process.env.AUTH_TRUSTED_PROXY_ORIGINS,
+    deployed,
+    false
+  );
+  resolveOriginEnv(
+    "NEXUS_EXTENSION_REDIRECT_ORIGINS",
+    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS,
+    deployed,
+    false
+  );
+
+  if (
+    deployed &&
+    process.env.AUTH_TRUSTED_PROXY_ORIGINS?.trim() &&
+    !process.env.SERVER_ACTION_ALLOWED_ORIGINS?.trim()
+  ) {
+    throw new Error(
+      "SERVER_ACTION_ALLOWED_ORIGINS is required when AUTH_TRUSTED_PROXY_ORIGINS is set in staging/prod"
+    );
   }
-  if ((url.pathname && url.pathname !== "/") || url.search || url.hash) {
-    return null;
+}
+
+function resolveOriginEnv(
+  name: string,
+  rawValue: string | undefined,
+  deployed: boolean,
+  required: boolean
+): string[] {
+  const origins = new Set<string>();
+  const entries = (rawValue ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (required && entries.length === 0) {
+    throw new Error(`${name} is required in staging/prod`);
   }
-  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol === "https:") return url.origin;
-  if (url.protocol === "http:" && (isLocalhost || !deployed)) return url.origin;
-  return null;
+
+  for (const entry of entries) {
+    const origin = parseWebOrigin(entry);
+    if (!origin) throw new Error(`Invalid ${name}: ${entry}`);
+    if (deployed && origin.protocol !== "https:") {
+      throw new Error(`${name} must use HTTPS origins in staging/prod: ${entry}`);
+    }
+    origins.add(origin.origin);
+  }
+
+  return [...origins];
+}
+
+function resolveServerActionAllowedOrigins(deployed: boolean): string[] {
+  const values = new Set<string>();
+
+  for (const rawEntry of (process.env.SERVER_ACTION_ALLOWED_ORIGINS ?? "").split(",")) {
+    const entry = rawEntry.trim().toLowerCase();
+    if (!entry) continue;
+    if (!isServerActionOriginPattern(entry)) {
+      throw new Error(`Invalid SERVER_ACTION_ALLOWED_ORIGINS entry: ${rawEntry.trim()}`);
+    }
+    if (deployed && (entry.includes("localhost") || entry.includes("127.0.0.1"))) {
+      throw new Error("SERVER_ACTION_ALLOWED_ORIGINS must not contain localhost in staging/prod");
+    }
+    values.add(entry);
+  }
+
+  return [...values];
+}
+
+function isServerActionOriginPattern(value: string): boolean {
+  const domain = value.startsWith("*.") ? value.slice(2) : value;
+  if (!domain || value === "*" || value.includes("://")) return false;
+  if (domain.includes("/") || domain.includes(":") || domain.includes("*")) return false;
+  if (domain.startsWith(".") || domain.endsWith(".")) return false;
+  const labels = domain.split(".");
+  if (value.startsWith("*.") && labels.length < 3) return false;
+  return (
+    labels.length >= 2 &&
+    labels.every((label) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label))
+  );
 }

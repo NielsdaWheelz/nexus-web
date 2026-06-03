@@ -23,6 +23,22 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 "
 
+OPTIONAL_READABLE_VERCEL_ENV_KEYS="
+AUTH_TRUSTED_PROXY_ORIGINS
+SERVER_ACTION_ALLOWED_ORIGINS
+NEXUS_EXTENSION_REDIRECT_ORIGINS
+"
+
+FRONTEND_ONLY_ENV_KEYS="
+AUTH_ALLOWED_REDIRECT_ORIGINS
+AUTH_TRUSTED_PROXY_ORIGINS
+SERVER_ACTION_ALLOWED_ORIGINS
+NEXUS_EXTENSION_REDIRECT_ORIGINS
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+FASTAPI_BASE_URL
+"
+
 SENSITIVE_VERCEL_ENV_KEYS="
 NEXUS_INTERNAL_SECRET
 "
@@ -150,6 +166,100 @@ if (
 PY
 }
 
+require_auth_origin_contract() {
+  local file="$1"
+  local allowed trusted server_actions extension_origins
+
+  allowed="$(normalize_env_value "$(env_value "AUTH_ALLOWED_REDIRECT_ORIGINS" "$file" || true)")"
+  trusted="$(normalize_env_value "$(env_value "AUTH_TRUSTED_PROXY_ORIGINS" "$file" || true)")"
+  server_actions="$(normalize_env_value "$(env_value "SERVER_ACTION_ALLOWED_ORIGINS" "$file" || true)")"
+  extension_origins="$(normalize_env_value "$(env_value "NEXUS_EXTENSION_REDIRECT_ORIGINS" "$file" || true)")"
+  AUTH_ALLOWED_REDIRECT_ORIGINS="$allowed" \
+    AUTH_TRUSTED_PROXY_ORIGINS="$trusted" \
+    SERVER_ACTION_ALLOWED_ORIGINS="$server_actions" \
+    NEXUS_EXTENSION_REDIRECT_ORIGINS="$extension_origins" \
+    python3 - <<'PY' || die "auth origin env contract is invalid"
+import os
+import sys
+from urllib.parse import urlparse
+
+def parse_origins(name: str) -> list[str]:
+    origins: list[str] = []
+    for raw_entry in os.environ.get(name, "").split(","):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        parsed = urlparse(entry)
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or not parsed.netloc
+        ):
+            sys.exit(1)
+        origins.append(f"{parsed.scheme}://{parsed.netloc.lower()}")
+    return origins
+
+if not parse_origins("AUTH_ALLOWED_REDIRECT_ORIGINS"):
+    sys.exit(1)
+trusted = parse_origins("AUTH_TRUSTED_PROXY_ORIGINS")
+parse_origins("NEXUS_EXTENSION_REDIRECT_ORIGINS")
+if trusted and not os.environ.get("SERVER_ACTION_ALLOWED_ORIGINS", "").strip():
+    sys.exit(1)
+PY
+}
+
+require_server_action_allowed_origins() {
+  local file="$1"
+  local value
+
+  value="$(normalize_env_value "$(env_value "SERVER_ACTION_ALLOWED_ORIGINS" "$file" || true)")"
+  SERVER_ACTION_ALLOWED_ORIGINS="$value" python3 - <<'PY' || die "SERVER_ACTION_ALLOWED_ORIGINS must contain only Next.js domain patterns"
+import os
+import re
+import sys
+
+value = os.environ["SERVER_ACTION_ALLOWED_ORIGINS"]
+label_re = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+
+for raw_entry in value.split(","):
+    entry = raw_entry.strip().lower()
+    if not entry:
+        continue
+    domain = entry[2:] if entry.startswith("*.") else entry
+    labels = domain.split(".")
+    if (
+        entry == "*"
+        or "://" in entry
+        or "/" in domain
+        or ":" in domain
+        or "*" in domain
+        or domain.startswith(".")
+        or domain.endswith(".")
+        or "localhost" in domain
+        or "127.0.0.1" in domain
+        or len(labels) < 2
+        or not all(label_re.fullmatch(label) for label in labels)
+        or (entry.startswith("*.") and len(labels) < 3)
+    ):
+        sys.exit(1)
+PY
+}
+
+reject_frontend_only_keys_from_shared_env() {
+  local file="$1"
+  local key value
+
+  for key in $FRONTEND_ONLY_ENV_KEYS; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} must live in env-prod-frontend, not env-prod"
+    fi
+  done
+}
+
 reject_backend_runtime_keys() {
   local file="$1"
   local key value
@@ -192,6 +302,20 @@ verify_pulled_vercel_env() {
     fi
   done
 
+  for key in $OPTIONAL_READABLE_VERCEL_ENV_KEYS; do
+    expected="$(normalize_env_value "$(env_value "$key" "$expected_file" || true)")"
+    if is_blank "$expected"; then
+      continue
+    fi
+    if ! actual="$(env_value "$key" "$pulled_file")" || is_blank "$(normalize_env_value "$actual")"; then
+      die "Vercel ${VERCEL_ENVIRONMENT} env verification failed: ${key} is missing or empty after pull"
+    fi
+    actual="$(normalize_env_value "$actual")"
+    if [ "$actual" != "$expected" ]; then
+      die "Vercel ${VERCEL_ENVIRONMENT} env verification failed: ${key} does not match the local env file"
+    fi
+  done
+
   for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
     if actual="$(env_value "$key" "$pulled_file")" && ! is_blank "$(normalize_env_value "$actual")"; then
       die "Vercel ${VERCEL_ENVIRONMENT} env verification failed: forbidden ${key} is still present after sync"
@@ -206,6 +330,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 is not installed locally"
 for file in "$SHARED_ENV" "$FRONTEND_ENV"; do
   [ -f "$file" ] || die "missing env file: $file"
 done
+
+reject_frontend_only_keys_from_shared_env "$SHARED_ENV"
 
 tmp_file="$(mktemp)"
 verify_file="$(mktemp)"
@@ -224,6 +350,8 @@ fi
 require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
+require_auth_origin_contract "$tmp_file"
+require_server_action_allowed_origins "$tmp_file"
 reject_backend_runtime_keys "$tmp_file"
 
 cd "$VERCEL_PROJECT_DIR"

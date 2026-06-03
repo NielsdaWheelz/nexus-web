@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
   __resetEnvForTests,
-  assertDeploymentEnv,
   getEnv,
   isDeployed,
   isDevBuild,
@@ -20,6 +19,7 @@ function stubDeployed(env: "staging" | "prod") {
   vi.stubEnv("FASTAPI_BASE_URL", "https://api.nexus.app");
   vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
   vi.stubEnv("NEXUS_INTERNAL_SECRET", "deploy-secret");
+  vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "https://app.nexus.app");
 }
 
 beforeEach(() => __resetEnvForTests());
@@ -134,9 +134,11 @@ describe("getEnv() (resolve-once, frozen)", () => {
   });
 
   it("__resetEnvForTests clears the memo so a re-stub takes effect", () => {
+    vi.stubEnv("R2_S3_API_ORIGIN", "");
     vi.stubEnv("FASTAPI_BASE_URL", "https://one.example.com");
     expect(getEnv().connectOrigins).toEqual(["https://one.example.com"]);
     __resetEnvForTests();
+    vi.stubEnv("R2_S3_API_ORIGIN", "");
     vi.stubEnv("FASTAPI_BASE_URL", "https://two.example.com");
     expect(getEnv().connectOrigins).toEqual(["https://two.example.com"]);
   });
@@ -168,16 +170,101 @@ describe("getEnv().connectOrigins", () => {
   });
 });
 
+describe("getEnv().serverActionAllowedOrigins", () => {
+  it("defaults to same-origin Server Actions", () => {
+    expect(getEnv().serverActionAllowedOrigins).toEqual([]);
+  });
+
+  it("normalizes and dedupes Next.js domain patterns", () => {
+    vi.stubEnv(
+      "SERVER_ACTION_ALLOWED_ORIGINS",
+      "App.Example.com, *.Proxy.Example.com, app.example.com"
+    );
+
+    expect(getEnv().serverActionAllowedOrigins).toEqual([
+      "app.example.com",
+      "*.proxy.example.com",
+    ]);
+  });
+
+  it("rejects URL-style Server Action origins", () => {
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "https://app.example.com");
+
+    expect(() => getEnv()).toThrow(/SERVER_ACTION_ALLOWED_ORIGINS/);
+  });
+
+  it("rejects broad wildcards", () => {
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "*");
+
+    expect(() => getEnv()).toThrow(/SERVER_ACTION_ALLOWED_ORIGINS/);
+
+    __resetEnvForTests();
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "*.com");
+
+    expect(() => getEnv()).toThrow(/SERVER_ACTION_ALLOWED_ORIGINS/);
+
+    __resetEnvForTests();
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "*.co.uk");
+
+    expect(() => getEnv()).toThrow(/SERVER_ACTION_ALLOWED_ORIGINS/);
+  });
+
+  it("rejects localhost in deployed builds", () => {
+    stubDeployed("prod");
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "localhost");
+
+    expect(() => getEnv()).toThrow(/localhost/);
+  });
+});
+
+describe("auth redirect origin deployment validation", () => {
+  it("requires AUTH_ALLOWED_REDIRECT_ORIGINS in deployed builds", () => {
+    stubDeployed("prod");
+    vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "");
+
+    expect(() => getEnv()).toThrow(/AUTH_ALLOWED_REDIRECT_ORIGINS/);
+  });
+
+  it("rejects invalid AUTH_ALLOWED_REDIRECT_ORIGINS entries", () => {
+    stubDeployed("prod");
+    vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "https://app.example.com/path");
+
+    expect(() => getEnv()).toThrow(/AUTH_ALLOWED_REDIRECT_ORIGINS/);
+  });
+
+  it("rejects non-HTTPS app redirect origins in deployed builds", () => {
+    stubDeployed("prod");
+    vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "http://app.example.com");
+
+    expect(() => getEnv()).toThrow(/HTTPS/);
+  });
+
+  it("requires Server Action allowed origins for deployed trusted-proxy auth origins", () => {
+    stubDeployed("prod");
+    vi.stubEnv("AUTH_TRUSTED_PROXY_ORIGINS", "https://proxy.internal");
+
+    expect(() => getEnv()).toThrow(/SERVER_ACTION_ALLOWED_ORIGINS/);
+  });
+
+  it("allows trusted-proxy auth origins when the Server Action admission list is explicit", () => {
+    stubDeployed("prod");
+    vi.stubEnv("AUTH_TRUSTED_PROXY_ORIGINS", "https://proxy.internal");
+    vi.stubEnv("SERVER_ACTION_ALLOWED_ORIGINS", "app.nexus.app");
+
+    expect(getEnv().serverActionAllowedOrigins).toEqual(["app.nexus.app"]);
+  });
+});
+
 // The build gate. These are the assertions the middleware/route runtime tests used to make
 // against "missing env in production"; they now live here, because the failure is converted
 // from a per-request 500 into a failed `next build`.
-describe("assertDeploymentEnv (build gate)", () => {
+describe("getEnv deployed build gate", () => {
   it("throws when FASTAPI_BASE_URL is missing in a deployed env", () => {
     vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "");
     vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "s");
-    expect(() => assertDeploymentEnv()).toThrow(/FASTAPI_BASE_URL/);
+    expect(() => getEnv()).toThrow(/FASTAPI_BASE_URL/);
   });
 
   it("throws when R2_S3_API_ORIGIN is missing in a deployed env", () => {
@@ -185,7 +272,7 @@ describe("assertDeploymentEnv (build gate)", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
     vi.stubEnv("R2_S3_API_ORIGIN", "");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "s");
-    expect(() => assertDeploymentEnv()).toThrow(/R2_S3_API_ORIGIN/);
+    expect(() => getEnv()).toThrow(/R2_S3_API_ORIGIN/);
   });
 
   it("throws when R2_S3_API_ORIGIN is not the Cloudflare R2 host", () => {
@@ -193,7 +280,7 @@ describe("assertDeploymentEnv (build gate)", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
     vi.stubEnv("R2_S3_API_ORIGIN", "https://storage.example.com");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "s");
-    expect(() => assertDeploymentEnv()).toThrow(/R2_S3_API_ORIGIN/);
+    expect(() => getEnv()).toThrow(/R2_S3_API_ORIGIN/);
   });
 
   it("throws on a non-HTTPS, non-localhost FastAPI origin in a deployed env", () => {
@@ -201,28 +288,29 @@ describe("assertDeploymentEnv (build gate)", () => {
     vi.stubEnv("FASTAPI_BASE_URL", "http://api.example.com");
     vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "s");
-    expect(() => assertDeploymentEnv()).toThrow(/FASTAPI_BASE_URL/);
+    expect(() => getEnv()).toThrow(/FASTAPI_BASE_URL/);
   });
 
   it("throws when NEXUS_INTERNAL_SECRET is missing in a deployed env", () => {
     vi.stubEnv("NEXUS_ENV", "prod");
     vi.stubEnv("FASTAPI_BASE_URL", "https://api.example.com");
     vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
+    vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "https://app.example.com");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "");
-    expect(() => assertDeploymentEnv()).toThrow(/NEXUS_INTERNAL_SECRET/);
+    expect(() => getEnv()).toThrow(/NEXUS_INTERNAL_SECRET/);
   });
 
   it("fires the same strict validation for staging", () => {
     vi.stubEnv("NEXUS_ENV", "staging");
     vi.stubEnv("FASTAPI_BASE_URL", "");
-    expect(() => assertDeploymentEnv()).toThrow(/FASTAPI_BASE_URL/);
+    expect(() => getEnv()).toThrow(/FASTAPI_BASE_URL/);
   });
 
   it("is a no-op for a local/test build with missing env", () => {
     vi.stubEnv("NEXUS_ENV", "test");
     vi.stubEnv("FASTAPI_BASE_URL", "");
     vi.stubEnv("R2_S3_API_ORIGIN", "");
-    expect(() => assertDeploymentEnv()).not.toThrow();
+    expect(() => getEnv()).not.toThrow();
   });
 });
 

@@ -173,16 +173,27 @@ required keys without printing secret values.
 Key Vercel values:
 
 ```bash
+APP_PUBLIC_URL=https://nexus.nielseriknandal.com
 FASTAPI_BASE_URL=https://api.example.com
 R2_S3_API_ORIGIN=https://<cloudflare-account-id>.r2.cloudflarestorage.com
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
+AUTH_ALLOWED_REDIRECT_ORIGINS=https://nexus.nielseriknandal.com
+AUTH_TRUSTED_PROXY_ORIGINS=
+SERVER_ACTION_ALLOWED_ORIGINS=
+NEXUS_EXTENSION_REDIRECT_ORIGINS=
 NEXUS_INTERNAL_SECRET=<same value as VPS>
 ```
 
 `R2_S3_API_ORIGIN` is a public shared origin used by backend signing and
 frontend CSP. `NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase
 database, storage service-role keys, R2 credentials, or bucket names to Vercel.
+`AUTH_ALLOWED_REDIRECT_ORIGINS` is a full URL origin allowlist for app-generated
+Supabase redirect URLs. `AUTH_TRUSTED_PROXY_ORIGINS` is only for trusted
+host-rewriting proxy hops. `SERVER_ACTION_ALLOWED_ORIGINS` is a Next.js domain
+pattern list for host-rewriting frontend proxies; leave it empty for direct
+Vercel custom-domain deploys. `NEXUS_EXTENSION_REDIRECT_ORIGINS` is the separate
+browser-extension callback origin allowlist.
 
 Current frontend values should use:
 
@@ -266,10 +277,12 @@ Before switching production traffic:
    offline before traffic moves; do not configure Supabase as a live fallback.
 5. Sync VPS env and Vercel env.
 6. Deploy backend and run migrations.
-7. Confirm `/health`, Supabase Auth login, object upload/download, and a worker
+7. Verify Supabase hosted Auth redirect config:
+   `SUPABASE_MANAGEMENT_ACCESS_TOKEN=... ./deploy/supabase/verify-auth-redirects.sh`.
+8. Confirm `/health`, Supabase Auth login, object upload/download, and a worker
    job against Hetzner Postgres/R2.
-8. Switch frontend/API traffic and keep maintenance schedules at `0`.
-9. Run the auth smoke check (see Smoke Checks) against the live URLs.
+9. Switch frontend/API traffic and keep maintenance schedules at `0`.
+10. Run the auth smoke checks (see Smoke Checks) against the live URLs.
 
 After cutover, treat Supabase Database and Supabase Storage as legacy data
 sources only. Do not write new production data to them and do not configure them
@@ -297,6 +310,35 @@ flags. `--supabase-url` is the deployed `NEXT_PUBLIC_SUPABASE_URL`; its project
 ref names the auth cookie the boundary parser reads, so the crafted expired
 cookie is one the deployed app interprets. The script makes only safe `GET`
 requests and never prints cookie or token values.
+
+Redirect construction has a separate explicit smoke entrypoint. Production
+defaults to read-only verification: it checks hosted Supabase Auth redirect
+configuration, verifies the smoke URLs match the same env files, then runs the
+safe auth HTTP smoke above. Mutating canary modes require dedicated smoke
+accounts and mailbox automation before they can be enabled.
+
+```bash
+SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
+NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
+NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
+NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
+  ./deploy/smoke/auth-redirect-construction-smoke.sh --mode prod-readonly
+```
+
+Staging can run the mutating redirect-construction proof against a controlled
+mailbox domain:
+
+```bash
+SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
+NEXUS_SMOKE_APP_URL=https://staging.example.com \
+NEXUS_SMOKE_API_URL=https://api-staging.example.com \
+NEXUS_SMOKE_SUPABASE_URL=https://<staging-ref>.supabase.co \
+NEXUS_SMOKE_MAILBOX_URL=https://mailbox.example.com \
+NEXUS_SMOKE_EMAIL_DOMAIN=smoke.example.com \
+  ./deploy/smoke/auth-redirect-construction-smoke.sh --mode staging \
+  --env-file deploy/env/env-staging \
+  --frontend-env-file deploy/env/env-staging-frontend
+```
 
 Keep legacy Supabase cleanup/export credentials in a separate local file that is
 never synced as runtime env. These values feed the one-off Supabase-exit cleanup
@@ -370,7 +412,9 @@ restore its schedule to `0`, sync env again without
 - `deploy/hetzner/sync-env.sh`: uploads backend runtime env.
 - `deploy/hetzner/deploy.sh`: builds, migrates, and starts services.
 - `deploy/vercel/sync-env.sh`: pushes Vercel env.
+- `deploy/supabase/verify-auth-redirects.sh`: read-only hosted Auth redirect allowlist verifier.
 - `deploy/smoke/auth-smoke.sh`: post-deploy auth smoke check.
+- `deploy/smoke/auth-redirect-construction-smoke.sh`: explicit redirect-construction smoke wrapper.
 - `.dockerignore`: keeps VPS Docker build contexts small.
 - `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
 - `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.

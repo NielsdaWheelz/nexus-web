@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
-import { assertDeploymentEnv } from "./src/lib/env";
+import { getEnv } from "./src/lib/env";
 
-// Fail the deploy, not the request: a staging/prod build with missing/invalid connect-origin
-// or internal-secret env aborts `next build`, so Vercel never promotes the bad artifact and the
-// last-good deployment keeps serving. No-op for local/test builds.
-assertDeploymentEnv();
+// Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
+// `next build`, so Vercel never promotes the bad artifact and the last-good deployment keeps
+// serving. Local/test builds keep local defaults.
+const env = getEnv();
 
 const nextConfig: NextConfig = {
   // `make check` owns lint. `next build` enforces build-time TypeScript validation.
@@ -24,6 +24,9 @@ const nextConfig: NextConfig = {
     // Enable server actions for form handling
     serverActions: {
       bodySizeLimit: "1mb",
+      ...(env.serverActionAllowedOrigins.length > 0
+        ? { allowedOrigins: [...env.serverActionAllowedOrigins] }
+        : {}),
     },
   },
 

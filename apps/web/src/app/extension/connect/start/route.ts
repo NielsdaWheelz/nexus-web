@@ -3,6 +3,7 @@ import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 import { createRandomId } from "@/lib/createRandomId";
+import { parseWebOriginList } from "@/lib/security/origin";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
@@ -28,11 +29,15 @@ export async function GET(req: Request) {
     );
   }
 
-  const allowedOrigins = (process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  if (redirectUrl.protocol !== "https:" || !allowedOrigins.includes(redirectUrl.origin)) {
+  const parsedAllowedOrigins = parseWebOriginList(
+    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS
+  );
+  const allowedOrigins = parsedAllowedOrigins.origins.map((origin) => origin.origin);
+  if (
+    parsedAllowedOrigins.invalidValues.length > 0 ||
+    redirectUrl.protocol !== "https:" ||
+    !allowedOrigins.includes(redirectUrl.origin)
+  ) {
     return NextResponse.json(
       { error: { code: "E_FORBIDDEN", message: "Extension redirect origin is not allowed" } },
       { status: 403 }

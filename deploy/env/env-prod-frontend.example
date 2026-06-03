@@ -5,7 +5,12 @@ FASTAPI_BASE_URL=https://api.example.com
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 
-# Also present in env-prod; repeated here because Vercel imports a flat env set.
+# Full URL origins used by app-side Supabase redirectTo/emailRedirectTo
+# construction. Production entries must be canonical HTTPS app origins.
 AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-vercel-app.example.com
+AUTH_TRUSTED_PROXY_ORIGINS=
+# Next.js Server Action CSRF admission list for host-rewriting frontend proxies.
+# Values are domain patterns, not URL origins. Empty is correct for direct Vercel.
+SERVER_ACTION_ALLOWED_ORIGINS=
 NEXUS_EXTENSION_REDIRECT_ORIGINS=
 NEXUS_INTERNAL_SECRET=<same-value-as-env-prod>

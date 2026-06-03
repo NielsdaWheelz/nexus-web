@@ -3,7 +3,9 @@
 
 NEXUS_ENV=prod
 
-# Public URL
+# Canonical public app origin. Hosted Supabase Auth `site_url` must match this
+# origin, and every auth redirect origin must have an exact /auth/callback entry
+# in the Supabase redirect allowlist.
 APP_PUBLIC_URL=https://your-vercel-app.example.com
 
 # Supabase Auth only. Production does not use Supabase Database or Storage.
@@ -17,10 +19,8 @@ SUPABASE_AUDIENCES=authenticated
 # Shared BFF -> FastAPI secret. Use the same value in Vercel and on the VPS.
 NEXUS_INTERNAL_SECRET=<generate-a-long-random-secret>
 
-# Browser origins
-AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-vercel-app.example.com
+# Browser origins used by FastAPI runtime policy.
 STREAM_CORS_ORIGINS=https://your-vercel-app.example.com
-NEXUS_EXTENSION_REDIRECT_ORIGINS=
 
 # Public R2 S3 API origin. Shared because the backend signs presigned URLs
 # against this origin and the frontend CSP must allow browsers to connect to it.

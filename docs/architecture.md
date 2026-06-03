@@ -148,6 +148,16 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 - `NEXUS_INTERNAL_SECRET` must be **identical** on Vercel and the VPS — it is the
   shared secret the BFF attaches as `X-Nexus-Internal` so FastAPI knows a request
   came through the trusted proxy.
+- Auth redirect origins are enforced in layers: Next.js admits Server Action
+  POSTs before app code; `apps/web/src/lib/auth/callback-origin.ts` resolves one
+  safe app origin from request metadata; `apps/web/src/lib/auth/redirects.ts`
+  builds `/auth/callback` URLs; hosted Supabase Auth must have exact callback
+  redirect URLs verified by `deploy/supabase/verify-auth-redirects.sh`.
+- Direct Vercel custom-domain frontend deploys leave
+  `SERVER_ACTION_ALLOWED_ORIGINS` empty. A host-rewriting frontend proxy must set
+  a minimal Next.js domain-pattern list and matching trusted-proxy auth origins.
+  Browser-extension redirect origins are frontend-only and stay out of the VPS
+  runtime env.
 - Local dev runs the same shape via Docker Compose (Postgres on `54320`, MinIO on
   `9000`) plus Supabase-local for Auth, started by `make dev`.
 
@@ -809,7 +819,9 @@ sync env → rsync repo to the VPS → `compose build` → stop worker+api → *
 --force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
 `.example` tracked); the sync scripts strongly validate them and reject legacy
 Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
-`deploy/cloudflare/*`.
+`deploy/cloudflare/*`. Supabase hosted Auth redirect config is verified as
+provider state with `deploy/supabase/verify-auth-redirects.sh`, not trusted as a
+manual dashboard checklist.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedicated

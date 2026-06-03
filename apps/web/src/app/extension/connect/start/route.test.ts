@@ -79,6 +79,37 @@ describe("GET /extension/connect/start", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("normalizes configured extension redirect origins", async () => {
+    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS =
+      "https://EXTENSION.chromiumapp.org/";
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2F"
+      )
+    );
+
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location") || "").pathname).toBe("/login");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a configured extension redirect origin is invalid", async () => {
+    process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS =
+      "https://extension.chromiumapp.org/path";
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2F"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("redirects users with a malformed session cookie through login", async () => {
     const { GET } = await import("./route");
     const response = await GET(

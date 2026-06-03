@@ -1,6 +1,11 @@
+import {
+  isLocalhostOrigin,
+  parseWebOrigin,
+  parseWebOriginList,
+} from "@/lib/security/origin";
+
 const AUTH_ALLOWED_REDIRECT_ORIGINS = "AUTH_ALLOWED_REDIRECT_ORIGINS";
 const AUTH_TRUSTED_PROXY_ORIGINS = "AUTH_TRUSTED_PROXY_ORIGINS";
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function getFirstHeaderValue(value: string | null): string | null {
   if (!value) {
@@ -11,44 +16,14 @@ function getFirstHeaderValue(value: string | null): string | null {
   return first ? first : null;
 }
 
-function normalizeOrigin(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return null;
-    }
-    if (url.username || url.password) {
-      return null;
-    }
-    if (url.pathname !== "/" || url.search || url.hash) {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
-function isLocalOrigin(origin: string): boolean {
-  try {
-    const hostname = new URL(origin).hostname.toLowerCase();
-    return LOCAL_HOSTNAMES.has(hostname);
-  } catch {
-    return false;
-  }
-}
-
 function parseAllowlistedOrigins(rawValue: string | undefined): string[] {
-  if (!rawValue) {
-    return [];
+  const parsed = parseWebOriginList(rawValue);
+  if (parsed.invalidValues.length > 0) {
+    throw new Error(
+      `Invalid auth redirect origin: ${parsed.invalidValues[0]}`
+    );
   }
-
-  const parsed = rawValue
-    .split(",")
-    .map((value) => normalizeOrigin(value.trim()))
-    .filter((value): value is string => value !== null);
-
-  return Array.from(new Set(parsed));
+  return parsed.origins.map((origin) => origin.origin);
 }
 
 function getForwardedOrigin(requestHeaders: Headers): string | null {
@@ -61,7 +36,7 @@ function getForwardedOrigin(requestHeaders: Headers): string | null {
 
   const forwardedProto =
     getFirstHeaderValue(requestHeaders.get("x-forwarded-proto")) ?? "https";
-  return normalizeOrigin(`${forwardedProto}://${forwardedHost}`);
+  return parseWebOrigin(`${forwardedProto}://${forwardedHost}`)?.origin ?? null;
 }
 
 function getHostOrigin(requestHeaders: Headers): string | null {
@@ -83,7 +58,7 @@ function getHostOrigin(requestHeaders: Headers): string | null {
     lowerHost.startsWith("localhost:") ||
     lowerHost.startsWith("127.0.0.1") ||
     lowerHost.startsWith("[::1]");
-  return normalizeOrigin(`${isLocal ? "http" : "https"}://${host}`);
+  return parseWebOrigin(`${isLocal ? "http" : "https"}://${host}`)?.origin ?? null;
 }
 
 function resolveAllowlistedRedirectOrigin(
@@ -98,7 +73,7 @@ function resolveAllowlistedRedirectOrigin(
   );
 
   if (allowlistedOrigins.length === 0) {
-    if (directOrigin && isLocalOrigin(directOrigin)) {
+    if (directOrigin && isLocalhostOrigin(directOrigin)) {
       return directOrigin;
     }
 
