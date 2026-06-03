@@ -2,11 +2,12 @@
 
 import Image, { type ImageProps } from "next/image";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import type { OraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 
 type SharedImageProps = Omit<ImageProps, "src" | "unoptimized">;
 
 type MediaImageProps =
-  | ({ kind: "owned"; src: string } & SharedImageProps)
+  | ({ kind: "owned"; src: OraclePlateImageSrc } & SharedImageProps)
   | ({ kind: "proxied"; remoteUrl: string } & SharedImageProps);
 
 export default function MediaImage(props: MediaImageProps) {

@@ -505,14 +505,23 @@ export async function proxyPublicToFastAPI(
   request: Request,
   path: string
 ): Promise<Response> {
+  const deps = await createDefaultDeps();
+  return proxyPublicToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyPublicToFastAPIWithDeps(
+  request: Request,
+  path: string,
+  deps: ProxyDeps
+): Promise<Response> {
   if (path.includes("?")) {
     throw new Error(
       "Path must not contain query string. Query params are extracted from request URL."
     );
   }
 
-  const requestId = getOrGenerateRequestId(request, createRandomId);
-  const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
+  const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
+  const { fastApiBaseUrl, internalSecret } = deps.config;
   if (!fastApiBaseUrl || (isDeployed() && !internalSecret)) {
     return NextResponse.json(
       {
@@ -539,7 +548,7 @@ export async function proxyPublicToFastAPI(
 
   const ctl = createTimedFetchController(request.signal, FASTAPI_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(`${fastApiBaseUrl}${path}${queryString}`, {
+    const response = await deps.fetch(`${fastApiBaseUrl}${path}${queryString}`, {
       method: "GET",
       headers,
       signal: ctl.signal,

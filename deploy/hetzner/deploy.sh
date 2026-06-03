@@ -78,6 +78,7 @@ for i in $(seq 1 30); do
   sleep 2
 done
 compose stop worker api
+compose run -T --rm api /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
 compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
 compose up -d --remove-orphans --force-recreate
 compose ps

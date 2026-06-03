@@ -97,12 +97,14 @@ def remote_http(monkeypatch):
 
 def _patch_remote_file_limits(monkeypatch, *, limit_bytes: int = REMOTE_FILE_LIMIT_BYTES) -> None:
     settings = SimpleNamespace(max_pdf_bytes=limit_bytes, max_epub_bytes=limit_bytes)
-    monkeypatch.setattr("nexus.services.media.get_settings", lambda: settings)
+    monkeypatch.setattr("nexus.services.remote_file_client.get_settings", lambda: settings)
     monkeypatch.setattr("nexus.services.upload.get_settings", lambda: settings)
 
 
 def _patch_remote_storage(monkeypatch, storage_client) -> None:
-    monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: storage_client)
+    monkeypatch.setattr(
+        "nexus.services.remote_file_ingest.get_storage_client", lambda: storage_client
+    )
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.services.epub_lifecycle.get_storage_client", lambda: storage_client)
 
@@ -402,18 +404,21 @@ class TestFromUrlSuccess:
         self,
         auth_client,
         direct_db: DirectSessionManager,
+        remote_http,
         monkeypatch,
     ):
-        """A .pdf URL creates file-backed PDF media through the upload lifecycle."""
+        """A .pdf URL creates file-backed PDF media through remote ingest."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr(
-            "nexus.services.media._download_remote_file",
-            lambda url, kind: (PDF_CONTENT, "application/pdf"),
+        _patch_remote_file_limits(monkeypatch)
+        _patch_remote_storage(monkeypatch, fake_storage)
+        _expect_remote_file(
+            remote_http,
+            "https://example.com/report.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
         )
 
         response = auth_client.post(
@@ -470,23 +475,21 @@ class TestFromUrlSuccess:
         self,
         auth_client,
         direct_db: DirectSessionManager,
+        remote_http,
         monkeypatch,
     ):
-        """A .epub URL creates file-backed EPUB media through the upload lifecycle."""
+        """A .epub URL creates file-backed EPUB media through remote ingest."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client",
-            lambda: fake_storage,
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-        monkeypatch.setattr(
-            "nexus.services.media._download_remote_file",
-            lambda url, kind: (EPUB_CONTENT, "application/epub+zip"),
+        _patch_remote_file_limits(monkeypatch)
+        _patch_remote_storage(monkeypatch, fake_storage)
+        _expect_remote_file(
+            remote_http,
+            "https://example.com/books/book.epub?download=1",
+            EPUB_CONTENT,
+            content_type="application/epub+zip",
         )
 
         response = auth_client.post(
@@ -1616,7 +1619,7 @@ class TestFromUrlRemoteFiles:
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         _patch_remote_file_limits(monkeypatch)
-        monkeypatch.setattr("nexus.services.media._REMOTE_FILE_TIMEOUT", httpx.Timeout(0.05))
+        monkeypatch.setattr("nexus.services.remote_file_client._TIMEOUT", httpx.Timeout(0.05))
 
         remote_http.get("http://example.com/slow.pdf").mock(
             side_effect=httpx.ReadTimeout("timed out")

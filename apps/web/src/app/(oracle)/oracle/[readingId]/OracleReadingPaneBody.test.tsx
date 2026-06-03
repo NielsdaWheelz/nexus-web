@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
 
@@ -169,7 +170,7 @@ describe("OracleReadingPaneBody", () => {
   });
 
   it("renders the owned plate URL from the backend", async () => {
-    const plateUrl = "/api/oracle/plates/123e4567-e89b-12d3-a456-426614174000";
+    const plateUrl = buildOraclePlateImageSrc("123e4567-e89b-12d3-a456-426614174000");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {

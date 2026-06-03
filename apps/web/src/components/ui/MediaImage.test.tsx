@@ -1,13 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import MediaImage from "./MediaImage";
 
 describe("MediaImage", () => {
   it("kind=owned renders the src verbatim without routing through the proxy", () => {
+    const src = buildOraclePlateImageSrc("123e4567-e89b-12d3-a456-426614174000");
     render(
       <MediaImage
         kind="owned"
-        src="/api/oracle/plates/abc123"
+        src={src}
         alt="plate"
         width={36}
         height={48}
@@ -15,7 +18,7 @@ describe("MediaImage", () => {
     );
 
     const img = screen.getByRole("img", { name: "plate" });
-    expect(img).toHaveAttribute("src", "/api/oracle/plates/abc123");
+    expect(img).toHaveAttribute("src", src);
     expect(img).not.toHaveAttribute("data-unoptimized");
   });
 
@@ -32,10 +35,7 @@ describe("MediaImage", () => {
     );
 
     const img = screen.getByRole("img", { name: "cover" });
-    expect(img).toHaveAttribute(
-      "src",
-      `/api/media/image?url=${encodeURIComponent(remoteUrl)}`,
-    );
+    expect(img).toHaveAttribute("src", buildMediaImageProxySrc(remoteUrl));
     expect(img).toHaveAttribute("data-unoptimized");
   });
 });

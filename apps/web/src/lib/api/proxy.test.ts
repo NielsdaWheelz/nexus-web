@@ -6,7 +6,11 @@ import {
   type SessionState,
 } from "@/lib/auth/session-cookie";
 import { __resetEnvForTests } from "@/lib/env";
-import { proxyToFastAPI, proxyToFastAPIWithDeps } from "./proxy";
+import {
+  proxyPublicToFastAPIWithDeps,
+  proxyToFastAPI,
+  proxyToFastAPIWithDeps,
+} from "./proxy";
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(() => {
@@ -580,5 +584,127 @@ describe("proxyToFastAPI", () => {
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer cookie-token"
     );
+  });
+});
+
+describe("proxyPublicToFastAPI", () => {
+  beforeEach(() => {
+    __resetEnvForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards only public asset request headers and server-owned internal auth", async () => {
+    const backendFetch = mockBackendFetch(
+      async () =>
+        new Response("plate", {
+          status: 200,
+          headers: {
+            "content-type": "image/jpeg",
+            "content-length": "5",
+            "cache-control": "public, max-age=31536000, immutable",
+            etag: '"plate"',
+            "x-content-type-options": "nosniff",
+            "x-request-id": "backend-request",
+            "set-cookie": "secret=value",
+            authorization: "Bearer backend",
+            "x-internal-debug": "hidden",
+          },
+        })
+    );
+
+    const response = await proxyPublicToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/oracle/plates/id?size=256", {
+        headers: {
+          authorization: "Bearer browser-token",
+          cookie: "session=browser-cookie",
+          "if-none-match": '"old"',
+          "x-nexus-internal": "spoofed",
+          "x-request-id": "request-1",
+        },
+      }),
+      "/oracle/plates/id",
+      deps({ backendFetch })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("plate");
+    expect(backendFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = firstFetchCall(backendFetch);
+    const headers = new Headers(init.headers);
+
+    expect(url).toBe("http://api.local/oracle/plates/id?size=256");
+    expect(init.method).toBe("GET");
+    expect(headers.get("x-nexus-internal")).toBe("internal-secret");
+    expect(headers.get("if-none-match")).toBe('"old"');
+    expect(headers.get("x-request-id")).toBe("request-1");
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("authorization")).toBeNull();
+
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("content-length")).toBe("5");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable"
+    );
+    expect(response.headers.get("etag")).toBe('"plate"');
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-request-id")).toBe("backend-request");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("authorization")).toBeNull();
+    expect(response.headers.get("x-internal-debug")).toBeNull();
+  });
+
+  it("returns a 304 with no response body", async () => {
+    const backendFetch = mockBackendFetch(
+      async () =>
+        new Response(null, {
+          status: 304,
+          headers: {
+            etag: '"plate"',
+            "x-request-id": "backend-request",
+          },
+        })
+    );
+
+    const response = await proxyPublicToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/oracle/plates/id", {
+        headers: { "if-none-match": '"plate"' },
+      }),
+      "/oracle/plates/id",
+      deps({ backendFetch })
+    );
+
+    expect(response.status).toBe(304);
+    expect(response.body).toBeNull();
+    expect(response.headers.get("etag")).toBe('"plate"');
+    expect(response.headers.get("x-request-id")).toBe("backend-request");
+  });
+
+  it("requires deployed FastAPI config before fetching", async () => {
+    vi.stubEnv("NEXUS_ENV", "prod");
+    const backendFetch = mockBackendFetch();
+    const readSession = vi.fn(readSessionFromCookie);
+
+    const response = await proxyPublicToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/oracle/plates/id"),
+      "/oracle/plates/id",
+      deps({ backendFetch, readSession, internalSecret: "" })
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "E_INTERNAL",
+        message: "Backend service is not configured",
+        request_id: "generated-request",
+      },
+    });
+    expect(backendFetch).not.toHaveBeenCalled();
+    expect(readSession).not.toHaveBeenCalled();
   });
 });

@@ -71,17 +71,17 @@ scaffolding.
    ┌─────────┐           │   React UI (Next.js App Router, apps/web)    │
    │ Android │──WebView──▶│                                              │
    │  shell  │           └───────┬──────────────────────────┬───────────┘
-   └─────────┘                   │ /api/* (product data)     │ /stream/* (SSE only)
-   ┌─────────┐  bearer token     │ same-origin, cookie auth  │ stream token, direct
+   └─────────┘                   │ /api/* product + assets   │ /stream/* (SSE only)
+   ┌─────────┐  bearer token     │ same-origin BFF           │ stream token, direct
    │Extension│──────────┐        ▼                           │
    └─────────┘          │  ┌──────────────────────┐          │
                         └─▶│  Next.js BFF (/api)   │          │
-                           │  proxy.ts: attach     │          │
-                           │  bearer + internal    │          │
-                           │  secret, no logic     │          │
+                           │  proxy.ts: product    │          │
+                           │  auth or public asset │          │
+                           │  proxy, no logic      │          │
                            └──────────┬────────────┘          │
-                                      │ Authorization: Bearer │
-                                      │ X-Nexus-Internal       │
+                                      │ Bearer + internal, or  │
+                                      │ public internal only    │
                                       ▼                        ▼
                            ┌─────────────────────────────────────────────┐
                            │            FastAPI  (python/nexus)           │
@@ -110,11 +110,15 @@ scaffolding.
 ```
 
 **The one rule that explains the shape:** the browser holds no tokens and never
-calls FastAPI directly for product data. It calls same-origin Next.js `/api/*`
-routes, which proxy to FastAPI with a server-attached bearer. The **only**
-exception is Server-Sent Events: the browser streams directly from FastAPI
-`/stream/*` using a short-lived, single-use stream token minted through the BFF.
-See [`rules/layers.md`](rules/layers.md) and [`rules/transport.md`](rules/transport.md).
+calls FastAPI directly for product data. Product data calls same-origin Next.js
+`/api/*` routes, which proxy to FastAPI with a server-attached bearer and the
+internal secret. Public owned assets also use the BFF, but as a separate
+cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
+only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
+browser-to-FastAPI exception is Server-Sent Events: the browser streams from
+FastAPI `/stream/*` using a short-lived, single-use stream token minted through
+the BFF. See [`rules/layers.md`](rules/layers.md) and
+[`rules/transport.md`](rules/transport.md).
 
 ---
 
@@ -265,7 +269,24 @@ Errors become HTTP via three exception handlers (`responses.py`): `ApiError`
 carries an `ApiErrorCode` enum mapped to a status; unhandled exceptions become a
 detail-free `500 E_INTERNAL` (with special logging for DB pool exhaustion).
 
-### 5.2 The SSE exception (streaming)
+### 5.2 A public owned asset request
+
+Oracle plate images are public owned assets, not product data:
+
+1. The UI renders backend-provided Oracle plate URLs through the typed
+   `OraclePlateImageSrc` contract and `MediaImage kind="owned"`.
+2. Next Image may optimize `/api/oracle/plates/**`; `/api/media/image` is not in
+   `images.localPatterns`.
+3. The route handler calls `proxyPublicToFastAPI(req, "/oracle/plates/{id}")`.
+   It strips browser cookies and authorization headers, forwards cache validators
+   and `X-Request-ID`, and attaches `X-Nexus-Internal`.
+4. FastAPI admits `/oracle/plates/{id}` only after internal-header verification;
+   there is no viewer context and no bearer auth.
+5. `services/oracle_plates.py` resolves immutable DB metadata, validates the
+   content-addressed storage contract, returns `304` from metadata when the ETag
+   matches, and reads storage through integrity-checked helpers for `200`.
+
+### 5.3 The SSE exception (streaming)
 
 Streaming bypasses the BFF for data delivery:
 
@@ -311,13 +332,15 @@ The tables group into these domains:
 `reader_profiles`, `workspace_sessions`, `command_palette_usages`.
 
 **Media / ingestion** — `media` (the central readable entity), `media_file`
-(object-storage metadata), `source_snapshots` + `content_index_runs` (versioned
-extraction/index runs), `project_gutenberg_catalog`, `user_media_deletions`.
+(private original-file object metadata), `source_snapshots` +
+`content_index_runs` (versioned extraction/index runs),
+`project_gutenberg_catalog`, `user_media_deletions`.
 
 **Reader content / fragments** — `fragments` (immutable render units carrying
 `canonical_text` + `html_sanitized`), `fragment_blocks`, EPUB structure
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
-`epub_resources`), `pdf_page_text_spans`, `reader_media_state`.
+`epub_resources` for private extracted asset object metadata),
+`pdf_page_text_spans`, `reader_media_state`.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
@@ -362,8 +385,9 @@ tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
 stream-token replay claims.
 
 **Oracle** — `oracle_corpus_set_versions`, `oracle_corpus_works`,
-`oracle_corpus_passages` (PGVector 256), `oracle_corpus_images` (PGVector 256),
-`oracle_readings`, `oracle_reading_passages`, `oracle_reading_events`.
+`oracle_corpus_passages` (PGVector 256), `oracle_corpus_images` (PGVector 256 +
+public owned plate object metadata), `oracle_readings`,
+`oracle_reading_passages`, `oracle_reading_events`.
 
 > Two things to know when reasoning about the schema: (1) `background_jobs` is
 > invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
@@ -544,35 +568,43 @@ surface → key flows.
 
 ### 8.1 Media ingestion
 
-The pipeline that turns five heterogeneous sources into one `media` row plus
-per-format artifacts. Central service: `services/media.py`; state owner:
-`services/media_processing_state.py`.
+The pipeline turns heterogeneous sources into one `media` row plus per-format
+artifacts, but there is no single god-service owner. `services/media.py` is the
+catalog/hydration service: visible-media queries, response shaping, fragment
+listing, browser article/file capture, and source refresh orchestration. Source
+creation and asset reads are capability-owned:
 
-- **The entity & state machine**: `media.processing_status` runs
-  `pending → extracting → ready_for_reading`. (`embedding`/`ready` enum values
-  exist but are unused on the document path — `ready_for_reading` is the effective
-  success terminal; search/embedding readiness lives on the *separate*
-  `media_content_index_states` machine.) `failure_stage ∈ {extract, transcribe,
-  embed, metadata, other}`; **only `source` and `metadata` are user-retryable**
-  (extract/chunk/embed are deterministic and recovered by the periodic
-  reconciler). `failure_stage='metadata'` and `'embed'` are *soft* warnings that
-  coexist with a readable status.
-- **Capture entry points** (`api/routes/media.py`): `POST /media/from-url`
-  (classifies YouTube / X / PDF-or-EPUB-URL / web article and routes to the right
-  ingest task), `POST /media/upload/init` + `POST /media/{id}/ingest`
-  (signed-URL-first upload of PDF/EPUB with magic-byte + SHA-256 validation and
-  dedupe), and `POST /media/capture/{article,file,url}` (extension-authenticated
-  browser capture — captured articles go straight to `ready_for_reading`).
-- **Per-format adapters**: EPUB and PDF extraction (§8.2), web articles via a
-  **Node subprocess** (`node/ingest/ingest.mjs`, jsdom + Mozilla Readability, no
-  browser), YouTube captions, X/Twitter threads (synchronous, rendered as
-  `web_article`-kind media), and the Project Gutenberg catalog mirror.
-- **Recovery**: `reconcile_stale_ingest_media` (periodic) requeues/fails stale
-  `extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
-  `media_events` SSE streams live status to the UI.
-- **Deletion** (`services/media_deletion.py`) is explicit and reference-counted
-  (no DB cascades): per-viewer hide vs hard-delete-when-unreferenced, with storage
-  objects deleted only after the DB commit.
+- `media_ingest.py`: URL classification and dispatch only.
+- `x_ingest.py`: same-author X thread snapshots, quote-post media, X refresh, no
+  oEmbed fallback.
+- `youtube_ingest.py`: YouTube row creation and ingest job enqueueing.
+- `remote_file_ingest.py` + `remote_file_client.py`: PDF/EPUB URL downloads,
+  SSRF-safe outbound policy, streaming to storage, hashing, dedupe, extraction
+  enqueueing.
+- `epub_assets.py`: private EPUB resource asset authorization and integrity
+  reads.
+- `listening_state.py`: podcast listening-state CRUD and batch updates.
+- `media_file_access.py`: signed original-file download URLs.
+- `media_processing_state.py`: every processing-state transition, including
+  reingest reset and ready-for-reading completion.
+
+**Entity & state machine:** `media.processing_status` runs
+`pending → extracting → ready_for_reading`. (`embedding`/`ready` enum values
+exist but are unused on the document path; search/embedding readiness lives on
+the separate `media_content_index_states` machine.) `failure_stage ∈ {extract,
+transcribe, embed, metadata, other}`; only `source` and `metadata` are
+user-retryable. `failure_stage='metadata'` and `'embed'` are soft warnings that
+coexist with readable media.
+
+**Capture entry points** (`api/routes/media.py`): `POST /media/from-url`,
+`POST /media/upload/init` + `POST /media/{id}/ingest`, and
+`POST /media/capture/{article,file,url}`. Routes are transport adapters; they
+call exactly one service owner.
+
+**Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
+`extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
+`media_events` streams live status. `services/media_deletion.py` is explicit and
+reference-counted; storage deletion happens only after the DB commit.
 
 ### 8.2 Reader
 
@@ -602,6 +634,13 @@ per section, where the `section_id` is the path-encodable `href_path[#fragment]`
 used in reader URLs. Navigation, sections, and resume state are served from
 `api/routes/media.py`; resume stores reflow-safe canonical offsets (web/transcript)
 or page/zoom (PDF), never pixels.
+
+EPUB resource assets use a private media asset lane:
+`/api/media/[id]/assets/[...assetKey]` → FastAPI `/media/{id}/assets/{assetKey}`.
+`services/epub_assets.py` authorizes the viewer, resolves immutable
+`epub_resources` storage metadata, releases the DB session, then reads the object
+through integrity-checked storage helpers. EPUB assets are not in Next Image
+`images.localPatterns`.
 
 **Highlights** (`services/highlights.py`): a selection becomes a stored highlight
 with a precomputed `exact`/`prefix`/`suffix` triple (a 64-codepoint context
@@ -653,15 +692,23 @@ push a reader target (`lib/conversations/*`).
 ### 8.4 Oracle
 
 An agentic "reading" feature over a curated, versioned **public-domain literary
-corpus** (`services/oracle.py`). A short question → retrieve corpus passages
-(+ the user's library) and pick a plate image → one LLM call produces a structured
-three-phase interpretation → stream + persist as `oracle_reading_events` + citation
-"folios". It has its **own** retrieval/prompt/persistence and does **not** use the
-four chat agent tools, but it **reuses the SSE transport** (stream tokens +
-`stream.py` tail). The LLM emits only integer candidate indices + prose; all
-citation text comes from the retrieved candidates (output that leaks source text
-fails the parse). Frontend lives in the separate `app/(oracle)/` route group
-(outside the pane system).
+corpus. `services/oracle.py` owns reading generation: question validation,
+corpus/library retrieval, plate selection, LLM prompt/call, parse, persistence,
+and SSE event emission. A short question → retrieve corpus passages (+ the
+user's library) and pick a plate image → one LLM call produces a structured
+three-phase interpretation → stream + persist as `oracle_reading_events` +
+citation "folios". It has its **own** retrieval/prompt/persistence and does
+**not** use the four chat agent tools, but it **reuses the SSE transport**.
+
+Oracle plate bytes and URLs are separate owned assets. `services/oracle_plates.py`
+owns `oracle_plate_url`, DB metadata lookup, content-addressed storage-key
+validation, ETag metadata, and integrity-checked storage reads. The public image
+route is `/api/oracle/plates/[id]` in Next.js → `/oracle/plates/{id}` in FastAPI.
+It is cookie-free, internal-header-protected, and safe for Next Image
+optimization. The LLM emits only integer candidate indices + prose; all citation
+text comes from the retrieved candidates (output that leaks source text fails the
+parse). Frontend lives in the separate `app/(oracle)/` route group (outside the
+pane system).
 
 ### 8.5 Libraries, sharing & the default-library closure
 
@@ -720,7 +767,8 @@ libraries + auto-queue), sync episodes into `media` rows of kind
 episodes stay `pending` until a viewer requests transcription. The **playback
 queue** (`playback_queue_items`, dense positions, unique per media) and
 **listening state** (`podcast_listening_states`, resume position, ≥95%
-auto-completion) are per-user. Frontend: a single app-wide `<audio>` element in
+auto-completion, `services/listening_state.py`) are per-user. Frontend: a single
+app-wide `<audio>` element in
 `lib/player/globalPlayer.tsx` with a Web Audio effects graph, OS media-session
 integration, and 15s listening-state persistence.
 
@@ -815,7 +863,8 @@ The `Makefile` is the single entrypoint; `make help` is canonical. Targets group
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
 sync env → rsync repo to the VPS → `compose build` → stop worker+api → **run
-`alembic upgrade head`** via a one-off `compose run` → `compose up -d
+`python /app/scripts/ensure_oracle_seed_objects.py`** → **run
+`alembic upgrade head`** via one-off `compose run` commands → `compose up -d
 --force-recreate`. Env contracts live in `deploy/env/*` (real values untracked,
 `.example` tracked); the sync scripts strongly validate them and reject legacy
 Supabase/`STORAGE_*` keys. R2 CORS/lifecycle are applied as code via
@@ -886,29 +935,35 @@ The things most likely to bite you, distilled:
    don't touch the ORM while streaming a body.
 2. **The browser holds no tokens.** Product data goes through `/api/*`; only SSE
    talks to FastAPI directly, with a single-use stream token minted per connect.
-3. **`ready_for_reading` is the document success terminal**; search/embedding
+3. **Private and public asset lanes are different.** `/api/media/image` and EPUB
+   assets are viewer-authenticated and unoptimized; `/api/oracle/plates/[id]` is
+   cookie-free, internal-header-protected, content-addressed, and optimizable.
+4. **`services/media.py` is catalog/hydration, not an ingest catch-all.** URL
+   ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
+   and processing transitions have named owners.
+5. **`ready_for_reading` is the document success terminal**; search/embedding
    readiness is a *separate* state machine. Only `source` + `metadata` are
    user-retryable stages.
-4. **Reader offsets are Unicode codepoints into immutable `canonical_text`.** The
+6. **Reader offsets are Unicode codepoints into immutable `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.
-5. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
+7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
    does; the client only tails SSE and reconciles.
-6. **Active conversation path is per-viewer**; only path messages enter context.
-7. **Citation `[N]` is a dense, turn-global ordinal**, not a per-tool index; only
+8. **Active conversation path is per-viewer**; only path messages enter context.
+9. **Citation `[N]` is a dense, turn-global ordinal**, not a per-tool index; only
    `message_retrievals` rows with a materialized citation get a number (the
    attached-reference citation regression came from breaking this).
-8. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
+10. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
    `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the
    reconciler + manual retry.
-9. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
+11. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
    (storage) effects after the DB commit.
-10. **pgvector is fixed at 256 dims**; the chunk ANN only matches embeddings whose
+12. **pgvector is fixed at 256 dims**; the chunk ANN only matches embeddings whose
     config-hash equals the media's *active* config — a model change silently drops
     a media from semantic search until re-indexed.
-11. **Frontend routing is the pane system, not `children`.** Behavior lives in
+13. **Frontend routing is the pane system, not `children`.** Behavior lives in
     `*PaneBody.tsx`; the URL is a projection of the active pane.
-12. **Migrations are hand-written**; `models.py` and the live DB can drift —
+14. **Migrations are hand-written**; `models.py` and the live DB can drift —
     there's no autogenerate safety net.
 
 ---
@@ -923,10 +978,10 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`) |
 | The schema | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`) |
 | Background jobs / worker | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/` |
-| Media ingestion | `python/nexus/services/media.py` (+ `*_ingest.py`, `*_lifecycle.py`) |
+| Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `x_ingest.py`, `youtube_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
-| Oracle | `python/nexus/services/oracle.py` |
+| Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |
 | Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation,resource_resolver}.py` |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{libraries,default_library_closure,contributors,notes}.py` |

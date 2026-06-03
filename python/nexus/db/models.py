@@ -6197,14 +6197,28 @@ class OracleCorpusImage(Base):
             name="ck_oracle_images_embedding_model_length",
         ),
         CheckConstraint(
-            "storage_key LIKE 'oracle/plates/%'", name="ck_oracle_images_storage_key_prefix"
+            r"storage_key ~ '^oracle/plates/[0-9a-f]{64}\.(jpg|png|webp)$'",
+            name="ck_oracle_images_storage_key_shape",
         ),
         CheckConstraint(
             "content_type IN ('image/jpeg', 'image/png', 'image/webp')",
             name="ck_oracle_images_content_type",
         ),
         CheckConstraint("byte_size > 0", name="ck_oracle_images_byte_size_positive"),
-        CheckConstraint("char_length(sha256) = 64", name="ck_oracle_images_sha256_length"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_oracle_images_sha256_hex"),
+        CheckConstraint(
+            "substring(storage_key from "
+            r"'^oracle/plates/([0-9a-f]{64})\.(?:jpg|png|webp)$') = sha256",
+            name="ck_oracle_images_storage_key_sha256_match",
+        ),
+        CheckConstraint(
+            """(
+                (content_type = 'image/jpeg' AND storage_key LIKE '%.jpg')
+                OR (content_type = 'image/png' AND storage_key LIKE '%.png')
+                OR (content_type = 'image/webp' AND storage_key LIKE '%.webp')
+            )""",
+            name="ck_oracle_images_storage_key_content_type_match",
+        ),
         UniqueConstraint(
             "corpus_set_version_id",
             "source_url",

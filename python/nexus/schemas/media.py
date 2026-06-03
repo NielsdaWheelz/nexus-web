@@ -303,7 +303,7 @@ class FromUrlRequest(BaseModel):
 
     Creates media from URL with service-layer classification:
     - supported YouTube variants -> canonical `video` identity (create-or-reuse)
-    - supported X/Twitter post URLs -> canonical `web_article` from official oEmbed
+    - supported X/Twitter post URLs -> canonical same-author thread `web_article`
     - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
     - other URLs -> provisional `web_article`
     URL validation (length, scheme, host, etc.) happens in the service layer.

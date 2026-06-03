@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -47,6 +47,7 @@ from nexus.schemas.oracle import (
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
 )
+from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.semantic_chunks import (
     build_deterministic_hash_embedding,
@@ -55,8 +56,6 @@ from nexus.services.semantic_chunks import (
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
-from nexus.storage.read import read_object_checked
 
 logger = get_logger(__name__)
 
@@ -140,10 +139,6 @@ ORACLE_CITATION_MARKER_RE = re.compile(
     r"|\b\d+:\d+(?:[-–]\d+)?\b)",
     re.IGNORECASE,
 )
-
-
-def oracle_plate_path(image_id: UUID) -> str:
-    return f"/api/oracle/plates/{image_id}"
 
 
 # ---------- create / fetch / list -------------------------------------------
@@ -430,7 +425,7 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
         plate_thumbnail_url: str | None = None
         plate_alt_text: str | None = None
         if row["image_id"] is not None:
-            plate_thumbnail_url = oracle_plate_path(row["image_id"])
+            plate_thumbnail_url = oracle_plate_url(row["image_id"])
             plate_alt_text = (
                 f"{row['image_work_title']} — {row['image_attribution_text']}"
                 if row["image_work_title"] and row["image_attribution_text"]
@@ -453,37 +448,6 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
             )
         )
     return out
-
-
-@dataclass(frozen=True)
-class OraclePlateBytes:
-    data: bytes
-    content_type: str
-    etag: str  # quoted sha256
-
-
-def get_oracle_plate_bytes(
-    *,
-    session_factory: Callable[[], Session],
-    image_id: UUID,
-    storage_client: StorageClientBase | None = None,
-) -> OraclePlateBytes:
-    with session_factory() as db:
-        img = db.get(OracleCorpusImage, image_id)
-        if img is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Oracle plate not found")
-        storage_key = img.storage_key
-        sha256 = img.sha256
-        byte_size = img.byte_size
-        content_type = img.content_type
-    sc = storage_client or get_storage_client()
-    try:
-        data = read_object_checked(sc, storage_key, expected_sha256=sha256, expected_size=byte_size)
-    except StorageError as exc:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is missing or unreadable"
-        ) from exc
-    return OraclePlateBytes(data=data, content_type=content_type, etag=f'"{sha256}"')
 
 
 def compute_concordance(
@@ -1018,7 +982,7 @@ def _usage_total_tokens(usage: Any) -> int | None:
 
 def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
     return {
-        "url": oracle_plate_path(image.id),
+        "url": oracle_plate_url(image.id),
         "attribution_text": image.attribution_text,
         "artist": image.artist,
         "work_title": image.work_title,

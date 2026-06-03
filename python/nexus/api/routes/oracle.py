@@ -16,6 +16,7 @@ from nexus.schemas.oracle import (
     OracleStreamConnectionOut,
 )
 from nexus.services import oracle as oracle_service
+from nexus.services import oracle_plates
 from nexus.services.image_proxy import etags_match
 
 router = APIRouter(tags=["oracle"])
@@ -82,17 +83,18 @@ def get_oracle_reading(
 @router.get("/oracle/plates/{image_id}")
 def get_oracle_plate(image_id: UUID, request: Request) -> Response:
     inm = request.headers.get("If-None-Match")
-    plate = oracle_service.get_oracle_plate_bytes(
+    metadata = oracle_plates.get_oracle_plate_metadata(
         session_factory=get_session_factory(), image_id=image_id
     )
-    if inm and etags_match(inm, plate.etag):
-        return Response(status_code=304, headers={"ETag": plate.etag})
+    if inm and etags_match(inm, metadata.etag):
+        return Response(status_code=304, headers={"ETag": metadata.etag})
+    plate = oracle_plates.read_oracle_plate_bytes(metadata)
     return Response(
         content=plate.data,
         media_type=plate.content_type,
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Length": str(len(plate.data)),
+            "Content-Length": str(plate.byte_size),
             "X-Content-Type-Options": "nosniff",
             "ETag": plate.etag,
         },

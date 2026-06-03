@@ -63,7 +63,7 @@ from nexus.oracle.seed_objects import (
     ensure_oracle_seed_objects,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.oracle import oracle_plate_path
+from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.semantic_chunks import current_transcript_embedding_model
 from nexus.storage.client import get_storage_client
 
@@ -265,7 +265,7 @@ def _write_seed_file(*, reading_id: UUID, image_id: UUID) -> None:
         "reading_id": str(reading_id),
         "image_id": str(image_id),
         "storage_key": FIXTURE_STORAGE_KEY,
-        "plate_route": oracle_plate_path(image_id),
+        "plate_route": oracle_plate_url(image_id),
     }
     seed_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote Oracle owned-plate seed: {seed_path}")

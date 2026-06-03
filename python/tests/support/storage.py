@@ -1,6 +1,7 @@
 """Test-only storage fakes."""
 
 from collections.abc import Iterator
+from typing import BinaryIO
 from uuid import uuid4
 
 from nexus.storage.client import ObjectMetadata, SignedUpload, StorageClientBase, StorageError
@@ -53,6 +54,14 @@ class FakeStorageClient(StorageClientBase):
         content_type: str = "application/octet-stream",
     ) -> None:
         self._objects[path] = (content, content_type)
+
+    def put_object_stream(
+        self,
+        path: str,
+        content: BinaryIO,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        self._objects[path] = (content.read(), content_type)
 
     def copy_object(self, source_path: str, destination_path: str) -> None:
         if source_path not in self._objects:

@@ -65,7 +65,6 @@ MACHINE_DERIVED_MEDIA_AUTHOR_CREDIT_SOURCES = frozenset(
         "web_article_capture",
         "x_api_author_thread",
         "x_api_quoted_post",
-        "x_oembed_article",
         "youtube_metadata",
     }
 )

@@ -43,3 +43,29 @@ def begin_extraction(db: Session, media: Media) -> None:
     media.failed_at = None
     media.updated_at = func.now()
     db.flush()
+
+
+def reset_for_reingest(db: Session, media: Media) -> None:
+    """Clear failure metadata, bump attempts, and restart source extraction."""
+    media.processing_status = ProcessingStatus.extracting
+    media.processing_attempts = (media.processing_attempts or 0) + 1
+    media.processing_started_at = func.now()
+    media.processing_completed_at = None
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = func.now()
+    db.flush()
+
+
+def mark_ready_for_reading(db: Session, media: Media) -> None:
+    """Clear failure metadata and mark readable extraction complete."""
+    media.processing_status = ProcessingStatus.ready_for_reading
+    media.processing_completed_at = func.now()
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = func.now()
+    db.flush()

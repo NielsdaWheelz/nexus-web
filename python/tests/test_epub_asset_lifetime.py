@@ -3,7 +3,7 @@
 import hashlib
 from uuid import uuid4
 
-from nexus.services import media as media_service
+from nexus.services import epub_assets
 from tests.support.storage import FakeStorageClient
 
 
@@ -30,7 +30,7 @@ def test_epub_asset_storage_read_happens_after_short_db_phase(monkeypatch):
         assert db is fake_db
         assert fake_db.closed is False
         metadata_calls.append(asset_key)
-        return media_service._EpubAssetMetadata(
+        return epub_assets._EpubAssetMetadata(
             storage_path=storage_path,
             content_type="image/png",
             size_bytes=len(asset_content),
@@ -44,9 +44,9 @@ def test_epub_asset_storage_read_happens_after_short_db_phase(monkeypatch):
 
     storage = AssertingStorageClient()
     storage.put_object(storage_path, asset_content, "image/png")
-    monkeypatch.setattr(media_service, "_get_epub_asset_metadata_for_viewer", load_metadata)
+    monkeypatch.setattr(epub_assets, "_get_epub_asset_metadata_for_viewer", load_metadata)
 
-    result = media_service.get_epub_asset_for_viewer(
+    result = epub_assets.get_epub_asset_for_viewer(
         session_factory=lambda: fake_db,
         viewer_id=uuid4(),
         media_id=uuid4(),

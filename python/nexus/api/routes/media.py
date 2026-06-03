@@ -43,10 +43,14 @@ from nexus.schemas.media import (
 )
 from nexus.schemas.reader import ReaderResumeState
 from nexus.services import (
+    epub_assets,
     epub_lifecycle,
     epub_read,
     image_proxy,
+    listening_state,
     locator_resolver,
+    media_file_access,
+    media_ingest,
     reader_navigation,
 )
 from nexus.services import libraries as libraries_service
@@ -185,7 +189,7 @@ def create_from_url(
 
     Kind classification happens in the service layer:
     - YouTube URLs -> canonical `video` identity with create-or-reuse semantics
-    - X/Twitter post URLs -> canonical `web_article` from official oEmbed
+    - X/Twitter post URLs -> canonical same-author thread `web_article`
     - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
     - Other URLs -> provisional `web_article`
 
@@ -200,7 +204,7 @@ def create_from_url(
     # Get request_id from state if available (set by request-id middleware)
     request_id = getattr(request.state, "request_id", None)
 
-    result = media_service.enqueue_media_from_url(
+    result = media_ingest.enqueue_media_from_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
@@ -266,7 +270,7 @@ def create_captured_url(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    result = media_service.enqueue_media_from_url(
+    result = media_ingest.enqueue_media_from_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
@@ -381,7 +385,7 @@ def get_listening_state(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get per-media listening state for the authenticated viewer."""
-    result = media_service.get_listening_state_for_viewer(db, viewer.user_id, media_id)
+    result = listening_state.get_listening_state_for_viewer(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
 
 
@@ -393,7 +397,7 @@ def put_listening_state(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Upsert per-media listening state for the authenticated viewer."""
-    media_service.upsert_listening_state_for_viewer(
+    listening_state.upsert_listening_state_for_viewer(
         db,
         viewer.user_id,
         media_id,
@@ -412,7 +416,7 @@ def post_listening_state_batch(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Batch mark many visible podcast episodes played/unplayed."""
-    media_service.batch_mark_listening_state_for_viewer(
+    listening_state.batch_mark_listening_state_for_viewer(
         db,
         viewer.user_id,
         media_ids=body.media_ids,
@@ -629,7 +633,7 @@ def get_epub_asset(
     Returns binary payload with resolved content type and cache headers.
     Visibility, kind, readiness, and key-format guards enforced by service layer.
     """
-    result = media_service.get_epub_asset_for_viewer(
+    result = epub_assets.get_epub_asset_for_viewer(
         session_factory=get_session_factory(),
         viewer_id=viewer.user_id,
         media_id=media_id,
@@ -695,7 +699,7 @@ def get_media_file(
         - url: Signed download URL
         - expires_at: When the URL expires
     """
-    result = upload_service.get_signed_download_url(
+    result = media_file_access.get_signed_download_url(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,

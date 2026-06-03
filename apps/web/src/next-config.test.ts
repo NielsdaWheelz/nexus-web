@@ -44,3 +44,18 @@ describe("next.config Server Actions", () => {
     });
   });
 });
+
+describe("next.config images", () => {
+  it("optimizes only public owned Oracle plate images", async () => {
+    const config = await loadConfig(deployedEnv);
+
+    expect(config.images?.localPatterns).toEqual([
+      {
+        pathname: "/api/oracle/plates/**",
+      },
+    ]);
+    expect(config.images?.localPatterns).not.toContainEqual({
+      pathname: "/api/media/image",
+    });
+  });
+});

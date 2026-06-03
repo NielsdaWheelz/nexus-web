@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import BinaryIO
 
 import boto3
 from botocore.client import BaseClient, Config
@@ -74,6 +75,16 @@ class StorageClientBase(ABC):
         content_type: str = "application/octet-stream",
     ) -> None:
         """Upload bytes to an object path."""
+        ...
+
+    @abstractmethod
+    def put_object_stream(
+        self,
+        path: str,
+        content: BinaryIO,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        """Upload streamed bytes to an object path."""
         ...
 
     @abstractmethod
@@ -204,6 +215,22 @@ class StorageClient(StorageClientBase):
         self,
         path: str,
         content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=path,
+                Body=content,
+                ContentType=content_type,
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to upload object {path}") from exc
+
+    def put_object_stream(
+        self,
+        path: str,
+        content: BinaryIO,
         content_type: str = "application/octet-stream",
     ) -> None:
         try:

@@ -17,6 +17,7 @@ from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+WEB_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)

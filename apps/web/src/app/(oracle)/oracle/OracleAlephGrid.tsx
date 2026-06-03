@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
 import MediaImage from "@/components/ui/MediaImage";
+import { requireOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
@@ -60,6 +61,11 @@ export default function OracleAlephGrid() {
           );
         }
 
+        const plateSrc =
+          !pending && row.plate_thumbnail_url !== null
+            ? requireOraclePlateImageSrc(row.plate_thumbnail_url)
+            : null;
+
         return (
           <button
             key={row.id}
@@ -68,10 +74,10 @@ export default function OracleAlephGrid() {
             onClick={() => router.push(`/oracle/${row.id}`)}
             aria-label={`Folio ${toRoman(row.folio_number)}: ${motto}`}
           >
-            {!pending && row.plate_thumbnail_url !== null && (
+            {plateSrc !== null && (
               <MediaImage
                 kind="owned"
-                src={row.plate_thumbnail_url}
+                src={plateSrc}
                 alt={row.plate_alt_text ?? ""}
                 fill
                 sizes="(max-width: 768px) 50vw, 25vw"

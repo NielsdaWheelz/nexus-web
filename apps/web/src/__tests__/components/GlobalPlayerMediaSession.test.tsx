@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { withRenderEnvironment } from "../helpers/renderEnvironment";
 import {
   buildPlaybackQueueItem,
   installPlaybackFetchMock,
@@ -147,7 +149,7 @@ describe("GlobalPlayer MediaSession integration", () => {
 
     let unmount: (() => void) | null = null;
     try {
-      ({ unmount } = render(<App />));
+      ({ unmount } = render(withRenderEnvironment(<App />)));
       fireEvent.click(screen.getByRole("button", { name: "Load A" }));
 
       await waitFor(() => {
@@ -168,7 +170,7 @@ describe("GlobalPlayer MediaSession integration", () => {
       expect(sessionMetadata?.artist).toBe("Queue Podcast");
       expect(sessionMetadata?.album).toBe("Queue Podcast");
       expect(sessionMetadata?.artwork?.[0]?.src).toBe(
-        "/api/media/image?url=https%3A%2F%2Fcdn.example.com%2Fpodcast-cover.jpg"
+        buildMediaImageProxySrc("https://cdn.example.com/podcast-cover.jpg"),
       );
 
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
@@ -251,7 +253,7 @@ describe("GlobalPlayer MediaSession integration", () => {
 
     let unmount: (() => void) | null = null;
     try {
-      ({ unmount } = render(<App />));
+      ({ unmount } = render(withRenderEnvironment(<App />)));
       fireEvent.click(screen.getByRole("button", { name: "Load A" }));
 
       await waitFor(() => {

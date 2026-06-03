@@ -12,6 +12,11 @@ import { apiFetch } from "@/lib/api/client";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
+import {
+  parseOraclePlateImageSrc,
+  requireOraclePlateImageSrc,
+  type OraclePlateImageSrc,
+} from "@/lib/media/oraclePlateImage";
 import { toRoman } from "@/lib/toRoman";
 import { useResource } from "@/lib/api/useResource";
 import { isRecord } from "@/lib/validation";
@@ -33,7 +38,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   ascent: "III. The Ascent",
 };
 
-interface ImagePayload {
+interface ApiImagePayload {
   url: string;
   attribution_text: string;
   artist: string;
@@ -41,6 +46,10 @@ interface ImagePayload {
   year: string | null;
   width: number;
   height: number;
+}
+
+interface ImagePayload extends Omit<ApiImagePayload, "url"> {
+  url: OraclePlateImageSrc;
 }
 
 interface PassagePayload {
@@ -62,7 +71,7 @@ export interface ReadingDetail {
   argument_text: string | null;
   question_text: string;
   status: "pending" | "streaming" | "complete" | "failed";
-  image: ImagePayload | null;
+  image: ApiImagePayload | null;
   passages: PassagePayload[];
   events: { seq: number; event_type: string; payload: Record<string, unknown> }[];
   created_at: string;
@@ -155,14 +164,24 @@ function parseImagePayload(payload: Record<string, unknown>): ImagePayload | nul
   ) {
     return null;
   }
+  const plateUrl = parseOraclePlateImageSrc(url);
+  if (plateUrl === null) return null;
   return {
-    url,
+    url: plateUrl,
     attribution_text: attributionText,
     artist,
     work_title: workTitle,
     year,
     width,
     height,
+  };
+}
+
+function normalizeDetailImagePayload(image: ApiImagePayload | null): ImagePayload | null {
+  if (image === null) return null;
+  return {
+    ...image,
+    url: requireOraclePlateImageSrc(image.url),
   };
 }
 
@@ -207,7 +226,7 @@ function stateFromDetail(detail: ReadingDetail): ReadingState {
     argument: detail.argument_text,
     createdAt: detail.created_at,
     status: detail.status,
-    image: detail.image,
+    image: normalizeDetailImagePayload(detail.image),
     passages: [...detail.passages].sort(
       (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
     ),

@@ -998,6 +998,7 @@ class TestMigrationUpgradeDowngrade:
             # Known-good column template (everything but ``id``/``created_at``/``tags``,
             # which carry server defaults). Each case overrides exactly one binding.
             def good_params() -> dict:
+                digest = "0" * 64
                 return {
                     "id": uuid4(),
                     "corpus_set_version_id": corpus_set_version_id,
@@ -1008,10 +1009,10 @@ class TestMigrationUpgradeDowngrade:
                     "attribution_text": "Attribution",
                     "width": 1,
                     "height": 1,
-                    "storage_key": "oracle/plates/contract-test.jpg",
+                    "storage_key": f"oracle/plates/{digest}.jpg",
                     "content_type": "image/jpeg",
                     "byte_size": 1,
-                    "sha256": "0" * 64,
+                    "sha256": digest,
                 }
 
             insert_sql = text(
@@ -1055,20 +1056,35 @@ class TestMigrationUpgradeDowngrade:
                 session.execute(insert_sql, good_params())
                 session.commit()
 
-            negative_cases: list[tuple[dict, str]] = [
+            negative_cases: list[tuple[dict, tuple[str, ...]]] = [
                 # 1) storage_key NULL -> NOT NULL violation.
-                ({"storage_key": None}, "storage_key"),
+                ({"storage_key": None}, ("storage_key",)),
                 # 2) byte_size = 0 -> ck_oracle_images_byte_size_positive.
-                ({"byte_size": 0}, "ck_oracle_images_byte_size_positive"),
+                ({"byte_size": 0}, ("ck_oracle_images_byte_size_positive",)),
                 # 3) disallowed content_type -> ck_oracle_images_content_type.
-                ({"content_type": "image/svg+xml"}, "ck_oracle_images_content_type"),
-                # 4) sha256 not 64 chars -> ck_oracle_images_sha256_length.
-                ({"sha256": "short"}, "ck_oracle_images_sha256_length"),
-                # 5) wrong storage_key prefix -> ck_oracle_images_storage_key_prefix.
-                ({"storage_key": "media/x"}, "ck_oracle_images_storage_key_prefix"),
+                ({"content_type": "image/svg+xml"}, ("ck_oracle_images_content_type",)),
+                # 4) sha256 not 64 lowercase hex chars -> ck_oracle_images_sha256_hex.
+                (
+                    {"sha256": "short"},
+                    ("ck_oracle_images_sha256_hex", "storage_key_sha256_match"),
+                ),
+                (
+                    {"sha256": "A" * 64},
+                    ("ck_oracle_images_sha256_hex", "storage_key_sha256_match"),
+                ),
+                # 5) storage_key must be oracle/plates/<64 lowercase hex>.<ext>.
+                ({"storage_key": "oracle/plates/contract-test.jpg"}, ("storage_key_shape",)),
+                ({"storage_key": "media/x.jpg"}, ("storage_key_shape",)),
+                # 6) storage_key digest must equal sha256.
+                (
+                    {"storage_key": f"oracle/plates/{'1' * 64}.jpg"},
+                    ("storage_key_sha256_match",),
+                ),
+                # 7) storage_key extension must match content_type.
+                ({"content_type": "image/png"}, ("storage_key_content_type_match",)),
             ]
 
-            for override, expected_constraint in negative_cases:
+            for override, expected_constraints in negative_cases:
                 params = good_params()
                 params.update(override)
                 with Session(engine) as session:
@@ -1076,9 +1092,10 @@ class TestMigrationUpgradeDowngrade:
                         session.execute(insert_sql, params)
                         session.commit()
                     session.rollback()
-                assert expected_constraint in str(exc_info.value), (
-                    f"expected {expected_constraint!r} violation for override {override!r}, "
-                    f"got: {exc_info.value}"
+                error_text = str(exc_info.value)
+                assert any(name in error_text for name in expected_constraints), (
+                    f"expected one of {expected_constraints!r} for override {override!r}, "
+                    f"got: {error_text}"
                 )
         finally:
             engine.dispose()

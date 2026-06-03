@@ -8,7 +8,7 @@ The route tests (``@pytest.mark.integration``) use a real test PostgreSQL
 database (the plate row is read through ``get_session_factory()`` on its own
 connection, so the data must be committed via ``direct_db``) and the sanctioned
 external storage seam ``tests.support.storage.FakeStorageClient`` patched in at
-``nexus.services.oracle.get_storage_client``.
+``nexus.services.oracle_plates.get_storage_client``.
 """
 
 import hashlib
@@ -23,9 +23,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import OracleCorpusImage, OracleCorpusSetVersion
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.services.oracle import (
+from nexus.services.oracle_plates import (
     get_oracle_plate_bytes,
-    oracle_plate_path,
+    oracle_plate_url,
 )
 from nexus.services.semantic_chunks import current_transcript_embedding_model
 from tests.support.storage import FakeStorageClient
@@ -104,6 +104,8 @@ def test_get_oracle_plate_bytes_returns_data_and_etag():
 
     assert result.data == data
     assert result.content_type == "image/jpeg"
+    assert result.byte_size == len(data)
+    assert result.sha256 == sha
     assert result.etag == f'"{sha}"'
 
 
@@ -166,9 +168,32 @@ def test_get_oracle_plate_bytes_releases_session_before_read():
 
 
 @pytest.mark.unit
-def test_oracle_plate_path_shape():
+def test_get_oracle_plate_bytes_rejects_invalid_metadata_before_read():
+    data = b"\xff\xd8\xff" + b"plate"
+    sha = hashlib.sha256(data).hexdigest()
+    image = SimpleNamespace(
+        storage_key="oracle/plates/not-the-digest.jpg",
+        sha256=sha,
+        byte_size=len(data),
+        content_type="image/jpeg",
+    )
+    events: list[str] = []
+
+    with pytest.raises(ApiError) as exc_info:
+        get_oracle_plate_bytes(
+            session_factory=_session_factory_for(image, events=events),
+            image_id=uuid4(),
+            storage_client=_FakeStorage(data, events=events),
+        )
+
+    assert exc_info.value.code == ApiErrorCode.E_INTERNAL
+    assert events == ["session_exit"]
+
+
+@pytest.mark.unit
+def test_oracle_plate_url_shape():
     some_uuid = uuid4()
-    assert oracle_plate_path(some_uuid) == f"/api/oracle/plates/{some_uuid}"
+    assert oracle_plate_url(some_uuid) == f"/api/oracle/plates/{some_uuid}"
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +275,9 @@ def test_route_returns_image_with_immutable_cache_and_etag(client, direct_db: Di
     # Object storage is an external dependency; FakeStorageClient isolates tests
     # from the real storage service per testing standards Section 6 (Allowed Mocks).
     # The service binds get_storage_client into its own namespace, so the seam is
-    # patched at nexus.services.oracle.get_storage_client.
+    # patched at nexus.services.oracle_plates.get_storage_client.
     # Replacement: Real storage integration in E2E tests.
-    with patch("nexus.services.oracle.get_storage_client", return_value=fake):
+    with patch("nexus.services.oracle_plates.get_storage_client", return_value=fake):
         resp = client.get(f"/oracle/plates/{image_id}")
 
     assert resp.status_code == 200, resp.text
@@ -271,16 +296,15 @@ def test_route_conditional_get_returns_304(client, direct_db: DirectSessionManag
     content_type = "image/jpeg"
 
     with direct_db.session() as session:
-        version_id, image_id, storage_key = _seed_oracle_plate(
+        version_id, image_id, _storage_key = _seed_oracle_plate(
             session, data=data, sha256=sha256, content_type=content_type
         )
     _register_plate_cleanup(direct_db, version_id)
 
-    fake = FakeStorageClient()
-    fake.put_object(storage_key, data, content_type)
-
-    # STORAGE SEAM EXCEPTION: External storage boundary mock (see above).
-    with patch("nexus.services.oracle.get_storage_client", return_value=fake):
+    with patch(
+        "nexus.services.oracle_plates.get_storage_client",
+        side_effect=AssertionError("conditional GET must not read storage"),
+    ):
         resp = client.get(
             f"/oracle/plates/{image_id}",
             headers={"If-None-Match": f'"{sha256}"'},
@@ -311,7 +335,7 @@ def test_route_integrity_mismatch_returns_5xx(client, direct_db: DirectSessionMa
     fake.put_object(storage_key, tampered, content_type)
 
     # STORAGE SEAM EXCEPTION: External storage boundary mock (see above).
-    with patch("nexus.services.oracle.get_storage_client", return_value=fake):
+    with patch("nexus.services.oracle_plates.get_storage_client", return_value=fake):
         resp = client.get(f"/oracle/plates/{image_id}")
 
     # ERROR_CODE_TO_STATUS maps ApiErrorCode.E_STORAGE_ERROR to 500.

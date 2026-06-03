@@ -19,7 +19,6 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
 from nexus.db.models import (
     Media,
@@ -601,57 +600,3 @@ def _read_validated_upload_object(
         )
     return hasher.hexdigest(), total_bytes
 
-
-def get_signed_download_url(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> dict:
-    """Get a signed download URL for a media file.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        media_id: The media ID.
-
-    Returns:
-        Dict with url and expires_at.
-
-    Raises:
-        NotFoundError: If media doesn't exist or viewer can't read.
-    """
-    settings = get_settings()
-
-    # Check visibility
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    # Get media_file
-    result = db.execute(select(MediaFile).where(MediaFile.media_id == media_id))
-    media_file = result.scalar()
-
-    if not media_file:
-        raise NotFoundError(
-            ApiErrorCode.E_MEDIA_NOT_FOUND,
-            "No file available for this media",
-        )
-
-    # Sign download URL
-    storage_client = get_storage_client()
-    try:
-        url = storage_client.sign_download(
-            media_file.storage_path,
-            expires_in=settings.signed_url_expiry_s,
-        )
-    except StorageError as e:
-        logger.error("Failed to sign download: %s", e.message)
-        raise ApiError(
-            ApiErrorCode.E_SIGN_DOWNLOAD_FAILED, "Failed to generate download URL"
-        ) from e
-
-    expires_at = datetime.now(UTC) + timedelta(seconds=settings.signed_url_expiry_s)
-
-    return {
-        "url": url,
-        "expires_at": expires_at.isoformat(),
-    }

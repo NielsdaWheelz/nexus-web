@@ -525,6 +525,9 @@ class ChunkedStorageClient(StorageClientBase):
     def put_object(self, *args, **kwargs) -> None:  # pragma: no cover - unused
         raise NotImplementedError
 
+    def put_object_stream(self, *args, **kwargs) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
     def copy_object(self, *args, **kwargs) -> None:  # pragma: no cover - unused
         raise NotImplementedError
 
