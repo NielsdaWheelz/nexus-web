@@ -2,6 +2,9 @@
 
 import { GitBranch } from "lucide-react";
 import { truncateText } from "@/lib/conversations/display";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { BranchGraph, BranchGraphNode } from "@/lib/conversations/types";
 import styles from "./ForkGraphOverview.module.css";
 
@@ -21,6 +24,7 @@ export default function ForkGraphOverview({
   switchableLeafIds?: Set<string>;
   onSelectLeaf: (leafMessageId: string) => void;
 }) {
+  const display = useRenderEnvironment();
   const nodes = [...graph.nodes].sort((a, b) => a.row - b.row || a.depth - b.depth);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const maxDepth = nodes.reduce((max, node) => Math.max(max, node.depth), 0);
@@ -60,7 +64,7 @@ export default function ForkGraphOverview({
           const switchable =
             node.leaf &&
             (!switchableLeafIds || switchableLeafIds.has(node.leaf_message_id));
-          const label = graphNodeLabel(node);
+          const label = graphNodeLabel(node, display);
           const matched = query ? graphNodeSearchText(node).includes(query) : false;
           const style = {
             left: node.depth * COLUMN_WIDTH,
@@ -139,22 +143,18 @@ function graphNodeSearchText(node: BranchGraphNode): string {
     .toLowerCase();
 }
 
-function graphNodeLabel(node: BranchGraphNode): string {
+function graphNodeLabel(node: BranchGraphNode, display: RenderEnvironment): string {
   return [
     node.title ? `Title: ${node.title}` : null,
     `Preview: ${node.preview}`,
     node.branch_anchor_preview ? `Quote: ${node.branch_anchor_preview}` : null,
     `Status: ${node.status}`,
     `Messages: ${node.message_count}`,
-    `Created: ${dateLabel(node.created_at)}`,
+    `Created: ${
+      formatDisplayDate(node.created_at, display, { month: "short", day: "numeric" }) ?? ""
+    }`,
     node.active_path ? "Current path" : null,
   ]
     .filter(Boolean)
     .join(". ");
-}
-
-function dateLabel(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

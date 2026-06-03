@@ -9,6 +9,7 @@ import { STATIC_COMMANDS, type PaletteItem } from "./paletteModel";
 import type { PaletteIntent } from "./paletteIntent";
 import { toRoman } from "@/lib/toRoman";
 import { formatKeyCombo } from "@/lib/keybindings";
+import type { PlatformKind } from "@/lib/renderEnvironment/types";
 import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
@@ -48,6 +49,7 @@ export interface PaletteContext {
   searchResults: SearchResultRowViewModel[];
   keybindings: Record<string, string>;
   androidShell: boolean;
+  platform: PlatformKind;
   canOpenConversation: boolean;
 }
 
@@ -134,7 +136,7 @@ function staticItems(ctx: PaletteContext): PaletteItem[] {
     const combo = ctx.keybindings[command.id];
     return {
       ...command,
-      shortcutLabel: combo ? formatKeyCombo(combo) : undefined,
+      shortcutLabel: combo ? formatKeyCombo(combo, ctx.platform) : undefined,
       rank:
         command.target.kind === "href"
           ? { frecencyBoost: ctx.frecencyBoosts.get(command.target.href) ?? 0 }

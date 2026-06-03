@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, waitFor } from "@testing-library/react";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 const {
   getVaultAutoSyncMock,
@@ -37,31 +37,27 @@ vi.mock("@/lib/api/client", () => ({
 
 import LocalVaultAutoSync from "@/app/(authenticated)/LocalVaultAutoSync";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
+function renderAutoSync(androidShell = false) {
+  return render(
+    withRenderEnvironment(
+      <FeedbackProvider>
+        <LocalVaultAutoSync />
+      </FeedbackProvider>,
+      { androidShell },
+    ),
+  );
 }
 
 describe("LocalVaultAutoSync android shell gating", () => {
   afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT);
     vi.clearAllMocks();
   });
 
   it("does not start local vault sync work in the android shell", () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
     isLocalVaultSupportedMock.mockReturnValue(true);
     getVaultAutoSyncMock.mockReturnValue(true);
 
-    render(
-      <FeedbackProvider>
-        <LocalVaultAutoSync />
-      </FeedbackProvider>
-    );
+    renderAutoSync(true);
 
     expect(loadVaultDirectoryHandleMock).not.toHaveBeenCalled();
     expect(apiFetchMock).not.toHaveBeenCalled();
@@ -70,7 +66,6 @@ describe("LocalVaultAutoSync android shell gating", () => {
   it("runs only one local vault sync across concurrent mounts", async () => {
     const handle = {} as FileSystemDirectoryHandle;
     let resolveHandle: (handle: FileSystemDirectoryHandle) => void = () => {};
-    setUserAgent(DEFAULT_USER_AGENT);
     isLocalVaultSupportedMock.mockReturnValue(true);
     getVaultAutoSyncMock.mockReturnValue(true);
     loadVaultDirectoryHandleMock.mockReturnValue(
@@ -84,10 +79,12 @@ describe("LocalVaultAutoSync android shell gating", () => {
     writeVaultPayloadMock.mockResolvedValue(undefined);
 
     render(
-      <FeedbackProvider>
-        <LocalVaultAutoSync />
-        <LocalVaultAutoSync />
-      </FeedbackProvider>
+      withRenderEnvironment(
+        <FeedbackProvider>
+          <LocalVaultAutoSync />
+          <LocalVaultAutoSync />
+        </FeedbackProvider>,
+      ),
     );
 
     expect(loadVaultDirectoryHandleMock).toHaveBeenCalledTimes(1);
@@ -106,7 +103,6 @@ describe("LocalVaultAutoSync android shell gating", () => {
   it("stops at an awaited boundary after unmount", async () => {
     const handle = {} as FileSystemDirectoryHandle;
     let resolveHandle: (handle: FileSystemDirectoryHandle) => void = () => {};
-    setUserAgent(DEFAULT_USER_AGENT);
     isLocalVaultSupportedMock.mockReturnValue(true);
     getVaultAutoSyncMock.mockReturnValue(true);
     loadVaultDirectoryHandleMock.mockReturnValue(
@@ -115,11 +111,7 @@ describe("LocalVaultAutoSync android shell gating", () => {
       })
     );
 
-    const { unmount } = render(
-      <FeedbackProvider>
-        <LocalVaultAutoSync />
-      </FeedbackProvider>
-    );
+    const { unmount } = renderAutoSync();
 
     expect(loadVaultDirectoryHandleMock).toHaveBeenCalledTimes(1);
     unmount();

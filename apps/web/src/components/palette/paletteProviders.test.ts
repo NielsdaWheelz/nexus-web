@@ -24,6 +24,7 @@ function ctx(overrides?: Partial<PaletteContext>): PaletteContext {
     searchResults: [],
     keybindings: {},
     androidShell: false,
+    platform: "other",
     canOpenConversation: true,
     ...overrides,
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch, apiKeepaliveJson } from "@/lib/api/client";
-import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
+import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import {
   createDefaultWorkspaceState,
   createWorkspaceStateFromPrimaryPanes,
@@ -46,13 +46,13 @@ export async function putWorkspaceSession(
 export function prepareRestoredState(
   raw: unknown,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+  androidShell: boolean,
 ): WorkspaceState {
   const sanitized = sanitizeWorkspaceState(raw, {
     fallbackHref: WORKSPACE_DEFAULT_FALLBACK_HREF,
     workspacePrimaryMetrics,
   });
 
-  const androidShell = isAndroidShell();
   const primaryPanes = getWorkspacePrimaryPanes(sanitized).filter(
     (pane) => !(androidShell && isAndroidShellRestrictedHref(pane.href))
   );

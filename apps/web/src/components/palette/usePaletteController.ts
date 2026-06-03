@@ -8,13 +8,15 @@ import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
 import { copyText } from "@/lib/ui/copyText";
-import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
+import { matchesKeyEvent } from "@/lib/keybindings";
+import { useKeybindings } from "@/lib/keybindingsProvider";
 import { createNotePage } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import { ALL_SEARCH_TYPES, type SearchResultRowViewModel } from "@/lib/search/types";
-import { isAndroidShell, isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
+import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resolveWorkspacePaneTitle, useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { parsePaletteInput, type PaletteIntent } from "./paletteIntent";
@@ -77,14 +79,14 @@ export interface PaletteController {
 }
 
 export function usePaletteController(): PaletteController {
-  const androidShell = isAndroidShell();
+  const { androidShell, platform } = useRenderEnvironment();
+  const keybindings = useKeybindings();
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [page, setPage] = useState<PalettePage>({ kind: "root" });
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const userMovedRef = useRef(false); // true once the user arrows/hovers; else the active row follows the top result
-  const [keybindings, setKeybindings] = useState<Record<string, string>>({});
   const [historyPath, setHistoryPath] = useState<ApiPath | null>(null);
   const [oracleKey, setOracleKey] = useState<string | null>(null);
   const [oracleRows, setOracleRows] = useState<PaletteOracleRow[]>([]);
@@ -192,9 +194,9 @@ export function usePaletteController(): PaletteController {
         id: pane.id,
         href: pane.href,
         visibility: pane.visibility,
-        title: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId).title,
+        title: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId, androidShell).title,
       })),
-    [state, runtimeTitleByPaneId],
+    [androidShell, state, runtimeTitleByPaneId],
   );
   const currentHref = panes.find((pane) => pane.id === state.activePrimaryPaneId)?.href ?? null;
 
@@ -210,6 +212,7 @@ export function usePaletteController(): PaletteController {
       searchResults,
       keybindings,
       androidShell,
+      platform,
       canOpenConversation: true,
     }),
     [
@@ -223,6 +226,7 @@ export function usePaletteController(): PaletteController {
       searchResults,
       keybindings,
       androidShell,
+      platform,
     ],
   );
   const rootView = useMemo(() => rankPalette(ctx, buildPaletteItems(ctx)), [ctx]);
@@ -432,8 +436,6 @@ export function usePaletteController(): PaletteController {
       `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`,
     );
   }, []);
-
-  useEffect(() => setKeybindings(loadKeybindings()), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

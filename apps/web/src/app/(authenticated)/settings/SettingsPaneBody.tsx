@@ -3,8 +3,9 @@
 import { ArrowRight } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
+import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import styles from "./page.module.css";
 
 const SETTINGS_ITEMS: {
@@ -45,7 +46,7 @@ const SETTINGS_ITEMS: {
 ];
 
 export default function SettingsPaneBody() {
-  const androidShell = isAndroidShell();
+  const androidShell = useAndroidShell();
   const settingsItems = SETTINGS_ITEMS.filter(({ href }) => {
     if (!androidShell) {
       return true;

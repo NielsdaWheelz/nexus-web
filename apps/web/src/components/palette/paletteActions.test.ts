@@ -34,6 +34,7 @@ function ctx(opts: { canOpenConversation: boolean }): PaletteContext {
     searchResults: [],
     keybindings: {},
     androidShell: false,
+    platform: "other",
     canOpenConversation: opts.canOpenConversation,
   };
 }

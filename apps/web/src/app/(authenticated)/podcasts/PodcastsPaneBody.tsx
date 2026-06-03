@@ -39,6 +39,9 @@ import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
@@ -46,28 +49,26 @@ const PAGE_SIZE = 100;
 type SubscriptionSort = "recent_episode" | "unplayed_count" | "alpha";
 type SubscriptionFilter = "all" | "has_new" | "not_in_library";
 
-function formatLatestEpisodeLabel(value: string | null): string {
+function formatLatestEpisodeLabel(
+  value: string | null,
+  display: RenderEnvironment,
+): string {
   if (!value) {
     return "No synced episodes yet";
   }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
+  const formatted = formatDisplayDate(value, display, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  if (!formatted) {
     return "No synced episodes yet";
   }
-  const days = Math.floor((Date.now() - timestamp) / 86_400_000);
-  if (days <= 0) {
-    return "Latest today";
-  }
-  if (days === 1) {
-    return "Latest yesterday";
-  }
-  if (days < 30) {
-    return `Latest ${days}d ago`;
-  }
-  return `Latest ${new Date(timestamp).toLocaleDateString()}`;
+  return `Latest ${formatted}`;
 }
 
 export default function PodcastsPaneBody() {
+  const display = useRenderEnvironment();
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
   const [rows, setRows] = useState<PodcastSubscriptionListItem[]>([]);
@@ -642,7 +643,10 @@ export default function PodcastsPaneBody() {
                     meta={
                       <span className={styles.metaRow}>
                         <span className={styles.metaBadge}>
-                          {formatLatestEpisodeLabel(row.latest_episode_published_at)}
+                          {formatLatestEpisodeLabel(
+                            row.latest_episode_published_at,
+                            display,
+                          )}
                         </span>
                         {row.default_playback_speed != null ? (
                           <span className={styles.metaBadge}>

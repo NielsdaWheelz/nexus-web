@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
+import { compareStableString } from "@/lib/display/format";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
@@ -84,9 +85,9 @@ export function compareHighlightsByAnchor(a: Highlight, b: Highlight): number {
     return a.anchor.end_offset - b.anchor.end_offset;
   }
   if (a.created_at !== b.created_at) {
-    return a.created_at.localeCompare(b.created_at);
+    return compareStableString(a.created_at, b.created_at);
   }
-  return a.id.localeCompare(b.id);
+  return compareStableString(a.id, b.id);
 }
 
 /** Replace any prior copy of `highlight` in `list`, then sort by anchor. */

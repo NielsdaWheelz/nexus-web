@@ -24,6 +24,9 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Pill from "@/components/ui/Pill";
+import { compareStableString, formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
 
 type ApiKeyStatus = "missing" | "untested" | "valid" | "invalid" | "revoked";
@@ -65,17 +68,16 @@ function statusVariant(status: ApiKeyStatus) {
   return "neutral" as const;
 }
 
-function formatDate(value: string | null | undefined): string {
+function formatDate(
+  value: string | null | undefined,
+  display: RenderEnvironment,
+): string {
   if (!value) return "Never";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Never";
-
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDisplayDate(value, display, {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(date);
+  }) ?? "Never";
 }
 
 function providerSortRank(provider: string): number {
@@ -97,6 +99,7 @@ function statusLabel(status: ApiKeyStatus): string {
 }
 
 export default function SettingsKeysPaneBody() {
+  const display = useRenderEnvironment();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [keysRefreshVersion, setKeysRefreshVersion] = useState(0);
   const [error, setError] = useState<FeedbackContent | null>(null);
@@ -118,7 +121,7 @@ export default function SettingsKeysPaneBody() {
     return [...keys].sort((a, b) => {
       const rankDelta = providerSortRank(a.provider) - providerSortRank(b.provider);
       if (rankDelta !== 0) return rankDelta;
-      return a.provider.localeCompare(b.provider);
+      return compareStableString(a.provider, b.provider);
     });
   }, [keys]);
 
@@ -286,11 +289,11 @@ export default function SettingsKeysPaneBody() {
                 </div>
                 <div>
                   <dt>Last tested</dt>
-                  <dd>{formatDate(key.last_tested_at)}</dd>
+                  <dd>{formatDate(key.last_tested_at, display)}</dd>
                 </div>
                 <div>
                   <dt>Last used</dt>
-                  <dd>{formatDate(key.last_used_at)}</dd>
+                  <dd>{formatDate(key.last_used_at, display)}</dd>
                 </div>
               </dl>
 

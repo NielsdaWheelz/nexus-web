@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 const { apiFetchMock, mockBillingState } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
@@ -53,24 +52,12 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
 
 import TranscriptStatePanel from "@/app/(authenticated)/media/[id]/TranscriptStatePanel";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
-}
-
-describe("TranscriptStatePanel android shell billing", () => {
+describe("TranscriptStatePanel transcript billing", () => {
   afterEach(() => {
     vi.clearAllMocks();
-    setUserAgent(DEFAULT_USER_AGENT);
   });
 
-  it("keeps the settings upgrade prompt in the android shell", () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-
+  it("keeps the settings upgrade prompt when transcription is locked", () => {
     render(
       <TranscriptStatePanel
         mediaId="media-1"
@@ -88,8 +75,6 @@ describe("TranscriptStatePanel android shell billing", () => {
   });
 
   it("does not dry-run transcription requests while the plan is locked", async () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-
     render(
       <TranscriptStatePanel
         mediaId="media-1"

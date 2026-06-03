@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
+import { compareStableString } from "@/lib/display/format";
 import type { ConversationReference } from "./types";
 
 export function useConversationReferences(conversationId: string | null) {
@@ -113,9 +114,9 @@ export function useConversationReferences(conversationId: string | null) {
       }
       return [...current, reference].sort((left, right) => {
         if (left.created_at !== right.created_at) {
-          return left.created_at.localeCompare(right.created_at);
+          return compareStableString(left.created_at, right.created_at);
         }
-        return left.id.localeCompare(right.id);
+        return compareStableString(left.id, right.id);
       });
     });
   }, []);

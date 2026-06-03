@@ -7,8 +7,9 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { formatLocalDate, isLocalDate, todayLocalDate } from "@/lib/localDate";
+import { isLocalDate, shiftLocalDate } from "@/lib/localDate";
 import { fetchDailyNotePage } from "@/lib/notes/api";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
   usePaneParam,
   usePaneRuntime,
@@ -18,10 +19,11 @@ import { useResource } from "@/lib/api/useResource";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 
 export default function DailyNotePaneBody() {
+  const { currentLocalDate } = useRenderEnvironment();
   const paneRuntime = usePaneRuntime();
   const paneRuntimeRef = useRef(paneRuntime);
   const routeLocalDate = usePaneParam("localDate");
-  const localDate = routeLocalDate ?? todayLocalDate();
+  const localDate = routeLocalDate ?? currentLocalDate;
   paneRuntimeRef.current = paneRuntime;
   const validLocalDate = isLocalDate(localDate);
   const dailyResource = useResource({
@@ -33,11 +35,9 @@ export default function DailyNotePaneBody() {
   });
 
   const openYesterday = useCallback(() => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const href = `/daily/${formatLocalDate(yesterday)}`;
+    const href = `/daily/${shiftLocalDate(currentLocalDate, -1)}`;
     paneRuntimeRef.current?.openInNewPane(href, "Yesterday");
-  }, []);
+  }, [currentLocalDate]);
   const paneOptions = useMemo(
     () => [
       {

@@ -39,6 +39,7 @@ function ctx(opts: {
     searchResults: [],
     keybindings: {},
     androidShell: false,
+    platform: "other",
     canOpenConversation: true,
   };
 }

@@ -8,6 +8,8 @@
  */
 
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { formatDisplayDate } from "@/lib/display/format";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 
 export type BrowseSectionType =
   | "documents"
@@ -168,12 +170,16 @@ export function buildBrowseHref(
   return search ? `/browse?${search}` : "/browse";
 }
 
-export function formatEpisodeMeta(result: BrowseEpisodeResult): string {
+export function formatEpisodeMeta(
+  result: BrowseEpisodeResult,
+  display: RenderEnvironment,
+): string {
   const bits: string[] = [];
   if (result.published_at) {
-    bits.push(
-      `Published ${new Date(result.published_at).toLocaleDateString()}`,
-    );
+    const publishedAt = formatDisplayDate(result.published_at, display);
+    if (publishedAt) {
+      bits.push(`Published ${publishedAt}`);
+    }
   }
   if (result.duration_seconds) {
     bits.push(`${Math.round(result.duration_seconds / 60)} min`);

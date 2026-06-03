@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
-import { isAndroidShell } from "@/lib/androidShell";
 import { useResource } from "@/lib/api/useResource";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
@@ -52,7 +52,7 @@ function statusVariant(status: VaultStatus) {
 }
 
 export default function SettingsLocalVaultPaneBody() {
-  const androidShell = isAndroidShell();
+  const androidShell = useAndroidShell();
   const [supported, setSupported] = useState(true);
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [autoSync, setAutoSyncState] = useState(false);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { getInstallationId } from "@/lib/workspace/deviceId";
 import {
   getWorkspaceSession,
@@ -23,6 +24,7 @@ export function useWorkspaceSession(
   ) => WorkspaceState,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): void {
+  const androidShell = useAndroidShell();
   const [captureArmed, setCaptureArmed] = useState(false);
   const captureArmedRef = useRef(false);
   const restoreStartedRef = useRef(false);
@@ -57,10 +59,10 @@ export function useWorkspaceSession(
         }
         const metrics = workspacePrimaryMetricsRef.current;
         const ownState =
-          own != null ? prepareRestoredState(own, metrics) : null;
+          own != null ? prepareRestoredState(own, metrics, androidShell) : null;
         const elsewhereState =
           mostRecentElsewhere != null
-            ? prepareRestoredState(mostRecentElsewhere, metrics)
+            ? prepareRestoredState(mostRecentElsewhere, metrics, androidShell)
             : null;
         const restored =
           ownState && isNonTrivialSession(ownState)
@@ -85,7 +87,7 @@ export function useWorkspaceSession(
     return () => {
       cancelled = true;
     };
-  }, [mounted]);
+  }, [androidShell, mounted]);
 
   // (2) CAPTURE — debounced PUT of the current state once capture is armed.
   useEffect(() => {

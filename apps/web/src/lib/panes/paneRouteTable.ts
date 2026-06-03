@@ -29,7 +29,6 @@ import {
   type PaneRouteModelDefinition,
   type RouteParams,
 } from "@/lib/panes/paneRouteModel";
-import { isAndroidShell } from "@/lib/androidShell";
 
 // Per-pane chrome + icon metadata. Deliberately holds NO pane-body imports so
 // the always-loaded shell (nav, command palette, store) can resolve a route's
@@ -187,8 +186,8 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   settingsLocalVault: {
     icon: FolderOpen,
-    getChrome: () =>
-      isAndroidShell()
+    getChrome: (ctx) =>
+      ctx.androidShell
         ? {
             title: "Local Vault",
             subtitle:

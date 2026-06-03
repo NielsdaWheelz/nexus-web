@@ -3,6 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import { GitBranch } from "lucide-react";
 import { truncateText } from "@/lib/conversations/display";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ForkOption } from "@/lib/conversations/types";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./ForkStrip.module.css";
@@ -16,6 +18,7 @@ export default function ForkStrip({
   switchableLeafIds?: Set<string>;
   onSelectFork: (fork: ForkOption) => void;
 }) {
+  const display = useRenderEnvironment();
   const visibleForks = useMemo(
     () =>
       switchableLeafIds
@@ -46,7 +49,9 @@ export default function ForkStrip({
       <div className={styles.list}>
         {visibleForks.map((fork, index) => {
           const title = fork.title || truncateText(fork.preview, 72);
-          const date = dateLabel(fork.created_at);
+          const date =
+            formatDisplayDate(fork.created_at, display, { month: "short", day: "numeric" }) ??
+            "";
           const label = forkAccessibleLabel(fork, date);
           return (
             <button
@@ -112,10 +117,4 @@ function forkAccessibleLabel(fork: ForkOption, date: string): string {
     date ? `Created: ${date}` : null,
   ];
   return parts.filter(Boolean).join(". ");
-}
-
-function dateLabel(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

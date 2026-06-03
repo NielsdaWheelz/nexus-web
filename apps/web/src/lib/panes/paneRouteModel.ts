@@ -23,6 +23,7 @@ export type RoutePattern = readonly string[];
 export interface PaneRouteContext {
   href: string;
   params: RouteParams;
+  androidShell?: boolean;
 }
 
 export type PaneRouteId =

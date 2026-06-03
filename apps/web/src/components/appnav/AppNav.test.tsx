@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, type RenderResult } from "@testing-library/react";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import AppNav from "./AppNav";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed.v1";
@@ -12,6 +15,24 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+
+function mockMatchMedia(matchesMobile: boolean) {
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("max-width") ? matchesMobile : false,
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent() {
+          return false;
+        },
+      }) as MediaQueryList,
+  );
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
@@ -32,13 +53,23 @@ function mockApi() {
 
 // Seed the real workspace store so the single active pane sits on /libraries —
 // the same fixture the old internal store mock hard-coded.
-function renderNav(): RenderResult {
+function renderNav(
+  renderEnvironment: Partial<RenderEnvironment> = {},
+): RenderResult {
   return render(
-    <MobileChromeProvider>
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics} initialHref="/libraries">
-        <AppNav />
-      </WorkspaceStoreProvider>
-    </MobileChromeProvider>,
+    withRenderEnvironment(
+      <KeybindingsProvider>
+        <MobileChromeProvider>
+          <WorkspaceStoreProvider
+            workspacePrimaryMetrics={workspacePrimaryMetrics}
+            initialHref="/libraries"
+          >
+            <AppNav />
+          </WorkspaceStoreProvider>
+        </MobileChromeProvider>
+      </KeybindingsProvider>,
+      renderEnvironment,
+    ),
   );
 }
 
@@ -47,6 +78,7 @@ describe("AppNav (desktop rail)", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     vi.stubGlobal("innerWidth", 1280); // desktop surface drives useIsMobileViewport=false
+    mockMatchMedia(false);
     mockApi();
   });
 
@@ -118,6 +150,7 @@ describe("AppNav (mobile sheet)", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     vi.stubGlobal("innerWidth", 390); // mobile viewport drives useIsMobileViewport=true
+    mockMatchMedia(true);
     mockApi();
   });
 
@@ -128,7 +161,7 @@ describe("AppNav (mobile sheet)", () => {
   });
 
   it("closes an open NavSheet when OPEN_COMMAND_PALETTE_EVENT fires", () => {
-    renderNav();
+    renderNav({ initialViewport: "mobile" });
 
     // Open the sheet via the mobile top-bar brand button.
     fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));

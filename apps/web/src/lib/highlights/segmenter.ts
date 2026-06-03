@@ -6,6 +6,8 @@
  * used by highlight rendering and interaction.
  */
 
+import { compareStableString } from "@/lib/display/format";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -86,7 +88,7 @@ function compareHighlightsTopmost(
     return b.created_at_ms - a.created_at_ms;
   }
   // id ASC (lexicographic tiebreaker)
-  return a.id.localeCompare(b.id);
+  return compareStableString(a.id, b.id);
 }
 
 /**

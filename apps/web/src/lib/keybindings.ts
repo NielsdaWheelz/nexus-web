@@ -1,4 +1,5 @@
 import { isRecord } from "@/lib/validation";
+import type { PlatformKind } from "@/lib/renderEnvironment/types";
 
 const STORAGE_KEY = "nexus.keybindings.v1";
 
@@ -45,7 +46,7 @@ export function matchesKeyEvent(combo: string, event: KeyboardEvent): boolean {
   return true;
 }
 
-export function loadKeybindings(): Record<string, string> {
+export function loadStoredKeybindings(): Record<string, string> {
   if (typeof localStorage === "undefined") {
     return { ...DEFAULT_KEYBINDINGS };
   }
@@ -59,7 +60,7 @@ export function loadKeybindings(): Record<string, string> {
   }
 }
 
-export function saveKeybindings(bindings: Record<string, string>): void {
+export function saveStoredKeybindings(bindings: Record<string, string>): void {
   // Only persist user overrides (exclude entries identical to defaults)
   const overrides: Record<string, string> = {};
   for (const [id, combo] of Object.entries(bindings)) {
@@ -96,9 +97,8 @@ function parseStoredKeybindings(raw: string | null): Record<string, string> {
   return bindings;
 }
 
-export function formatKeyCombo(combo: string): string {
-  const isMac =
-    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+export function formatKeyCombo(combo: string, platform: PlatformKind): string {
+  const isMac = platform === "mac" || platform === "ios";
   const parts = combo.split("+");
   const key = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);

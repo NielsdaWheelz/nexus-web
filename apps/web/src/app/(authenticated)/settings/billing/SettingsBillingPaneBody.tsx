@@ -13,6 +13,9 @@ import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
+import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
 
 interface CheckoutResponse {
@@ -57,18 +60,20 @@ function statusVariant(status: string, planTier: BillingPlanTier) {
   return "info" as const;
 }
 
-function formatDateRange(start: string | null, end: string | null): string {
+function formatDateRange(
+  start: string | null,
+  end: string | null,
+  display: RenderEnvironment,
+): string {
   if (!start && !end) {
     return "Unavailable";
   }
   const parts: string[] = [];
   if (start) {
-    const startDate = new Date(start);
-    parts.push(Number.isNaN(startDate.getTime()) ? start : startDate.toLocaleDateString());
+    parts.push(formatDisplayDate(start, display) ?? start);
   }
   if (end) {
-    const endDate = new Date(end);
-    parts.push(Number.isNaN(endDate.getTime()) ? end : endDate.toLocaleDateString());
+    parts.push(formatDisplayDate(end, display) ?? end);
   }
   return parts.join(" - ");
 }
@@ -79,7 +84,7 @@ function statusSummary(account: {
   cancel_at_period_end: boolean;
   subscription_current_period_end: string | null;
   entitlement_source: string;
-}): string {
+}, display: RenderEnvironment): string {
   if (account.entitlement_source === "internal_grant") {
     return "Internal access grant.";
   }
@@ -88,24 +93,28 @@ function statusSummary(account: {
   }
   if (account.billing_status === "canceled") {
     return account.subscription_current_period_end
-      ? `Ended ${formatDateRange(null, account.subscription_current_period_end)}`
+      ? `Ended ${formatDateRange(null, account.subscription_current_period_end, display)}`
       : "Subscription canceled.";
   }
   if (account.cancel_at_period_end) {
     return account.subscription_current_period_end
-      ? `Ends ${formatDateRange(null, account.subscription_current_period_end)}`
+      ? `Ends ${formatDateRange(null, account.subscription_current_period_end, display)}`
       : "Scheduled to cancel at period end.";
   }
   return account.subscription_current_period_end
-    ? `Renews ${formatDateRange(null, account.subscription_current_period_end)}`
+    ? `Renews ${formatDateRange(null, account.subscription_current_period_end, display)}`
     : "Billing period unavailable.";
 }
 
-function formatUsage(value: number | null, unit: string): string {
+function formatUsage(
+  value: number | null,
+  unit: string,
+  display: Pick<RenderEnvironment, "displayLocale">,
+): string {
   if (value === null) {
     return "Unlimited";
   }
-  return `${new Intl.NumberFormat().format(value)} ${unit}`;
+  return `${formatDisplayNumber(value, display)} ${unit}`;
 }
 
 function yesNo(value: boolean): string {
@@ -123,6 +132,7 @@ function sourceLabel(source: string): string {
 }
 
 export default function SettingsBillingPaneBody() {
+  const display = useRenderEnvironment();
   const { account, loading, error } = useBillingAccount();
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
@@ -223,7 +233,7 @@ export default function SettingsBillingPaneBody() {
                   <Pill tone={statusVariant(account.billing_status, account.billing_plan_tier)}>
                     {statusLabel(account.billing_status, account.billing_plan_tier)}
                   </Pill>
-                  <span className={styles.summaryMeta}>{statusSummary(account)}</span>
+                  <span className={styles.summaryMeta}>{statusSummary(account, display)}</span>
                 </dd>
               </div>
 
@@ -233,7 +243,7 @@ export default function SettingsBillingPaneBody() {
                   <Pill tone="info">{sourceLabel(account.entitlement_source)}</Pill>
                   {account.entitlement_expires_at && (
                     <span className={styles.summaryMeta}>
-                      Expires {formatDateRange(null, account.entitlement_expires_at)}
+                      Expires {formatDateRange(null, account.entitlement_expires_at, display)}
                     </span>
                   )}
                 </dd>
@@ -245,7 +255,8 @@ export default function SettingsBillingPaneBody() {
                   <span className={styles.summaryText}>
                     {formatDateRange(
                       account.subscription_current_period_start,
-                      account.subscription_current_period_end
+                      account.subscription_current_period_end,
+                      display,
                     )}
                   </span>
                 </dd>
@@ -256,26 +267,26 @@ export default function SettingsBillingPaneBody() {
               <section className={styles.usageCard}>
                 <h3 className={styles.usageTitle}>AI tokens</h3>
                 <p className={styles.usageValue}>
-                  {formatUsage(account.ai_token_usage.used, "tokens")}
+                  {formatUsage(account.ai_token_usage.used, "tokens", display)}
                 </p>
                 <p className={styles.usageMeta}>
-                  Limit: {formatUsage(account.ai_token_usage.limit, "tokens")}
+                  Limit: {formatUsage(account.ai_token_usage.limit, "tokens", display)}
                 </p>
                 <p className={styles.usageMeta}>
-                  Remaining: {formatUsage(account.ai_token_usage.remaining, "tokens")}
+                  Remaining: {formatUsage(account.ai_token_usage.remaining, "tokens", display)}
                 </p>
               </section>
 
               <section className={styles.usageCard}>
                 <h3 className={styles.usageTitle}>Transcription</h3>
                 <p className={styles.usageValue}>
-                  {formatUsage(account.transcription_usage.used, "minutes")}
+                  {formatUsage(account.transcription_usage.used, "minutes", display)}
                 </p>
                 <p className={styles.usageMeta}>
-                  Limit: {formatUsage(account.transcription_usage.limit, "minutes")}
+                  Limit: {formatUsage(account.transcription_usage.limit, "minutes", display)}
                 </p>
                 <p className={styles.usageMeta}>
-                  Remaining: {formatUsage(account.transcription_usage.remaining, "minutes")}
+                  Remaining: {formatUsage(account.transcription_usage.remaining, "minutes", display)}
                 </p>
               </section>
             </div>

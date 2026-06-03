@@ -829,13 +829,15 @@ export interface WorkspacePaneTitleDescriptor {
 
 export function resolveWorkspacePaneTitle(
   pane: WorkspacePaneTitleInput,
-  runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>
+  runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>,
+  androidShell = false,
 ): WorkspacePaneTitleDescriptor {
   const route = resolvePaneRoute(pane.href);
   const { resourceKey } = resolvePaneRouteIdentity(pane.href);
   const chrome = route.definition?.getChrome?.({
     href: pane.href,
     params: route.params,
+    androidShell,
   });
   const titleRecord = runtimeTitleByPaneId.get(pane.id);
   if (titleRecord?.resourceKey === resourceKey) {

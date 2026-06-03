@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_KEYBINDINGS, loadKeybindings } from "./keybindings";
+import { DEFAULT_KEYBINDINGS, loadStoredKeybindings } from "./keybindings";
 
 function stubStoredKeybindings(value: string | null): void {
   vi.stubGlobal("localStorage", {
@@ -12,7 +12,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("loadKeybindings", () => {
+describe("loadStoredKeybindings", () => {
   it("merges valid stored string bindings over defaults", () => {
     stubStoredKeybindings(
       JSON.stringify({
@@ -20,7 +20,7 @@ describe("loadKeybindings", () => {
       }),
     );
 
-    expect(loadKeybindings()).toEqual({
+    expect(loadStoredKeybindings()).toEqual({
       ...DEFAULT_KEYBINDINGS,
       "open-palette": "Ctrl+p",
     });
@@ -35,7 +35,7 @@ describe("loadKeybindings", () => {
       }),
     );
 
-    expect(loadKeybindings()).toEqual({
+    expect(loadStoredKeybindings()).toEqual({
       ...DEFAULT_KEYBINDINGS,
       "pane-previous": "Alt+arrowleft",
     });
@@ -44,6 +44,6 @@ describe("loadKeybindings", () => {
   it("falls back to defaults for invalid stored JSON", () => {
     stubStoredKeybindings("{");
 
-    expect(loadKeybindings()).toEqual(DEFAULT_KEYBINDINGS);
+    expect(loadStoredKeybindings()).toEqual(DEFAULT_KEYBINDINGS);
   });
 });

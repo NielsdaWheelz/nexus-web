@@ -20,7 +20,9 @@ import PaneShell from "@/components/workspace/PaneShell";
 import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneHost";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
+import { matchesKeyEvent } from "@/lib/keybindings";
+import { useKeybindings } from "@/lib/keybindingsProvider";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
@@ -650,6 +652,8 @@ function WorkspaceHost() {
   >(() => new Map());
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
+  const keybindings = useKeybindings();
+  const androidShell = useAndroidShell();
 
   // --- Mobile viewport and pane chrome focus state ---
   const isMobile = useIsMobileViewport();
@@ -663,9 +667,9 @@ function WorkspaceHost() {
     () =>
       primaryPanes.map((pane) => ({
         pane,
-        descriptor: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId),
+        descriptor: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId, androidShell),
       })),
-    [primaryPanes, runtimeTitleByPaneId]
+    [androidShell, primaryPanes, runtimeTitleByPaneId]
   );
   const currentResourceKeyByPaneId = useMemo(
     () =>
@@ -1062,7 +1066,6 @@ function WorkspaceHost() {
   };
 
   useEffect(() => {
-    const keybindings = loadKeybindings();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) {
         return;
@@ -1085,7 +1088,7 @@ function WorkspaceHost() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [primaryPanes, state.activePrimaryPaneId, activatePane]);
+  }, [primaryPanes, state.activePrimaryPaneId, keybindings, activatePane]);
 
   // --- Close handler ---
   const handleClosePane = useCallback(

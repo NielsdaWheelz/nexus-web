@@ -14,6 +14,7 @@ import {
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
+import { compareStableString } from "@/lib/display/format";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 
@@ -177,7 +178,7 @@ export function useAnchoredHighlightProjection({
         right.stable_order_key &&
         left.stable_order_key !== right.stable_order_key
       ) {
-        return left.stable_order_key.localeCompare(right.stable_order_key);
+        return compareStableString(left.stable_order_key, right.stable_order_key);
       }
       if (left.stable_order_key && !right.stable_order_key) {
         return -1;
@@ -208,7 +209,7 @@ export function useAnchoredHighlightProjection({
         return leftCreatedAtMs - rightCreatedAtMs;
       }
 
-      return left.id.localeCompare(right.id);
+      return compareStableString(left.id, right.id);
     });
     return sorted;
   }, [highlights]);

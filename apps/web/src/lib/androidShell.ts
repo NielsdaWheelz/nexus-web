@@ -4,13 +4,6 @@ export function isAndroidShellUserAgent(userAgent: string): boolean {
   return userAgent.includes(ANDROID_SHELL_USER_AGENT_TOKEN);
 }
 
-export function isAndroidShell(): boolean {
-  return (
-    typeof navigator !== "undefined" &&
-    isAndroidShellUserAgent(navigator.userAgent)
-  );
-}
-
 export function isAndroidShellRestrictedHref(href: string): boolean {
   try {
     const baseOrigin =

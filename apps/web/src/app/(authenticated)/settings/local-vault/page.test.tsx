@@ -1,16 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
-
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
-}
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 
 const {
   mockIsLocalVaultSupported,
@@ -67,6 +58,12 @@ vi.mock("@/lib/api/client", () => ({
 
 import SettingsLocalVaultPaneBody from "./SettingsLocalVaultPaneBody";
 
+function renderLocalVault(androidShell = false) {
+  return render(
+    withRenderEnvironment(<SettingsLocalVaultPaneBody />, { androidShell }),
+  );
+}
+
 describe("SettingsLocalVaultPaneBody", () => {
   beforeEach(() => {
     mockIsLocalVaultSupported.mockReturnValue(true);
@@ -89,13 +86,9 @@ describe("SettingsLocalVaultPaneBody", () => {
     });
   });
 
-  afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT);
-  });
-
   it("connects a folder and exports the vault", async () => {
     const user = userEvent.setup();
-    render(<SettingsLocalVaultPaneBody />);
+    renderLocalVault();
 
     expect(screen.queryByRole("heading", { name: "Local Vault" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /connect folder/i }));
@@ -109,16 +102,14 @@ describe("SettingsLocalVaultPaneBody", () => {
 
   it("stores the auto-sync preference", async () => {
     const user = userEvent.setup();
-    render(<SettingsLocalVaultPaneBody />);
+    renderLocalVault();
 
     await user.click(await screen.findByRole("checkbox"));
     expect(mockSetVaultAutoSync).toHaveBeenCalledWith(true);
   });
 
   it("shows an unsupported message and skips local vault APIs in the android shell", () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-
-    render(<SettingsLocalVaultPaneBody />);
+    renderLocalVault(true);
 
     expect(
       screen.getByText(

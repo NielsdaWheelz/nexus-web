@@ -11,6 +11,9 @@ import Button from "@/components/ui/Button";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
 
 type IntelligenceStatus =
@@ -82,23 +85,23 @@ function formatLabel(value: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatDateTime(value: string | null | undefined): string | null {
+function formatDateTime(
+  value: string | null | undefined,
+  display: RenderEnvironment,
+): string | null {
   if (!value) {
     return null;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString(undefined, {
+  return formatDisplayDate(value, display, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  });
+  }) ?? value;
 }
 
 export default function LibraryIntelligenceView({ libraryId }: { libraryId: string }) {
+  const display = useRenderEnvironment();
   const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(
     null,
   );
@@ -151,14 +154,16 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
   const currentIntelligence =
     intelligence?.library_id === libraryId ? intelligence : null;
   const sections = currentIntelligence?.sections ?? [];
-  const updatedAt = formatDateTime(currentIntelligence?.updated_at);
+  const updatedAt = formatDateTime(currentIntelligence?.updated_at, display);
   const buildUpdatedAt = formatDateTime(
     currentIntelligence?.build?.updated_at ??
       currentIntelligence?.build?.completed_at ??
       null,
+    display,
   );
   const buildStartedAt = formatDateTime(
     currentIntelligence?.build?.started_at ?? null,
+    display,
   );
   const status = currentIntelligence?.status ?? "unavailable";
   const buildStatus = currentIntelligence?.build?.status ?? null;
@@ -201,13 +206,13 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
             <div className={styles.intelligenceStat}>
               <span className={styles.statLabel}>Sources</span>
               <strong>
-                {currentIntelligence.source_count.toLocaleString()}
+                {formatDisplayNumber(currentIntelligence.source_count, display)}
               </strong>
             </div>
             <div className={styles.intelligenceStat}>
               <span className={styles.statLabel}>Chunks</span>
               <strong>
-                {currentIntelligence.chunk_count.toLocaleString()}
+                {formatDisplayNumber(currentIntelligence.chunk_count, display)}
               </strong>
             </div>
             <div className={styles.intelligenceStat}>
@@ -294,7 +299,7 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
                         source.included
                           ? "Included"
                           : formatLabel(source.exclusion_reason ?? "excluded"),
-                        `${source.chunk_count.toLocaleString()} chunks`,
+                        `${formatDisplayNumber(source.chunk_count, display)} chunks`,
                         formatLabel(source.readiness_state),
                       ]
                         .filter(Boolean)

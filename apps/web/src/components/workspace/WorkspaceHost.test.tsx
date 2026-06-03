@@ -263,8 +263,15 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
 }));
 
 vi.mock("@/lib/keybindings", () => ({
-  loadKeybindings: () => ({}),
   matchesKeyEvent: () => false,
+}));
+
+vi.mock("@/lib/keybindingsProvider", () => ({
+  useKeybindings: () => ({}),
+}));
+
+vi.mock("@/lib/renderEnvironment/provider", () => ({
+  useAndroidShell: () => false,
 }));
 
 vi.mock("@/lib/workspace/telemetry", () => ({

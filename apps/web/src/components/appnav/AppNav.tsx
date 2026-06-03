@@ -12,7 +12,8 @@ import {
   dispatchOpenCommandPalette,
   OPEN_COMMAND_PALETTE_EVENT,
 } from "@/components/commandPaletteEvents";
-import { DEFAULT_KEYBINDINGS, formatKeyCombo, loadKeybindings } from "@/lib/keybindings";
+import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
+import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { NAV_MODEL, type NavDestination, type NavGroup, type NavItem } from "./navModel";
 import { resolveActiveDestinationId } from "./navActive";
@@ -46,6 +47,9 @@ export default function AppNav() {
 
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const commandCombo =
+    useKeybinding("open-palette") ?? DEFAULT_KEYBINDINGS["open-palette"];
+  const commandHint = useKeybindingLabel("open-palette") ?? commandCombo;
 
   useEffect(() => {
     setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
@@ -97,13 +101,6 @@ export default function AppNav() {
     [activePathname, pins],
   );
   const settingsActive = activeId === "settings";
-
-  // Raw combo ("Meta+k") for aria-keyshortcuts (ARIA token syntax); display form ("⌘K") for the kbd hint.
-  const commandCombo = useMemo(
-    () => loadKeybindings()["open-palette"] ?? DEFAULT_KEYBINDINGS["open-palette"],
-    [],
-  );
-  const commandHint = useMemo(() => formatKeyCombo(commandCombo), [commandCombo]);
 
   // Close the sheet when the active route changes from outside the sheet (e.g. the command palette).
   useEffect(() => setSheetOpen(false), [activePathname]);

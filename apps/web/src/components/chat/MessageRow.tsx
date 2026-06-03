@@ -2,6 +2,8 @@
 
 import { useCallback } from "react";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type {
   BranchDraft,
@@ -27,17 +29,6 @@ interface MessageRowProps {
   ) => void;
 }
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = Date.now();
-  const diffSec = Math.floor((now - d.getTime()) / 1000);
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 function errorLabel(message: ConversationMessage): string {
   if (message.error_code === "E_LLM_INCOMPLETE")
     return "Response stopped before completion.";
@@ -57,6 +48,7 @@ export function MessageRow({
   onRetryAssistantResponse,
   onReaderSourceActivate,
 }: MessageRowProps) {
+  const display = useRenderEnvironment();
   const activateTarget = useCallback(
     (target: ReaderSourceTarget, event?: React.MouseEvent) => {
       dispatchReaderPulse({
@@ -74,7 +66,9 @@ export function MessageRow({
   );
 
   const messageErrorLabel = errorLabel(message);
-  const timestampLabel = formatTime(message.created_at);
+  const timestampLabel =
+    formatDisplayDate(message.created_at, display, { month: "short", day: "numeric" }) ??
+    "";
 
   switch (message.role) {
     case "user":

@@ -24,6 +24,7 @@ import type {
 import { formatContributorRole } from "@/lib/contributors/formatting";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { compareStableString } from "@/lib/display/format";
 import styles from "./page.module.css";
 
 interface ContributorPaneData {
@@ -63,7 +64,7 @@ function normalizeFilterValue(value: string | null | undefined): string {
 function uniqueSorted(values: Array<string | null | undefined>): string[] {
   return Array.from(
     new Set(values.map((value) => normalizeFilterValue(value)).filter(Boolean))
-  ).sort((a, b) => a.localeCompare(b));
+  ).sort(compareStableString);
 }
 
 function buildWorkMeta(work: ContributorWork): string {

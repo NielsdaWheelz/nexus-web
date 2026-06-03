@@ -211,18 +211,32 @@ describe("prepareRestoredState", () => {
       activePrimaryPaneId: "pane-2",
       primaryPanes: [{ ...librariesPane }, { ...mediaPane }],
     });
-    expect(prepareRestoredState(raw, workspacePrimaryMetrics)).toEqual(raw);
+    expect(prepareRestoredState(raw, workspacePrimaryMetrics, false)).toEqual(raw);
   });
 
   it("returns a default workspace for null", () => {
-    const result = prepareRestoredState(null, workspacePrimaryMetrics);
+    const result = prepareRestoredState(null, workspacePrimaryMetrics, false);
     const panes = getWorkspacePrimaryPanes(result);
     expect(panes).toHaveLength(1);
     expect(panes[0]?.href).toBe("/libraries");
   });
 
   it("returns a default workspace for garbage state", () => {
-    const garbage = prepareRestoredState({ nonsense: true }, workspacePrimaryMetrics);
+    const garbage = prepareRestoredState({ nonsense: true }, workspacePrimaryMetrics, false);
     expect(getWorkspacePrimaryPanes(garbage)[0]?.href).toBe("/libraries");
+  });
+
+  it("filters Local Vault panes for the Android shell", () => {
+    const raw = workspace({
+      activePrimaryPaneId: "pane-2",
+      primaryPanes: [
+        primary("pane-1", "/settings/local-vault"),
+        primary("pane-2", "/settings/billing"),
+      ],
+    });
+    const restored = prepareRestoredState(raw, workspacePrimaryMetrics, true);
+    expect(getWorkspacePrimaryPanes(restored).map((pane) => pane.href)).toEqual([
+      "/settings/billing",
+    ]);
   });
 });

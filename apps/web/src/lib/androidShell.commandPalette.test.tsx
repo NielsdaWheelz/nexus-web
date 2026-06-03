@@ -10,18 +10,17 @@
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import CommandPalette from "@/components/palette/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 // ---------------------------------------------------------------------------
 // Helpers (mirrors CommandPalette.test.tsx)
 // ---------------------------------------------------------------------------
-
-const ANDROID_UA = `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 ${ANDROID_SHELL_USER_AGENT_TOKEN}/1.0`;
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
@@ -69,14 +68,19 @@ function mockApi(
 
 function renderPalette() {
   return render(
-    <FeedbackProvider>
-      <WorkspaceStoreProvider
-        workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref="/libraries"
-      >
-        <CommandPalette />
-      </WorkspaceStoreProvider>
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <KeybindingsProvider>
+        <FeedbackProvider>
+          <WorkspaceStoreProvider
+            workspacePrimaryMetrics={workspacePrimaryMetrics}
+            initialHref="/libraries"
+          >
+            <CommandPalette />
+          </WorkspaceStoreProvider>
+        </FeedbackProvider>
+      </KeybindingsProvider>,
+      { androidShell: true },
+    ),
   );
 }
 
@@ -105,11 +109,6 @@ const RECENTS = [
 
 describe("Android-shell gating — command palette recents", () => {
   beforeEach(() => {
-    // Identify as Android shell by injecting the required UA token.
-    Object.defineProperty(navigator, "userAgent", {
-      value: ANDROID_UA,
-      configurable: true,
-    });
     vi.stubGlobal("innerWidth", 1280); // desktop surface
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
@@ -117,11 +116,6 @@ describe("Android-shell gating — command palette recents", () => {
   });
 
   afterEach(() => {
-    // Restore UA so subsequent tests get the real value.
-    Object.defineProperty(navigator, "userAgent", {
-      value: "",
-      configurable: true,
-    });
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

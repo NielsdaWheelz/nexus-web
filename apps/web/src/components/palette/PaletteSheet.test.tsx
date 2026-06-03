@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import CommandPalette from "@/components/palette/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
@@ -11,6 +13,30 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+
+function mockMatchMedia({
+  mobile,
+  reducedMotion = false,
+}: {
+  mobile: boolean;
+  reducedMotion?: boolean;
+}) {
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("max-width") ? mobile : reducedMotion && query.includes("reduce"),
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent() {
+          return false;
+        },
+      }) as MediaQueryList,
+  );
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
@@ -35,11 +61,19 @@ function mockApi() {
 
 function renderPalette() {
   return render(
-    <FeedbackProvider>
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics} initialHref="/libraries">
-        <CommandPalette />
-      </WorkspaceStoreProvider>
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <KeybindingsProvider>
+        <FeedbackProvider>
+          <WorkspaceStoreProvider
+            workspacePrimaryMetrics={workspacePrimaryMetrics}
+            initialHref="/libraries"
+          >
+            <CommandPalette />
+          </WorkspaceStoreProvider>
+        </FeedbackProvider>
+      </KeybindingsProvider>,
+      { initialViewport: "mobile" },
+    ),
   );
 }
 
@@ -52,6 +86,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     vi.stubGlobal("innerWidth", 390); // mobile viewport
+    mockMatchMedia({ mobile: true });
     vi.spyOn(history, "pushState").mockImplementation(() => {});
     vi.spyOn(history, "back").mockImplementation(() => {});
     // setPointerCapture isn't implemented for synthetic pointer events in the test env.
@@ -151,21 +186,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
   });
 
   it("reduced-motion disables drag dismissal", async () => {
-    vi.spyOn(window, "matchMedia").mockImplementation(
-      (q: string) =>
-        ({
-          matches: q.includes("reduce"),
-          media: q,
-          onchange: null,
-          addEventListener() {},
-          removeEventListener() {},
-          addListener() {},
-          removeListener() {},
-          dispatchEvent() {
-            return false;
-          },
-        }) as MediaQueryList,
-    );
+    mockMatchMedia({ mobile: true, reducedMotion: true });
 
     renderPalette();
     open();

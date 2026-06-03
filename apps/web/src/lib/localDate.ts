@@ -14,6 +14,22 @@ export function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export function formatLocalDateInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  if (!year || !month || !day) {
+    return formatLocalDate(date);
+  }
+  return `${year}-${month}-${day}`;
+}
+
 export function todayLocalDate(): string {
   return formatLocalDate(new Date());
 }
@@ -29,4 +45,17 @@ export function isLocalDate(value: string): boolean {
     parsed.getMonth() === month - 1 &&
     parsed.getDate() === day
   );
+}
+
+export function shiftLocalDate(value: string, days: number): string {
+  if (!isLocalDate(value)) {
+    return value;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return [
+    String(date.getUTCFullYear()).padStart(4, "0"),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
 }

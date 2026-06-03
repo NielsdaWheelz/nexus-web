@@ -55,9 +55,11 @@ import {
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import BrowseTypeFilters from "./BrowseTypeFilters";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import styles from "./page.module.css";
 
 export default function BrowsePaneBody() {
+  const display = useRenderEnvironment();
   const paneRouter = usePaneRouter();
   const { openInNewPane } = usePaneRuntime() ?? {};
   const paneSearchParams = usePaneSearchParams();
@@ -713,7 +715,7 @@ export default function BrowsePaneBody() {
                         </div>
                         <div className={styles.title}>{result.title}</div>
                         <div className={styles.description}>
-                          {formatEpisodeMeta(result)}
+                          {formatEpisodeMeta(result, display)}
                         </div>
                       </div>
                     </div>

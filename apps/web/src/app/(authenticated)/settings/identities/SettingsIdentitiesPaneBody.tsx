@@ -22,6 +22,9 @@ import {
   unlinkLinkedIdentity,
 } from "./actions";
 import { PasswordRow } from "./PasswordRow";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./page.module.css";
 
 const LOAD_FAILED_MESSAGE = "Failed to load identities";
@@ -30,15 +33,12 @@ const UNLINK_FAILED_MESSAGE =
 const KEEP_ONE_IDENTITY_MESSAGE =
   "Link at least one additional identity before unlinking.";
 
-function linkedDate(identity: LinkedIdentity): string {
+function linkedDate(identity: LinkedIdentity, display: RenderEnvironment): string {
   if (!identity.createdAt) {
     return "linked date unavailable";
   }
-  const date = new Date(identity.createdAt);
-  if (Number.isNaN(date.getTime())) {
-    return "linked date unavailable";
-  }
-  return `linked ${date.toLocaleDateString()}`;
+  const formatted = formatDisplayDate(identity.createdAt, display);
+  return formatted ? `linked ${formatted}` : "linked date unavailable";
 }
 
 // Identity linking is OAuth initiation: a GET form to the server /auth/oauth
@@ -57,6 +57,7 @@ function ConnectProviderForm({ provider }: { provider: OAuthProvider }) {
 }
 
 export default function SettingsIdentitiesPaneBody() {
+  const display = useRenderEnvironment();
   const initialIdentities = useResource({
     cacheKey: "settings-identities:list",
     load: () => loadLinkedIdentities(),
@@ -156,7 +157,7 @@ export default function SettingsIdentitiesPaneBody() {
                   key={identity.id}
                   title={formatIdentityProvider(identity.provider)}
                   description={identity.email ?? "provider did not return an email"}
-                  meta={linkedDate(identity)}
+                  meta={linkedDate(identity, display)}
                   actions={
                     canUnlink ? (
                       <Button

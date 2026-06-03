@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import CommandPalette from "@/components/palette/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
@@ -11,6 +13,24 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+
+function mockMatchMedia(matchesMobile: boolean) {
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("max-width") ? matchesMobile : false,
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent() {
+          return false;
+        },
+      }) as MediaQueryList,
+  );
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
@@ -42,11 +62,18 @@ function mockApi(
 
 function renderPalette() {
   return render(
-    <FeedbackProvider>
-      <WorkspaceStoreProvider workspacePrimaryMetrics={workspacePrimaryMetrics} initialHref="/libraries">
-        <CommandPalette />
-      </WorkspaceStoreProvider>
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <KeybindingsProvider>
+        <FeedbackProvider>
+          <WorkspaceStoreProvider
+            workspacePrimaryMetrics={workspacePrimaryMetrics}
+            initialHref="/libraries"
+          >
+            <CommandPalette />
+          </WorkspaceStoreProvider>
+        </FeedbackProvider>
+      </KeybindingsProvider>,
+    ),
   );
 }
 
@@ -69,6 +96,7 @@ describe("CommandPalette", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     vi.stubGlobal("innerWidth", 1280); // desktop surface
+    mockMatchMedia(false);
     mockApi();
   });
 

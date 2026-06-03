@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import {
-  loadKeybindings,
-  saveKeybindings,
   formatKeyCombo,
   captureKeyCombo,
   DEFAULT_KEYBINDINGS,
 } from "@/lib/keybindings";
+import { useKeybindingsController } from "@/lib/keybindingsProvider";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import styles from "./page.module.css";
 
 interface BindableAction {
@@ -34,13 +34,10 @@ const BINDABLE_ACTIONS: BindableAction[] = [
 ];
 
 export default function KeybindingsPaneBody() {
-  const [bindings, setBindings] = useState<Record<string, string>>({});
+  const { bindings, setBinding, resetBindings } = useKeybindingsController();
+  const { platform } = useRenderEnvironment();
   const [capturing, setCapturing] = useState<string | null>(null);
   const [capturedCombo, setCapturedCombo] = useState<string | null>(null);
-
-  useEffect(() => {
-    setBindings(loadKeybindings());
-  }, []);
 
   const startCapture = useCallback((actionId: string) => {
     setCapturing(actionId);
@@ -54,29 +51,23 @@ export default function KeybindingsPaneBody() {
 
   const saveCapture = useCallback(() => {
     if (!capturing || !capturedCombo) return;
-    const next = { ...bindings, [capturing]: capturedCombo };
-    setBindings(next);
-    saveKeybindings(next);
+    setBinding(capturing, capturedCombo);
     setCapturing(null);
     setCapturedCombo(null);
-  }, [bindings, capturing, capturedCombo]);
+  }, [capturing, capturedCombo, setBinding]);
 
   const clearBinding = useCallback(
     (actionId: string) => {
-      const next = { ...bindings };
-      delete next[actionId];
-      setBindings(next);
-      saveKeybindings(next);
+      setBinding(actionId, null);
     },
-    [bindings],
+    [setBinding],
   );
 
   const resetAll = useCallback(() => {
-    setBindings({ ...DEFAULT_KEYBINDINGS });
-    saveKeybindings({ ...DEFAULT_KEYBINDINGS });
+    resetBindings();
     setCapturing(null);
     setCapturedCombo(null);
-  }, []);
+  }, [resetBindings]);
 
   // Capture key combo when in capture mode
   useEffect(() => {
@@ -121,7 +112,7 @@ export default function KeybindingsPaneBody() {
                 <div className={styles.captureRow}>
                   <span className={styles.captureHint}>
                     {capturedCombo
-                      ? formatKeyCombo(capturedCombo)
+                      ? formatKeyCombo(capturedCombo, platform)
                       : "Press a key combination..."}
                   </span>
                   {conflict && (
@@ -148,7 +139,7 @@ export default function KeybindingsPaneBody() {
               ) : (
                 <div className={styles.bindingRow}>
                   <span className={styles.combo}>
-                    {currentCombo ? formatKeyCombo(currentCombo) : "—"}
+                    {currentCombo ? formatKeyCombo(currentCombo, platform) : "—"}
                   </span>
                   <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
                     Edit

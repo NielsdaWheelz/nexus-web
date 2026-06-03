@@ -6,6 +6,7 @@
  */
 
 import { isAbortError } from "@/lib/errors";
+import { compareStableString } from "@/lib/display/format";
 import { isRecord } from "@/lib/validation";
 
 export type ApiPath = `/api/${string}`;
@@ -70,7 +71,7 @@ function sortedHeaderEntries(headers: HeadersInit | undefined): [string, string]
     return [];
   }
   return Array.from(new Headers(headers).entries()).sort(([a], [b]) =>
-    a.localeCompare(b)
+    compareStableString(a, b),
   );
 }
 

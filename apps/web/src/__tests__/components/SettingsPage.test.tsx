@@ -1,24 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
-}
-
 describe("SettingsPaneBody", () => {
-  afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT);
-  });
-
   it("includes linked identities management entrypoint", () => {
-    render(<SettingsPaneBody />);
+    render(withRenderEnvironment(<SettingsPaneBody />));
 
     const billingLink = screen.getByRole("link", {
       name: /billing/i,
@@ -37,13 +24,11 @@ describe("SettingsPaneBody", () => {
   });
 
   it("hides Local Vault in the Android shell without hiding Billing", () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-
-    render(<SettingsPaneBody />);
+    render(withRenderEnvironment(<SettingsPaneBody />, { androidShell: true }));
 
     expect(screen.getByRole("link", { name: /billing/i })).toHaveAttribute(
       "href",
-      "/settings/billing"
+      "/settings/billing",
     );
     expect(screen.queryByRole("link", { name: /local vault/i })).not.toBeInTheDocument();
   });

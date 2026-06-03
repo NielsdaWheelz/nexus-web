@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { isAndroidShell } from "@/lib/androidShell";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
 import {
   getVaultAutoSync,
@@ -60,9 +60,10 @@ async function runLocalVaultSync(feedback: ReturnType<typeof useFeedback>): Prom
 
 export default function LocalVaultAutoSync() {
   const feedback = useFeedback();
+  const androidShell = useAndroidShell();
 
   useEffect(() => {
-    if (isAndroidShell() || !isLocalVaultSupported() || !getVaultAutoSync()) {
+    if (androidShell || !isLocalVaultSupported() || !getVaultAutoSync()) {
       return;
     }
 
@@ -100,7 +101,7 @@ export default function LocalVaultAutoSync() {
       localVaultSyncSubscriberCount = Math.max(0, localVaultSyncSubscriberCount - 1);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [feedback]);
+  }, [androidShell, feedback]);
 
   return null;
 }

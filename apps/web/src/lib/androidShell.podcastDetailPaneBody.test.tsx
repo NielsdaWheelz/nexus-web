@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 
@@ -58,15 +57,6 @@ vi.mock("@/lib/player/globalPlayer", () => ({
 
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
-}
-
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -74,14 +64,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("PodcastDetailPaneBody android shell billing", () => {
+describe("PodcastDetailPaneBody transcript billing", () => {
   afterEach(() => {
-    setUserAgent(DEFAULT_USER_AGENT);
     vi.restoreAllMocks();
   });
 
-  it("keeps the transcript upgrade affordance in the android shell", async () => {
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
+  it("keeps the transcript upgrade affordance when transcription is locked", async () => {
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );

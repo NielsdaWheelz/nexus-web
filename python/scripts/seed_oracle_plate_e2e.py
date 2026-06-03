@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from seed_e2e_data import (  # noqa: E402
     E2E_USER_EMAIL,
     _fetch_e2e_user_id_with_retry,
+    _release_stale_e2e_user_email,
 )
 
 # Deterministic identifiers keep the seed idempotent across reseeds.
@@ -232,6 +233,7 @@ def main() -> None:
 
     session_factory = create_session_factory()
     with session_factory() as db:
+        _release_stale_e2e_user_email(db, user_id, E2E_USER_EMAIL)
         ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
         corpus_set_version_id = _ensure_corpus_version(db)
         image_id = _ensure_corpus_image(db, corpus_set_version_id=corpus_set_version_id)

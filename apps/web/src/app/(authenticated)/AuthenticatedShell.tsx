@@ -11,6 +11,8 @@ import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
@@ -21,28 +23,33 @@ import {
   type DehydratedResources,
 } from "@/lib/api/hydrationCache";
 import type { ReaderProfile } from "@/lib/reader/types";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell({
   initialHref,
   readerProfile,
+  renderEnvironment,
   resources,
 }: {
   initialHref: string;
   readerProfile: ReaderProfile;
+  renderEnvironment: RenderEnvironment;
   resources: DehydratedResources;
 }) {
   return (
-    <>
+    <RenderEnvironmentProvider value={renderEnvironment}>
       <SessionRefresher />
       <LocalVaultAutoSync />
       <WebVitalsReporter />
       <BootstrapHydrationProvider value={resources}>
-        <ReaderProvider initialProfile={readerProfile}>
-          <AuthenticatedWorkspace initialHref={initialHref} />
-        </ReaderProvider>
+        <KeybindingsProvider>
+          <ReaderProvider initialProfile={readerProfile}>
+            <AuthenticatedWorkspace initialHref={initialHref} />
+          </ReaderProvider>
+        </KeybindingsProvider>
       </BootstrapHydrationProvider>
-    </>
+    </RenderEnvironmentProvider>
   );
 }
 

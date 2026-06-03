@@ -17,6 +17,9 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import type { ConversationSummary } from "@/lib/conversations/types";
+import { formatDisplayDate } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./ConversationsPaneBody.module.css";
 
 interface ConversationsResponse {
@@ -36,6 +39,7 @@ export default function ConversationsPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const display = useRenderEnvironment();
 
   useEffect(() => {
     if (initialConversations.status === "ready") {
@@ -99,6 +103,7 @@ export default function ConversationsPaneBody() {
             <ConversationListItem
               key={conv.id}
               conversation={conv}
+              display={display}
               onDelete={handleDelete}
             />
           ))}
@@ -122,9 +127,11 @@ export default function ConversationsPaneBody() {
 
 function ConversationListItem({
   conversation,
+  display,
   onDelete,
 }: {
   conversation: ConversationSummary;
+  display: RenderEnvironment;
   onDelete: (conversationId: string) => Promise<void>;
 }) {
   return (
@@ -132,7 +139,7 @@ function ConversationListItem({
       href={`/conversations/${conversation.id}`}
       title={conversation.title}
       paneTitleHint={conversation.title}
-      meta={new Date(conversation.updated_at).toLocaleDateString()}
+      meta={formatDisplayDate(conversation.updated_at, display) ?? ""}
       options={conversationResourceOptions({
         onDelete: () => void onDelete(conversation.id),
       })}

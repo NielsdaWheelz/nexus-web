@@ -6,6 +6,7 @@ import type {
   ForkStatus,
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
+import { compareStableString } from "@/lib/display/format";
 
 type ChatRunData = ChatRunResponse["data"];
 
@@ -92,7 +93,7 @@ export function upsertForkOptionForRun(
   return {
     ...optionsByParentId,
     [parentMessageId]: nextOptions.sort((a, b) =>
-      a.created_at.localeCompare(b.created_at),
+      compareStableString(a.created_at, b.created_at),
     ),
   };
 }
