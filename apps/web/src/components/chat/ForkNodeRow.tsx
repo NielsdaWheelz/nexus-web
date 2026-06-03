@@ -2,27 +2,21 @@
 
 import { useEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
-import { Check, ChevronRight, GitBranch, Pencil, Trash2, X } from "lucide-react";
+import { ChevronRight, GitBranch } from "lucide-react";
 import { truncateText } from "@/lib/conversations/display";
-import { forkSearchText } from "@/lib/conversations/forkTree";
+import { forkSearchText, isForkInActivePath } from "@/lib/conversations/forkTree";
 import type {
   ConversationForkNode,
   VisibleForkRow,
 } from "@/lib/conversations/forkTree";
 import type { ForkOption } from "@/lib/conversations/types";
 import { pluralize } from "@/lib/text/pluralize";
+import ActionBar from "@/components/ui/ActionBar";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
+import { buildForkNodeActions } from "./forkNodeActions";
+import { treeItemDomId, toForkOption } from "./forkNodeRow";
 import styles from "./ConversationForksPanel.module.css";
-
-export function treeItemDomId(id: string): string {
-  return `conversation-fork-${id}`;
-}
-
-export function toForkOption(node: ConversationForkNode): ForkOption {
-  const { children: _children, ...fork } = node;
-  return fork;
-}
 
 interface ForkNodeRowProps {
   node: ConversationForkNode;
@@ -72,24 +66,39 @@ export default function ForkNodeRow({
   onSelectFork,
 }: ForkNodeRowProps) {
   const editRef = useRef<HTMLTextAreaElement>(null);
-  const activeInPath =
-    node.active ||
-    node.leaf_message_id === activeLeafMessageId ||
-    selectedPathMessageIds.has(node.leaf_message_id) ||
-    selectedPathMessageIds.has(node.user_message_id) ||
-    (node.assistant_message_id ? selectedPathMessageIds.has(node.assistant_message_id) : false);
+  const activeInPath = isForkInActivePath(node, {
+    activeLeafMessageId,
+    selectedPathMessageIds,
+  });
   const title = node.title || truncateText(node.preview, 90);
   const expanded = expandedIds.has(node.id);
   const hasChildren = node.children.length > 0;
   const switchable = !switchableLeafIds || switchableLeafIds.has(node.leaf_message_id);
   const matchesSearch = searchQuery ? forkSearchText(node).includes(searchQuery) : false;
   const deleteDescriptionId = `${treeItemDomId(node.id)}-delete-description`;
+  const editing = editingId === node.id;
+  const actions = buildForkNodeActions(
+    editing
+      ? {
+          mode: "edit",
+          title,
+          onSaveRename: () => onSaveRename(node),
+          onCancelRename,
+        }
+      : {
+          mode: "view",
+          title,
+          deleteDisabled: activeInPath,
+          onStartRename: () => onStartRename(node),
+          onRequestDelete: () => onRequestDelete(node),
+        },
+  );
 
   useEffect(() => {
-    if (editingId === node.id) {
+    if (editing) {
       editRef.current?.focus();
     }
-  }, [editingId, node.id]);
+  }, [editing]);
 
   return (
     <article
@@ -116,7 +125,7 @@ export default function ForkNodeRow({
         <GitBranch size={14} aria-hidden="true" />
       )}
       <div className={styles.nodeBody}>
-        {editingId === node.id ? (
+        {editing ? (
           <Textarea
             ref={editRef}
             value={editingTitle}
@@ -153,52 +162,7 @@ export default function ForkNodeRow({
           </>
         )}
       </div>
-      <div className={styles.actions}>
-        {editingId === node.id ? (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => onSaveRename(node)}
-              aria-label={`Save fork ${title}`}
-            >
-              <Check size={14} aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={onCancelRename}
-              aria-label={`Cancel rename fork ${title}`}
-            >
-              <X size={14} aria-hidden="true" />
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              onClick={() => onStartRename(node)}
-              aria-label={`Rename fork ${title}`}
-            >
-              <Pencil size={14} aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              disabled={activeInPath}
-              onClick={() => onRequestDelete(node)}
-              aria-label={`Delete fork ${title}`}
-            >
-              <Trash2 size={14} aria-hidden="true" />
-            </Button>
-          </>
-        )}
-      </div>
+      <ActionBar options={actions} label="Fork actions" className={styles.actions} />
       {pendingDeleteId === node.id ? (
         <div
           className={styles.deleteConfirm}

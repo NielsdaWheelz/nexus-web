@@ -8,6 +8,25 @@ export type VisibleForkRow = {
   parentId: string | null;
 };
 
+export function isForkInActivePath(
+  fork: Pick<
+    ForkOption,
+    "active" | "leaf_message_id" | "user_message_id" | "assistant_message_id"
+  >,
+  path: {
+    activeLeafMessageId?: string | null;
+    selectedPathMessageIds: ReadonlySet<string>;
+  },
+): boolean {
+  return (
+    fork.active ||
+    fork.leaf_message_id === path.activeLeafMessageId ||
+    path.selectedPathMessageIds.has(fork.leaf_message_id) ||
+    path.selectedPathMessageIds.has(fork.user_message_id) ||
+    (fork.assistant_message_id ? path.selectedPathMessageIds.has(fork.assistant_message_id) : false)
+  );
+}
+
 export function buildForkTree(
   forks: ForkOption[],
   graph?: BranchGraph,

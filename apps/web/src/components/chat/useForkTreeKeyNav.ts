@@ -8,7 +8,20 @@ import type {
   VisibleForkRow,
 } from "@/lib/conversations/forkTree";
 import type { ForkOption } from "@/lib/conversations/types";
-import { treeItemDomId, toForkOption } from "./ForkNodeRow";
+import { treeItemDomId, toForkOption } from "./forkNodeRow";
+
+const ROW_CONTROL_SELECTOR = [
+  "button",
+  "a[href]",
+  "input",
+  "textarea",
+  "select",
+  "summary",
+  '[role="button"]',
+  '[role="menuitem"]',
+  '[role="textbox"]',
+  '[contenteditable]:not([contenteditable="false"])',
+].join(",");
 
 interface UseForkTreeKeyNav {
   handleTreeKeyDown: (event: KeyboardEvent<HTMLElement>, row: VisibleForkRow) => void;
@@ -54,6 +67,9 @@ export function useForkTreeKeyNav(input: {
 
   const handleTreeKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>, row: VisibleForkRow) => {
+      if (event.key !== "Escape" && eventStartedInRowControl(event)) {
+        return;
+      }
       const index = visibleRows.findIndex((item) => item.node.id === row.node.id);
       switch (event.key) {
         case "ArrowDown":
@@ -141,4 +157,11 @@ export function useForkTreeKeyNav(input: {
   );
 
   return { handleTreeKeyDown };
+}
+
+function eventStartedInRowControl(event: KeyboardEvent<HTMLElement>): boolean {
+  if (!(event.target instanceof Element) || event.target === event.currentTarget) {
+    return false;
+  }
+  return Boolean(event.target.closest(ROW_CONTROL_SELECTOR));
 }

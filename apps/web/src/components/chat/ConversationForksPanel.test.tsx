@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import ConversationForksPanel from "./ConversationForksPanel";
 import type { BranchGraph, ForkOption } from "@/lib/conversations/types";
 
@@ -136,6 +137,7 @@ function renderPanel(
   onForksChanged: ForksChanged = vi.fn<ForksChanged>(),
   options: {
     branchGraph?: BranchGraph;
+    activeLeafMessageId?: string | null;
     selectedPathMessageIds?: Set<string>;
     onSelectGraphLeaf?: SelectGraphLeaf;
   } = {},
@@ -143,25 +145,28 @@ function renderPanel(
   const onSelectGraphLeaf =
     options.onSelectGraphLeaf ?? vi.fn<SelectGraphLeaf>();
   render(
-    <ConversationForksPanel
-      conversationId="conversation-1"
-      forkOptionsByParentId={{ "root-assistant": [parentFork, siblingFork] }}
-      branchGraph={options.branchGraph ?? branchGraph}
-      switchableLeafIds={
-        new Set([
-          "parent-assistant",
-          "child-assistant",
-          "sibling-assistant",
-        ])
-      }
-      selectedPathMessageIds={
-        options.selectedPathMessageIds ??
-        new Set(["parent-user", "parent-assistant"])
-      }
-      onSelectFork={onSelectFork}
-      onSelectGraphLeaf={onSelectGraphLeaf}
-      onForksChanged={onForksChanged}
-    />,
+    withRenderEnvironment(
+      <ConversationForksPanel
+        conversationId="conversation-1"
+        forkOptionsByParentId={{ "root-assistant": [parentFork, siblingFork] }}
+        branchGraph={options.branchGraph ?? branchGraph}
+        activeLeafMessageId={options.activeLeafMessageId}
+        switchableLeafIds={
+          new Set([
+            "parent-assistant",
+            "child-assistant",
+            "sibling-assistant",
+          ])
+        }
+        selectedPathMessageIds={
+          options.selectedPathMessageIds ??
+          new Set(["parent-user", "parent-assistant"])
+        }
+        onSelectFork={onSelectFork}
+        onSelectGraphLeaf={onSelectGraphLeaf}
+        onForksChanged={onForksChanged}
+      />,
+    ),
   );
   return { onSelectFork, onForksChanged, onSelectGraphLeaf };
 }
@@ -357,6 +362,78 @@ describe("ConversationForksPanel", () => {
     expect(onForksChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps row action clicks separate from fork selection", async () => {
+    const { onSelectFork } = renderPanel();
+    await visibleTreeItems();
+
+    expect(screen.getByRole("button", { name: "Delete fork Parent path" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename fork Child path" }));
+    expect(onSelectFork).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("textbox", { name: /rename fork child path/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel rename fork Child path" }));
+    expect(
+      screen.queryByRole("textbox", { name: /rename fork child path/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete fork Child path" }));
+    expect(onSelectFork).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("group", {
+      name: /confirm delete fork.*child path/i,
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.queryByRole("group", { name: /confirm delete fork.*child path/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps rename textbox keys out of tree navigation while preserving Escape cancel", async () => {
+    const { onSelectFork } = renderPanel();
+    await visibleTreeItems();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename fork Child path" }));
+    const input = screen.getByRole("textbox", {
+      name: /rename fork child path/i,
+    });
+    expect(input).toHaveFocus();
+
+    fireEvent.keyDown(input, { key: "Delete" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: " " });
+    expect(onSelectFork).not.toHaveBeenCalled();
+    expect(input).toHaveFocus();
+    expect(
+      screen.queryByRole("group", { name: /confirm delete fork.*child path/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(
+      screen.queryByRole("textbox", { name: /rename fork child path/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the active leaf id when blocking delete", async () => {
+    renderPanel(vi.fn(), vi.fn(), {
+      activeLeafMessageId: "child-assistant",
+      selectedPathMessageIds: new Set(),
+    });
+    const treeItems = await visibleTreeItems();
+
+    expect(screen.getByRole("button", { name: "Delete fork Child path" })).toBeDisabled();
+    treeItems[1].focus();
+    fireEvent.keyDown(treeItems[1], { key: "Delete" });
+    expect(
+      screen.getByText("Switch away from this fork before deleting it."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: /confirm delete fork.*child path/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps rename editing open and shows an error when PATCH fails", async () => {
     vi.stubGlobal(
       "fetch",
@@ -435,6 +512,38 @@ describe("ConversationForksPanel", () => {
     );
     expect(deleteCall).toBeDefined();
     expect(onForksChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a fork row when DELETE fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (init?.method === "DELETE" && path.endsWith("/forks/branch-child")) {
+          return jsonResponse(
+            { error: { code: "E_INTERNAL", message: "Delete failed" } },
+            500,
+          );
+        }
+        return jsonResponse({
+          data: { forks: [parentFork, childFork, siblingFork] },
+        });
+      }),
+    );
+    const onForksChanged = vi.fn();
+
+    renderPanel(vi.fn(), onForksChanged);
+    await visibleTreeItems();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete fork Child path" }));
+    const confirm = screen.getByRole("group", {
+      name: /confirm delete fork.*child path/i,
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Fork delete failed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to fork Child path" })).toBeInTheDocument();
+    expect(onForksChanged).not.toHaveBeenCalled();
   });
 
   it("keeps the graph tab selectable and switches graph leaves", async () => {

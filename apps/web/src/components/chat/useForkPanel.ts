@@ -7,6 +7,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   buildForkTree,
   collectExpandableIds,
+  isForkInActivePath,
   removeNode,
   updateNode,
 } from "@/lib/conversations/forkTree";
@@ -41,6 +42,7 @@ export function useForkPanel(input: {
   conversationId: string;
   forkOptionsByParentId: Record<string, ForkOption[]>;
   branchGraph: BranchGraph;
+  activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   onForksChanged?: () => void;
 }): UseForkPanel {
@@ -48,6 +50,7 @@ export function useForkPanel(input: {
     conversationId,
     forkOptionsByParentId,
     branchGraph,
+    activeLeafMessageId,
     selectedPathMessageIds,
     onForksChanged,
   } = input;
@@ -141,21 +144,14 @@ export function useForkPanel(input: {
 
   const requestDeleteFork = useCallback(
     (fork: ConversationForkNode) => {
-      if (
-        fork.active ||
-        selectedPathMessageIds.has(fork.leaf_message_id) ||
-        selectedPathMessageIds.has(fork.user_message_id) ||
-        (fork.assistant_message_id
-          ? selectedPathMessageIds.has(fork.assistant_message_id)
-          : false)
-      ) {
+      if (isForkInActivePath(fork, { activeLeafMessageId, selectedPathMessageIds })) {
         setError("Switch away from this fork before deleting it.");
         return;
       }
       setError(null);
       setPendingDeleteId(fork.id);
     },
-    [selectedPathMessageIds],
+    [activeLeafMessageId, selectedPathMessageIds],
   );
 
   const cancelDelete = useCallback(() => setPendingDeleteId(null), []);

@@ -37,6 +37,7 @@ export default function ConversationForksPanel({
     conversationId,
     forkOptionsByParentId,
     branchGraph,
+    activeLeafMessageId,
     selectedPathMessageIds,
     onForksChanged,
   });

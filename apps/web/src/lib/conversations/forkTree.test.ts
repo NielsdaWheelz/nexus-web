@@ -4,6 +4,7 @@ import {
   collectExpandableIds,
   filterNodes,
   flattenVisibleRows,
+  isForkInActivePath,
   removeNode,
   updateNode,
 } from "@/lib/conversations/forkTree";
@@ -111,6 +112,45 @@ describe("buildForkTree", () => {
 
     expect(roots.map((node) => node.id)).toEqual(["ancestor"]);
     expect(roots[0].children.map((node) => node.id)).toEqual(["descendant"]);
+  });
+});
+
+describe("isForkInActivePath", () => {
+  it("matches active flags, selected path messages, and the active leaf", () => {
+    expect(
+      isForkInActivePath(fork({ id: "active", active: true }), {
+        selectedPathMessageIds: new Set(),
+      }),
+    ).toBe(true);
+    expect(
+      isForkInActivePath(fork({ id: "leaf" }), {
+        activeLeafMessageId: "leaf-assistant",
+        selectedPathMessageIds: new Set(),
+      }),
+    ).toBe(true);
+    expect(
+      isForkInActivePath(fork({ id: "selected-leaf" }), {
+        selectedPathMessageIds: new Set(["selected-leaf-assistant"]),
+      }),
+    ).toBe(true);
+    expect(
+      isForkInActivePath(fork({ id: "user" }), {
+        selectedPathMessageIds: new Set(["user-user"]),
+      }),
+    ).toBe(true);
+    expect(
+      isForkInActivePath(fork({ id: "assistant", leaf_message_id: "assistant-leaf" }), {
+        selectedPathMessageIds: new Set(["assistant-assistant"]),
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat an inactive fork with no selected messages as active", () => {
+    expect(
+      isForkInActivePath(fork({ id: "inactive", assistant_message_id: null }), {
+        selectedPathMessageIds: new Set(),
+      }),
+    ).toBe(false);
   });
 });
 
