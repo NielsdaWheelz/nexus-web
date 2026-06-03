@@ -51,20 +51,44 @@ function parseAllowlistedOrigins(rawValue: string | undefined): string[] {
   return Array.from(new Set(parsed));
 }
 
-function getForwardedOrigin(request: Request): string | null {
-  const forwardedHost = getFirstHeaderValue(request.headers.get("x-forwarded-host"));
+function getForwardedOrigin(requestHeaders: Headers): string | null {
+  const forwardedHost = getFirstHeaderValue(
+    requestHeaders.get("x-forwarded-host")
+  );
   if (!forwardedHost) {
     return null;
   }
 
   const forwardedProto =
-    getFirstHeaderValue(request.headers.get("x-forwarded-proto")) ?? "https";
+    getFirstHeaderValue(requestHeaders.get("x-forwarded-proto")) ?? "https";
   return normalizeOrigin(`${forwardedProto}://${forwardedHost}`);
 }
 
-export function resolveCallbackRedirectOrigin(
-  request: Request,
-  requestUrl: URL
+function getHostOrigin(requestHeaders: Headers): string | null {
+  const host = getFirstHeaderValue(requestHeaders.get("host"));
+  if (!host) {
+    return null;
+  }
+
+  // Direct origin is built from `host` ALONE — never from x-forwarded-*, which
+  // is attacker-influenced and gates the forwarded-origin branch. Mirrors the
+  // route path (direct origin = requestUrl.origin; forwarded headers consulted
+  // only afterwards). The scheme is a deterministic candidate — local hosts get
+  // http, everything else https — matched on raw-host prefixes since the host
+  // may carry a port or bracketed IPv6 colons. The allowlist (prod) or
+  // isLocalOrigin (empty allowlist) is the authority, so a wrong guess fails closed.
+  const lowerHost = host.toLowerCase();
+  const isLocal =
+    lowerHost === "localhost" ||
+    lowerHost.startsWith("localhost:") ||
+    lowerHost.startsWith("127.0.0.1") ||
+    lowerHost.startsWith("[::1]");
+  return normalizeOrigin(`${isLocal ? "http" : "https"}://${host}`);
+}
+
+function resolveAllowlistedRedirectOrigin(
+  directOrigin: string | null,
+  forwardedOrigin: string | null
 ): string {
   const allowlistedOrigins = parseAllowlistedOrigins(
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS]
@@ -72,11 +96,10 @@ export function resolveCallbackRedirectOrigin(
   const trustedProxyOrigins = parseAllowlistedOrigins(
     process.env[AUTH_TRUSTED_PROXY_ORIGINS]
   );
-  const requestOrigin = requestUrl.origin;
 
   if (allowlistedOrigins.length === 0) {
-    if (isLocalOrigin(requestOrigin)) {
-      return requestOrigin;
+    if (directOrigin && isLocalOrigin(directOrigin)) {
+      return directOrigin;
     }
 
     throw new Error(
@@ -84,18 +107,37 @@ export function resolveCallbackRedirectOrigin(
     );
   }
 
-  if (allowlistedOrigins.includes(requestOrigin)) {
-    return requestOrigin;
+  if (directOrigin && allowlistedOrigins.includes(directOrigin)) {
+    return directOrigin;
   }
 
-  const forwardedOrigin = getForwardedOrigin(request);
   if (
     forwardedOrigin &&
     allowlistedOrigins.includes(forwardedOrigin) &&
-    trustedProxyOrigins.includes(requestOrigin)
+    directOrigin &&
+    trustedProxyOrigins.includes(directOrigin)
   ) {
     return forwardedOrigin;
   }
 
   throw new Error(`${AUTH_ALLOWED_REDIRECT_ORIGINS} rejected auth callback origin`);
+}
+
+export function resolveCallbackRedirectOrigin(
+  request: Request,
+  requestUrl: URL
+): string {
+  return resolveAllowlistedRedirectOrigin(
+    requestUrl.origin,
+    getForwardedOrigin(request.headers)
+  );
+}
+
+export function resolveServerActionRedirectOrigin(
+  requestHeaders: Headers
+): string {
+  return resolveAllowlistedRedirectOrigin(
+    getHostOrigin(requestHeaders),
+    getForwardedOrigin(requestHeaders)
+  );
 }
