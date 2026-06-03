@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
+export const PLAYER_SHORTCUTS_DISABLED_SELECTOR = "[data-player-shortcuts-disabled]";
+
 /**
  * Bind document keyboard shortcuts to the global player while a track is
  * loaded:
@@ -11,8 +13,8 @@ import { isEditableTarget } from "@/lib/ui/isEditableTarget";
  *   - ArrowRight : `onSkipForward`
  *
  * No-ops when the active element is editable (text input, textarea,
- * contenteditable). Handlers are read through a ref so callers don't have to
- * memoize them.
+ * contenteditable) or inside a player-shortcut disabled scope. Handlers are read
+ * through a ref so callers don't have to memoize them.
  */
 export function usePlayerKeyboardShortcuts(args: {
   enabled: boolean;
@@ -30,6 +32,12 @@ export function usePlayerKeyboardShortcuts(args: {
       const live = argsRef.current;
       if (!live.enabled) return;
       if (isEditableTarget(event.target)) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(PLAYER_SHORTCUTS_DISABLED_SELECTOR)
+      ) {
+        return;
+      }
 
       const isSpaceKey =
         event.key === " " ||

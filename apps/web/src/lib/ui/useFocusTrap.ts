@@ -16,6 +16,16 @@ export function useFocusTrap(
       const first = els[0];
       const last = els[els.length - 1];
       const current = document.activeElement;
+      if (!(current instanceof HTMLElement) || !container.contains(current)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
+      if (!els.includes(current)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
       if (!e.shiftKey && current === last) {
         e.preventDefault();
         first.focus();

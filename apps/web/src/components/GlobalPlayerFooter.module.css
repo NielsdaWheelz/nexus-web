@@ -572,11 +572,9 @@
   inset: 0;
   background: var(--overlay-scrim);
   display: flex;
+  align-items: stretch;
   justify-content: flex-end;
-  z-index: var(--z-overlay);
-}
-
-.footer[data-mobile-view="expanded"] .queueOverlay {
+  overscroll-behavior: contain;
   z-index: var(--z-modal);
 }
 
@@ -589,6 +587,9 @@
   flex-direction: column;
   padding: var(--space-4);
   gap: var(--space-3);
+  min-height: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-4);
 }
 
 .queueHeader {
@@ -601,6 +602,11 @@
 .queueTitle {
   margin: 0;
   font-size: var(--text-md);
+}
+
+.queueTitle:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .queueCloseButton {
@@ -625,7 +631,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  flex: 1 1 auto;
   overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .queueListItem {
@@ -637,6 +646,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  min-width: 0;
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   padding: var(--space-2);
@@ -673,12 +683,15 @@
   color: inherit;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   text-align: left;
   gap: 2px;
   cursor: pointer;
   padding: 0;
   flex: 1;
   min-width: 0;
+  min-height: var(--size-xl);
+  border-radius: var(--radius-md);
 }
 
 .queueItemTitle {
@@ -692,6 +705,9 @@
 .queueItemMeta {
   font-size: var(--text-xs);
   color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .queueItemRemoveButton {
@@ -735,5 +751,6 @@
 
   .queuePanel {
     width: 100%;
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
   }
 }

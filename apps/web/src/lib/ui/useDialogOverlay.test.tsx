@@ -16,6 +16,7 @@ function Host(props: HostProps) {
     <>
       <button type="button">Open</button>
       <div ref={ref}>
+        <h2 tabIndex={-1}>Title</h2>
         <button type="button">First</button>
         <button type="button">Last</button>
       </div>
@@ -24,6 +25,7 @@ function Host(props: HostProps) {
 }
 
 const opener = () => screen.getByRole("button", { name: "Open" });
+const title = () => screen.getByRole("heading", { name: "Title" });
 const first = () => screen.getByRole("button", { name: "First" });
 const last = () => screen.getByRole("button", { name: "Last" });
 
@@ -136,6 +138,18 @@ describe("useDialogOverlay", () => {
 
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
     expect(last()).toHaveFocus();
+  });
+
+  it("wraps focus from a non-tabbable initial focus target", async () => {
+    render(<Host active onDismiss={vi.fn()} initialFocus={() => title()} />);
+    await waitFor(() => expect(title()).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(last()).toHaveFocus();
+
+    title().focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(first()).toHaveFocus();
   });
 
   it("composes nested locks, restoring the prior overflow only after both release", async () => {

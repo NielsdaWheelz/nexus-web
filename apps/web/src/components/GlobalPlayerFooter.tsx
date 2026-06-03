@@ -167,6 +167,7 @@ export default function GlobalPlayerFooter() {
   const [moreOpen, setMoreOpen] = useState(false);
   const morePopoverRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const miniExpandButtonRef = useRef<HTMLButtonElement>(null);
   const expandedSheetRef = useRef<HTMLElement>(null);
   const {
     track,
@@ -254,6 +255,18 @@ export default function GlobalPlayerFooter() {
   };
 
   const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
+  const getQueueReturnFocusTarget = () =>
+    isMobile ? miniExpandButtonRef.current : moreButtonRef.current;
+  const openQueueFromMobileExpanded = () => {
+    miniExpandButtonRef.current?.focus();
+    setMobileExpanded(false);
+    setQueueOpen(true);
+  };
+  const openQueueFromDesktopMore = () => {
+    moreButtonRef.current?.focus();
+    setMoreOpen(false);
+    setQueueOpen(true);
+  };
 
   return (
     <footer
@@ -274,6 +287,7 @@ export default function GlobalPlayerFooter() {
           {/* Compact mini-bar */}
           <div className={styles.miniBar}>
             <Button
+              ref={miniExpandButtonRef}
               variant="ghost"
               className={styles.miniTapArea}
               onClick={() => setMobileExpanded(true)}
@@ -479,10 +493,7 @@ export default function GlobalPlayerFooter() {
                     variant="secondary"
                     size="sm"
                     className={styles.queueButton}
-                    onClick={() => {
-                      setQueueOpen(true);
-                      setMobileExpanded(false);
-                    }}
+                    onClick={openQueueFromMobileExpanded}
                     aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                   >
                     Queue
@@ -688,10 +699,7 @@ export default function GlobalPlayerFooter() {
                   variant="secondary"
                   size="sm"
                   className={styles.queueButton}
-                  onClick={() => {
-                    setQueueOpen(true);
-                    setMoreOpen(false);
-                  }}
+                  onClick={openQueueFromDesktopMore}
                   aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                 >
                   Queue
@@ -721,7 +729,12 @@ export default function GlobalPlayerFooter() {
         aria-label="Global podcast player"
       />
 
-      {queueOpen && <GlobalPlayerQueuePanel onClose={() => setQueueOpen(false)} />}
+      {queueOpen && (
+        <GlobalPlayerQueuePanel
+          onClose={() => setQueueOpen(false)}
+          returnFocusFallback={getQueueReturnFocusTarget}
+        />
+      )}
     </footer>
   );
 }
