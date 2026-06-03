@@ -38,8 +38,8 @@ function renderPopover(overrides: Record<string, unknown> = {}) {
 describe("HighlightActionPopover", () => {
   it("anchors the shared action bar with the same options as the sidecar", () => {
     renderPopover();
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
-    expect(dialog).toBeInTheDocument();
+    const group = screen.getByRole("group", { name: "Highlight actions" });
+    expect(group).toBeInTheDocument();
     for (const name of [
       "Highlight color",
       "Quote to new chat",

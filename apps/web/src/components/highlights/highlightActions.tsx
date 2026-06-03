@@ -54,6 +54,7 @@ export function buildHighlightActions({
       id: "color",
       label: "Highlight color",
       icon: <ColorDot color={color} />,
+      disabled: state.changingColor,
       render: ({ closeMenu }) => (
         <HighlightColorPicker
           selectedColor={color}
@@ -73,12 +74,14 @@ export function buildHighlightActions({
       id: "quote-new",
       label: "Quote to new chat",
       icon: <MessageSquarePlus size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
       onSelect: handlers.onQuoteToNewChat,
     });
     options.push({
       id: "quote-existing",
       label: "Quote to existing chat",
       icon: <MessagesSquare size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
       onSelect: handlers.onQuoteToExistingChat,
     });
   }

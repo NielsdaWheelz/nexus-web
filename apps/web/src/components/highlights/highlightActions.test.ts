@@ -110,4 +110,20 @@ describe("buildHighlightActions", () => {
       }),
     ).toEqual(["color"]);
   });
+
+  it("disables selection color and quote actions while the selection action is busy", () => {
+    const actions = buildHighlightActions({
+      target: { kind: "selection", color: "green" },
+      canQuoteToChat: true,
+      isReflowable: true,
+      state: { ...idleState, changingColor: true },
+      handlers: noopHandlers,
+    });
+
+    expect(actions.map((option) => [option.id, option.disabled])).toEqual([
+      ["color", true],
+      ["quote-new", true],
+      ["quote-existing", true],
+    ]);
+  });
 });

@@ -1,13 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
-import { createPortal } from "react-dom";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
+import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
-import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
-import styles from "./HighlightActionPopover.module.css";
 
 /**
  * The reader-text click surface: the same {@link HighlightActionBar} the sidecar
@@ -37,22 +33,16 @@ export default function HighlightActionPopover({
   onToggleEditBounds: () => void;
   onDismiss: () => void;
 }) {
-  const { ref, style } = useAnchoredPosition(anchorRect, {
-    enabled: true,
-    placement: "below",
-    align: "center",
-    flip: true,
-  });
-  useDismissOnOutsideOrEscape({ enabled: true, refs: [ref], onDismiss });
-
-  useEffect(() => {
-    window.addEventListener("scroll", onDismiss, true);
-    return () => window.removeEventListener("scroll", onDismiss, true);
-  }, [onDismiss]);
-
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div ref={ref} style={style} className={styles.popover} role="dialog" aria-label="Highlight actions">
+  return (
+    <FloatingActionSurface
+      open
+      anchor={anchorRect}
+      placement="below"
+      align="center"
+      flip
+      scrollBehavior="dismiss"
+      onDismiss={onDismiss}
+    >
       <HighlightActionBar
         variant="existing"
         presentation="bar"
@@ -66,7 +56,6 @@ export default function HighlightActionPopover({
         onQuoteToExistingChat={onQuoteToExistingChat}
         onToggleEditBounds={onToggleEditBounds}
       />
-    </div>,
-    document.body,
+    </FloatingActionSurface>
   );
 }

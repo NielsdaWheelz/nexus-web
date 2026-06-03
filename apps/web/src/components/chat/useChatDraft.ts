@@ -11,6 +11,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import type { BranchDraft } from "@/lib/conversations/types";
 
 interface UseChatDraft {
@@ -42,12 +43,12 @@ export function useChatDraft({
       return draftKey;
     }
     if (branchDraft) {
-      if (branchDraft.anchor.kind === "assistant_selection") {
-        return `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`;
-      }
-      return `branch:${branchDraft.parentMessageId}:message`;
+      return chatDraftKeyFor({ kind: "branch", branchDraft });
     }
-    return `path:${parentMessageId ?? conversationId ?? "new"}`;
+    return chatDraftKeyFor({
+      kind: "path",
+      pathTargetId: parentMessageId ?? conversationId,
+    });
   }, [branchDraft, conversationId, draftKey, parentMessageId]);
 
   const activeDraftKeyRef = useRef(activeDraftKey);

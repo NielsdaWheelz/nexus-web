@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
@@ -171,5 +171,40 @@ describe("HighlightActionBar — selection", () => {
     await user.click(screen.getByRole("button", { name: "Highlight color" }));
     await user.click(await screen.findByRole("button", { name: "Green" }));
     expect(onSelectColor).toHaveBeenCalledWith("green");
+  });
+
+  it("disables every create/quote action while a selection action is busy", async () => {
+    const onSelectColor = vi.fn();
+    const onQuoteToNewChat = vi.fn();
+    const onQuoteToExistingChat = vi.fn();
+    render(
+      <FeedbackProvider>
+        <HighlightActionBar
+          variant="selection"
+          selectionColor="yellow"
+          canQuoteToChat
+          busy
+          onSelectColor={onSelectColor}
+          onQuoteToNewChat={onQuoteToNewChat}
+          onQuoteToExistingChat={onQuoteToExistingChat}
+        />
+      </FeedbackProvider>,
+    );
+
+    const color = screen.getByRole("button", { name: "Highlight color" });
+    const newChat = screen.getByRole("button", { name: "Quote to new chat" });
+    const existingChat = screen.getByRole("button", {
+      name: "Quote to existing chat",
+    });
+    expect(color).toBeDisabled();
+    expect(newChat).toBeDisabled();
+    expect(existingChat).toBeDisabled();
+
+    fireEvent.click(color);
+    fireEvent.click(newChat);
+    fireEvent.click(existingChat);
+    expect(onSelectColor).not.toHaveBeenCalled();
+    expect(onQuoteToNewChat).not.toHaveBeenCalled();
+    expect(onQuoteToExistingChat).not.toHaveBeenCalled();
   });
 });

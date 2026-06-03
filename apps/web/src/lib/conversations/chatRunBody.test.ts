@@ -73,6 +73,32 @@ describe("buildChatRunBody", () => {
     const body = buildChatRunBody({ ...base, branchDraft });
     expect(body.branch_anchor).toEqual(anchor);
     expect(body.parent_message_id).toBe("asst-5");
+    expect("reader_selection" in body).toBe(false);
+  });
+
+  it("passes an unmapped assistant_selection anchor through without offsets", () => {
+    const anchor = {
+      kind: "assistant_selection" as const,
+      message_id: "asst-5",
+      exact: "selected text",
+      prefix: null,
+      suffix: null,
+      offset_status: "unmapped" as const,
+      client_selection_id: "sel-1",
+    };
+    const branchDraft: BranchDraft = {
+      parentMessageId: "asst-5",
+      parentMessageSeq: 6,
+      parentMessagePreview: "answer",
+      anchor,
+    };
+    const body = buildChatRunBody({ ...base, branchDraft });
+    expect(body.branch_anchor).toEqual(anchor);
+    const branchAnchor = body.branch_anchor;
+    expect(branchAnchor).toBeDefined();
+    expect("start_offset" in branchAnchor!).toBe(false);
+    expect("end_offset" in branchAnchor!).toBe(false);
+    expect("reader_selection" in body).toBe(false);
   });
 
   it("sets key_mode to byok_only when the user pins their own keys", () => {
@@ -97,5 +123,6 @@ describe("buildChatRunBody", () => {
     };
     const body = buildChatRunBody({ ...base, readerSelection });
     expect(body.reader_selection).toEqual(readerSelection);
+    expect(body.branch_anchor).toEqual({ kind: "none" });
   });
 });

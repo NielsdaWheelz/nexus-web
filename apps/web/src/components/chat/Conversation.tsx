@@ -26,6 +26,7 @@ import {
   type ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
+import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import { resolveObjectRefs } from "@/lib/objectRefs";
 import {
   parseResourceUri,
@@ -135,17 +136,16 @@ export default function Conversation() {
 
   const branchDraft = branch?.branchDraft ?? null;
   const composerDraftKey = branchDraft
-    ? branchDraft.anchor.kind === "assistant_selection"
-      ? `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`
-      : `branch:${branchDraft.parentMessageId}:message`
+    ? chatDraftKeyFor({ kind: "branch", branchDraft })
     : startedOnNewRouteRef.current && convo.messages.length === 0
       ? "path:new"
-      : `path:${
-          branch?.activeLeafMessageId ??
-          activeReplyParentMessageId ??
-          convo.conversationId ??
-          "new"
-        }`;
+      : chatDraftKeyFor({
+          kind: "path",
+          pathTargetId:
+            branch?.activeLeafMessageId ??
+            activeReplyParentMessageId ??
+            convo.conversationId,
+        });
 
   const handleReplyToAssistant = useCallback(
     (nextDraft: BranchDraft) => {

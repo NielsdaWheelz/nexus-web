@@ -1,12 +1,10 @@
 "use client";
 
 import { Fragment, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
+import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { cx } from "@/lib/ui/cx";
-import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
-import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./ActionBar.module.css";
 
 /**
@@ -69,17 +67,6 @@ function ActionButton({ option }: { option: ActionMenuOption }) {
 function PopoverAction({ option }: { option: ActionMenuOption }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const { ref, style } = useAnchoredPosition(triggerRef.current, {
-    enabled: open,
-    placement: "below",
-    align: "start",
-    flip: true,
-  });
-  useDismissOnOutsideOrEscape({
-    enabled: open,
-    refs: [ref, triggerRef],
-    onDismiss: () => setOpen(false),
-  });
 
   return (
     <>
@@ -91,7 +78,7 @@ function PopoverAction({ option }: { option: ActionMenuOption }) {
         disabled={option.disabled}
         aria-label={option.label}
         title={option.label}
-        aria-haspopup="dialog"
+        aria-haspopup="true"
         aria-expanded={open}
         onClick={(event) => {
           event.stopPropagation();
@@ -100,26 +87,22 @@ function PopoverAction({ option }: { option: ActionMenuOption }) {
       >
         {option.icon}
       </Button>
-      {open && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              ref={ref}
-              style={style}
-              className={styles.popover}
-              role="dialog"
-              aria-label={option.label}
-              // Portaled child layer — never "outside" for a host popover's
-              // outside-pointerdown dismissal (selection / reader-click).
-              data-dismiss-ignore="true"
-            >
-              {option.render?.({
-                closeMenu: () => setOpen(false),
-                triggerEl: triggerRef.current,
-              })}
-            </div>,
-            document.body,
-          )
-        : null}
+      <FloatingActionSurface
+        open={open}
+        anchor={triggerRef.current}
+        placement="below"
+        align="start"
+        flip
+        dismissIgnore
+        additionalDismissRefs={[triggerRef]}
+        className={styles.popover}
+        onDismiss={() => setOpen(false)}
+      >
+        {option.render?.({
+          closeMenu: () => setOpen(false),
+          triggerEl: triggerRef.current,
+        })}
+      </FloatingActionSurface>
     </>
   );
 }

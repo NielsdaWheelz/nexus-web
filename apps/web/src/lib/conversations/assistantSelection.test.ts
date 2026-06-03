@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assistantSelectionAnchor,
+  assistantSelectionBranchDraft,
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
 
@@ -55,5 +56,68 @@ describe("assistant selection mapping", () => {
       start_offset: null,
       end_offset: null,
     });
+  });
+
+  it("builds a mapped branch draft from a text selection draft", () => {
+    expect(
+      assistantSelectionBranchDraft({
+        parentMessageId: "assistant-1",
+        parentMessageSeq: 2,
+        parentMessagePreview: "alpha beta gamma",
+        selection: {
+          exact: "beta",
+          prefix: "alpha ",
+          suffix: " gamma",
+          offset_status: "mapped",
+          start_offset: 6,
+          end_offset: 10,
+          client_selection_id: "selection-1",
+        },
+      }),
+    ).toEqual({
+      parentMessageId: "assistant-1",
+      parentMessageSeq: 2,
+      parentMessagePreview: "alpha beta gamma",
+      anchor: {
+        kind: "assistant_selection",
+        message_id: "assistant-1",
+        exact: "beta",
+        prefix: "alpha ",
+        suffix: " gamma",
+        offset_status: "mapped",
+        start_offset: 6,
+        end_offset: 10,
+        client_selection_id: "selection-1",
+      },
+    });
+  });
+
+  it("builds an unmapped branch draft without offsets", () => {
+    const draft = assistantSelectionBranchDraft({
+      parentMessageId: "assistant-1",
+      parentMessageSeq: 2,
+      parentMessagePreview: "alpha beta alpha",
+      selection: {
+        exact: "alpha",
+        prefix: null,
+        suffix: " beta",
+        offset_status: "unmapped",
+        start_offset: null,
+        end_offset: null,
+        client_selection_id: "selection-1",
+      },
+    });
+
+    expect(draft.anchor).toEqual({
+      kind: "assistant_selection",
+      message_id: "assistant-1",
+      exact: "alpha",
+      prefix: null,
+      suffix: " beta",
+      offset_status: "unmapped",
+      client_selection_id: "selection-1",
+    });
+    expect("start_offset" in draft.anchor).toBe(false);
+    expect("end_offset" in draft.anchor).toBe(false);
   });
 });

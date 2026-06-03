@@ -2,35 +2,28 @@
 
 import { GitBranch } from "lucide-react";
 import Button from "@/components/ui/Button";
-import styles from "./AssistantSelectionPopover.module.css";
-
-export interface AssistantSelectionDraft {
-  exact: string;
-  prefix: string | null;
-  suffix: string | null;
-  start_offset: number | null;
-  end_offset: number | null;
-  offset_status: "mapped" | "unmapped";
-  client_selection_id: string;
-  rect: { top: number; left: number };
-}
+import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import type { AssistantSelectionBranchSelection } from "./useAssistantSelectionBranch";
 
 export default function AssistantSelectionPopover({
   selection,
   onBranch,
+  onDismiss,
 }: {
-  selection: AssistantSelectionDraft;
+  selection: AssistantSelectionBranchSelection;
   onBranch: () => void;
+  onDismiss: () => void;
 }) {
   return (
-    <div
-      className={styles.popover}
-      style={{
-        top: selection.rect.top,
-        left: selection.rect.left,
-      }}
-      role="dialog"
-      aria-label="Assistant answer selection"
+    <FloatingActionSurface
+      open
+      anchor={selection.rect}
+      strategy="text-selection"
+      lineRects={selection.lineRects}
+      role="group"
+      label="Assistant answer selection"
+      preservePointerSelection
+      onDismiss={onDismiss}
     >
       <Button
         variant="secondary"
@@ -40,6 +33,6 @@ export default function AssistantSelectionPopover({
       >
         Fork from selection
       </Button>
-    </div>
+    </FloatingActionSurface>
   );
 }

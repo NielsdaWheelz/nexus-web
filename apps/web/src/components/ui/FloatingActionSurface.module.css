@@ -1,14 +1,16 @@
-.popover {
+.surface {
+  display: flex;
+  align-items: stretch;
   padding: var(--space-1);
   background: var(--surface-2);
   border: var(--stroke-hairline) solid var(--edge);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
   z-index: var(--z-modal);
-  animation: popoverFadeIn var(--duration-fast) var(--ease-snap);
+  animation: floatingActionSurfaceFadeIn var(--duration-fast) var(--ease-snap);
 }
 
-@keyframes popoverFadeIn {
+@keyframes floatingActionSurfaceFadeIn {
   from {
     opacity: 0;
     transform: translateY(4px);

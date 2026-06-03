@@ -1,11 +1,18 @@
-import type { BranchAnchor } from "@/lib/conversations/types";
+import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 
-type AssistantSelectionOffsetStatus = "mapped" | "unmapped";
+export type AssistantSelectionOffsetStatus = "mapped" | "unmapped";
 
-interface AssistantSelectionMapping {
+export interface AssistantSelectionMapping {
   offset_status: AssistantSelectionOffsetStatus;
   start_offset: number | null;
   end_offset: number | null;
+}
+
+export interface AssistantSelectionTextDraft extends AssistantSelectionMapping {
+  exact: string;
+  prefix: string | null;
+  suffix: string | null;
+  client_selection_id: string;
 }
 
 export function mapAssistantSelectionToSource(
@@ -94,5 +101,31 @@ export function assistantSelectionAnchor({
     suffix,
     offset_status: "unmapped",
     client_selection_id: clientSelectionId,
+  };
+}
+
+export function assistantSelectionBranchDraft({
+  parentMessageId,
+  parentMessageSeq,
+  parentMessagePreview,
+  selection,
+}: {
+  parentMessageId: string;
+  parentMessageSeq: number;
+  parentMessagePreview: string;
+  selection: AssistantSelectionTextDraft;
+}): BranchDraft {
+  return {
+    parentMessageId,
+    parentMessageSeq,
+    parentMessagePreview,
+    anchor: assistantSelectionAnchor({
+      messageId: parentMessageId,
+      exact: selection.exact,
+      prefix: selection.prefix,
+      suffix: selection.suffix,
+      clientSelectionId: selection.client_selection_id,
+      mapping: selection,
+    }),
   };
 }

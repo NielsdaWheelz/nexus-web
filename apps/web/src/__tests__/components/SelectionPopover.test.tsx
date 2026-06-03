@@ -8,7 +8,6 @@ function createContainerRef(
 ): RefObject<HTMLElement | null> {
   const container = document.createElement("div");
   container.getBoundingClientRect = vi.fn(() => rect);
-  document.body.appendChild(container);
   return { current: container };
 }
 
@@ -130,7 +129,6 @@ describe("SelectionPopover", () => {
     window.dispatchEvent(new Event("resize"));
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    document.body.innerHTML = "";
   });
 
   it("shows icon-only chat destination actions when callbacks are provided", () => {
@@ -258,7 +256,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
+    const dialog = screen.getByRole("group", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("below");
     });
@@ -285,7 +283,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
+    const dialog = screen.getByRole("group", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("above");
     });
@@ -312,7 +310,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
+    const dialog = screen.getByRole("group", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("right");
     });
@@ -339,7 +337,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
+    const dialog = screen.getByRole("group", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("below");
     });
@@ -369,7 +367,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
+    const dialog = screen.getByRole("group", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("edge");
     });
