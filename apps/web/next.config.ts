@@ -8,7 +8,7 @@ import { assertDeploymentEnv } from "./src/lib/env";
 assertDeploymentEnv();
 
 const nextConfig: NextConfig = {
-  // `make check` owns lint and type verification. `make build` only verifies buildability.
+  // `make check` owns lint. `next build` enforces build-time TypeScript validation.
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -19,10 +19,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-
   // Ensure all routes run in Node.js runtime (not Edge)
   experimental: {
     // Enable server actions for form handling
