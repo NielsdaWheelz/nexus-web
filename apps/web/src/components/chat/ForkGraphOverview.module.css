@@ -65,7 +65,7 @@ button.node:focus:not(:focus-visible) {
 }
 
 .node[data-match="true"] {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning, #f5a524) 36%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 36%, transparent);
 }
 
 .branchIcon {

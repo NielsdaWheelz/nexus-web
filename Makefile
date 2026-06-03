@@ -273,6 +273,7 @@ type-back:
 	cd python && uv run pyright
 
 check-front:
+	cd apps/web && bun run lint:css-tokens
 	cd apps/web && bun run lint
 	cd apps/web && bun run typecheck
 
