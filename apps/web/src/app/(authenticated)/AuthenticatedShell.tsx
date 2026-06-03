@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import AppNav from "@/components/appnav/AppNav";
-import CommandPalette from "@/components/CommandPalette";
+import CommandPalette from "@/components/palette/CommandPalette";
 import AddContentTray from "@/components/AddContentTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";

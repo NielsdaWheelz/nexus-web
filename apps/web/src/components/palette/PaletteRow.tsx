@@ -1,56 +1,28 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
-import type { PaletteCommand } from "./types";
-import styles from "./PaletteBody.module.css";
-
-interface PaletteRowProps {
-  command: PaletteCommand;
-  selected: boolean;
-  showTag: boolean;
-  showShortcut: boolean;
-  onSelect(command: PaletteCommand): void;
-  onTrailingAction(command: PaletteCommand): void;
-  onHover?(commandId: string): void;
-}
-
-const SECTION_TAGS: Record<string, string> = {
-  "open-tabs": "Tab",
-  recent: "Recent",
-  "recent-folios": "Folio",
-  create: "Create",
-  navigate: "Go to",
-  settings: "Settings",
-};
-
-function tagFor(command: PaletteCommand): string | null {
-  const tag = SECTION_TAGS[command.sectionId];
-  if (tag) return tag;
-  if (command.source === "search" && command.subtitle) return command.subtitle;
-  return null;
-}
+import { ChevronRight, X } from "lucide-react";
+import { PALETTE_OPTION_ID_PREFIX, type PaletteItem } from "./paletteModel";
+import styles from "./palette.module.css";
 
 export default function PaletteRow({
-  command,
+  item,
   selected,
-  showTag,
-  showShortcut,
   onSelect,
-  onTrailingAction,
+  onDrill,
+  onTrailing,
   onHover,
-}: PaletteRowProps) {
+}: {
+  item: PaletteItem;
+  selected: boolean;
+  onSelect(item: PaletteItem): void;
+  onDrill(item: PaletteItem): void;
+  onTrailing(item: PaletteItem): void;
+  onHover(id: string): void;
+}) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const Icon = command.icon;
-  const tag = showTag && !command.trailingAction ? tagFor(command) : null;
-  const optionName = [
-    command.title,
-    command.subtitle,
-    tag,
-    showShortcut ? command.shortcutLabel : undefined,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const Icon = item.icon;
+  const ariaLabel = [item.title, item.subtitle, item.shortcutLabel].filter(Boolean).join(" ");
 
   useEffect(() => {
     if (selected) rowRef.current?.scrollIntoView({ block: "nearest" });
@@ -59,39 +31,46 @@ export default function PaletteRow({
   return (
     <div
       ref={rowRef}
-      id={`palette-option-${command.id}`}
+      id={`${PALETTE_OPTION_ID_PREFIX}${item.id}`}
       role="option"
-      aria-selected={selected ? "true" : "false"}
-      aria-label={optionName}
+      aria-selected={selected}
+      aria-label={ariaLabel}
       className={styles.option}
-      data-active={selected ? "true" : "false"}
-      onMouseMove={() => onHover?.(command.id)}
-      onClick={() => onSelect(command)}
+      data-active={selected || undefined}
+      onMouseMove={() => onHover(item.id)}
+      onClick={() => onSelect(item)}
     >
       <Icon size={16} aria-hidden="true" />
       <span className={styles.optionText}>
-        <span className={styles.optionTitle}>{command.title}</span>
-        {command.subtitle ? (
-          <span className={styles.optionSubtitle}>{command.subtitle}</span>
-        ) : null}
+        <span className={styles.optionTitle}>{item.title}</span>
+        {item.subtitle ? <span className={styles.optionSubtitle}>{item.subtitle}</span> : null}
       </span>
-      {command.trailingAction ? (
+      {item.trailingAction ? (
         <button
           type="button"
           tabIndex={-1}
           className={styles.trailingButton}
-          aria-label={command.trailingAction.ariaLabel}
+          aria-label={item.trailingAction.ariaLabel}
           onClick={(event) => {
             event.stopPropagation();
-            onTrailingAction(command);
+            onTrailing(item);
           }}
         >
           <X size={16} aria-hidden="true" />
         </button>
-      ) : tag ? (
-        <span className={styles.tag}>{tag}</span>
-      ) : showShortcut && command.shortcutLabel ? (
-        <span className={styles.optionMeta}>{command.shortcutLabel}</span>
+      ) : item.hasActions ? (
+        <span
+          className={styles.drill}
+          aria-hidden="true"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDrill(item);
+          }}
+        >
+          <ChevronRight size={16} aria-hidden="true" />
+        </span>
+      ) : item.shortcutLabel ? (
+        <span className={styles.keycap}>{item.shortcutLabel}</span>
       ) : null}
     </div>
   );

@@ -8,7 +8,10 @@ import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { useResource } from "@/lib/api/useResource";
 import { pinnedObjectsPath, type PinnedObject } from "@/lib/pinnedObjects";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
-import { dispatchOpenCommandPalette } from "@/components/commandPaletteEvents";
+import {
+  dispatchOpenCommandPalette,
+  OPEN_COMMAND_PALETTE_EVENT,
+} from "@/components/commandPaletteEvents";
 import { DEFAULT_KEYBINDINGS, formatKeyCombo, loadKeybindings } from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { NAV_MODEL, type NavDestination, type NavGroup, type NavItem } from "./navModel";
@@ -104,6 +107,14 @@ export default function AppNav() {
 
   // Close the sheet when the active route changes from outside the sheet (e.g. the command palette).
   useEffect(() => setSheetOpen(false), [activePathname]);
+
+  // The palette renders above the sheet (--z-palette); also close the sheet whenever
+  // the palette opens (a hotkey can open it while the sheet is up) so they never stack.
+  useEffect(() => {
+    const handler = () => setSheetOpen(false);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
+    return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
+  }, []);
 
   const onNavigate = useCallback(
     (event: MouseEvent<HTMLElement>, href: string) => {

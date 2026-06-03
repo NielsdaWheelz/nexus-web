@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import AppNav from "./AppNav";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed.v1";
 
-const { mockWorkspaceStore } = vi.hoisted(() => ({
+const { mockWorkspaceStore, mockIsMobile } = vi.hoisted(() => ({
   mockWorkspaceStore: {
     state: {
       activePrimaryPaneId: "pane-a",
@@ -24,6 +25,7 @@ const { mockWorkspaceStore } = vi.hoisted(() => ({
     },
     navigatePane: vi.fn(),
   },
+  mockIsMobile: { value: false },
 }));
 
 vi.mock("@/lib/workspace/store", () => ({
@@ -31,7 +33,7 @@ vi.mock("@/lib/workspace/store", () => ({
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => false,
+  useIsMobileViewport: () => mockIsMobile.value,
 }));
 
 vi.mock("@/lib/api/useResource", () => ({
@@ -95,5 +97,36 @@ describe("AppNav (desktop rail)", () => {
 
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Sign Out" })).toBeInTheDocument();
+  });
+});
+
+describe("AppNav (mobile sheet)", () => {
+  beforeEach(() => {
+    mockIsMobile.value = true;
+    localStorage.clear();
+    mockWorkspaceStore.navigatePane.mockClear();
+  });
+
+  afterEach(() => {
+    mockIsMobile.value = false;
+  });
+
+  it("closes an open NavSheet when OPEN_COMMAND_PALETTE_EVENT fires", async () => {
+    render(
+      <MobileChromeProvider>
+        <AppNav />
+      </MobileChromeProvider>,
+    );
+
+    // Open the sheet via the mobile top-bar brand button.
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
+
+    // Dispatch the palette event — the sheet's useEffect listener calls setSheetOpen(false).
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
   });
 });

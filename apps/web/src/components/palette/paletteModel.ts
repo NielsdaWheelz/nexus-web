@@ -1,10 +1,10 @@
 /**
- * Static palette command catalog.
- *
- * Owns the global navigation/create commands and the query<->command match
- * predicate consumed by the CommandPalette component.
+ * Command-palette model: the single source of truth for item/section/action
+ * shapes, the static command catalog, and the ordered section list. Every other
+ * palette module derives from here (the way nav derives from NAV_MODEL).
  */
 
+import type { ComponentType } from "react";
 import {
   FileText,
   FolderPlus,
@@ -14,10 +14,83 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
-import type { PaletteCommand } from "@/components/palette/types";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 
-export const STATIC_COMMANDS: PaletteCommand[] = [
+export type PaletteLane = "all" | "actions" | "content" | "ask";
+
+// `source` is the backend wire enum (command_palette.py:8 / models.py:5901) and
+// is posted verbatim on selection — DO NOT rename its members.
+export type PaletteSource = "static" | "workspace" | "recent" | "oracle" | "search" | "ai";
+
+export type PaletteSectionId =
+  | "context"
+  | "open-tabs"
+  | "recent"
+  | "recent-folios"
+  | "create"
+  | "navigate"
+  | "settings"
+  | "search-results"
+  | "ask";
+
+export type PaletteIcon = ComponentType<{
+  size?: number;
+  "aria-hidden"?: boolean | "true" | "false";
+}>;
+
+// Stable DOM ids shared by the input (aria-controls / aria-activedescendant),
+// the listbox, and the rows.
+export const PALETTE_LISTBOX_ID = "palette-listbox";
+export const PALETTE_OPTION_ID_PREFIX = "palette-option-";
+
+export type PaletteTarget =
+  | { kind: "href"; href: string; externalShell: boolean }
+  | { kind: "action"; actionId: string }
+  | { kind: "ask"; text: string; scopeHref?: string }; // wire kind "prefill" (mapped in the controller)
+
+export interface PaletteRankSignals {
+  searchScore?: number;
+  frecencyBoost?: number;
+  recencyBoost?: number;
+  scopeBoost?: number;
+}
+
+export interface PaletteItem {
+  id: string;
+  title: string;
+  subtitle?: string;
+  keywords: string[];
+  sectionId: PaletteSectionId; // also determines lane membership (laneOfSection)
+  icon: PaletteIcon;
+  target: PaletteTarget;
+  source: PaletteSource;
+  rank: PaletteRankSignals;
+  shortcutLabel?: string;
+  hasActions?: boolean; // row drills into an actions page (§5.4)
+  pin?: "last"; // sinks to the end of the querying list (ask / see-all)
+  trailingAction?: { actionId: string; ariaLabel: string };
+}
+
+export interface PaletteSection {
+  id: PaletteSectionId;
+  label: string;
+  cap: number; // max rows shown in the resting group
+}
+
+// Ordered; the resting view groups by this order and skips empty sections.
+export const SECTIONS: PaletteSection[] = [
+  { id: "context", label: "Continue", cap: 1 },
+  { id: "open-tabs", label: "Open tabs", cap: 6 },
+  { id: "recent", label: "Recent", cap: 6 },
+  { id: "recent-folios", label: "Recent folios", cap: 5 },
+  { id: "create", label: "Create", cap: 8 },
+  { id: "navigate", label: "Go to", cap: 12 },
+  { id: "settings", label: "Settings", cap: 8 },
+  { id: "search-results", label: "Search results", cap: 6 },
+  { id: "ask", label: "Ask", cap: 1 },
+];
+
+export const STATIC_COMMANDS: PaletteItem[] = [
   {
     id: "nav-oracle",
     title: "Oracle",
@@ -230,10 +303,41 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
   },
 ];
 
-export function matchesCommand(command: PaletteCommand, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  if (command.source === "search" || command.source === "ai") return true;
-  if (command.title.toLowerCase().includes(normalized)) return true;
-  return command.keywords.some((keyword) => keyword.toLowerCase().includes(normalized));
+export type PaletteActionRun =
+  | { kind: "open"; href: string; externalShell: boolean }
+  | { kind: "ask"; text: string; scopeHref?: string }
+  | { kind: "copy-link"; href: string }
+  | { kind: "pane-activate"; paneId: string }
+  | { kind: "pane-close"; paneId: string };
+
+export interface PaletteAction {
+  id: string;
+  label: string;
+  icon: PaletteIcon;
+  shortcutLabel?: string;
+  run: PaletteActionRun;
+}
+
+export interface PaletteGroup {
+  sectionId: PaletteSectionId;
+  label: string;
+  items: PaletteItem[];
+}
+
+export type PaletteView =
+  | { state: "resting"; groups: PaletteGroup[] }
+  | { state: "querying"; results: PaletteItem[] }
+  | { state: "actions"; item: PaletteItem; actions: PaletteAction[] };
+
+// Ordered ids of the selectable rows in a view — items at root, actions when drilled.
+// Used for arrow-nav and to keep the active row valid across view changes.
+export function paletteRowIds(view: PaletteView): string[] {
+  switch (view.state) {
+    case "resting":
+      return view.groups.flatMap((group) => group.items.map((item) => item.id));
+    case "querying":
+      return view.results.map((item) => item.id);
+    case "actions":
+      return view.actions.map((action) => action.id);
+  }
 }
