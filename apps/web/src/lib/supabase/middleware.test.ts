@@ -249,6 +249,20 @@ describe("updateSession", () => {
     );
   });
 
+  it("lets a session-ended login request render when a stale refreshable cookie is still present", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest(
+        "http://localhost:3000/login?next=%2Flibraries&error_description=Your+session+ended.+Please+sign+in+again.",
+        { headers: { cookie: refreshableCookie() } }
+      ),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("redirects an authenticated login request with an unsafe next to the default", async () => {
     const { updateSession } = await import("./middleware");
     const response = updateSession(

@@ -15,6 +15,8 @@ from nexus.errors import ApiError, ApiErrorCode
 from tests.helpers import auth_headers
 from tests.utils.db import DirectSessionManager
 
+pytestmark = pytest.mark.integration
+
 
 class _RaisingRateLimiter:
     """Stands in for a user who is already past their RPM budget."""

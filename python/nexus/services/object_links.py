@@ -14,9 +14,9 @@ from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import ObjectLink
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
-    UNSET,
     OBJECT_LINK_RELATIONS,
     OBJECT_TYPES,
+    UNSET,
     ObjectLinkOut,
     ObjectRef,
     _UnsetType,

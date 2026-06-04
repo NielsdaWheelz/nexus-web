@@ -271,7 +271,21 @@ vi.mock("@/lib/keybindingsProvider", () => ({
 }));
 
 vi.mock("@/lib/renderEnvironment/provider", () => ({
+  RenderEnvironmentProvider: ({ children }: { children: ReactNode }) => children,
+  useRenderEnvironment: () => ({
+    androidShell: false,
+    platform: "other",
+    displayLocale: "en-US",
+    displayTimeZone: "UTC",
+    currentLocalDate: "2026-06-03",
+    initialViewport: "desktop",
+  }),
   useAndroidShell: () => false,
+  useViewportState: () => ({
+    kind: "desktop",
+    isMobile: false,
+    hydrated: true,
+  }),
 }));
 
 vi.mock("@/lib/workspace/telemetry", () => ({

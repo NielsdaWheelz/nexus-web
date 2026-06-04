@@ -326,9 +326,7 @@ class TestListConversations:
             )
             conversation_id = create_test_conversation(session, user_id)
 
-        direct_db.register_cleanup(
-            "conversation_references", "conversation_id", conversation_id
-        )
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         uri = f"media:{media_id}"

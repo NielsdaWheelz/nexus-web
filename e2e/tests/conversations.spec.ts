@@ -119,11 +119,15 @@ async function confirmDeleteFork(panel: Locator, name: string) {
 }
 
 test.describe("conversations", () => {
-  test("create conversation", async ({ page }) => {
+  test("create conversation", async ({ page }, testInfo) => {
     let conversationId: string | null = null;
     try {
       conversationId = await createConversationViaApi(page);
-      await page.goto("/conversations");
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-create"),
+        "/conversations",
+      );
 
       const conversationLink = page
         .locator(`a[href="/conversations/${conversationId}"]`)

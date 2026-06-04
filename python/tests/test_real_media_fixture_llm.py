@@ -8,7 +8,7 @@ from nexus.services.real_media_fixture_llm import (
     RealMediaFixtureLLMRouter,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 def _request(*turns: Turn) -> LLMRequest:

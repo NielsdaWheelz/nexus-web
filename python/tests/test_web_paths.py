@@ -45,6 +45,4 @@ class TestMediaAssetUrl:
 
 class TestOraclePlateUrl:
     def test_output(self):
-        assert web_paths.oracle_plate_url(_SAMPLE_UUID) == (
-            f"/api/oracle/plates/{_SAMPLE_UUID}"
-        )
+        assert web_paths.oracle_plate_url(_SAMPLE_UUID) == (f"/api/oracle/plates/{_SAMPLE_UUID}")

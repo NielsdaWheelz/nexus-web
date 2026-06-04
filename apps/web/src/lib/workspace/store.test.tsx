@@ -163,6 +163,38 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     ).toBe(restored);
   });
 
+  it("rekeys a neutral single-pane same-resource restore to preserve first-paint hydration", () => {
+    const singlePaneRestore = workspaceState({
+      activePrimaryPaneId: "pane-saved-libraries",
+      primaryPanes: [
+        pane("pane-saved-libraries", "/libraries", {
+          primaryWidthPx: 640,
+          history: { back: ["/browse"], forward: [] },
+        }),
+      ],
+    });
+    const deepLink = workspaceState({
+      activePrimaryPaneId: "pane-url-libraries",
+      primaryPanes: [pane("pane-url-libraries", "/libraries")],
+    });
+
+    const merged = mergeRestoredWorkspaceWithDeepLink(
+      singlePaneRestore,
+      deepLink,
+      workspacePrimaryMetrics,
+    );
+
+    expect(merged.activePrimaryPaneId).toBe("pane-url-libraries");
+    expect(primaryPanes(merged)).toEqual([
+      expect.objectContaining({
+        id: "pane-url-libraries",
+        href: "/libraries",
+        primaryWidthPx: 640,
+        history: { back: ["/browse"], forward: [] },
+      }),
+    ]);
+  });
+
   it("adds an explicit deep link as the active pane instead of letting restore override it", () => {
     const deepLink = workspaceState({
       activePrimaryPaneId: "pane-url-media",

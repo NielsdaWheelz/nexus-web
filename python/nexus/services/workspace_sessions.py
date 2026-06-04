@@ -17,9 +17,7 @@ def _to_out(session: WorkspaceSession | None) -> WorkspaceSessionOut | None:
     return WorkspaceSessionOut(state=session.state, updated_at=session.updated_at.isoformat())
 
 
-def get_workspace_session(
-    db: Session, user_id: UUID, device_id: str
-) -> WorkspaceSessionOut | None:
+def get_workspace_session(db: Session, user_id: UUID, device_id: str) -> WorkspaceSessionOut | None:
     """Get this device's own workspace session."""
     return _to_out(
         db.query(WorkspaceSession)

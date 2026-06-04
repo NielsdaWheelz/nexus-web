@@ -68,7 +68,7 @@ test("@real-media desktop selected quote opens doc chat pending context", async 
     /^chat\b/i,
   ).count();
 
-  const actions = page.getByRole("dialog", { name: /selection actions/i });
+  const actions = page.getByRole("group", { name: /selection actions/i });
   await expect(
     actions.getByRole("button", { name: "Quote to new chat" }),
   ).toBeVisible({ timeout: 5_000 });
@@ -144,7 +144,7 @@ test("@real-media mobile selected quote opens document chat chooser", async ({
     { method: "range" },
   );
 
-  const actions = page.getByRole("dialog", { name: /selection actions/i });
+  const actions = page.getByRole("group", { name: /selection actions/i });
   await expect(
     actions.getByRole("button", { name: "Quote to existing chat" }),
   ).toBeVisible({ timeout: 5_000 });

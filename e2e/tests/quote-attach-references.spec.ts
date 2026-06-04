@@ -86,7 +86,7 @@ test.describe("quote-attach references (post-cutover)", () => {
       { method: "range" },
     );
 
-    const popover = page.getByRole("dialog", { name: /selection actions/i });
+    const popover = page.getByRole("group", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
     await popover.getByRole("button", { name: "Quote to existing chat" }).click();
 

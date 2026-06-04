@@ -155,7 +155,7 @@ test.describe("youtube transcript media", () => {
       existingExacts
     );
 
-    const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
+    const highlightActions = page.getByRole("group", { name: /selection actions/i });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
 
     const createHighlightResponse = page.waitForResponse(
@@ -165,8 +165,7 @@ test.describe("youtube transcript media", () => {
     );
     await highlightActions.getByRole("button", { name: "Highlight color" }).click();
     await page
-      .getByRole("dialog", { name: "Highlight color" })
-      .getByRole("button", { name: /^Green/ })
+      .getByRole("button", { name: /^Green$/ })
       .first()
       .click();
     const createdHighlightResponse = await createHighlightResponse;

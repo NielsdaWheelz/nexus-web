@@ -1,3 +1,5 @@
+import pytest
+
 from nexus.oracle.seed_objects import (
     FIXTURE_BYTES,
     FIXTURE_CONTENT_TYPE,
@@ -5,6 +7,8 @@ from nexus.oracle.seed_objects import (
     ensure_oracle_seed_objects,
 )
 from tests.support.storage import FakeStorageClient
+
+pytestmark = pytest.mark.unit
 
 
 def test_ensure_oracle_seed_objects_uploads_fixture_once():

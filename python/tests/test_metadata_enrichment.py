@@ -13,6 +13,8 @@ from nexus.services.metadata_enrichment import (
     validate_structured_enrichment,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_structured_metadata_output_accepts_required_nullable_fields():
     parsed = MetadataEnrichmentOutput.model_validate(

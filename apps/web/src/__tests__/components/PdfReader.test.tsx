@@ -358,7 +358,7 @@ describe("PdfReader selection chat destinations", () => {
     document.dispatchEvent(new Event("selectionchange"));
 
     expect(
-      screen.getByRole("dialog", { name: "Selection actions" }),
+      screen.getByRole("group", { name: "Selection actions" }),
     ).toBeInTheDocument();
 
     fireEvent.click(colorButton);

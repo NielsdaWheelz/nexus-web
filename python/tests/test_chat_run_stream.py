@@ -18,6 +18,10 @@ from nexus.api.routes import _sse
 from nexus.api.routes import stream as stream_routes
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.listen import StreamListenCapacityError
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.middleware.stream_cors import StreamCORSMiddleware
+from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.stream_tokens import (
     STREAM_TOKEN_AUDIENCE,
     STREAM_TOKEN_ISSUER,
@@ -27,10 +31,6 @@ from nexus.services.stream_tokens import (
     mint_stream_token,
     verify_stream_token,
 )
-from nexus.errors import ApiError, ApiErrorCode
-from nexus.middleware.stream_cors import StreamCORSMiddleware
-from nexus.services.billing_entitlements import grant_entitlement_override
-from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.factories import (
     create_test_conversation,
     create_test_message,

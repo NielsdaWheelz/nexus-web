@@ -17,7 +17,6 @@ import {
  */
 
 const APP_BASE_URL = `http://localhost:${process.env.WEB_PORT ?? "3000"}`;
-
 // The incident was a hung request. A correct `refreshable` navigation is one
 // redirect to /auth/refresh, one bounded Supabase refresh (5s budget), and one
 // redirect onward — comfortably inside this ceiling. A hang would blow past it.
@@ -36,6 +35,12 @@ async function gotoAllowingTerminalRedirectAbort(
   }
 }
 
+async function leaveAppDocument(page: Page): Promise<void> {
+  if (page.url() !== "about:blank") {
+    await page.goto("about:blank");
+  }
+}
+
 test.describe("auth silent refresh", () => {
   test("expired access token with a valid session loads a protected page signed in", async ({
     browser,
@@ -47,6 +52,7 @@ test.describe("auth silent refresh", () => {
       const page = await context.newPage();
       await bootstrapMagicLinkSession(page, context.request);
 
+      await leaveAppDocument(page);
       await expireAccessTokenKeepingRefreshToken(context, APP_BASE_URL);
 
       await gotoAllowingTerminalRedirectAbort(page, "/libraries");
@@ -74,6 +80,7 @@ test.describe("auth silent refresh", () => {
       const page = await context.newPage();
       await bootstrapMagicLinkSession(page, context.request);
 
+      await leaveAppDocument(page);
       await expireAccessTokenKeepingRefreshToken(context, APP_BASE_URL);
 
       // The BFF proxy refreshes inline on a `refreshable` cookie and returns
@@ -103,16 +110,24 @@ test.describe("auth silent refresh", () => {
       const page = await context.newPage();
       await bootstrapMagicLinkSession(page, context.request);
 
+      await leaveAppDocument(page);
       await expireAccessTokenWithRevokedRefreshToken(context, APP_BASE_URL);
 
       await gotoAllowingTerminalRedirectAbort(page, "/libraries");
 
       // The failed refresh is terminal: it lands on /login, preserving `next`.
-      await expect(page).toHaveURL(/\/login/);
-      expect(new URL(page.url()).searchParams.get("next")).toBe("/libraries");
+      await page.waitForURL(
+        (url) =>
+          url.pathname === "/login" &&
+          url.searchParams.get("next") === "/libraries",
+        { timeout: PROMPT_RESOLUTION_MS },
+      );
 
       // The page states why the session ended — not an opaque "session expired".
       await expect(page.getByText("You were signed out.")).toBeVisible();
+      await expect(
+        page.getByText("Your session ended. Please sign in again."),
+      ).toBeVisible();
       await expect(
         page.getByRole("button", { name: /continue with google/i }),
       ).toBeVisible();
@@ -133,10 +148,11 @@ test.describe("auth silent refresh", () => {
 
       // A well-formed cookie whose access token has expired — exactly the state
       // that hung the original middleware. It must resolve fast, not time out.
+      await leaveAppDocument(page);
       await expireAccessTokenKeepingRefreshToken(context, APP_BASE_URL);
 
       const startedAt = Date.now();
-      await page.goto("/libraries", { timeout: PROMPT_RESOLUTION_MS });
+      await gotoAllowingTerminalRedirectAbort(page, "/libraries");
       await expect(page).toHaveURL(/\/libraries/, {
         timeout: PROMPT_RESOLUTION_MS,
       });

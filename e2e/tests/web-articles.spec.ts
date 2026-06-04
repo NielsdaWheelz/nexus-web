@@ -122,14 +122,13 @@ test.describe("web articles", () => {
     expect(selectedText.trim().length).toBeGreaterThanOrEqual(2);
 
     await expect(
-      page.getByRole("dialog", { name: /selection actions/i })
+      page.getByRole("group", { name: /selection actions/i })
     ).toBeVisible({ timeout: 5_000 });
 
-    const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
+    const highlightActions = page.getByRole("group", { name: /selection actions/i });
     await highlightActions.getByRole("button", { name: "Highlight color" }).click();
     const greenButton = page
-      .getByRole("dialog", { name: "Highlight color" })
-      .getByRole("button", { name: /^Green/ })
+      .getByRole("button", { name: /^Green$/ })
       .first();
     await expect(greenButton).toBeEnabled();
     const createHighlightResponse = page.waitForResponse(

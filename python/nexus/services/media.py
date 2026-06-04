@@ -1182,4 +1182,6 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
         "transcript_coverage": media.transcript_coverage,
         "updated_at": media.updated_at.isoformat(),
     }
-    return MediaEventSnapshot(payload=payload, terminal=media.processing_status in ("ready", "failed"))
+    return MediaEventSnapshot(
+        payload=payload, terminal=media.processing_status in ("ready", "failed")
+    )

@@ -69,6 +69,15 @@ function clearAndRedirectToLogin(
   return response;
 }
 
+function isSessionEndedLoginRequest(request: NextRequest): boolean {
+  return (
+    request.cookies.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1" ||
+    request.nextUrl.searchParams.get("error_description") ===
+      SESSION_ENDED_MESSAGE ||
+    request.nextUrl.searchParams.get("error") === SESSION_ENDED_MESSAGE
+  );
+}
+
 export function updateSession(
   request: NextRequest,
   nonce: string,
@@ -91,7 +100,10 @@ export function updateSession(
 
   if (pathname === "/login") {
     const session = readSupabaseSessionCookie(request.cookies.getAll());
-    if (session.state === "active" || session.state === "refreshable") {
+    if (
+      (session.state === "active" || session.state === "refreshable") &&
+      !isSessionEndedLoginRequest(request)
+    ) {
       return NextResponse.redirect(
         new URL(
           normalizeAuthRedirect(

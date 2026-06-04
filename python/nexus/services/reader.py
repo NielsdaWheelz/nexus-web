@@ -127,9 +127,7 @@ def parse_reader_resume_state(raw_body: bytes) -> ReaderResumeState | None:
     rejected; a JSON ``null`` clears the state (returns None); anything else must
     validate as a ReaderResumeState."""
     if not raw_body:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required."
-        )
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required.")
     try:
         payload = json.loads(raw_body)
     except json.JSONDecodeError as exc:

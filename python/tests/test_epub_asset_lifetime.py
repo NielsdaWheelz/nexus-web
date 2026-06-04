@@ -3,8 +3,12 @@
 import hashlib
 from uuid import uuid4
 
+import pytest
+
 from nexus.services import epub_assets
 from tests.support.storage import FakeStorageClient
+
+pytestmark = pytest.mark.unit
 
 
 class FakeDbSession:

@@ -45,9 +45,7 @@ class TestRetrievalCandidateLedgers:
 
         assert result == []
 
-    def test_unknown_message_raises_message_not_found(
-        self, db_session: Session, bootstrapped_user
-    ):
+    def test_unknown_message_raises_message_not_found(self, db_session: Session, bootstrapped_user):
         """An unknown message id is masked as E_MESSAGE_NOT_FOUND."""
         with pytest.raises(NotFoundError) as exc_info:
             message_retrievals_service.list_message_retrieval_candidate_ledgers(
@@ -57,9 +55,7 @@ class TestRetrievalCandidateLedgers:
             )
         assert exc_info.value.code == ApiErrorCode.E_MESSAGE_NOT_FOUND
 
-    def test_non_owner_is_masked_as_message_not_found(
-        self, db_session: Session, bootstrapped_user
-    ):
+    def test_non_owner_is_masked_as_message_not_found(self, db_session: Session, bootstrapped_user):
         """A non-owner viewer cannot read another user's message ledgers."""
         _, assistant_message_id = _owned_assistant_message(db_session, bootstrapped_user)
         other_viewer = create_test_user_id()
@@ -90,9 +86,7 @@ class TestRerankLedgers:
 
         assert result == []
 
-    def test_non_owner_is_masked_as_message_not_found(
-        self, db_session: Session, bootstrapped_user
-    ):
+    def test_non_owner_is_masked_as_message_not_found(self, db_session: Session, bootstrapped_user):
         """A non-owner viewer cannot read another user's rerank ledgers."""
         _, assistant_message_id = _owned_assistant_message(db_session, bootstrapped_user)
         other_viewer = create_test_user_id()

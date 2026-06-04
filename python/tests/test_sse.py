@@ -14,6 +14,8 @@ from nexus.api.routes._sse import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 
+pytestmark = pytest.mark.unit
+
 
 class _FakeListener:
     def __init__(self, ticks: int = 3) -> None:

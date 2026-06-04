@@ -5,6 +5,8 @@ import pytest
 from nexus.db.session import REQUEST_DB_SESSIONS_STATE_KEY
 from nexus.middleware.db_session import RequestDbSessionMiddleware
 
+pytestmark = pytest.mark.unit
+
 
 class FakeSession:
     def __init__(self) -> None:

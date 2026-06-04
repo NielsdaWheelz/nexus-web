@@ -222,13 +222,52 @@ function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
   );
 }
 
+function rekeySinglePaneRestoreToDeepLink(
+  restored: WorkspaceState,
+  deepLinkIntent: WorkspaceState,
+): WorkspaceState | null {
+  const restoredPanes = getWorkspacePrimaryPanes(restored);
+  const deepLinkPanes = getWorkspacePrimaryPanes(deepLinkIntent);
+  if (restoredPanes.length !== 1 || deepLinkPanes.length !== 1) {
+    return null;
+  }
+
+  const restoredPane = restoredPanes[0];
+  const deepLinkPane = deepLinkPanes[0];
+  if (
+    !restoredPane ||
+    !deepLinkPane ||
+    restored.activePrimaryPaneId !== restoredPane.id ||
+    deepLinkIntent.activePrimaryPaneId !== deepLinkPane.id ||
+    restoredPane.visibility !== "visible" ||
+    deepLinkPane.visibility !== "visible" ||
+    !hasSamePaneResource(restoredPane.href, deepLinkPane.href)
+  ) {
+    return null;
+  }
+
+  const secondaryPanesById = Object.fromEntries(
+    Object.entries(restored.secondaryPanesById).map(([id, secondary]) => [
+      id,
+      secondary.parentPrimaryPaneId === restoredPane.id
+        ? { ...secondary, parentPrimaryPaneId: deepLinkPane.id }
+        : secondary,
+    ])
+  );
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: deepLinkPane.id,
+    primaryPanes: [{ ...restoredPane, id: deepLinkPane.id }],
+    secondaryPanesById,
+  });
+}
+
 export function mergeRestoredWorkspaceWithDeepLink(
   restored: WorkspaceState,
   deepLinkIntent: WorkspaceState,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspaceState {
   if (isNeutralWorkspaceRestoreIntent(deepLinkIntent)) {
-    return restored;
+    return rekeySinglePaneRestoreToDeepLink(restored, deepLinkIntent) ?? restored;
   }
 
   const restoredPanes = getWorkspacePrimaryPanes(restored);

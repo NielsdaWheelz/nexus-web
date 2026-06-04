@@ -599,4 +599,3 @@ def _read_validated_upload_object(
             "Uploaded file size does not match the stored object. Please upload the file again.",
         )
     return hasher.hexdigest(), total_bytes
-

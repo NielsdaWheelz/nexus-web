@@ -1,4 +1,8 @@
+import pytest
+
 from nexus.services.web_article_structure import add_heading_anchors, prepare_web_article_fragment
+
+pytestmark = pytest.mark.unit
 
 
 def test_prepare_web_article_fragment_emits_heading_navigation_blocks():

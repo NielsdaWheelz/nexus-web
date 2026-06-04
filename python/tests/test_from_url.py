@@ -21,6 +21,7 @@ import io
 import socket
 import zipfile
 from types import SimpleNamespace
+from typing import BinaryIO
 from uuid import UUID, uuid4
 
 import httpx
@@ -30,7 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 from nexus.storage.client import StorageError
-from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
+from nexus.storage.paths import build_storage_path
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
@@ -64,6 +65,12 @@ class _TrackingStorageClient(FakeStorageClient):
         self.put_paths.append(path)
         super().put_object(path, content, content_type)
 
+    def put_object_stream(
+        self, path: str, content: BinaryIO, content_type: str = "application/pdf"
+    ) -> None:
+        self.put_paths.append(path)
+        super().put_object_stream(path, content, content_type)
+
     def delete_object(self, path: str) -> None:
         self.deleted_paths.append(path)
         super().delete_object(path)
@@ -73,6 +80,12 @@ class _FailingPutStorageClient(_TrackingStorageClient):
     """Fake storage client that fails on put_object after fetch succeeds."""
 
     def put_object(self, path: str, content: bytes, content_type: str = "application/pdf") -> None:
+        self.put_paths.append(path)
+        raise StorageError("forced storage put failure", code="E_STORAGE_ERROR")
+
+    def put_object_stream(
+        self, path: str, content: BinaryIO, content_type: str = "application/pdf"
+    ) -> None:
         self.put_paths.append(path)
         raise StorageError("forced storage put failure", code="E_STORAGE_ERROR")
 
@@ -1758,8 +1771,8 @@ class TestFromUrlRemoteFiles:
         _patch_remote_file_limits(monkeypatch)
 
         media_uuid = UUID("11111111-1111-1111-1111-111111111111")
-        monkeypatch.setattr("nexus.services.media.uuid4", lambda: media_uuid)
-        storage_path = build_upload_staging_storage_path(media_uuid, "pdf")
+        monkeypatch.setattr("nexus.services.remote_file_ingest.uuid4", lambda: media_uuid)
+        storage_path = build_storage_path(media_uuid, "pdf")
 
         _install_library_entry_insert_failure(direct_db)
         try:
@@ -1818,7 +1831,6 @@ class TestFromUrlRemoteFiles:
         assert first_response.status_code == 202
         first_data = first_response.json()["data"]
         media_id = UUID(first_data["media_id"])
-        first_staging_path = build_upload_staging_storage_path(media_id, "pdf")
         first_final_path = build_storage_path(media_id, "pdf")
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
@@ -1837,9 +1849,8 @@ class TestFromUrlRemoteFiles:
         assert UUID(second_data["media_id"]) == media_id
         assert "duplicate" not in second_data
         assert second_data["idempotency_outcome"] == "reused"
-        assert storage.put_paths[0] == first_staging_path
-        second_staging_path = storage.put_paths[1]
-        second_final_path = build_storage_path(UUID(second_staging_path.split("/")[-2]), "pdf")
+        assert storage.put_paths[0] == first_final_path
+        second_final_path = storage.put_paths[1]
 
         with direct_db.session() as session:
             count = session.execute(
@@ -1854,15 +1865,9 @@ class TestFromUrlRemoteFiles:
             ).scalar_one()
 
         assert count == 1
-        assert storage.get_object(first_staging_path) is None
         assert storage.get_object(first_final_path) == PDF_CONTENT
-        assert storage.get_object(second_staging_path) is None
         assert storage.get_object(second_final_path) is None
-        assert storage.deleted_paths == [
-            first_staging_path,
-            second_staging_path,
-            second_final_path,
-        ]
+        assert storage.deleted_paths == [second_final_path]
 
 
 # =============================================================================

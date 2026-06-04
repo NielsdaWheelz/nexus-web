@@ -1015,6 +1015,22 @@ function WorkspaceHost() {
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   // --- Pane chrome focus management ---
+  const focusPaneChrome = useCallback((targetPaneId: string) => {
+    const paneWrap = paneWrapRefById.current.get(targetPaneId);
+    if (!paneWrap) {
+      return false;
+    }
+    const chrome = paneWrap.querySelector<HTMLElement>(
+      '[data-pane-chrome-focus="true"]'
+    );
+    if (!chrome) {
+      return false;
+    }
+    chrome.focus({ preventScroll: true });
+    pendingPaneChromeFocusPaneIdRef.current = null;
+    return true;
+  }, []);
+
   useEffect(() => {
     const targetPaneId =
       pendingPaneChromeFocusPaneIdRef.current ??
@@ -1022,48 +1038,29 @@ function WorkspaceHost() {
     if (!targetPaneId) {
       return;
     }
-    const paneWrap = paneWrapRefById.current.get(targetPaneId);
-    if (!paneWrap) {
-      return;
-    }
-    const chrome = paneWrap.querySelector<HTMLElement>(
-      '[data-pane-chrome-focus="true"]'
-    );
-    if (!chrome) {
-      return;
-    }
-    chrome.focus({ preventScroll: true });
-    pendingPaneChromeFocusPaneIdRef.current = null;
-  }, [state.activePrimaryPaneId, isMobile]);
+    focusPaneChrome(targetPaneId);
+  }, [state.activePrimaryPaneId, isMobile, focusPaneChrome]);
 
   useEffect(() => {
     scrollPaneIntoView(state.activePrimaryPaneId);
   }, [state.activePrimaryPaneId, scrollPaneIntoView]);
 
-  const handleActivatePane = (
-    paneId: string,
-    options?: { focusPaneChrome?: boolean }
-  ) => {
-    const shouldFocusPaneChrome = options?.focusPaneChrome !== false;
-    activatePane(paneId);
-    const paneWrap = paneWrapRefById.current.get(paneId);
-    if (!shouldFocusPaneChrome) {
-      return;
-    }
-    if (!paneWrap) {
+  const handleActivatePane = useCallback(
+    (paneId: string, options?: { focusPaneChrome?: boolean }) => {
+      const shouldFocusPaneChrome = options?.focusPaneChrome !== false;
+      activatePane(paneId);
+      if (!shouldFocusPaneChrome) {
+        return;
+      }
       pendingPaneChromeFocusPaneIdRef.current = paneId;
-      return;
-    }
-    const chrome = paneWrap.querySelector<HTMLElement>(
-      '[data-pane-chrome-focus="true"]'
-    );
-    if (!chrome) {
-      pendingPaneChromeFocusPaneIdRef.current = paneId;
-      return;
-    }
-    chrome.focus({ preventScroll: true });
-    pendingPaneChromeFocusPaneIdRef.current = null;
-  };
+      window.requestAnimationFrame(() => {
+        if (pendingPaneChromeFocusPaneIdRef.current === paneId) {
+          focusPaneChrome(paneId);
+        }
+      });
+    },
+    [activatePane, focusPaneChrome]
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1084,11 +1081,11 @@ function WorkspaceHost() {
       }
       const index = visible.findIndex((pane) => pane.id === state.activePrimaryPaneId);
       const targetIndex = (index + (isNext ? 1 : -1) + visible.length) % visible.length;
-      activatePane(visible[targetIndex].id);
+      handleActivatePane(visible[targetIndex].id);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [primaryPanes, state.activePrimaryPaneId, keybindings, activatePane]);
+  }, [primaryPanes, state.activePrimaryPaneId, keybindings, handleActivatePane]);
 
   // --- Close handler ---
   const handleClosePane = useCallback(

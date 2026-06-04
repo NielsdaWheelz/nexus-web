@@ -53,16 +53,18 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import (
     rebuild_fragment_content_index,
-    rebuild_transcript_content_index,
 )
 from nexus.services.crypto import CryptoError, encrypt_api_key
 from nexus.services.epub_ingest import EpubExtractionError
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
-from nexus.services.media import create_or_reuse_youtube_video, create_provisional_web_article
+from nexus.services.media import create_provisional_web_article
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
+from nexus.services.transcript_segments import normalize_transcript_segments
+from nexus.services.transcripts.versions import write_transcript_version
 from nexus.services.upload import confirm_ingest, init_upload
+from nexus.services.youtube_ingest import create_or_reuse_youtube_video
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 from nexus.tasks.ingest_epub import persist_epub_metadata, run_epub_ingest_sync
@@ -911,143 +913,32 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         media.processing_completed_at = now
         media.updated_at = now
 
-        db.execute(
-            text(
-                """
-                UPDATE podcast_transcript_versions
-                SET is_active = false, updated_at = :updated_at
-                WHERE media_id = :media_id
-                """
-            ),
-            {"media_id": transcript_media_id, "updated_at": now},
-        )
-        next_version_no = db.execute(
-            text(
-                """
-                SELECT COALESCE(MAX(version_no), 0) + 1
-                FROM podcast_transcript_versions
-                WHERE media_id = :media_id
-                """
-            ),
-            {"media_id": transcript_media_id},
-        ).scalar_one()
-        transcript_version_id = db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcript_versions (
-                    media_id,
-                    version_no,
-                    transcript_coverage,
-                    is_active,
-                    request_reason,
-                    created_by_user_id,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :version_no,
-                    'full',
-                    true,
-                    'episode_open',
-                    :created_by_user_id,
-                    :created_at,
-                    :updated_at
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "media_id": transcript_media_id,
-                "version_no": int(next_version_no),
-                "created_by_user_id": user_id,
-                "created_at": now,
-                "updated_at": now,
-            },
-        ).scalar_one()
-
-        transcript_segments: list[dict[str, object]] = []
-        for idx, segment in enumerate(YOUTUBE_TRANSCRIPT_SEGMENTS):
-            transcript_segments.append(
+        transcript_segments = normalize_transcript_segments(
+            [
                 {
                     "text": segment["canonical_text"],
                     "speaker_label": segment["speaker_label"],
                     "t_start_ms": segment["t_start_ms"],
                     "t_end_ms": segment["t_end_ms"],
                 }
-            )
-            db.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcript_segments (
-                        transcript_version_id,
-                        media_id,
-                        segment_idx,
-                        canonical_text,
-                        t_start_ms,
-                        t_end_ms,
-                        speaker_label,
-                        created_at
-                    )
-                    VALUES (
-                        :transcript_version_id,
-                        :media_id,
-                        :segment_idx,
-                        :canonical_text,
-                        :t_start_ms,
-                        :t_end_ms,
-                        :speaker_label,
-                        :created_at
-                    )
-                    """
-                ),
-                {
-                    "transcript_version_id": transcript_version_id,
-                    "media_id": transcript_media_id,
-                    "segment_idx": idx,
-                    "canonical_text": segment["canonical_text"],
-                    "t_start_ms": segment["t_start_ms"],
-                    "t_end_ms": segment["t_end_ms"],
-                    "speaker_label": segment["speaker_label"],
-                    "created_at": now,
-                },
-            )
-            db.add(
-                Fragment(
-                    media_id=transcript_media_id,
-                    transcript_version_id=transcript_version_id,
-                    idx=idx,
-                    canonical_text=segment["canonical_text"],
-                    html_sanitized=f"<p>{escape(segment['canonical_text'])}</p>",
-                    t_start_ms=segment["t_start_ms"],
-                    t_end_ms=segment["t_end_ms"],
-                    speaker_label=segment["speaker_label"],
-                )
-            )
+                for segment in YOUTUBE_TRANSCRIPT_SEGMENTS
+            ]
+        )
+        if len(transcript_segments) != len(YOUTUBE_TRANSCRIPT_SEGMENTS):
+            raise RuntimeError("YouTube transcript E2E fixture contains invalid segments")
 
-        _upsert_media_transcript_state(
+        write_result = write_transcript_version(
             db,
             media_id=transcript_media_id,
-            transcript_state="ready",
+            created_by_user_id=user_id,
+            request_reason="episode_open",
             transcript_coverage="full",
-            semantic_status="pending",
-            last_request_reason="episode_open",
-        )
-        rebuild_transcript_content_index(
-            db,
-            media_id=transcript_media_id,
-            transcript_version_id=transcript_version_id,
             transcript_segments=transcript_segments,
-            reason="e2e_seed",
+            fragment_strategy="replace",
+            now=now,
         )
-        _upsert_media_transcript_state(
-            db,
-            media_id=transcript_media_id,
-            transcript_state="ready",
-            transcript_coverage="full",
-            semantic_status="ready",
-            last_request_reason="episode_open",
-        )
+        if write_result.semantic_status != "ready":
+            raise RuntimeError("YouTube transcript E2E semantic index failed")
         db.commit()
 
     with session_factory() as db:

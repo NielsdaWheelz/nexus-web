@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.services.media_processing_state import mark_ready_for_reading, reset_for_reingest
+
+pytestmark = pytest.mark.unit
 
 
 class FlushRecorder:
