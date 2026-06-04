@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from uuid import UUID
 
 import pytest
@@ -118,18 +119,17 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert sync_response.status_code == 202, sync_response.text
 
-    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
         sync_result = run_podcast_subscription_sync_now(
             session,
             user_id=user_id,
             podcast_id=podcast_id,
-            request_id="live-provider-podcast-sync",
         )
         session.commit()
 
-    assert sync_result["sync_status"] == "complete", sync_result
+    assert sync_result.sync_status == "complete", sync_result
 
     episodes_response = auth_client.get(
         f"/podcasts/{podcast_id}/episodes",
@@ -169,7 +169,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+    from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
     with direct_db.session() as session:
         transcription_result = run_podcast_transcription_now(
@@ -180,7 +180,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
         )
         session.commit()
 
-    assert transcription_result["status"] == "completed", transcription_result
+    assert transcription_result.status == "completed", transcription_result
     register_background_job_cleanup(direct_db, media_id)
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
@@ -194,6 +194,6 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
-            "transcription": transcription_result,
+            "transcription": asdict(transcription_result),
         },
     )

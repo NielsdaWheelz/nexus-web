@@ -144,6 +144,10 @@ class ApiErrorCode(str, Enum):
     E_IMAGE_FETCH_FAILED = "E_IMAGE_FETCH_FAILED"  # 502 - Upstream fetch failed
     E_IMAGE_TOO_LARGE = "E_IMAGE_TOO_LARGE"  # 413 - Image exceeds size/dimension limits
 
+    # Feed-controlled fetch errors (413/502) — RSS feeds, chapters, transcript sidecars
+    E_SOURCE_FETCH_FAILED = "E_SOURCE_FETCH_FAILED"  # 502 - feed-controlled fetch failed
+    E_SOURCE_TOO_LARGE = "E_SOURCE_TOO_LARGE"  # 413 - response exceeded streamed size cap
+
     # Server errors (500/503)
     E_AUTH_UNAVAILABLE = "E_AUTH_UNAVAILABLE"  # 503
     E_INTERNAL = "E_INTERNAL"  # 500
@@ -273,6 +277,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_SSRF_BLOCKED: 403,
     ApiErrorCode.E_IMAGE_FETCH_FAILED: 502,
     ApiErrorCode.E_IMAGE_TOO_LARGE: 413,
+    ApiErrorCode.E_SOURCE_FETCH_FAILED: 502,
+    ApiErrorCode.E_SOURCE_TOO_LARGE: 413,
     # Server errors
     ApiErrorCode.E_AUTH_UNAVAILABLE: 503,
     ApiErrorCode.E_INTERNAL: 500,

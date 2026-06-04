@@ -46,6 +46,10 @@ from nexus.services.search import (
     search,
 )
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
+from nexus.services.transcript_segments import TranscriptSegmentInput
+from tests.factories import (
+    add_library_entry_only as seed_media_in_library,
+)
 from tests.factories import (
     add_library_member,
     add_media_to_library,
@@ -343,13 +347,7 @@ class TestBasicSearch:
             )
 
             for media_id in (unavailable_video_id, unavailable_podcast_id, ready_video_id):
-                session.execute(
-                    text("""
-                        INSERT INTO library_entries (library_id, media_id)
-                        VALUES (:library_id, :media_id)
-                    """),
-                    {"library_id": default_library_id, "media_id": media_id},
-                )
+                seed_media_in_library(session, default_library_id, media_id)
                 session.execute(
                     text("""
                         INSERT INTO default_library_intrinsics (default_library_id, media_id)
@@ -456,13 +454,7 @@ class TestBasicSearch:
                 """),
                 {"media_id": media_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text("""
                     INSERT INTO default_library_intrinsics (default_library_id, media_id)
@@ -843,14 +835,7 @@ class TestSearchScopes:
             media_id = create_searchable_media(session, user_id, title="Research Paper on AI")
 
             # Also add to the non-default library
-            session.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    ON CONFLICT DO NOTHING
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
+            seed_media_in_library(session, library_id, media_id)
             session.commit()
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -2379,13 +2364,7 @@ class TestSearchProvenance:
                 },
             )
             # Insert library_entries WITHOUT intrinsic or closure (stale row)
-            session.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id)
-                    VALUES (:lib_id, :media_id)
-                """),
-                {"lib_id": default_lib_id, "media_id": media_id},
-            )
+            seed_media_in_library(session, default_lib_id, media_id)
             session.commit()
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -2454,7 +2433,7 @@ class TestSemanticTranscriptChunkSearch:
         direct_db: DirectSessionManager,
         *,
         semantic_status: str,
-        segments: list[dict[str, object]] | None = None,
+        segments: list[TranscriptSegmentInput] | None = None,
     ) -> tuple[UUID, UUID]:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -2462,18 +2441,20 @@ class TestSemanticTranscriptChunkSearch:
         media_id = uuid4()
         version_id = uuid4()
         transcript_segments = segments or [
-            {
-                "segment_idx": 0,
-                "text": "transformer attention residual stream explanation",
-                "t_start_ms": 1000,
-                "t_end_ms": 5000,
-            },
-            {
-                "segment_idx": 1,
-                "text": "gardening tomatoes and compost aeration tips",
-                "t_start_ms": 5100,
-                "t_end_ms": 9000,
-            },
+            TranscriptSegmentInput(
+                segment_idx=0,
+                t_start_ms=1000,
+                t_end_ms=5000,
+                canonical_text="transformer attention residual stream explanation",
+                speaker_label=None,
+            ),
+            TranscriptSegmentInput(
+                segment_idx=1,
+                t_start_ms=5100,
+                t_end_ms=9000,
+                canonical_text="gardening tomatoes and compost aeration tips",
+                speaker_label=None,
+            ),
         ]
 
         with direct_db.session() as session:
@@ -2497,15 +2478,7 @@ class TestSemanticTranscriptChunkSearch:
                 ),
                 {"id": media_id, "user_id": user_id},
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO library_entries (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    """
-                ),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text(
                     """
@@ -2555,10 +2528,10 @@ class TestSemanticTranscriptChunkSearch:
                         "transcript_version_id": version_id,
                         "media_id": media_id,
                         "segment_idx": segment_idx,
-                        "canonical_text": segment["text"],
-                        "t_start_ms": segment["t_start_ms"],
-                        "t_end_ms": segment["t_end_ms"],
-                        "speaker_label": segment.get("speaker_label"),
+                        "canonical_text": segment.canonical_text,
+                        "t_start_ms": segment.t_start_ms,
+                        "t_end_ms": segment.t_end_ms,
+                        "speaker_label": segment.speaker_label,
                     },
                 )
             session.execute(
@@ -2566,18 +2539,17 @@ class TestSemanticTranscriptChunkSearch:
                     """
                     INSERT INTO media_transcript_states (
                         media_id, transcript_state, transcript_coverage, semantic_status,
-                        active_transcript_version_id, last_request_reason
+                        last_request_reason
                     )
                     VALUES (
                         :media_id, 'ready', 'full', :semantic_status,
-                        :active_transcript_version_id, 'search'
+                        'search'
                     )
                     """
                 ),
                 {
                     "media_id": media_id,
                     "semantic_status": semantic_status,
-                    "active_transcript_version_id": version_id,
                 },
             )
             rebuild_transcript_content_index(
@@ -2958,19 +2930,21 @@ class TestSemanticTranscriptChunkSearch:
             direct_db,
             semantic_status="ready",
             segments=[
-                {
-                    "segment_idx": 0,
-                    "text": "transformer attention residual stream explanation",
-                    "t_start_ms": 1000,
-                    "t_end_ms": 5000,
-                },
+                TranscriptSegmentInput(
+                    segment_idx=0,
+                    t_start_ms=1000,
+                    t_end_ms=5000,
+                    canonical_text="transformer attention residual stream explanation",
+                    speaker_label=None,
+                ),
                 *[
-                    {
-                        "segment_idx": offset + 1,
-                        "text": f"irrelevant gardening chunk {offset}",
-                        "t_start_ms": 20_000 + (offset * 1000),
-                        "t_end_ms": 20_900 + (offset * 1000),
-                    }
+                    TranscriptSegmentInput(
+                        segment_idx=offset + 1,
+                        t_start_ms=20_000 + (offset * 1000),
+                        t_end_ms=20_900 + (offset * 1000),
+                        canonical_text=f"irrelevant gardening chunk {offset}",
+                        speaker_label=None,
+                    )
                     for offset in range(120)
                 ],
             ],
@@ -2997,20 +2971,22 @@ class TestSemanticTranscriptChunkSearch:
             semantic_status="ready",
             segments=[
                 *[
-                    {
-                        "segment_idx": offset,
-                        "text": f"irrelevant corpus filler chunk {offset}",
-                        "t_start_ms": 1000 + (offset * 1000),
-                        "t_end_ms": 1900 + (offset * 1000),
-                    }
+                    TranscriptSegmentInput(
+                        segment_idx=offset,
+                        t_start_ms=1000 + (offset * 1000),
+                        t_end_ms=1900 + (offset * 1000),
+                        canonical_text=f"irrelevant corpus filler chunk {offset}",
+                        speaker_label=None,
+                    )
                     for offset in range(30)
                 ],
-                {
-                    "segment_idx": 999,
-                    "text": "transformer attention residual stream explanation",
-                    "t_start_ms": 61000,
-                    "t_end_ms": 66000,
-                },
+                TranscriptSegmentInput(
+                    segment_idx=999,
+                    t_start_ms=61000,
+                    t_end_ms=66000,
+                    canonical_text="transformer attention residual stream explanation",
+                    speaker_label=None,
+                ),
             ],
         )
 
@@ -3078,15 +3054,7 @@ class TestSearchTranscriptVersionNavigation:
                 ),
                 {"id": media_id, "user_id": user_id},
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO library_entries (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    """
-                ),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text(
                     """
@@ -3152,7 +3120,6 @@ class TestSearchTranscriptVersionNavigation:
                         transcript_state,
                         transcript_coverage,
                         semantic_status,
-                        active_transcript_version_id,
                         last_request_reason
                     )
                     VALUES (
@@ -3160,12 +3127,11 @@ class TestSearchTranscriptVersionNavigation:
                         'ready',
                         'full',
                         'ready',
-                        :active_version_id,
                         'operator_requeue'
                     )
                     """
                 ),
-                {"media_id": media_id, "active_version_id": version_v2},
+                {"media_id": media_id},
             )
             session.execute(
                 text(

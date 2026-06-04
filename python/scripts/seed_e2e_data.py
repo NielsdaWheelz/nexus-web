@@ -698,7 +698,6 @@ def _upsert_media_transcript_state(
     transcript_state: str,
     transcript_coverage: str,
     semantic_status: str,
-    active_transcript_version_id: UUID | None = None,
     last_request_reason: str | None = None,
     last_error_code: str | None = None,
 ) -> None:
@@ -708,7 +707,6 @@ def _upsert_media_transcript_state(
         "transcript_state": transcript_state,
         "transcript_coverage": transcript_coverage,
         "semantic_status": semantic_status,
-        "active_transcript_version_id": active_transcript_version_id,
         "last_request_reason": last_request_reason,
         "last_error_code": last_error_code,
     }
@@ -725,7 +723,6 @@ def _upsert_media_transcript_state(
                     transcript_state,
                     transcript_coverage,
                     semantic_status,
-                    active_transcript_version_id,
                     last_request_reason,
                     last_error_code,
                     created_at,
@@ -736,7 +733,6 @@ def _upsert_media_transcript_state(
                     :transcript_state,
                     :transcript_coverage,
                     :semantic_status,
-                    :active_transcript_version_id,
                     :last_request_reason,
                     :last_error_code,
                     now(),
@@ -754,7 +750,6 @@ def _upsert_media_transcript_state(
                 SET transcript_state = :transcript_state,
                     transcript_coverage = :transcript_coverage,
                     semantic_status = :semantic_status,
-                    active_transcript_version_id = :active_transcript_version_id,
                     last_request_reason = :last_request_reason,
                     last_error_code = :last_error_code,
                     updated_at = now()
@@ -1036,7 +1031,6 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             transcript_state="ready",
             transcript_coverage="full",
             semantic_status="pending",
-            active_transcript_version_id=transcript_version_id,
             last_request_reason="episode_open",
         )
         rebuild_transcript_content_index(
@@ -1052,7 +1046,6 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             transcript_state="ready",
             transcript_coverage="full",
             semantic_status="ready",
-            active_transcript_version_id=transcript_version_id,
             last_request_reason="episode_open",
         )
         db.commit()

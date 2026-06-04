@@ -1,11 +1,12 @@
 """Worker job handler for podcast transcript semantic reindex repair."""
 
+from dataclasses import asdict
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.podcasts.transcripts import (
+from nexus.services.podcasts.transcription import (
     repair_podcast_transcript_semantic_index_now as repair_podcast_transcript_semantic_index_now_service,
 )
 
@@ -44,10 +45,12 @@ def podcast_reindex_semantic_job(
     session_factory = get_session_factory()
     db = session_factory()
     try:
-        result = repair_podcast_transcript_semantic_index_now_service(
-            db,
-            media_id=media_uuid,
-            request_reason=request_reason,
+        result = asdict(
+            repair_podcast_transcript_semantic_index_now_service(
+                db,
+                media_id=media_uuid,
+                request_reason=request_reason,
+            )
         )
         db.commit()
         logger.info(

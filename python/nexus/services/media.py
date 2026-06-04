@@ -7,7 +7,9 @@ import json
 import posixpath
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid4
 
@@ -38,8 +40,13 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
-from nexus.services import libraries as libraries_service
-from nexus.services import web_article_indexing, x_ingest, youtube_ingest
+from nexus.services import (
+    library_entries,
+    library_governance,
+    web_article_indexing,
+    x_ingest,
+    youtube_ingest,
+)
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
@@ -58,7 +65,7 @@ from nexus.services.pdf_ingest import (
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.podcasts.transcripts import requeue_podcast_transcription_for_source_refresh
+from nexus.services.podcasts.transcription import requeue_podcast_transcription_for_source_refresh
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_structure import (
     WEB_ARTICLE_HTML_MAX_BYTES,
@@ -691,7 +698,7 @@ def create_captured_web_article(
     published_time: str | None = None,
 ) -> ArticleCaptureResponse:
     """Persist a browser-rendered article capture as readable media."""
-    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
     validate_requested_url(url)
 
     if len(content_html.encode("utf-8")) > WEB_ARTICLE_HTML_MAX_BYTES:
@@ -771,7 +778,7 @@ def create_captured_web_article(
                     )
             replace_media_contributor_credits(db, media_id=media.id, credits=credits)
 
-        libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
+        library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
         fragment_id = fragment.id
         media_id = media.id
         media_language = media.language
@@ -792,7 +799,7 @@ def create_captured_web_article(
 
     _try_enrich_dispatch(str(media.id), None)
 
-    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     return ArticleCaptureResponse(
         media_id=media.id,
@@ -814,7 +821,7 @@ def create_captured_file(
     """Persist a browser-fetched PDF/EPUB and run the existing file ingest lifecycle."""
     from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
 
-    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
     cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
     lower_filename = cleaned_filename.lower()
@@ -890,7 +897,7 @@ def create_captured_file(
         db.add(media)
         db.add(media_file)
         db.flush()
-        libraries_service.ensure_media_in_default_library(db, viewer_id, media_id)
+        library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
     except Exception:
         db.rollback()
@@ -915,7 +922,7 @@ def create_captured_file(
         request_id=request_id,
     )
     resolved_media_id = UUID(result["media_id"])
-    libraries_service.assign_libraries_for_media(db, viewer_id, resolved_media_id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, resolved_media_id, library_ids)
     return FromUrlResponse(
         media_id=resolved_media_id,
         idempotency_outcome="reused" if result["duplicate"] else "created",
@@ -985,7 +992,7 @@ def create_provisional_web_article(
     db.add(media)
     db.flush()  # Get the generated ID
 
-    libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
+    library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
 
     ingest_enqueued = False
     try:
@@ -1101,8 +1108,8 @@ def list_fragments_for_viewer(
                 f_source.source_version,
                 f.created_at
             FROM fragments f
-            LEFT JOIN media_transcript_states mts
-              ON mts.media_id = f.media_id
+            LEFT JOIN podcast_transcript_versions ptv
+              ON ptv.media_id = f.media_id AND ptv.is_active
             LEFT JOIN media_content_index_states mcis
               ON mcis.media_id = f.media_id
             LEFT JOIN LATERAL (
@@ -1128,8 +1135,8 @@ def list_fragments_for_viewer(
             WHERE f.media_id = :media_id
               AND (
                   f.transcript_version_id IS NULL
-                  OR mts.active_transcript_version_id IS NULL
-                  OR f.transcript_version_id = mts.active_transcript_version_id
+                  OR ptv.id IS NULL
+                  OR f.transcript_version_id = ptv.id
               )
             ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
         """),
@@ -1151,3 +1158,28 @@ def list_fragments_for_viewer(
         )
         for row in result.fetchall()
     ]
+
+
+@dataclass(frozen=True)
+class MediaEventSnapshot:
+    payload: dict[str, Any]
+    terminal: bool  # owns the former route-level _TERMINAL_STATUSES
+
+
+def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> MediaEventSnapshot:
+    """State payload + terminal flag for the media-processing SSE.
+
+    Raises E_MEDIA_NOT_FOUND if the media is gone/unreadable (the SSE tail treats
+    that as a clean close).
+    """
+    media = get_media_for_viewer(db, viewer_id, media_id)
+    payload = {
+        "processing_status": media.processing_status,
+        "last_error_code": media.last_error_code,
+        "failure_stage": media.failure_stage,
+        "capabilities": media.capabilities.model_dump(mode="json"),
+        "transcript_state": media.transcript_state,
+        "transcript_coverage": media.transcript_coverage,
+        "updated_at": media.updated_at.isoformat(),
+    }
+    return MediaEventSnapshot(payload=payload, terminal=media.processing_status in ("ready", "failed"))

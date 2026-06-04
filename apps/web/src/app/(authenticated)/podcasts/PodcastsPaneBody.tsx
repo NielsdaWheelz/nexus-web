@@ -24,17 +24,11 @@ import {
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
-  addPodcastToLibrary,
-  buildPodcastUnsubscribeConfirmation,
-  fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
-  getPodcastSubscriptionSyncPatch,
   type PodcastLibraryMembership,
   type PodcastSubscriptionListItem,
-  removePodcastFromLibrary,
-  refreshPodcastSubscriptionSync,
-  unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
+import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
 import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
@@ -78,8 +72,7 @@ export default function PodcastsPaneBody() {
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState(0);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const busyPodcastIds = useStringIdSet();
-  const refreshingPodcastIds = useStringIdSet();
+  const actions = usePodcastSubscriptionActions(setError);
   const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>("all");
   const [searchText, setSearchText] = useState("");
@@ -92,7 +85,7 @@ export default function PodcastsPaneBody() {
     Record<string, PodcastLibraryMembership[]>
   >({});
   const loadingLibraryPodcastIds = useStringIdSet();
-  const busyLibraryMembershipKeys = useStringIdSet();
+  const busyLibraryMembershipKeys = actions.busyLibraryMembershipKeys;
   const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<string | null>(null);
   const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
     null
@@ -261,47 +254,39 @@ export default function PodcastsPaneBody() {
     };
   }, []);
 
-  const loadPodcastLibraries = useCallback(
-    async (podcastId: string, force = false) => {
-      if (!force && loadingLibraryPodcastIds.ids.has(podcastId)) {
-        return librariesByPodcastId[podcastId] ?? [];
+  // Populate the per-podcast library cache for the membership panel. The hook's
+  // loadLibraries does the fetch + error reporting; this layer adds the
+  // list-only keyed-map cache and in-flight dedupe.
+  const ensurePodcastLibrariesLoaded = useCallback(
+    async (podcastId: string) => {
+      if (loadingLibraryPodcastIds.ids.has(podcastId)) {
+        return;
       }
-      if (!force && librariesByPodcastId[podcastId]) {
-        return librariesByPodcastId[podcastId];
+      if (librariesByPodcastId[podcastId]) {
+        return;
       }
       loadingLibraryPodcastIds.add(podcastId);
-      setError(null);
       try {
-        const nextLibraries = await fetchPodcastLibraries(podcastId);
-        setLibrariesByPodcastId((prev) => ({
-          ...prev,
-          [podcastId]: nextLibraries,
-        }));
-        return nextLibraries;
-      } catch (loadError) {
-        setError(toFeedback(loadError, { fallback: "Failed to load podcast libraries" }));
-        return [];
+        const nextLibraries = await actions.loadLibraries(podcastId);
+        if (nextLibraries) {
+          setLibrariesByPodcastId((prev) => ({
+            ...prev,
+            [podcastId]: nextLibraries,
+          }));
+        }
       } finally {
         loadingLibraryPodcastIds.remove(podcastId);
       }
     },
-    [librariesByPodcastId, loadingLibraryPodcastIds]
+    [actions, librariesByPodcastId, loadingLibraryPodcastIds],
   );
 
-  const handleAddPodcastToLibrary = useCallback(
-    async (podcastId: string, libraryId: string) => {
-      const busyKey = `${libraryId}:${podcastId}`;
-      busyLibraryMembershipKeys.add(busyKey);
-      setError(null);
-      try {
-        await addPodcastToLibrary(podcastId, libraryId);
+  const addPodcastToLibrary = useCallback(
+    (podcastId: string, libraryId: string) =>
+      actions.addToLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(
-            prev[podcastId] ?? [],
-            libraryId,
-            true,
-          ),
+          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, true),
         }));
         setRows((prev) =>
           prev.map((row) => {
@@ -319,38 +304,21 @@ export default function PodcastsPaneBody() {
               ...row,
               visible_libraries: [
                 ...row.visible_libraries,
-                {
-                  id: summary.id,
-                  name: summary.name,
-                  color: summary.color ?? null,
-                },
+                { id: summary.id, name: summary.name, color: summary.color ?? null },
               ],
             };
-          })
+          }),
         );
-      } catch (mutationError) {
-        setError(toFeedback(mutationError, { fallback: "Failed to add podcast to library" }));
-      } finally {
-        busyLibraryMembershipKeys.remove(busyKey);
-      }
-    },
-    [busyLibraryMembershipKeys, libraries]
+      }),
+    [actions, libraries],
   );
 
-  const handleRemovePodcastFromLibrary = useCallback(
-    async (podcastId: string, libraryId: string) => {
-      const busyKey = `${libraryId}:${podcastId}`;
-      busyLibraryMembershipKeys.add(busyKey);
-      setError(null);
-      try {
-        await removePodcastFromLibrary(podcastId, libraryId);
+  const removePodcastFromLibrary = useCallback(
+    (podcastId: string, libraryId: string) =>
+      actions.removeFromLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(
-            prev[podcastId] ?? [],
-            libraryId,
-            false,
-          ),
+          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, false),
         }));
         setRows((prev) =>
           prev.map((row) =>
@@ -358,39 +326,22 @@ export default function PodcastsPaneBody() {
               ? {
                   ...row,
                   visible_libraries: row.visible_libraries.filter(
-                    (library) => library.id !== libraryId
+                    (library) => library.id !== libraryId,
                   ),
                 }
-              : row
-          )
+              : row,
+          ),
         );
-      } catch (mutationError) {
-        setError(
-          toFeedback(mutationError, { fallback: "Failed to remove podcast from library" })
-        );
-      } finally {
-        busyLibraryMembershipKeys.remove(busyKey);
-      }
-    },
-    [busyLibraryMembershipKeys]
+      }),
+    [actions],
   );
 
-  const handleUnsubscribe = useCallback(
-    async (row: PodcastSubscriptionListItem) => {
-      const currentLibraries = await loadPodcastLibraries(row.podcast_id, true);
-      if (
-        !window.confirm(
-          buildPodcastUnsubscribeConfirmation(row.podcast.title, currentLibraries)
-        )
-      ) {
-        return;
-      }
-
-      busyPodcastIds.add(row.podcast_id);
-      setError(null);
-      try {
-        await unsubscribeFromPodcast(row.podcast_id);
-        setRows((prev) => prev.filter((candidate) => candidate.podcast_id !== row.podcast_id));
+  const unsubscribePodcast = useCallback(
+    (row: PodcastSubscriptionListItem) =>
+      actions.unsubscribe(row.podcast_id, row.podcast.title, () => {
+        setRows((prev) =>
+          prev.filter((candidate) => candidate.podcast_id !== row.podcast_id),
+        );
         if (membershipPanelPodcastId === row.podcast_id) {
           setMembershipPanelPodcastId(null);
           setMembershipPanelTriggerEl(null);
@@ -400,38 +351,21 @@ export default function PodcastsPaneBody() {
           delete next[row.podcast_id];
           return next;
         });
-      } catch (unsubscribeError) {
-        setError(
-          toFeedback(unsubscribeError, { fallback: "Failed to unsubscribe from podcast" })
-        );
-      } finally {
-        busyPodcastIds.remove(row.podcast_id);
-      }
-    },
-    [busyPodcastIds, loadPodcastLibraries, membershipPanelPodcastId]
+      }),
+    [actions, membershipPanelPodcastId],
   );
 
-  const handleRefreshSync = useCallback(async (podcastId: string) => {
-    refreshingPodcastIds.add(podcastId);
-    setError(null);
-    try {
-      const response = await refreshPodcastSubscriptionSync(podcastId);
-      setRows((prev) =>
-        prev.map((row) =>
-          row.podcast_id === podcastId
-            ? {
-                ...row,
-                ...getPodcastSubscriptionSyncPatch(response),
-              }
-            : row
-        )
-      );
-    } catch (refreshError) {
-      setError(toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }));
-    } finally {
-      refreshingPodcastIds.remove(podcastId);
-    }
-  }, [refreshingPodcastIds]);
+  const refreshPodcastSync = useCallback(
+    (podcastId: string) =>
+      actions.refreshSync(podcastId, (patch) => {
+        setRows((prev) =>
+          prev.map((row) =>
+            row.podcast_id === podcastId ? { ...row, ...patch } : row,
+          ),
+        );
+      }),
+    [actions],
+  );
 
   const activeCount = rows.length;
   const settingsRow =
@@ -446,11 +380,7 @@ export default function PodcastsPaneBody() {
       )
     : false;
   const membershipPanelLibraries = membershipPanelPodcastId
-    ? (librariesByPodcastId[membershipPanelPodcastId] ?? []).map((library) => ({
-        ...library,
-        canAdd: membershipPanelBusy ? false : library.canAdd,
-        canRemove: membershipPanelBusy ? false : library.canRemove,
-      }))
+    ? (librariesByPodcastId[membershipPanelPodcastId] ?? [])
     : [];
 
   return (
@@ -604,8 +534,8 @@ export default function PodcastsPaneBody() {
           {rows.length > 0 ? (
             <AppList>
               {rows.map((row) => {
-                const rowBusy = busyPodcastIds.ids.has(row.podcast_id);
-                const rowRefreshing = refreshingPodcastIds.ids.has(row.podcast_id);
+                const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
+                const rowRefreshing = actions.refreshingPodcastIds.ids.has(row.podcast_id);
 
                 return (
                   <AppListItem
@@ -694,14 +624,14 @@ export default function PodcastsPaneBody() {
                       onManageLibraries: ({ triggerEl }) => {
                         setMembershipPanelPodcastId(row.podcast_id);
                         setMembershipPanelTriggerEl(triggerEl);
-                        void loadPodcastLibraries(row.podcast_id);
+                        void ensurePodcastLibrariesLoaded(row.podcast_id);
                       },
                       onOpenSettings: () => settingsModal.open(row),
                       onRefreshSync: () => {
-                        void handleRefreshSync(row.podcast_id);
+                        void refreshPodcastSync(row.podcast_id);
                       },
                       onUnsubscribe: () => {
-                        void handleUnsubscribe(row);
+                        void unsubscribePodcast(row);
                       },
                     })}
                   />
@@ -745,12 +675,12 @@ export default function PodcastsPaneBody() {
         }}
         onAddToLibrary={(libraryId: string) => {
           if (membershipPanelPodcastId) {
-            void handleAddPodcastToLibrary(membershipPanelPodcastId, libraryId);
+            void addPodcastToLibrary(membershipPanelPodcastId, libraryId);
           }
         }}
         onRemoveFromLibrary={(libraryId: string) => {
           if (membershipPanelPodcastId) {
-            void handleRemovePodcastFromLibrary(membershipPanelPodcastId, libraryId);
+            void removePodcastFromLibrary(membershipPanelPodcastId, libraryId);
           }
         }}
       />

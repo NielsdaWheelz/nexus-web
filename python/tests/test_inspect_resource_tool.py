@@ -154,12 +154,12 @@ def test_inspect_resource_audio_video_uses_active_transcript_timecodes(
             """
             INSERT INTO media_transcript_states (
                 media_id, transcript_state, transcript_coverage, semantic_status,
-                active_transcript_version_id, last_request_reason
+                last_request_reason
             )
-            VALUES (:media_id, 'ready', 'full', 'ready', :version_id, 'episode_open')
+            VALUES (:media_id, 'ready', 'full', 'ready', 'episode_open')
             """
         ),
-        {"media_id": media_id, "version_id": transcript_version_id},
+        {"media_id": media_id},
     )
     db_session.execute(
         text(

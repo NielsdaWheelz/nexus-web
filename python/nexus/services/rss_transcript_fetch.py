@@ -8,11 +8,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from nexus.config import get_settings, real_media_provider_fixtures_requested
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
+from nexus.services.net.safe_fetch import safe_get
 from nexus.services.podcasts._normalize import normalize_language_tag
 from nexus.services.url_normalize import validate_requested_url
 
@@ -20,6 +19,13 @@ logger = get_logger(__name__)
 
 _TRANSCRIPT_TIMEOUT_SECONDS = 15.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
+
+# Real-media crew-4 transcript fixture identity. The same fixture file
+# (nasa-hwhap-crew4-transcript.txt) is also validated in
+# nexus/services/podcasts/deepgram_adapter.py; keep these two in sync if the
+# fixture content changes.
+_CREW4_FIXTURE_BYTES = 753
+_CREW4_FIXTURE_SHA256 = "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
 
 _SOURCE_TYPE_PRIORITY = {
     "vtt": 0,
@@ -164,8 +170,9 @@ def _fetch_real_media_fixture_transcript(
         )
 
     payload = content.encode("utf-8")
-    if len(payload) != 753 or hashlib.sha256(payload).hexdigest() != (
-        "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
+    if (
+        len(payload) != _CREW4_FIXTURE_BYTES
+        or hashlib.sha256(payload).hexdigest() != _CREW4_FIXTURE_SHA256
     ):
         return _failure(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
@@ -187,7 +194,7 @@ def _fetch_real_media_fixture_transcript(
         "provider_fixture": {
             "path": str(path),
             "byte_length": len(payload),
-            "sha256": "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953",
+            "sha256": _CREW4_FIXTURE_SHA256,
             "source_url": expected_url,
         },
     }
@@ -306,38 +313,20 @@ def _language_matches(language: str | None, preferred: str | None) -> bool:
 
 def _fetch_transcript_text(url: str, *, source_type: str) -> tuple[str | None, str | None]:
     try:
-        validate_requested_url(url)
-    except InvalidRequestError as exc:
-        return None, f"url_rejected:{exc.message}"
-
-    try:
-        response = httpx.get(
+        result = safe_get(
             url,
-            headers={"User-Agent": "nexus-podcast-client/1.0"},
-            timeout=_TRANSCRIPT_TIMEOUT_SECONDS,
+            max_bytes=_MAX_TRANSCRIPT_BYTES,
+            timeout_s=_TRANSCRIPT_TIMEOUT_SECONDS,
         )
-    except httpx.TimeoutException:
-        return None, "timeout"
-    except httpx.HTTPError as exc:  # pragma: no cover - exercised in integration paths.
-        return None, f"request_failed:{exc}"
+    except ApiError as exc:
+        return None, f"fetch_rejected:{exc.code.value}"
 
-    if response.status_code >= 400:
-        return None, f"http_{response.status_code}"
+    if not _is_allowed_content_type(result.content_type, source_type=source_type):
+        return None, f"content_type_rejected:{result.content_type or 'unknown'}"
 
-    payload_bytes = bytes(response.content or b"")
-    if not payload_bytes:
+    if not result.text.strip():
         return None, "empty_body"
-    if len(payload_bytes) > _MAX_TRANSCRIPT_BYTES:
-        return None, "payload_too_large"
-
-    content_type = _normalize_content_type(response.headers.get("Content-Type"))
-    if not _is_allowed_content_type(content_type, source_type=source_type):
-        return None, f"content_type_rejected:{content_type or 'unknown'}"
-
-    text_content = response.text
-    if not text_content.strip():
-        return None, "empty_body"
-    return text_content, None
+    return result.text, None
 
 
 def _is_allowed_content_type(content_type: str | None, *, source_type: str) -> bool:

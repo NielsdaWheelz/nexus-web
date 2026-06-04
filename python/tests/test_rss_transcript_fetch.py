@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import httpx
 import pytest
 
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.services.net.safe_fetch import SafeFetchResult
 from nexus.services.rss_transcript_fetch import (
     fetch_rss_transcript,
     parse_json_transcript,
@@ -180,23 +181,24 @@ class TestRssTranscriptFetchBoundary:
         ]
         called_urls: list[str] = []
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             called_urls.append(url)
             if url.endswith("episode-es.vtt"):
-                return httpx.Response(500, request=httpx.Request("GET", url))
+                raise ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, "upstream 500")
             if url.endswith("episode-en.vtt"):
-                return httpx.Response(404, request=httpx.Request("GET", url))
+                raise ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, "upstream 404")
             if url.endswith("episode-fr.srt"):
-                return httpx.Response(
-                    200,
-                    text=_fixture_text("sample_transcript.srt"),
-                    headers={"Content-Type": "application/x-subrip"},
-                    request=httpx.Request("GET", url),
+                body = _fixture_text("sample_transcript.srt")
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="application/x-subrip",
+                    content=body.encode("utf-8"),
+                    text=body,
                 )
             raise AssertionError(f"unexpected transcript URL fetch: {url}")
 
-        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         result = fetch_rss_transcript(
             refs,
@@ -221,17 +223,11 @@ class TestRssTranscriptFetchBoundary:
     def test_fetch_rejects_payloads_over_size_limit(self, monkeypatch):
         refs = [{"url": "https://cdn.example.com/transcripts/huge.vtt", "type": "text/vtt"}]
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
-            return httpx.Response(
-                200,
-                text="A" * 1024,
-                headers={"Content-Type": "text/vtt"},
-                request=httpx.Request("GET", url),
-            )
+            raise ApiError(ApiErrorCode.E_SOURCE_TOO_LARGE, "payload too large")
 
-        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
-        monkeypatch.setattr("nexus.services.rss_transcript_fetch._MAX_TRANSCRIPT_BYTES", 128)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         result = fetch_rss_transcript(refs)
 

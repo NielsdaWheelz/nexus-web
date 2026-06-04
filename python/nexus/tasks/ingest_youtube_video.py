@@ -13,16 +13,13 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.content_indexing import (
-    mark_content_index_failed,
-    rebuild_transcript_content_index,
-)
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.transcript_segments import (
-    insert_transcript_fragments,
-    normalize_transcript_segments,
+from nexus.services.transcript_segments import normalize_transcript_segments
+from nexus.services.transcripts.versions import (
+    set_media_transcript_state,
+    write_transcript_version,
 )
 from nexus.services.youtube_identity import classify_youtube_url
 from nexus.services.youtube_transcripts import fetch_youtube_transcript
@@ -94,13 +91,12 @@ def _do_ingest(
     media.last_error_code = None
     media.last_error_message = None
     media.updated_at = now
-    _upsert_media_transcript_state(
+    set_media_transcript_state(
         db,
         media_id=media_id,
         transcript_state="running",
         transcript_coverage="none",
         semantic_status="pending",
-        active_transcript_version_id=None,
         last_request_reason="episode_open",
         last_error_code=None,
         now=now,
@@ -142,121 +138,27 @@ def _do_ingest(
 
         if transcript_status == "completed" and transcript_segments:
             now = datetime.now(UTC)
-            db.execute(
-                text(
-                    """
-                    DELETE FROM highlights AS h
-                    USING highlight_fragment_anchors AS hfa
-                    JOIN fragments AS f ON f.id = hfa.fragment_id
-                    WHERE h.id = hfa.highlight_id
-                      AND f.media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            )
-            db.execute(
-                text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id}
-            )
-            transcript_version_id = _create_transcript_version(
+            write_transcript_version(
                 db,
                 media_id=media_id,
-                actor_user_id=actor_user_id,
-                now=now,
-            )
-            _insert_transcript_segments(
-                db,
-                media_id=media_id,
-                transcript_version_id=transcript_version_id,
+                created_by_user_id=actor_user_id,
+                request_reason="episode_open",
+                transcript_coverage="full",
                 transcript_segments=transcript_segments,
+                fragment_strategy="replace",
                 now=now,
-            )
-            insert_transcript_fragments(
-                db,
-                media_id,
-                transcript_segments,
-                now=now,
-                transcript_version_id=transcript_version_id,
             )
             media = db.get(Media, media_id)
             if media is None:
                 return {"status": "skipped", "reason": "media_deleted_during_ingest"}
-            media.processing_status = ProcessingStatus.ready_for_reading
-            media.failure_stage = None
-            media.last_error_code = None
-            media.last_error_message = None
-            media.processing_completed_at = now
-            media.updated_at = now
-            media.failed_at = None
             media.provider = "youtube"
             media.provider_id = provider_video_id
             if watch_url is not None:
                 media.canonical_url = watch_url
                 media.canonical_source_url = watch_url
                 media.external_playback_url = watch_url
-            _upsert_media_transcript_state(
-                db,
-                media_id=media_id,
-                transcript_state="ready",
-                transcript_coverage="full",
-                semantic_status="pending",
-                active_transcript_version_id=transcript_version_id,
-                last_request_reason="episode_open",
-                last_error_code=None,
-                now=now,
-            )
+            media.updated_at = now
             db.commit()
-            try:
-                rebuild_transcript_content_index(
-                    db,
-                    media_id=media_id,
-                    transcript_version_id=transcript_version_id,
-                    transcript_segments=transcript_segments,
-                    reason="youtube_transcript",
-                )
-                _upsert_media_transcript_state(
-                    db,
-                    media_id=media_id,
-                    transcript_state="ready",
-                    transcript_coverage="full",
-                    semantic_status="ready",
-                    active_transcript_version_id=transcript_version_id,
-                    last_request_reason="episode_open",
-                    last_error_code=None,
-                    now=datetime.now(UTC),
-                )
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                logger.exception(
-                    "youtube_transcript_semantic_index_failed",
-                    media_id=str(media_id),
-                    actor_user_id=str(actor_user_id),
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                error_code = (
-                    exc.code.value
-                    if isinstance(exc, ApiError)
-                    else ApiErrorCode.E_INGEST_FAILED.value
-                )
-                mark_content_index_failed(
-                    db,
-                    media_id=media_id,
-                    failure_code=error_code,
-                    failure_message=f"Transcript index failed: {exc}"[:1000],
-                )
-                _upsert_media_transcript_state(
-                    db,
-                    media_id=media_id,
-                    transcript_state="ready",
-                    transcript_coverage="full",
-                    semantic_status="failed",
-                    active_transcript_version_id=transcript_version_id,
-                    last_request_reason="episode_open",
-                    last_error_code=error_code,
-                    now=datetime.now(UTC),
-                )
-                db.commit()
             logger.info(
                 "ingest_youtube_video_success",
                 media_id=str(media_id),
@@ -303,6 +205,7 @@ def _do_ingest(
             request_id=request_id,
             error=str(exc),
         )
+        db.rollback()
         error_code = ApiErrorCode.E_TRANSCRIPTION_FAILED.value
         _mark_failed(db, media_id, error_code, "Transcription failed")
         dispatch_enrich_metadata(str(media_id), request_id)
@@ -457,116 +360,6 @@ def _persist_youtube_metadata(db: Session, media_id: UUID, metadata: dict[str, s
     media.updated_at = datetime.now(UTC)
 
 
-def _create_transcript_version(
-    db: Session,
-    *,
-    media_id: UUID,
-    actor_user_id: UUID,
-    now: datetime,
-) -> UUID:
-    db.execute(
-        text(
-            """
-            UPDATE podcast_transcript_versions
-            SET is_active = false, updated_at = :updated_at
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id, "updated_at": now},
-    )
-    next_version_no = db.execute(
-        text(
-            """
-            SELECT COALESCE(MAX(version_no), 0) + 1
-            FROM podcast_transcript_versions
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one()
-    return db.execute(
-        text(
-            """
-            INSERT INTO podcast_transcript_versions (
-                media_id,
-                version_no,
-                transcript_coverage,
-                is_active,
-                request_reason,
-                created_by_user_id,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :media_id,
-                :version_no,
-                'full',
-                true,
-                'episode_open',
-                :actor_user_id,
-                :created_at,
-                :updated_at
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "version_no": int(next_version_no),
-            "actor_user_id": actor_user_id,
-            "created_at": now,
-            "updated_at": now,
-        },
-    ).scalar_one()
-
-
-def _insert_transcript_segments(
-    db: Session,
-    *,
-    media_id: UUID,
-    transcript_version_id: UUID,
-    transcript_segments: list[dict[str, Any]],
-    now: datetime,
-) -> None:
-    for segment_idx, segment in enumerate(transcript_segments):
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcript_segments (
-                    transcript_version_id,
-                    media_id,
-                    segment_idx,
-                    canonical_text,
-                    t_start_ms,
-                    t_end_ms,
-                    speaker_label,
-                    created_at
-                )
-                VALUES (
-                    :transcript_version_id,
-                    :media_id,
-                    :segment_idx,
-                    :canonical_text,
-                    :t_start_ms,
-                    :t_end_ms,
-                    :speaker_label,
-                    :created_at
-                )
-                """
-            ),
-            {
-                "transcript_version_id": transcript_version_id,
-                "media_id": media_id,
-                "segment_idx": segment_idx,
-                "canonical_text": segment["text"],
-                "t_start_ms": segment["t_start_ms"],
-                "t_end_ms": segment["t_end_ms"],
-                "speaker_label": segment.get("speaker_label"),
-                "created_at": now,
-            },
-        )
-
-
 def _mark_failed(db: Session, media_id: UUID, error_code: str, message: str) -> None:
     now = datetime.now(UTC)
     db.execute(
@@ -599,99 +392,14 @@ def _mark_failed(db: Session, media_id: UUID, error_code: str, message: str) -> 
         if error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
         else "failed_provider"
     )
-    _upsert_media_transcript_state(
+    set_media_transcript_state(
         db,
         media_id=media_id,
         transcript_state=transcript_state,
         transcript_coverage="none",
         semantic_status="failed",
-        active_transcript_version_id=None,
         last_request_reason="episode_open",
         last_error_code=error_code,
         now=now,
     )
     db.commit()
-
-
-def _upsert_media_transcript_state(
-    db: Session,
-    *,
-    media_id: UUID,
-    transcript_state: str,
-    transcript_coverage: str,
-    semantic_status: str,
-    active_transcript_version_id: UUID | None,
-    last_request_reason: str | None,
-    last_error_code: str | None,
-    now: datetime,
-) -> None:
-    existing = db.execute(
-        text(
-            """
-            SELECT 1
-            FROM media_transcript_states
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).first()
-    params = {
-        "media_id": media_id,
-        "transcript_state": transcript_state,
-        "transcript_coverage": transcript_coverage,
-        "semantic_status": semantic_status,
-        "active_transcript_version_id": active_transcript_version_id,
-        "last_request_reason": last_request_reason,
-        "last_error_code": last_error_code,
-        "created_at": now,
-        "updated_at": now,
-    }
-    if existing is None:
-        result = db.execute(
-            text(
-                """
-                INSERT INTO media_transcript_states (
-                    media_id,
-                    transcript_state,
-                    transcript_coverage,
-                    semantic_status,
-                    active_transcript_version_id,
-                    last_request_reason,
-                    last_error_code,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :transcript_state,
-                    :transcript_coverage,
-                    :semantic_status,
-                    :active_transcript_version_id,
-                    :last_request_reason,
-                    :last_error_code,
-                    :created_at,
-                    :updated_at
-                )
-                """
-            ),
-            params,
-        )
-    else:
-        result = db.execute(
-            text(
-                """
-                UPDATE media_transcript_states
-                SET transcript_state = :transcript_state,
-                    transcript_coverage = :transcript_coverage,
-                    semantic_status = :semantic_status,
-                    active_transcript_version_id = :active_transcript_version_id,
-                    last_request_reason = :last_request_reason,
-                    last_error_code = :last_error_code,
-                    updated_at = :updated_at
-                WHERE media_id = :media_id
-                """
-            ),
-            params,
-        )
-    if getattr(result, "rowcount", None) != 1:
-        raise RuntimeError("media_transcript_states mutation affected an unexpected row count")

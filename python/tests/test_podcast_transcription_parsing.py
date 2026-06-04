@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.services.podcasts.transcripts import _extract_deepgram_segments
+from nexus.services.podcasts.deepgram_adapter import _extract_deepgram_segments
 from nexus.services.transcript_segments import (
+    TranscriptSegmentInput,
     canonicalize_transcript_segment_text,
     normalize_transcript_segments,
 )
@@ -114,9 +115,21 @@ def test_normalize_transcript_segments_enforces_canonicalization_and_strict_timi
 
     normalized = normalize_transcript_segments(raw_segments)
 
-    assert normalized == [
-        {"text": "Café story", "t_start_ms": 100, "t_end_ms": 300, "speaker_label": "Host"},
-        {"text": "later segment", "t_start_ms": 500, "t_end_ms": 800, "speaker_label": None},
+    assert list(normalized) == [
+        TranscriptSegmentInput(
+            segment_idx=0,
+            t_start_ms=100,
+            t_end_ms=300,
+            canonical_text="Café story",
+            speaker_label="Host",
+        ),
+        TranscriptSegmentInput(
+            segment_idx=1,
+            t_start_ms=500,
+            t_end_ms=800,
+            canonical_text="later segment",
+            speaker_label=None,
+        ),
     ]
 
 

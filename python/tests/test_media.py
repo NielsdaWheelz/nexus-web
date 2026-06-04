@@ -3151,7 +3151,6 @@ class TestRefreshSourceForPodcastMedia:
                         mts.transcript_state,
                         mts.transcript_coverage,
                         mts.semantic_status,
-                        mts.active_transcript_version_id,
                         m.processing_status
                     FROM media m
                     JOIN podcast_transcription_jobs j ON j.media_id = m.id
@@ -3169,7 +3168,6 @@ class TestRefreshSourceForPodcastMedia:
             "queued",
             "none",
             "none",
-            None,
             "extracting",
         )
 
@@ -3249,7 +3247,6 @@ class TestRefreshSourceForPodcastMedia:
                         transcript_state,
                         transcript_coverage,
                         semantic_status,
-                        active_transcript_version_id,
                         last_request_reason,
                         last_error_code
                     )
@@ -3258,13 +3255,12 @@ class TestRefreshSourceForPodcastMedia:
                         'ready',
                         'full',
                         'ready',
-                        :version_id,
                         'search',
                         'E_OLD'
                     )
                     """
                 ),
-                {"media_id": media_id, "version_id": transcript_version_id},
+                {"media_id": media_id},
             )
             session.commit()
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
@@ -3292,9 +3288,13 @@ class TestRefreshSourceForPodcastMedia:
                         mts.transcript_state,
                         mts.transcript_coverage,
                         mts.semantic_status,
-                        mts.active_transcript_version_id,
                         mts.last_request_reason,
                         mts.last_error_code,
+                        (
+                            SELECT ptv.id
+                            FROM podcast_transcript_versions ptv
+                            WHERE ptv.media_id = mts.media_id AND ptv.is_active
+                        ),
                         m.processing_status,
                         m.failure_stage,
                         m.last_error_code
@@ -3318,8 +3318,8 @@ class TestRefreshSourceForPodcastMedia:
             "queued",
             "none",
             "none",
-            None,
             "operator_requeue",
+            None,
             None,
             "extracting",
             None,

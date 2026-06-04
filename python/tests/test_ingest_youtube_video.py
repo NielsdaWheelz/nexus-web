@@ -1,6 +1,7 @@
 """Integration tests for YouTube video transcript ingestion."""
 
 import importlib
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -293,3 +294,160 @@ class TestIngestYoutubeVideo:
         assert second["status"] == "skipped"
         assert second["reason"] == "already_ready"
         assert calls["count"] == 1, f"expected one transcript fetch, got {calls['count']}"
+
+    def test_reingest_replace_strategy_deletes_anchored_highlight_and_replaces_fragments(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        # Characterization test pinning the destructive `fragment_strategy="replace"`
+        # side of write_transcript_version (the YouTube-only branch in
+        # nexus/services/transcripts/versions.py): a YouTube re-ingest deletes the
+        # media's pre-existing highlights (via the highlight_fragment_anchors join)
+        # and replaces its fragments wholesale. The "preserve_anchors" counterpart is
+        # pinned in test_podcasts.py
+        # (test_retranscription_creates_new_version_without_deleting_old_highlight_anchor).
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        create_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
+        )
+        assert create_response.status_code == 202
+        media_id = UUID(create_response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        first_segments = [
+            {
+                "t_start_ms": 0,
+                "t_end_ms": 1200,
+                "text": "alpha transcript line",
+                "speaker_label": "SpeakerA",
+            },
+            {
+                "t_start_ms": 1300,
+                "t_end_ms": 2400,
+                "text": "alpha follow up",
+                "speaker_label": None,
+            },
+        ]
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_transcript",
+            lambda _provider_id: {"status": "completed", "segments": first_segments},
+        )
+
+        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+
+        with direct_db.session() as session:
+            first = run_ingest_sync(session, media_id, user_id)
+        assert first["status"] == "success"
+
+        # Seed a highlight anchored to one of the first transcript's fragments. The
+        # POST creates the highlight + its highlight_fragment_anchors row, which is the
+        # exact join the "replace" branch deletes through.
+        fragments_v1_response = auth_client.get(
+            f"/media/{media_id}/fragments", headers=auth_headers(user_id)
+        )
+        assert fragments_v1_response.status_code == 200
+        fragments_v1 = fragments_v1_response.json()["data"]
+        assert len(fragments_v1) == 2
+        first_fragment_id = UUID(fragments_v1[0]["id"])
+
+        highlight_response = auth_client.post(
+            f"/fragments/{first_fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 201, (
+            f"expected highlight create 201, got {highlight_response.status_code}: "
+            f"{highlight_response.text}"
+        )
+        highlight_id = UUID(highlight_response.json()["data"]["id"])
+        direct_db.register_cleanup("highlights", "fragment_anchor_fragment_id", first_fragment_id)
+
+        # A YouTube re-ingest is enqueued by resetting the media back to `pending`
+        # (see nexus/services/youtube_ingest.py), which defeats the already_ready skip
+        # guard so the second run re-transcribes through write_transcript_version.
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE media
+                    SET processing_status = 'pending', updated_at = :now
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "now": datetime.now(UTC)},
+            )
+            session.commit()
+
+        second_segments = [
+            {
+                "t_start_ms": 5000,
+                "t_end_ms": 6200,
+                "text": "beta transcript line",
+                "speaker_label": "SpeakerB",
+            },
+            {
+                "t_start_ms": 6300,
+                "t_end_ms": 7600,
+                "text": "beta follow up",
+                "speaker_label": None,
+            },
+        ]
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_transcript",
+            lambda _provider_id: {"status": "completed", "segments": second_segments},
+        )
+
+        with direct_db.session() as session:
+            second = run_ingest_sync(session, media_id, user_id)
+        assert second["status"] == "success"
+
+        # The pre-existing highlight anchored to a now-deleted fragment is GONE.
+        highlight_detail = auth_client.get(
+            f"/highlights/{highlight_id}", headers=auth_headers(user_id)
+        )
+        assert highlight_detail.status_code == 404, (
+            "expected the re-ingest 'replace' strategy to delete the anchored highlight, "
+            f"got {highlight_detail.status_code}: {highlight_detail.text}"
+        )
+
+        # The fragments were replaced wholesale by the new transcript's segments: the
+        # original fragment id is gone and only the beta segments remain.
+        fragments_v2_response = auth_client.get(
+            f"/media/{media_id}/fragments", headers=auth_headers(user_id)
+        )
+        assert fragments_v2_response.status_code == 200
+        fragments_v2 = fragments_v2_response.json()["data"]
+        assert len(fragments_v2) == 2
+        assert {row["canonical_text"] for row in fragments_v2} == {
+            "beta transcript line",
+            "beta follow up",
+        }
+        assert all("alpha" not in row["canonical_text"] for row in fragments_v2)
+        fragment_v2_ids = {UUID(row["id"]) for row in fragments_v2}
+        assert first_fragment_id not in fragment_v2_ids
+
+        with direct_db.session() as session:
+            anchor_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM highlight_fragment_anchors
+                    WHERE highlight_id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).scalar()
+            old_fragment_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE id = :fragment_id"),
+                {"fragment_id": first_fragment_id},
+            ).scalar()
+        assert anchor_count == 0
+        assert old_fragment_count == 0

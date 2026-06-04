@@ -35,7 +35,7 @@ def upgrade() -> None:
         "oracle_corpus_images",
         (
             "substring(storage_key from "
-            r"'^oracle/plates/([0-9a-f]{64})\.(?:jpg|png|webp)$') = sha256"
+            r"'^oracle/plates/([0-9a-f]{64})\.(jpg|png|webp)$') = sha256"
         ),
     )
     op.create_check_constraint(

@@ -1,11 +1,12 @@
 """Worker job handler for podcast episode transcription jobs."""
 
+from dataclasses import asdict
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
 logger = get_logger(__name__)
 
@@ -52,11 +53,13 @@ def podcast_transcribe_episode_job(
     session_factory = get_session_factory()
     db = session_factory()
     try:
-        result = run_podcast_transcription_now(
-            db,
-            media_id=media_uuid,
-            requested_by_user_id=requested_by_uuid,
-            request_id=request_id,
+        result = asdict(
+            run_podcast_transcription_now(
+                db,
+                media_id=media_uuid,
+                requested_by_user_id=requested_by_uuid,
+                request_id=request_id,
+            )
         )
         logger.info(
             "podcast_transcription_task_completed",

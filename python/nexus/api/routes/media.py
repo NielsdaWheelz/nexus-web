@@ -36,9 +36,7 @@ from nexus.schemas.media import (
     RetryRequest,
     TranscriptForecastBatchRequest,
     TranscriptRequestBatchRequest,
-    TranscriptRequestBatchResponse,
     TranscriptRequestRequest,
-    TranscriptRequestResponse,
     UploadInitRequest,
 )
 from nexus.schemas.reader import ReaderResumeState
@@ -47,18 +45,18 @@ from nexus.services import (
     epub_lifecycle,
     epub_read,
     image_proxy,
+    library_entries,
     listening_state,
     locator_resolver,
     media_file_access,
     media_ingest,
     reader_navigation,
 )
-from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
-from nexus.services.podcasts import transcripts as podcast_transcript_service
+from nexus.services.podcasts import transcription as podcast_transcript_service
 
 router = APIRouter()
 _READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
@@ -336,7 +334,9 @@ def get_media_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    rows = libraries_service.list_media_item_libraries(db, viewer.user_id, media_id)
+    rows = library_entries.list_item_libraries(
+        db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
+    )
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -539,7 +539,7 @@ def add_media_libraries(
     default-library dedupes).
     """
     media_service.get_media_for_viewer(db, viewer.user_id, media_id)
-    inserted = libraries_service.add_media_to_libraries(
+    inserted = library_entries.add_media_to_libraries(
         db, viewer.user_id, media_id, body.library_ids
     )
     return success_response(
@@ -579,8 +579,7 @@ def request_podcast_transcript_batch(
         media_ids=body.media_ids,
         reason=body.reason,
     )
-    payload = TranscriptRequestBatchResponse.model_validate(result).model_dump(mode="json")
-    return success_response(payload)
+    return success_response(result.model_dump(mode="json"))
 
 
 @router.post("/media/{media_id}/transcript/request")
@@ -599,9 +598,11 @@ def request_podcast_transcript(
         reason=transcript_request.reason,
         dry_run=transcript_request.dry_run,
     )
-    payload = TranscriptRequestResponse.model_validate(result).model_dump(mode="json")
-    status_code = 202 if result["request_enqueued"] else 200
-    return JSONResponse(status_code=status_code, content=success_response(payload))
+    status_code = 202 if result.request_enqueued else 200
+    return JSONResponse(
+        status_code=status_code,
+        content=success_response(result.model_dump(mode="json")),
+    )
 
 
 @router.post("/media/transcript/forecasts")
@@ -616,9 +617,7 @@ def forecast_podcast_transcripts(
         viewer_id=viewer.user_id,
         requests=[(item.media_id, item.reason) for item in body.requests],
     )
-    payload = [
-        TranscriptRequestResponse.model_validate(row).model_dump(mode="json") for row in result
-    ]
+    payload = [row.model_dump(mode="json") for row in result]
     return success_response(payload)
 
 

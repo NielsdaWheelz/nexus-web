@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
@@ -22,6 +23,7 @@ from nexus.services.semantic_chunks import (
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
+from nexus.services.transcript_segments import TranscriptSegmentInput
 from nexus.services.web_article_structure import (
     WebArticleIndexBlockSpec,
     add_heading_anchors,
@@ -32,6 +34,13 @@ from nexus.services.web_article_structure import (
 CHUNKER_VERSION = "block_token_v2"
 CHUNK_MAX_TOKENS = 420
 CHUNK_OVERLAP_TOKENS = 60
+
+
+def compute_embedding_config_hash(provider: str, model: str, dimensions: int) -> str:
+    """The single definition of the embedding-config hash. Changing the separator,
+    field order, or chunker version touches exactly one site, so repair-vs-rebuild
+    decisions can never silently desynchronize."""
+    return hashlib.sha256(f"{provider}:{model}:{dimensions}:{CHUNKER_VERSION}".encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -89,9 +98,9 @@ def rebuild_media_content_index(
     embedding_dimensions = transcript_embedding_dimensions()
     embedding_provider = current_transcript_embedding_provider()
     embedding_version = embedding_model
-    embedding_config_hash = hashlib.sha256(
-        f"{embedding_provider}:{embedding_model}:{embedding_dimensions}:{CHUNKER_VERSION}".encode()
-    ).hexdigest()
+    embedding_config_hash = compute_embedding_config_hash(
+        embedding_provider, embedding_model, embedding_dimensions
+    )
 
     text_blocks = [block for block in blocks if block.canonical_text.strip()]
     chunks: list[list[tuple[IndexableBlock, int, int, int]]] = []
@@ -878,19 +887,19 @@ def rebuild_transcript_content_index(
     *,
     media_id: UUID,
     transcript_version_id: UUID,
-    transcript_segments: list[dict[str, Any]],
+    transcript_segments: Sequence[TranscriptSegmentInput],
     reason: str,
 ) -> ContentIndexResult:
     blocks: list[IndexableBlock] = []
     joined_text_parts: list[str] = []
     source_offset = 0
     for segment in transcript_segments:
-        text_value = str(segment.get("text") or "").strip()
-        t_start_ms = segment.get("t_start_ms")
-        t_end_ms = segment.get("t_end_ms")
-        if not text_value or t_start_ms is None or t_end_ms is None:
+        text_value = segment.canonical_text.strip()
+        t_start_ms = segment.t_start_ms
+        t_end_ms = segment.t_end_ms
+        if not text_value:
             continue
-        if int(t_end_ms) <= int(t_start_ms):
+        if t_end_ms <= t_start_ms:
             continue
         if joined_text_parts:
             source_offset += 2
@@ -899,8 +908,8 @@ def rebuild_transcript_content_index(
             "kind": "transcript_time_text",
             "version": 1,
             "transcript_version_id": str(transcript_version_id),
-            "t_start_ms": int(t_start_ms),
-            "t_end_ms": int(t_end_ms),
+            "t_start_ms": t_start_ms,
+            "t_end_ms": t_end_ms,
             "text_quote": {
                 "exact": text_value,
                 "prefix": "",
@@ -920,7 +929,7 @@ def rebuild_transcript_content_index(
                 locator=locator,
                 selector=locator,
                 heading_path=(),
-                metadata={"speaker_label": segment.get("speaker_label")},
+                metadata={"speaker_label": segment.speaker_label},
             )
         )
         source_offset += len(text_value)
@@ -934,7 +943,19 @@ def rebuild_transcript_content_index(
             artifact_kind="transcript_json",
             artifact_ref=f"podcast_transcript_versions:{transcript_version_id}",
             content_type="application/json",
-            byte_length=len(json.dumps(transcript_segments).encode("utf-8")),
+            byte_length=len(
+                json.dumps(
+                    [
+                        {
+                            "text": segment.canonical_text,
+                            "t_start_ms": segment.t_start_ms,
+                            "t_end_ms": segment.t_end_ms,
+                            "speaker_label": segment.speaker_label,
+                        }
+                        for segment in transcript_segments
+                    ]
+                ).encode("utf-8")
+            ),
             content_sha256=_sha256(joined_text),
             source_version="podcast_transcript_segments_v1",
             extractor_version="podcast_transcript_v1",
@@ -1023,16 +1044,13 @@ def _repair_ready_transcript_content_index(
     version_id = db.execute(
         text(
             """
-            SELECT mts.active_transcript_version_id
+            SELECT ptv.id
             FROM media_transcript_states mts
             JOIN podcast_transcript_versions ptv
-              ON ptv.id = mts.active_transcript_version_id
-             AND ptv.media_id = mts.media_id
+              ON ptv.media_id = mts.media_id AND ptv.is_active
             WHERE mts.media_id = :media_id
-              AND mts.active_transcript_version_id IS NOT NULL
               AND mts.transcript_state IN ('ready', 'partial')
               AND mts.transcript_coverage IN ('partial', 'full')
-            ORDER BY ptv.version_no DESC, ptv.created_at DESC
             LIMIT 1
             """
         ),
@@ -1053,14 +1071,17 @@ def _repair_ready_transcript_content_index(
         ),
         {"media_id": media_id, "version_id": version_id},
     ).fetchall()
+    # Rows arrive ordered by segment_idx ASC; enumerate restores the contiguous
+    # 0..N-1 index the dataclass contract carries.
     segments = [
-        {
-            "text": str(row[0] or ""),
-            "t_start_ms": row[1],
-            "t_end_ms": row[2],
-            "speaker_label": row[3],
-        }
-        for row in rows
+        TranscriptSegmentInput(
+            segment_idx=position,
+            t_start_ms=int(row[1]),
+            t_end_ms=int(row[2]),
+            canonical_text=str(row[0] or ""),
+            speaker_label=row[3],
+        )
+        for position, row in enumerate(rows)
     ]
     return rebuild_transcript_content_index(
         db,

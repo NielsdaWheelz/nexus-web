@@ -16,10 +16,13 @@ from nexus.schemas.podcast import (
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
-from nexus.services import libraries as libraries_service
-from nexus.services.podcasts import catalog as podcast_catalog_service
+from nexus.services import library_entries
+from nexus.services.podcasts import discovery as podcast_discovery_service
+from nexus.services.podcasts import episodes as podcast_episodes_service
+from nexus.services.podcasts import identity as podcast_identity_service
+from nexus.services.podcasts import poll as podcast_sync_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
-from nexus.services.podcasts import sync as podcast_sync_service
+from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
 
 router = APIRouter()
 
@@ -33,7 +36,7 @@ def discover_podcasts(
 ) -> dict:
     """Discover podcasts globally (not library-scoped)."""
     _ = viewer
-    rows = podcast_catalog_service.discover_podcasts(db, q, limit=limit)
+    rows = podcast_discovery_service.discover_podcasts(db, q, limit=limit)
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -45,7 +48,7 @@ def ensure_podcast(
 ) -> dict:
     """Ensure one discovered podcast exists locally and return its local id."""
     _ = viewer
-    out = podcast_catalog_service.ensure_podcast(db, body)
+    out = podcast_identity_service.ensure_podcast(db, body)
     return success_response(out.model_dump(mode="json"))
 
 
@@ -78,7 +81,7 @@ def list_subscriptions(
     library_id: Annotated[UUID | None, Query()] = None,
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
-    rows = podcast_catalog_service.list_subscriptions(
+    rows = podcast_subscriptions_query_service.list_subscriptions(
         db,
         viewer.user_id,
         limit=limit,
@@ -139,7 +142,9 @@ def get_podcast_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    rows = libraries_service.list_podcast_item_libraries(db, viewer.user_id, podcast_id)
+    rows = library_entries.list_item_libraries(
+        db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
+    )
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -197,7 +202,9 @@ def get_podcast_detail(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get podcast detail, even if the viewer is not actively subscribed."""
-    out = podcast_catalog_service.get_podcast_detail_for_viewer(db, viewer.user_id, podcast_id)
+    out = podcast_subscriptions_query_service.get_podcast_detail_for_viewer(
+        db, viewer.user_id, podcast_id
+    )
     return success_response(out.model_dump(mode="json"))
 
 
@@ -213,7 +220,7 @@ def list_podcast_episodes(
     q: str | None = Query(default=None),
 ) -> dict:
     """List viewer-visible episodes for one podcast."""
-    rows = podcast_catalog_service.list_podcast_episodes_for_viewer(
+    rows = podcast_episodes_service.list_podcast_episodes_for_viewer(
         db,
         viewer.user_id,
         podcast_id,

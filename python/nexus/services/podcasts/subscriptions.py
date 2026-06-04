@@ -31,19 +31,20 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
     PodcastUnsubscribeOut,
 )
-from nexus.services.libraries import set_subscription_libraries, validate_libraries_accessible
+from nexus.services.library_entries import (
+    remove_user_podcast_subscription_libraries,
+    set_subscription_libraries,
+)
+from nexus.services.library_governance import validate_libraries_accessible
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
-from ._writes import replace_podcast_contributors_from_body, update_podcast_metadata
-from .catalog import (
-    is_podcast_identity_conflict,
+from .identity import (
     select_podcast_id_by_feed_url,
-    select_podcast_id_by_provider_id,
     upsert_podcast,
     validate_and_normalize_feed_url,
 )
+from .poll import enqueue_podcast_subscription_sync, get_subscription_sync_snapshot
 from .provider import PODCAST_PROVIDER, get_podcast_index_client
-from .sync import enqueue_podcast_subscription_sync, get_subscription_sync_snapshot
 
 logger = get_logger(__name__)
 
@@ -149,11 +150,7 @@ def import_subscriptions_from_opml(
                         opml_website_url=opml_website_url,
                         provider_row=provider_row,
                     )
-                    podcast_id = _upsert_podcast_from_opml(
-                        db,
-                        subscribe_body,
-                        now=now,
-                    )
+                    podcast_id = upsert_podcast(db, subscribe_body, now=now)
 
                 existing_status = _get_subscription_status_value(db, viewer_id, podcast_id)
                 if existing_status == "active":
@@ -279,13 +276,13 @@ def subscribe_to_podcast(
     return PodcastSubscribeOut(
         podcast_id=podcast_id,
         subscription_created=subscription_created,
-        auto_queue=bool(snapshot["auto_queue"]),
-        sync_status=snapshot["sync_status"],
+        auto_queue=snapshot.auto_queue,
+        sync_status=snapshot.sync_status,
         sync_enqueued=sync_enqueued,
-        sync_error_code=snapshot["sync_error_code"],
-        sync_error_message=snapshot["sync_error_message"],
-        sync_attempts=snapshot["sync_attempts"],
-        last_synced_at=snapshot["last_synced_at"],
+        sync_error_code=snapshot.sync_error_code,
+        sync_error_message=snapshot.sync_error_message,
+        sync_attempts=snapshot.sync_attempts,
+        last_synced_at=snapshot.last_synced_at,
         window_size=get_settings().podcast_initial_episode_window,
     )
 
@@ -407,79 +404,11 @@ def unsubscribe_from_podcast(
         if subscription_exists is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
 
-        library_rows = db.execute(
-            text(
-                """
-                SELECT
-                    le.id,
-                    le.library_id,
-                    l.owner_user_id,
-                    l.is_default,
-                    m.role
-                FROM library_entries le
-                JOIN libraries l
-                  ON l.id = le.library_id
-                JOIN memberships m
-                  ON m.library_id = le.library_id
-                 AND m.user_id = :user_id
-                WHERE le.podcast_id = :podcast_id
-                FOR UPDATE OF le
-                """
-            ),
-            {"user_id": viewer_id, "podcast_id": podcast_id},
-        ).fetchall()
-
-        removable_entry_ids: list[UUID] = []
-        removable_library_ids: list[UUID] = []
-        for row in library_rows:
-            entry_id = UUID(str(row[0]))
-            library_id = UUID(str(row[1]))
-            owner_user_id = row[2]
-            is_default = bool(row[3])
-            role = str(row[4])
-
-            if is_default:
-                continue
-            if role == "admin":
-                removable_entry_ids.append(entry_id)
-                removable_library_ids.append(library_id)
-                continue
-            if owner_user_id != viewer_id:
-                retained_shared_library_count += 1
-
-        for entry_id in removable_entry_ids:
-            db.execute(
-                text(
-                    """
-                    DELETE FROM library_entries
-                    WHERE id = :entry_id
-                    """
-                ),
-                {"entry_id": entry_id},
-            )
-        removed_from_library_count = len(removable_entry_ids)
-        for library_id in sorted(set(removable_library_ids)):
-            db.execute(
-                text(
-                    """
-                    WITH ordered AS (
-                        SELECT
-                            id,
-                            ROW_NUMBER() OVER (
-                                ORDER BY position ASC, created_at ASC, id ASC
-                            ) - 1 AS next_position
-                        FROM library_entries
-                        WHERE library_id = :library_id
-                    )
-                    UPDATE library_entries le
-                    SET position = ordered.next_position
-                    FROM ordered
-                    WHERE le.id = ordered.id
-                      AND le.position IS DISTINCT FROM ordered.next_position
-                    """
-                ),
-                {"library_id": library_id},
-            )
+        removal = remove_user_podcast_subscription_libraries(
+            db, viewer_id=viewer_id, podcast_id=podcast_id
+        )
+        removed_from_library_count = removal.removed_from_library_count
+        retained_shared_library_count = removal.retained_shared_library_count
 
         db.execute(
             text(
@@ -621,119 +550,6 @@ def _build_opml_subscribe_request(
         auto_queue=False,
         library_ids=[],
     )
-
-
-def _upsert_podcast_from_opml(
-    db: Session,
-    body: PodcastSubscribeRequest,
-    *,
-    now: datetime,
-) -> UUID:
-    feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
-    if feed_owner_id is not None:
-        provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-        set_provider_podcast_id = not (
-            provider_owner_id is not None and provider_owner_id != feed_owner_id
-        )
-        update_podcast_metadata(
-            db,
-            podcast_id=feed_owner_id,
-            body=body,
-            now=now,
-            set_provider_podcast_id=set_provider_podcast_id,
-        )
-        replace_podcast_contributors_from_body(db, feed_owner_id, body)
-        return feed_owner_id
-
-    provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-    if provider_owner_id is not None:
-        update_podcast_metadata(
-            db,
-            podcast_id=provider_owner_id,
-            body=body,
-            now=now,
-            set_feed_url=True,
-        )
-        replace_podcast_contributors_from_body(db, provider_owner_id, body)
-        return provider_owner_id
-
-    try:
-        with db.begin_nested():
-            row = db.execute(
-                text(
-                    """
-                    INSERT INTO podcasts (
-                        provider,
-                        provider_podcast_id,
-                        title,
-                        feed_url,
-                        website_url,
-                        image_url,
-                        description,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        :provider,
-                        :provider_podcast_id,
-                        :title,
-                        :feed_url,
-                        :website_url,
-                        :image_url,
-                        :description,
-                        :created_at,
-                        :updated_at
-                    )
-                    RETURNING id
-                    """
-                ),
-                {
-                    "provider": PODCAST_PROVIDER,
-                    "provider_podcast_id": body.provider_podcast_id,
-                    "title": body.title,
-                    "feed_url": body.feed_url,
-                    "website_url": body.website_url,
-                    "image_url": body.image_url,
-                    "description": body.description,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            ).fetchone()
-    except IntegrityError as exc:
-        if not is_podcast_identity_conflict(exc):
-            raise
-        feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
-        if feed_owner_id is not None:
-            provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-            set_provider_podcast_id = not (
-                provider_owner_id is not None and provider_owner_id != feed_owner_id
-            )
-            update_podcast_metadata(
-                db,
-                podcast_id=feed_owner_id,
-                body=body,
-                now=now,
-                set_provider_podcast_id=set_provider_podcast_id,
-            )
-            replace_podcast_contributors_from_body(db, feed_owner_id, body)
-            return feed_owner_id
-
-        provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-        if provider_owner_id is None:
-            raise
-        update_podcast_metadata(
-            db,
-            podcast_id=provider_owner_id,
-            body=body,
-            now=now,
-            set_feed_url=True,
-        )
-        replace_podcast_contributors_from_body(db, provider_owner_id, body)
-        return provider_owner_id
-
-    podcast_id = row[0]
-    replace_podcast_contributors_from_body(db, podcast_id, body)
-    return podcast_id
 
 
 def _get_subscription_status_value(db: Session, viewer_id: UUID, podcast_id: UUID) -> str | None:

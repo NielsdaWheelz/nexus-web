@@ -20,7 +20,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.services.contributor_credits import load_contributor_credits_for_media
-from nexus.services.podcasts import catalog as podcast_catalog_service
+from nexus.services.podcasts import discovery as podcast_discovery_service
 from nexus.services.podcasts import provider as podcast_provider_service
 
 logger = get_logger(__name__)
@@ -82,7 +82,7 @@ def browse_content(
             },
         }
 
-    initial_podcast_rows = podcast_catalog_service.discover_podcasts(
+    initial_podcast_rows = podcast_discovery_service.discover_podcasts(
         db,
         trimmed_query,
         limit=max(limit + 1, 10),
@@ -285,7 +285,7 @@ def _browse_podcasts(
     candidate_limit = offset + limit + 1
     candidates = podcast_rows
     if candidates is None:
-        candidates = podcast_catalog_service.discover_podcasts(db, query, limit=candidate_limit)
+        candidates = podcast_discovery_service.discover_podcasts(db, query, limit=candidate_limit)
     page_rows = [_to_podcast_result(row) for row in candidates[offset : offset + limit]]
     has_more = len(candidates) > offset + limit
     next_cursor = (
@@ -315,7 +315,7 @@ def _browse_podcast_episodes(
     target_count = offset + limit + 1
     podcast_limit = max(target_count, 10)
     if podcast_rows is None:
-        podcast_rows = podcast_catalog_service.discover_podcasts(db, query, limit=podcast_limit)
+        podcast_rows = podcast_discovery_service.discover_podcasts(db, query, limit=podcast_limit)
     client = podcast_provider_service.get_podcast_index_client()
     per_podcast_limit = get_settings().podcast_initial_episode_window
 

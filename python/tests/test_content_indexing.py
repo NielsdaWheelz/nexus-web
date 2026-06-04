@@ -471,13 +471,12 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
                 transcript_state,
                 transcript_coverage,
                 semantic_status,
-                active_transcript_version_id,
                 last_request_reason
             )
-            VALUES (:media_id, 'ready', 'full', 'pending', :version_id, 'search')
+            VALUES (:media_id, 'ready', 'full', 'pending', 'search')
             """
         ),
-        {"media_id": media_id, "version_id": version_id},
+        {"media_id": media_id},
     )
     db_session.execute(
         text(

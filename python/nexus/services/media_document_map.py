@@ -174,7 +174,7 @@ def load_media_document_summary(
             word_count=int(metrics[0] or 0) if metrics is not None else None,
         )
     if kind in ("podcast_episode", "video"):
-        version_id = _active_transcript_version_id(db, media_id)
+        version_id = _active_transcript_version(db, media_id)
         if version_id is None:
             return MediaDocumentSummary(section_count=0, word_count=0)
         metrics = db.execute(
@@ -217,7 +217,7 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     elif kind in ("web_article", "epub"):
         body = _join_fragments(db, media_id, transcript_version_id=None)
     elif kind in ("podcast_episode", "video"):
-        version_id = _active_transcript_version_id(db, media_id)
+        version_id = _active_transcript_version(db, media_id)
         body = _join_fragments(db, media_id, transcript_version_id=version_id) if version_id else ""
     else:
         raise AssertionError(f"Unhandled media kind for full read: {kind}")
@@ -329,7 +329,7 @@ def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
 
 
 def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
-    version_id = _active_transcript_version_id(db, media_id)
+    version_id = _active_transcript_version(db, media_id)
     if version_id is None:
         return []
     chapters: list[tuple[str, int, int | None]] = [
@@ -379,13 +379,13 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection
 # --- shared helpers --------------------------------------------------------------
 
 
-def _active_transcript_version_id(db: Session, media_id: UUID) -> UUID | None:
+def _active_transcript_version(db: Session, media_id: UUID) -> UUID | None:
     return db.scalar(
         text(
             """
-            SELECT active_transcript_version_id
-            FROM media_transcript_states
-            WHERE media_id = :id AND active_transcript_version_id IS NOT NULL
+            SELECT id
+            FROM podcast_transcript_versions
+            WHERE media_id = :id AND is_active
             """
         ),
         {"id": media_id},

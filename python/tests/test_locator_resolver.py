@@ -18,6 +18,8 @@ from nexus.services.content_indexing import (
     rebuild_transcript_content_index,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.transcript_segments import TranscriptSegmentInput
+from tests.factories import add_library_entry_only as seed_media_in_library
 from tests.factories import get_user_default_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -46,10 +48,7 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
             ),
             {"media_id": media_id, "user_id": user_id},
         )
-        session.execute(
-            text("INSERT INTO library_entries (library_id, media_id) VALUES (:lid, :mid)"),
-            {"lid": default_library_id, "mid": media_id},
-        )
+        seed_media_in_library(session, default_library_id, media_id)
         session.execute(
             text(
                 """
@@ -148,10 +147,7 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
             ),
             {"media_id": media_id, "user_id": user_id},
         )
-        session.execute(
-            text("INSERT INTO library_entries (library_id, media_id) VALUES (:lid, :mid)"),
-            {"lid": default_library_id, "mid": media_id},
-        )
+        seed_media_in_library(session, default_library_id, media_id)
         session.execute(
             text(
                 """
@@ -302,10 +298,7 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
             ),
             {"media_id": media_id, "user_id": user_id},
         )
-        session.execute(
-            text("INSERT INTO library_entries (library_id, media_id) VALUES (:lid, :mid)"),
-            {"lid": default_library_id, "mid": media_id},
-        )
+        seed_media_in_library(session, default_library_id, media_id)
         session.execute(
             text(
                 """
@@ -466,10 +459,7 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
                 "file_sha256": file_sha256,
             },
         )
-        session.execute(
-            text("INSERT INTO library_entries (library_id, media_id) VALUES (:lid, :mid)"),
-            {"lid": default_library_id, "mid": media_id},
-        )
+        seed_media_in_library(session, default_library_id, media_id)
         session.execute(
             text(
                 """
@@ -597,12 +587,13 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
     first_version_id = uuid4()
     second_version_id = uuid4()
     first_segments = [
-        {
-            "text": "Alpha transcript locator evidence.",
-            "t_start_ms": 1000,
-            "t_end_ms": 2500,
-            "speaker_label": "Host",
-        }
+        TranscriptSegmentInput(
+            segment_idx=0,
+            t_start_ms=1000,
+            t_end_ms=2500,
+            canonical_text="Alpha transcript locator evidence.",
+            speaker_label="Host",
+        )
     ]
 
     with direct_db.session() as session:
@@ -623,10 +614,7 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
             ),
             {"media_id": media_id, "user_id": user_id},
         )
-        session.execute(
-            text("INSERT INTO library_entries (library_id, media_id) VALUES (:lid, :mid)"),
-            {"lid": default_library_id, "mid": media_id},
-        )
+        seed_media_in_library(session, default_library_id, media_id)
         session.execute(
             text(
                 """
@@ -663,7 +651,7 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
             {
                 "version_id": first_version_id,
                 "media_id": media_id,
-                "canonical_text": first_segments[0]["text"],
+                "canonical_text": first_segments[0].canonical_text,
             },
         )
         session.execute(
@@ -671,12 +659,12 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
                 """
                 INSERT INTO media_transcript_states (
                     media_id, transcript_state, transcript_coverage, semantic_status,
-                    active_transcript_version_id, last_request_reason
+                    last_request_reason
                 )
-                VALUES (:media_id, 'ready', 'full', 'ready', :version_id, 'search')
+                VALUES (:media_id, 'ready', 'full', 'ready', 'search')
                 """
             ),
-            {"media_id": media_id, "version_id": first_version_id},
+            {"media_id": media_id},
         )
         rebuild_transcript_content_index(
             session,
@@ -737,12 +725,11 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
             text(
                 """
                 UPDATE media_transcript_states
-                SET active_transcript_version_id = :version_id,
-                    updated_at = now()
+                SET updated_at = now()
                 WHERE media_id = :media_id
                 """
             ),
-            {"media_id": media_id, "version_id": second_version_id},
+            {"media_id": media_id},
         )
         session.commit()
 
@@ -762,7 +749,7 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
     resolver = response.json()["data"]["resolver"]
     assert resolver["status"] == "resolved", resolver
     assert resolver["highlight"]["kind"] == "transcript_time_text"
-    assert resolver["highlight"]["text_quote"]["exact"] == first_segments[0]["text"]
+    assert resolver["highlight"]["text_quote"]["exact"] == first_segments[0].canonical_text
 
 
 def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str, str]:

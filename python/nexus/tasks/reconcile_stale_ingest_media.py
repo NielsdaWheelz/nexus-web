@@ -6,7 +6,6 @@ dropped/discarded or never finished. Recovery is bounded:
 - then fail closed with deterministic timeout metadata
 """
 
-import hashlib
 from datetime import datetime
 
 from sqlalchemy import func, literal, or_, select, text
@@ -19,7 +18,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
-    CHUNKER_VERSION,
+    compute_embedding_config_hash,
     mark_content_index_failed,
     repair_ready_media_content_index_now,
 )
@@ -48,11 +47,11 @@ def _mark_stale_media_failed(
     error_message: str,
 ) -> None:
     if media.kind == "podcast_episode":
-        from nexus.services.podcasts.transcripts import (
-            mark_podcast_transcription_failure_for_recovery,
+        from nexus.services.podcasts.transcription import (
+            mark_podcast_transcription_failure,
         )
 
-        mark_podcast_transcription_failure_for_recovery(
+        mark_podcast_transcription_failure(
             db,
             media_id=media.id,
             error_code=error_code,
@@ -297,9 +296,9 @@ def reconcile_stale_ingest_media_job(
         embedding_model = current_transcript_embedding_model()
         embedding_version = embedding_model
         embedding_provider = current_transcript_embedding_provider()
-        embedding_config_hash = hashlib.sha256(
-            f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
-        ).hexdigest()
+        embedding_config_hash = compute_embedding_config_hash(
+            embedding_provider, embedding_model, transcript_embedding_dimensions()
+        )
         semantic_candidates = db.execute(
             text(
                 """
@@ -307,7 +306,12 @@ def reconcile_stale_ingest_media_job(
                 FROM media_transcript_states mts
                 JOIN media m ON m.id = mts.media_id
                 WHERE m.kind = 'podcast_episode'
-                  AND mts.active_transcript_version_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM podcast_transcript_versions ptv
+                      WHERE ptv.media_id = mts.media_id
+                        AND ptv.is_active
+                  )
                   AND mts.transcript_state IN ('ready', 'partial')
                   AND mts.transcript_coverage IN ('partial', 'full')
                   AND (
@@ -331,7 +335,12 @@ def reconcile_stale_ingest_media_job(
                                     AND mcis.active_embedding_config_hash = :embedding_config_hash
                                     AND ss.source_kind = 'transcript'
                                     AND ss.metadata ->> 'transcript_version_id'
-                                        = mts.active_transcript_version_id::text
+                                        = (
+                                            SELECT ptv.id
+                                            FROM podcast_transcript_versions ptv
+                                            WHERE ptv.media_id = mts.media_id
+                                              AND ptv.is_active
+                                        )::text
                               )
                           )
                       )
@@ -351,7 +360,7 @@ def reconcile_stale_ingest_media_job(
         ).fetchall()
         semantic_scanned = len(semantic_candidates)
         if semantic_candidates:
-            from nexus.services.podcasts.transcripts import (
+            from nexus.services.podcasts.transcription import (
                 repair_podcast_transcript_semantic_index_now,
             )
 
@@ -362,15 +371,14 @@ def reconcile_stale_ingest_media_job(
                     media_id=media_id,
                     request_reason="operator_requeue",
                 )
-                status = str(result.get("status") or "")
-                if status == "completed":
+                if result.status == "completed":
                     semantic_repaired += 1
-                elif status == "failed":
+                elif result.status == "failed":
                     semantic_failed += 1
                     logger.warning(
                         "stale_ingest_semantic_repair_failed",
                         media_id=str(media_id),
-                        error_code=result.get("error_code"),
+                        error_code=result.error_code,
                         request_id=request_id,
                     )
                 else:

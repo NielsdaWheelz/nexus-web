@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
-import httpx
 
 from nexus.coerce import coerce_positive_int
 from nexus.config import get_settings, real_media_provider_fixtures_requested
@@ -19,7 +16,7 @@ from nexus.errors import (
     ApiErrorCode,
 )
 from nexus.logging import get_logger
-from nexus.retry_after import parse_retry_after_seconds
+from nexus.services.net.http_retry import get_json_with_retry
 
 from ._normalize import normalize_provider_published_at
 
@@ -27,7 +24,6 @@ logger = get_logger(__name__)
 
 PODCAST_PROVIDER = "podcast_index"
 PODCAST_INDEX_EPISODE_PAGE_SIZE = 100
-PODCAST_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 PODCAST_PROVIDER_MAX_ATTEMPTS = 3
 PODCAST_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
 
@@ -55,87 +51,17 @@ class PodcastIndexClient:
             "User-Agent": "nexus-podcast-client/1.0",
         }
 
-    def _retry_delay_seconds(
-        self, *, attempt_index: int, response: httpx.Response | None = None
-    ) -> float:
-        # Respect Retry-After when provider rate-limits requests.
-        if response is not None and response.status_code == 429:
-            retry_after_seconds = parse_retry_after_seconds(
-                response.headers.get("Retry-After"),
-                cap_seconds=10.0,
-            )
-            if retry_after_seconds is not None:
-                return retry_after_seconds
-        return PODCAST_PROVIDER_BACKOFF_SECONDS[
-            min(attempt_index, len(PODCAST_PROVIDER_BACKOFF_SECONDS) - 1)
-        ]
-
     def _get_json(self, path: str, *, params: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self.base_url}{path}"
-        last_exc: Exception | None = None
-        for attempt_index in range(PODCAST_PROVIDER_MAX_ATTEMPTS):
-            try:
-                response = httpx.get(
-                    url,
-                    params=params,
-                    headers=self._auth_headers(),
-                    timeout=15.0,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                if not isinstance(payload, dict):
-                    raise ApiError(
-                        ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-                        "Podcast provider returned an invalid response",
-                    )
-                return payload
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                status_code = exc.response.status_code
-                if (
-                    status_code in PODCAST_PROVIDER_RETRYABLE_STATUS_CODES
-                    and attempt_index < PODCAST_PROVIDER_MAX_ATTEMPTS - 1
-                ):
-                    delay_seconds = self._retry_delay_seconds(
-                        attempt_index=attempt_index,
-                        response=exc.response,
-                    )
-                    logger.warning(
-                        "podcast_provider_retryable_http_error",
-                        provider=PODCAST_PROVIDER,
-                        path=path,
-                        status_code=status_code,
-                        attempt=attempt_index + 1,
-                        max_attempts=PODCAST_PROVIDER_MAX_ATTEMPTS,
-                        retry_delay_seconds=delay_seconds,
-                    )
-                    time.sleep(delay_seconds)
-                    continue
-                break
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_exc = exc
-                if attempt_index < PODCAST_PROVIDER_MAX_ATTEMPTS - 1:
-                    delay_seconds = self._retry_delay_seconds(attempt_index=attempt_index)
-                    logger.warning(
-                        "podcast_provider_retryable_transport_error",
-                        provider=PODCAST_PROVIDER,
-                        path=path,
-                        attempt=attempt_index + 1,
-                        max_attempts=PODCAST_PROVIDER_MAX_ATTEMPTS,
-                        retry_delay_seconds=delay_seconds,
-                        error=str(exc),
-                    )
-                    time.sleep(delay_seconds)
-                    continue
-                break
-            except (httpx.HTTPError, ValueError, ApiError) as exc:
-                last_exc = exc
-                break
-
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-            "Podcast provider request failed",
-        ) from last_exc
+        return get_json_with_retry(
+            f"{self.base_url}{path}",
+            headers=self._auth_headers(),
+            params=params,
+            timeout_s=15.0,
+            backoff_seconds=PODCAST_PROVIDER_BACKOFF_SECONDS[: PODCAST_PROVIDER_MAX_ATTEMPTS - 1],
+            error_code=ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            provider_name=PODCAST_PROVIDER,
+            honor_retry_after=True,
+        )
 
     def search_podcasts(self, query: str, limit: int) -> list[dict[str, Any]]:
         if real_media_provider_fixtures_requested():

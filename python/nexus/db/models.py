@@ -1388,12 +1388,12 @@ class LibraryEntry(Base):
     )
     media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=True,
     )
     podcast_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id", ondelete="CASCADE"),
+        ForeignKey("podcasts.id"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -1412,9 +1412,15 @@ class LibraryEntry(Base):
         CheckConstraint("position >= 0", name="ck_library_entries_position_non_negative"),
         UniqueConstraint("library_id", "media_id", name="uq_library_entries_library_media"),
         UniqueConstraint("library_id", "podcast_id", name="uq_library_entries_library_podcast"),
+        UniqueConstraint(
+            "library_id",
+            "position",
+            name="uq_library_entries_library_position_unique",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         Index("idx_library_entries_media_library", "media_id", "library_id"),
         Index("idx_library_entries_podcast_library", "podcast_id", "library_id"),
-        Index("ix_library_entries_library_position", "library_id", "position"),
         Index(
             "ix_library_entries_library_order",
             "library_id",
@@ -3127,11 +3133,6 @@ class MediaTranscriptState(Base):
         nullable=False,
         server_default=SemanticStatus.none.value,
     )
-    active_transcript_version_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     last_request_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -3163,7 +3164,8 @@ class MediaTranscriptState(Base):
         ),
         CheckConstraint(
             "last_request_reason IS NULL OR last_request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', "
+            "'operator_requeue', 'rss_feed'"
             ")",
             name="ck_media_transcript_states_last_request_reason",
         ),
@@ -3173,8 +3175,7 @@ class MediaTranscriptState(Base):
             "updated_at",
             "media_id",
             postgresql_where=text(
-                "active_transcript_version_id IS NOT NULL "
-                "AND transcript_state IN ('ready', 'partial') "
+                "transcript_state IN ('ready', 'partial') "
                 "AND transcript_coverage IN ('partial', 'full') "
                 "AND semantic_status IN ('pending', 'failed', 'ready')"
             ),
@@ -3182,9 +3183,6 @@ class MediaTranscriptState(Base):
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="transcript_state")
-    active_transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
-        "PodcastTranscriptVersion"
-    )
 
 
 class PodcastTranscriptRequestAudit(Base):
@@ -3222,7 +3220,8 @@ class PodcastTranscriptRequestAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', "
+            "'operator_requeue', 'rss_feed'"
             ")",
             name="ck_podcast_transcript_request_audits_reason",
         ),
@@ -6208,7 +6207,7 @@ class OracleCorpusImage(Base):
         CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_oracle_images_sha256_hex"),
         CheckConstraint(
             "substring(storage_key from "
-            r"'^oracle/plates/([0-9a-f]{64})\.(?:jpg|png|webp)$') = sha256",
+            r"'^oracle/plates/([0-9a-f]{64})\.(jpg|png|webp)$') = sha256",
             name="ck_oracle_images_storage_key_sha256_match",
         ),
         CheckConstraint(

@@ -1,9 +1,11 @@
 """Worker job handler for scheduled active podcast subscription polling."""
 
+from dataclasses import asdict
+
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.podcasts.sync import (
+from nexus.services.podcasts.poll import (
     run_scheduled_active_subscription_poll as run_scheduled_active_subscription_poll_service,
 )
 
@@ -56,10 +58,12 @@ def run_podcast_active_subscription_poll_now(
     from settings. Shared by the job handler above and by integration tests; unlike a
     pure test seam it owns the settings-derived lease default, so it is not inlinable."""
     settings = get_settings()
-    return run_scheduled_active_subscription_poll_service(
-        db,
-        limit=limit,
-        run_lease_seconds=run_lease_seconds,
-        sync_lease_seconds=settings.podcast_sync_running_lease_seconds,
-        scheduler_identity=scheduler_identity,
+    return asdict(
+        run_scheduled_active_subscription_poll_service(
+            db,
+            limit=limit,
+            run_lease_seconds=run_lease_seconds,
+            sync_lease_seconds=settings.podcast_sync_running_lease_seconds,
+            scheduler_identity=scheduler_identity,
+        )
     )

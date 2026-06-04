@@ -1,21 +1,27 @@
 """Integration tests for podcast backend behavior."""
 
+import json
 import os
 import threading
 import time
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
-import httpx
 import lxml.etree as etree
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import clear_settings_cache, get_settings
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.billing_entitlements import (
     grant_entitlement_override,
     revoke_entitlement_override,
 )
+from nexus.services.net.safe_fetch import SafeFetchResult
+from nexus.services.podcasts.deepgram_adapter import TranscriptionResult
+from nexus.services.podcasts.transcription import TranscriptionRunResult
+from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -26,7 +32,7 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
     db_session,
 ):
     from nexus.services.content_indexing import rebuild_transcript_content_index
-    from nexus.services.podcasts.transcripts import (
+    from nexus.services.podcasts.transcription import (
         repair_podcast_transcript_semantic_index_now,
     )
 
@@ -34,12 +40,13 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
     media_id = uuid4()
     version_id = uuid4()
     transcript_segments = [
-        {
-            "text": "Direct semantic repair should detect stale embedding config.",
-            "t_start_ms": 0,
-            "t_end_ms": 1800,
-            "speaker_label": "Host",
-        }
+        TranscriptSegmentInput(
+            segment_idx=0,
+            t_start_ms=0,
+            t_end_ms=1800,
+            canonical_text="Direct semantic repair should detect stale embedding config.",
+            speaker_label="Host",
+        )
     ]
 
     db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -83,13 +90,12 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
                 transcript_state,
                 transcript_coverage,
                 semantic_status,
-                active_transcript_version_id,
                 last_request_reason
             )
-            VALUES (:media_id, 'ready', 'full', 'ready', :version_id, 'search')
+            VALUES (:media_id, 'ready', 'full', 'ready', 'search')
             """
         ),
-        {"media_id": media_id, "version_id": version_id},
+        {"media_id": media_id},
     )
     db_session.execute(
         text(
@@ -140,7 +146,7 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
         request_reason="operator_requeue",
     )
 
-    assert result["status"] == "completed", (
+    assert result.status == "completed", (
         "direct semantic repair must rebuild ready transcript rows with stale "
         f"embedding config, got: {result}"
     )
@@ -481,7 +487,7 @@ def _mock_podcast_index(
     # test seam maps episode transcript_segments fixtures into the provider
     # transcription result so lifecycle tests can focus on ingest contracts,
     # while allowing specific tests to override transcription outcomes explicitly.
-    def fake_transcribe(audio_url: str) -> dict[str, object]:
+    def fake_transcribe(self, audio_url: str) -> TranscriptionResult:
         normalized_audio_url = str(audio_url or "").strip()
         for episode_rows in episodes_by_podcast.values():
             for episode in episode_rows:
@@ -491,27 +497,34 @@ def _mock_podcast_index(
 
                 override = episode.get("mock_transcription_result")
                 if isinstance(override, dict):
-                    return override
+                    return TranscriptionResult(
+                        status=override.get("status", "failed"),
+                        segments=override.get("segments", []),
+                        error_code=override.get("error_code"),
+                        error_message=override.get("error_message"),
+                        diagnostic_error_code=override.get("diagnostic_error_code"),
+                        provider_fixture=override.get("provider_fixture"),
+                    )
 
                 transcript_segments = episode.get("transcript_segments")
                 if isinstance(transcript_segments, list) and transcript_segments:
-                    return {
-                        "status": "completed",
-                        "segments": transcript_segments,
-                        "diagnostic_error_code": None,
-                    }
+                    return TranscriptionResult(
+                        status="completed",
+                        segments=transcript_segments,
+                        diagnostic_error_code=None,
+                    )
 
-                return {
-                    "status": "failed",
-                    "error_code": "E_TRANSCRIPT_UNAVAILABLE",
-                    "error_message": "Transcript unavailable",
-                }
+                return TranscriptionResult(
+                    status="failed",
+                    error_code="E_TRANSCRIPT_UNAVAILABLE",
+                    error_message="Transcript unavailable",
+                )
 
-        return {
-            "status": "failed",
-            "error_code": "E_TRANSCRIPT_UNAVAILABLE",
-            "error_message": "Transcript unavailable",
-        }
+        return TranscriptionResult(
+            status="failed",
+            error_code="E_TRANSCRIPT_UNAVAILABLE",
+            error_message="Transcript unavailable",
+        )
 
     monkeypatch.setattr(
         "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
@@ -521,7 +534,7 @@ def _mock_podcast_index(
         fake_fetch,
     )
     monkeypatch.setattr(
-        "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
+        "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
         fake_transcribe,
         raising=False,
     )
@@ -545,81 +558,68 @@ def _run_subscription_sync(
     podcast_id: UUID,
     *,
     run_transcription_jobs: bool = True,
-    stub_enqueue: bool = True,
 ) -> dict:
-    from nexus.services.podcasts import transcripts as podcast_transcript_service
-    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
-    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+    from dataclasses import asdict
 
-    original_enqueue = podcast_transcript_service._enqueue_podcast_transcription_job
+    from nexus.services.podcasts import transcription as podcast_transcript_service
+    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
-    def _enqueue_stub(
-        _db,
-        *,
-        media_id: UUID,
-        requested_by_user_id: UUID | None,
-        request_id: str | None = None,
-    ) -> bool:
-        _ = _db, media_id, requested_by_user_id, request_id
-        return True
+    # The transcript-request loop runs the REAL enqueue path: enqueue_job writes
+    # genuine background_jobs/podcast_transcription_jobs rows that this helper then
+    # SELECTs and drives via run_podcast_transcription_now. No private symbol is
+    # patched (testing_standards.md §7); the rows are inert (never claimed here).
+    with direct_db.session() as session:
+        result = run_podcast_subscription_sync_now(
+            session,
+            user_id=user_id,
+            podcast_id=podcast_id,
+        )
+        if run_transcription_jobs and result.sync_status in {
+            "complete",
+            "source_limited",
+        }:
+            episode_media_ids = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    WHERE pe.podcast_id = :podcast_id
+                    ORDER BY pe.media_id ASC
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchall()
+            for row in episode_media_ids:
+                podcast_transcript_service.request_podcast_transcript_for_viewer(
+                    session,
+                    viewer_id=user_id,
+                    media_id=row[0],
+                    reason="episode_open",
+                    dry_run=False,
+                )
 
-    if stub_enqueue:
-        podcast_transcript_service._enqueue_podcast_transcription_job = _enqueue_stub
-
-    try:
-        with direct_db.session() as session:
-            result = run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=podcast_id,
-            )
-            if run_transcription_jobs and result.get("sync_status") in {
-                "complete",
-                "source_limited",
-            }:
-                episode_media_ids = session.execute(
-                    text(
-                        """
-                        SELECT pe.media_id
-                        FROM podcast_episodes pe
-                        WHERE pe.podcast_id = :podcast_id
-                        ORDER BY pe.media_id ASC
-                        """
-                    ),
-                    {"podcast_id": podcast_id},
-                ).fetchall()
-                for row in episode_media_ids:
-                    podcast_transcript_service.request_podcast_transcript_for_viewer(
-                        session,
-                        viewer_id=user_id,
-                        media_id=row[0],
-                        reason="episode_open",
-                        dry_run=False,
-                    )
-
-                pending_jobs = session.execute(
-                    text(
-                        """
-                        SELECT j.media_id, j.requested_by_user_id
-                        FROM podcast_transcription_jobs j
-                        JOIN podcast_episodes pe ON pe.media_id = j.media_id
-                        WHERE pe.podcast_id = :podcast_id
-                          AND j.status = 'pending'
-                        ORDER BY j.media_id ASC
-                        """
-                    ),
-                    {"podcast_id": podcast_id},
-                ).fetchall()
-                for row in pending_jobs:
-                    run_podcast_transcription_now(
-                        session,
-                        media_id=row[0],
-                        requested_by_user_id=row[1],
-                    )
-            session.commit()
-        return result
-    finally:
-        podcast_transcript_service._enqueue_podcast_transcription_job = original_enqueue
+            pending_jobs = session.execute(
+                text(
+                    """
+                    SELECT j.media_id, j.requested_by_user_id
+                    FROM podcast_transcription_jobs j
+                    JOIN podcast_episodes pe ON pe.media_id = j.media_id
+                    WHERE pe.podcast_id = :podcast_id
+                      AND j.status = 'pending'
+                    ORDER BY j.media_id ASC
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchall()
+            for row in pending_jobs:
+                run_podcast_transcription_now(
+                    session,
+                    media_id=row[0],
+                    requested_by_user_id=row[1],
+                )
+        session.commit()
+    return asdict(result)
 
 
 def _podcast_payload(provider_podcast_id: str, title: str) -> dict:
@@ -1310,7 +1310,7 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # Data-plane worker path should ingest episodes and transition pending -> complete.
-        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -1378,7 +1378,7 @@ class TestPodcastSubscriptionSyncLifecycle:
             )
             session.commit()
 
-        assert job_result["sync_status"] == "complete"
+        assert job_result.sync_status == "complete"
 
         with direct_db.session() as session:
             status_row = session.execute(
@@ -1412,7 +1412,7 @@ class TestPodcastSubscriptionSyncLifecycle:
     def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
         self, auth_client, monkeypatch, direct_db
     ):
-        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         opted_in_user = create_test_user_id()
         opted_out_user = create_test_user_id()
@@ -1522,7 +1522,7 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # If provider result appears capped and feed has no next-page path, surface source_limited.
-        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -1572,11 +1572,16 @@ class TestPodcastSubscriptionSyncLifecycle:
 </rss>
 """
 
-        def fake_http_get(url: str, **kwargs):
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
-            return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+            return SafeFetchResult(
+                final_url=url,
+                content_type="",
+                content=feed_xml.encode("utf-8"),
+                text=feed_xml,
+            )
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe = auth_client.post(
             "/podcasts/subscriptions",
@@ -1604,7 +1609,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 {"user_id": user_id, "podcast_id": podcast_id},
             ).scalar()
 
-        assert job_result["sync_status"] == "source_limited"
+        assert job_result.sync_status == "source_limited"
         assert sync_status == "source_limited"
 
 
@@ -1760,15 +1765,25 @@ class TestPodcastSubscribeIngest:
 
         # EXTERNAL SEAM EXCEPTION:
         # Feed URL pagination is an external HTTP boundary; mock deterministic pages.
-        def fake_http_get(url: str, **kwargs):
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == page1_url:
-                return httpx.Response(200, text=page1_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=page1_xml.encode("utf-8"),
+                    text=page1_xml,
+                )
             if url == page2_url:
-                return httpx.Response(200, text=page2_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=page2_xml.encode("utf-8"),
+                    text=page2_xml,
+                )
             raise AssertionError(f"unexpected feed page url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
@@ -2420,9 +2435,9 @@ class TestPodcastBillingQuota:
             def today(cls):
                 return wrong_local_today
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FixedDatetime)
-        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FixedDatetime)
-        monkeypatch.setattr("nexus.services.podcasts.transcripts.date", WrongLocalDate)
+        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FixedDatetime)
+        monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FixedDatetime)
+        monkeypatch.setattr("nexus.services.podcasts.transcription.date", WrongLocalDate)
 
         _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
 
@@ -2446,8 +2461,7 @@ class TestPodcastBillingQuota:
 
 class TestPodcastTranscriptRequestAdmission:
     def test_concurrent_quota_admission_caps_reserved_minutes(self, auth_client, direct_db):
-        from nexus.errors import ApiError, ApiErrorCode
-        from nexus.services.podcasts import transcripts as transcript_service
+        from nexus.services.podcasts import transcription as transcript_service
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -2557,7 +2571,7 @@ class TestPodcastTranscriptRequestAdmission:
         finalizer_name: str,
         expected_used_minutes: int,
     ):
-        from nexus.services.podcasts import transcripts as transcript_service
+        from nexus.services.podcasts import transcription as transcript_service
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -2745,7 +2759,6 @@ class TestPodcastTranscriptRequestAdmission:
             user_id,
             UUID(subscribe_data["podcast_id"]),
             run_transcription_jobs=False,
-            stub_enqueue=True,
         )
 
         with direct_db.session() as session:
@@ -2890,7 +2903,6 @@ class TestPodcastTranscriptRequestAdmission:
                         transcript_state = 'ready',
                         transcript_coverage = 'full',
                         semantic_status = :semantic_status,
-                        active_transcript_version_id = :version_id,
                         last_request_reason = 'search',
                         last_error_code = :last_error_code,
                         updated_at = :now
@@ -2900,7 +2912,6 @@ class TestPodcastTranscriptRequestAdmission:
                 {
                     "media_id": media_id,
                     "semantic_status": semantic_status,
-                    "version_id": version_id,
                     "last_error_code": "E_INTERNAL" if semantic_status == "failed" else None,
                     "now": now,
                 },
@@ -3166,16 +3177,16 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": [
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=[
                     {"t_start_ms": 0, "t_end_ms": 1000, "text": "segment one"},
                     {"t_start_ms": 1100, "t_end_ms": 2100, "text": "segment two"},
                 ],
-            },
+            ),
         )
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -3184,7 +3195,7 @@ class TestPodcastTranscriptRequestAdmission:
                 requested_by_user_id=user_id,
             )
             session.commit()
-        assert result["status"] == "completed"
+        assert result.status == "completed"
 
         with direct_db.session() as session:
             used_after_completion = session.execute(
@@ -3227,14 +3238,14 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "failed",
-                "error_code": "E_TRANSCRIPT_UNAVAILABLE",
-                "error_message": "Transcript unavailable",
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="failed",
+                error_code="E_TRANSCRIPT_UNAVAILABLE",
+                error_message="Transcript unavailable",
+            ),
         )
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -3243,7 +3254,7 @@ class TestPodcastTranscriptRequestAdmission:
                 requested_by_user_id=user_id,
             )
             session.commit()
-        assert result["status"] == "failed"
+        assert result.status == "failed"
 
         with direct_db.session() as session:
             used_after_failure = session.execute(
@@ -3306,9 +3317,16 @@ class TestPodcastTranscriptRequestAdmission:
         )
         user_id = seeded["user_id"]
         media_id = seeded["media_id"]
+
+        # Drive the real wrapper's except SQLAlchemyError -> return False branch by
+        # making the PUBLIC enqueue boundary fail, instead of patching the private
+        # _enqueue_podcast_transcription_job wrapper (testing_standards.md §7).
+        def _raise(*_args, **_kwargs):
+            raise SQLAlchemyError("enqueue boundary failure")
+
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._enqueue_podcast_transcription_job",
-            lambda _db, **_kwargs: False,
+            "nexus.services.podcasts.transcription.enqueue_job",
+            _raise,
         )
 
         request_response = auth_client.post(
@@ -3704,14 +3722,14 @@ class TestPodcastTranscriptRequestAdmission:
         assert admitted.status_code == 202
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "failed",
-                "error_code": "E_TRANSCRIPTION_FAILED",
-                "error_message": "simulated provider failure",
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="failed",
+                error_code="E_TRANSCRIPTION_FAILED",
+                error_message="simulated provider failure",
+            ),
         )
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -3720,7 +3738,7 @@ class TestPodcastTranscriptRequestAdmission:
                 requested_by_user_id=user_id,
             )
             session.commit()
-        assert result["status"] == "failed"
+        assert result.status == "failed"
 
         monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
@@ -3882,12 +3900,12 @@ class TestPodcastTranscriptPersistence:
             }
         ]
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": provider_segments,
-                "diagnostic_error_code": None,
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=provider_segments,
+                diagnostic_error_code=None,
+            ),
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -4100,10 +4118,10 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": [
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=[
                     {
                         "t_start_ms": 500,
                         "t_end_ms": 1800,
@@ -4111,8 +4129,8 @@ class TestPodcastTranscriptPersistence:
                         "speaker_label": None,
                     }
                 ],
-                "diagnostic_error_code": "E_DIARIZATION_FAILED",
-            },
+                diagnostic_error_code="E_DIARIZATION_FAILED",
+            ),
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -4198,12 +4216,12 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "failed",
-                "error_code": terminal_error_code,
-                "error_message": f"simulated {terminal_error_code}",
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="failed",
+                error_code=terminal_error_code,
+                error_message=f"simulated {terminal_error_code}",
+            ),
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -4301,12 +4319,12 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": raw_segments,
-                "diagnostic_error_code": None,
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=raw_segments,
+                diagnostic_error_code=None,
+            ),
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -4439,10 +4457,12 @@ class TestPodcastEpisodeMetadataPersistence:
 
 
 def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:
-    from nexus.services.podcasts.sync import poll_active_subscriptions_once
+    from dataclasses import asdict
+
+    from nexus.services.podcasts.poll import poll_active_subscriptions_once
 
     with direct_db.session() as session:
-        result = poll_active_subscriptions_once(session, limit=limit)
+        result = asdict(poll_active_subscriptions_once(session, limit=limit))
         session.commit()
     return result
 
@@ -4681,11 +4701,22 @@ class TestPodcastPollingOrchestration:
             scheduler_identity="pytest-scheduled-run",
         )
 
+        # The poll is now a pure scheduler. Its run telemetry counts ENQUEUE outcomes,
+        # not sync outcomes: processed_count = subscriptions enqueued, failed_count =
+        # enqueue failures (normally 0), skipped_count = subs not claimable, and
+        # scanned_count = rows scanned. The actual feed sync (which, for this free-tier
+        # over-quota episode, would fail with E_PODCAST_QUOTA_EXCEEDED) now runs later in
+        # the enqueued `podcast_sync_subscription_job`, so per-sync failure codes belong
+        # to the job, NOT to this poll run.
         assert result["status"] == "completed", f"expected completed run, got {result}"
         assert result["processed_count"] == 1
         assert result["failed_count"] == 0
         assert result["skipped_count"] == 0
         assert result["scanned_count"] == 1
+        assert result["failure_code_breakdown"] == {}, (
+            "the poll only enqueues; per-sync failure codes are recorded by the job, "
+            f"not the poll run, so its breakdown must be empty, got {result}"
+        )
         assert "run_id" in result and result["run_id"], (
             f"expected durable run_id in scheduled poll result, got {result}"
         )
@@ -4699,7 +4730,10 @@ class TestPodcastPollingOrchestration:
             f"{status_response.text}"
         )
         status_data = status_response.json()["data"]
-        assert status_data["sync_status"] == "complete"
+        # The poll claimed the due subscription into 'pending' and enqueued its sync job;
+        # it does not run the sync, so the subscription sits in 'pending' until the
+        # enqueued job claims it.
+        assert status_data["sync_status"] == "pending"
         assert status_data["sync_error_code"] is None
 
         with direct_db.session() as session:
@@ -4735,9 +4769,14 @@ class TestPodcastPollingOrchestration:
             ).fetchall()
 
         assert run_row[0] == "completed"
+        # Durable counters mirror the enqueue model: 1 enqueued, 0 enqueue failures,
+        # 0 skipped, 1 scanned.
         assert run_row[1:] == (1, 0, 0, 1), (
             f"durable run counters mismatch: expected (1,0,0,1), got {run_row[1:]}"
         )
+        # No durable poll-run failure rows: the poll only enqueues. The per-sync failure
+        # breakdown (e.g. E_PODCAST_QUOTA_EXCEEDED for this free-tier over-quota episode)
+        # is now the job's concern, recorded against the subscription/job, not the poll.
         assert failure_rows == []
 
     def test_scheduled_poll_is_singleton_safe_when_another_run_is_active(self, direct_db):
@@ -4861,7 +4900,7 @@ class TestPodcastPollingOrchestration:
             def now(cls, tz=None):  # noqa: ANN001
                 return datetime(2099, 1, 1, tzinfo=UTC)
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FutureDateTime)
+        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FutureDateTime)
 
         try:
             result = _run_scheduled_active_subscription_poll(
@@ -4947,14 +4986,40 @@ class TestPodcastPollingOrchestration:
             )
             session.commit()
 
+        # The poll reclaims the stale `running` claim (lease expired by the DB clock)
+        # by resetting sync_status -> 'pending' and enqueuing a fresh
+        # `podcast_sync_subscription_job`, counting it as processed (enqueued). It no
+        # longer re-syncs inline.
         result = _run_scheduled_active_subscription_poll(
             direct_db,
             limit=100,
             scheduler_identity="pytest-stale-recovery",
         )
-        assert result["processed_count"] == 1, (
-            f"expected stale running claim to be reclaimed and processed, got {result}"
+        assert result["processed_count"] >= 1, (
+            f"expected stale running claim to be reclaimed and re-enqueued, got {result}"
         )
+
+        # The reclaim itself is the poll's responsibility: the expired 'running' claim
+        # must be reset to 'pending' so the enqueued job can re-claim it.
+        with direct_db.session() as session:
+            reclaimed_status = session.execute(
+                text(
+                    """
+                    SELECT sync_status
+                    FROM podcast_subscriptions
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            ).scalar_one()
+        assert reclaimed_status == "pending", (
+            "expected the poll to reclaim the expired running claim back to pending, "
+            f"got {reclaimed_status}"
+        )
+
+        # Drive the enqueued job (claims 'pending' -> 'running', then syncs) to confirm
+        # the reclaimed subscription recovers to a completed sync end-to-end.
+        _run_subscription_sync(direct_db, user_id, podcast_id)
 
         status_response = auth_client.get(
             f"/podcasts/subscriptions/{podcast_id}",
@@ -5023,7 +5088,7 @@ class TestPodcastPollingOrchestration:
             def now(cls, tz=None):  # noqa: ANN001
                 return datetime(2099, 1, 1, tzinfo=UTC)
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FutureDateTime)
+        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FutureDateTime)
 
         result = _run_active_subscription_poll(direct_db, limit=100)
         assert result["scanned_count"] == 0, (
@@ -5257,9 +5322,52 @@ class TestPodcastSubscriptionLifecycleClosure:
         )
         assert detail_after_unsubscribe.json()["data"]["subscription"]["status"] == "unsubscribed"
 
-        poll_result = _run_active_subscription_poll(direct_db, limit=100)
-        assert poll_result["processed_count"] == 0
+        # Count any sync jobs already enqueued for this podcast (e.g. from the initial
+        # subscribe sync) so we can prove the post-unsubscribe poll adds none.
+        with direct_db.session() as session:
+            sync_jobs_before_poll = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                          AND payload->>'podcast_id' = :podcast_id
+                        """
+                    ),
+                    {"user_id": str(user_id), "podcast_id": str(podcast_id)},
+                ).scalar_one()
+            )
 
+        # The poll is now a pure scheduler whose scan filters status = 'active'. The
+        # unsubscribed podcast is not scanned, so the poll enqueues nothing for it.
+        # Other active subscriptions in the shared test DB may also be enqueued; the
+        # scoped check below proves the UNSUBSCRIBED podcast specifically is not.
+        _run_active_subscription_poll(direct_db, limit=100)
+
+        with direct_db.session() as session:
+            sync_jobs_after_poll = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                          AND payload->>'podcast_id' = :podcast_id
+                        """
+                    ),
+                    {"user_id": str(user_id), "podcast_id": str(podcast_id)},
+                ).scalar_one()
+            )
+        assert sync_jobs_after_poll == sync_jobs_before_poll, (
+            "the poll must not enqueue a new sync job for an unsubscribed podcast; "
+            f"before={sync_jobs_before_poll} after={sync_jobs_after_poll}"
+        )
+
+        # Episodes saved while subscribed are retained; nothing new is ingested for the
+        # unsubscribed podcast.
         with direct_db.session() as session:
             titles = session.execute(
                 text(
@@ -5444,6 +5552,157 @@ class TestPodcastSubscriptionLifecycleClosure:
         assert owned_media_row is not None
         assert shared_admin_media_row is not None
 
+    def test_unsubscribe_renormalizes_remaining_entry_positions_to_canonical_order(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Slice 2 / Problem #3: after unsubscribe teardown removes a podcast entry,
+        the surviving library_entries must be contiguous 0..n-1 with NO gaps AND
+        ordered identically to the canonical normalizer / list_library_entries
+        (position ASC, created_at DESC, id DESC). The old inline CTE ordered
+        created_at ASC / id ASC, which diverged from the canonical normalizer; this
+        pins the tie-break-divergence fix by seeding several entries at the SAME
+        initial position so the DESC/DESC tie-break is observable.
+        """
+        from nexus.services.library_entries import list_library_entries
+
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
+            initial_episode_window=1,
+        )
+
+        # Create four real, distinct podcasts (target + three fillers) so every
+        # seeded library_entries row references a valid podcast_id FK and the
+        # target has a real subscription row for unsubscribe to act on.
+        suffix = uuid4()
+        provider_ids = [f"renorm-{idx}-{suffix}" for idx in range(4)]
+        payloads = [
+            _podcast_payload(provider_id, f"Renorm Podcast {idx}")
+            for idx, provider_id in enumerate(provider_ids)
+        ]
+        episodes_by_podcast = {
+            provider_id: [
+                {
+                    "provider_episode_id": f"ep-{provider_id}-1",
+                    "guid": f"guid-{provider_id}-1",
+                    "title": f"Renorm Episode {idx}",
+                    "audio_url": f"https://cdn.example.com/{provider_id}.mp3",
+                    "published_at": "2026-03-02T08:00:00Z",
+                    "duration_seconds": 60,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "renorm"}],
+                }
+            ]
+            for idx, provider_id in enumerate(provider_ids)
+        }
+        podcast_ids: list[UUID] = []
+        for payload in payloads:
+            _mock_podcast_index(
+                monkeypatch,
+                podcasts=[payload],
+                episodes_by_podcast=episodes_by_podcast,
+            )
+            subscribe_data = _subscribe(auth_client, user_id, payload)
+            podcast_ids.append(UUID(subscribe_data["podcast_id"]))
+
+        target_podcast_id = podcast_ids[0]
+        surviving_podcast_ids = podcast_ids[1:]
+
+        affected_library_id = _create_library(auth_client, user_id, name=f"renorm-{suffix}")
+
+        # Seed one entry per podcast at DISTINCT contiguous positions (the position
+        # unique constraint forbids ties). podcast_ids order is [target, s1, s2, s3], so
+        # the target is seeded first; removing it on unsubscribe forces the survivors to
+        # renumber down to a contiguous 0..n-1 by position.
+        _ensure_library_entries_table(direct_db)
+        base_created_at = datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
+        # podcast_ids order: [target, s1, s2, s3]
+        seeded_entry_ids: dict[UUID, UUID] = {}
+        with direct_db.session() as session:
+            for offset, podcast_id in enumerate(podcast_ids):
+                entry_id = uuid4()
+                seeded_entry_ids[podcast_id] = entry_id
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO library_entries
+                            (id, library_id, position, podcast_id, created_at)
+                        VALUES
+                            (:entry_id, :library_id, :position, :podcast_id, :created_at)
+                        """
+                    ),
+                    {
+                        "entry_id": entry_id,
+                        "library_id": affected_library_id,
+                        "position": offset,
+                        "podcast_id": podcast_id,
+                        "created_at": base_created_at - timedelta(minutes=offset),
+                    },
+                )
+            session.commit()
+
+        unsubscribe = auth_client.delete(
+            f"/podcasts/subscriptions/{target_podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert unsubscribe.status_code == 200, (
+            f"expected unsubscribe 200, got {unsubscribe.status_code}: {unsubscribe.text}"
+        )
+        assert unsubscribe.json()["data"]["removed_from_library_count"] == 1
+
+        # (a) positions are exactly 0..n-1 contiguous with no gaps, ordered by position.
+        with direct_db.session() as session:
+            raw_rows = session.execute(
+                text(
+                    """
+                    SELECT id, position, podcast_id
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"library_id": affected_library_id},
+            ).fetchall()
+
+        positions = [int(row[1]) for row in raw_rows]
+        assert positions == list(range(len(surviving_podcast_ids))), (
+            "surviving library_entries positions must be contiguous 0..n-1 with no gaps, "
+            f"got {positions}"
+        )
+        raw_podcast_ids_by_position = [UUID(str(row[2])) for row in raw_rows]
+        assert UUID(str(target_podcast_id)) not in raw_podcast_ids_by_position
+
+        # (b) the position order matches the canonical list_library_entries order.
+        with direct_db.session() as session:
+            canonical_entries = list_library_entries(
+                session,
+                viewer_id=user_id,
+                library_id=affected_library_id,
+                limit=200,
+            )
+        canonical_entry_ids = [entry.id for entry in canonical_entries]
+        raw_entry_ids_by_position = [UUID(str(row[0])) for row in raw_rows]
+        assert canonical_entry_ids == raw_entry_ids_by_position, (
+            "after renormalization, position order must equal the canonical "
+            "list_library_entries order (position ASC, created_at DESC, id DESC)"
+        )
+
+        # Survivors keep their seeded relative position order (s1, s2, s3) after the gap
+        # left by the target is renumbered away. Position is now a total order (the
+        # unique constraint forbids ties), so the canonical list order is uniquely
+        # determined by position.
+        expected_canonical_order = [
+            seeded_entry_ids[podcast_id] for podcast_id in surviving_podcast_ids
+        ]
+        assert canonical_entry_ids == expected_canonical_order, (
+            "survivors must stay contiguous in their seeded position order after "
+            f"renormalization; got {canonical_entry_ids} expected {expected_canonical_order}"
+        )
+
     def test_active_subscription_poll_ingests_newly_published_episode(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -5495,8 +5754,20 @@ class TestPodcastSubscriptionLifecycleClosure:
             }
         )
 
+        # The poll is now a pure scheduler: it claims the due subscription
+        # (sync_status -> 'pending') and enqueues one durable
+        # `podcast_sync_subscription_job`, reporting the enqueue count as
+        # processed_count. It does NOT ingest inline.
         poll_result = _run_active_subscription_poll(direct_db, limit=100)
-        assert poll_result["processed_count"] == 1
+        assert poll_result["processed_count"] >= 1, (
+            f"expected the poll to enqueue a sync job for the due subscription, got {poll_result}"
+        )
+
+        # Drive the enqueued sync job (claims 'pending' -> 'running', then ingests),
+        # reusing the same `run_podcast_subscription_sync_now` mechanism the worker
+        # invokes when the enqueued job runs. Only after the job runs is the newly
+        # published episode ingested.
+        _run_subscription_sync(direct_db, user_id, podcast_id)
 
         with direct_db.session() as session:
             titles = session.execute(
@@ -5836,7 +6107,7 @@ class TestPodcastApiSurface:
         assert removed_field.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_episode_from_feed_item_extracts_rss_transcript_refs_with_relative_url_resolution(self):
-        from nexus.services.podcasts import sync as podcast_sync_service
+        from nexus.services.podcasts import feed as podcast_sync_service
 
         item_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <item xmlns:podcast="https://podcastindex.org/namespace/1.0">
@@ -5951,21 +6222,26 @@ class TestPodcastApiSurface:
 <v Host>hello rss
 """
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == payload["feed_url"]:
-                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=feed_xml.encode("utf-8"),
+                    text=feed_xml,
+                )
             if url == transcript_url:
-                return httpx.Response(
-                    200,
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="text/vtt",
+                    content=transcript_vtt.encode("utf-8"),
                     text=transcript_vtt,
-                    headers={"Content-Type": "text/vtt"},
-                    request=httpx.Request("GET", url),
                 )
             raise AssertionError(f"unexpected RSS transcript test fetch URL: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
-        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -6135,27 +6411,29 @@ upgrade now
 """
         state = {"rss_enabled": False}
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == payload["feed_url"]:
-                return httpx.Response(
-                    200,
-                    text=(
-                        feed_with_transcript if state["rss_enabled"] else feed_without_transcript
-                    ),
-                    request=httpx.Request("GET", url),
+                feed_body = (
+                    feed_with_transcript if state["rss_enabled"] else feed_without_transcript
+                )
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=feed_body.encode("utf-8"),
+                    text=feed_body,
                 )
             if url == transcript_url:
-                return httpx.Response(
-                    200,
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="text/vtt",
+                    content=transcript_vtt.encode("utf-8"),
                     text=transcript_vtt,
-                    headers={"Content-Type": "text/vtt"},
-                    request=httpx.Request("GET", url),
                 )
             raise AssertionError(f"unexpected RSS transcript upgrade fetch URL: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
-        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -6307,19 +6585,26 @@ upgrade now
 </rss>
 """
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == payload["feed_url"]:
-                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=feed_xml.encode("utf-8"),
+                    text=feed_xml,
+                )
             if url == chapter_json_url:
-                return httpx.Response(
-                    200,
-                    json=chapter_json_payload,
-                    request=httpx.Request("GET", url),
+                chapter_body = json.dumps(chapter_json_payload)
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="application/json",
+                    content=chapter_body.encode("utf-8"),
+                    text=chapter_body,
                 )
             raise AssertionError(f"unexpected chapter fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -6445,13 +6730,18 @@ upgrade now
 </rss>
 """
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == payload["feed_url"]:
-                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=feed_xml.encode("utf-8"),
+                    text=feed_xml,
+                )
             raise AssertionError(f"unexpected feed fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -6989,46 +7279,35 @@ upgrade now
         monkeypatch.setenv("PODCAST_INDEX_API_SECRET", "test-secret")
         clear_settings_cache()
 
-        call_count = {"value": 0}
-
-        class _FakeResponse:
-            status_code = 200
-
-            def raise_for_status(self) -> None:
-                return None
-
-            def json(self) -> dict[str, object]:
-                return {
-                    "feeds": [
-                        {
-                            "id": "provider-1",
-                            "url": "https://feeds.example.com/provider-1.xml",
-                            "title": "Retry Podcast",
-                            "author": "Retry Author",
-                        }
-                    ]
-                }
-
-        def flaky_get(*args: object, **kwargs: object) -> _FakeResponse:
+        # The retry/backoff loop now lives in `get_json_with_retry`, which the provider
+        # calls at its network boundary. Patch THAT seam, not the underlying HTTP client
+        # method: the FastAPI TestClient drives the app over the same `httpx` client, so
+        # patching the client method would intercept this test's own request to the app
+        # rather than the provider's outbound call. Raising the provider-unavailable
+        # ApiError here simulates retry exhaustion: `get_json_with_retry` has already
+        # burned through its attempts and is surfacing the terminal failure.
+        def fake(*args: object, **kwargs: object) -> dict[str, object]:
             _ = args, kwargs
-            call_count["value"] += 1
-            if call_count["value"] < 3:
-                raise httpx.TimeoutException("timeout")
-            return _FakeResponse()
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+                "Podcast provider timed out after exhausting retries",
+            )
 
-        monkeypatch.setattr("nexus.services.podcasts.provider.httpx.get", flaky_get)
+        monkeypatch.setattr("nexus.services.podcasts.provider.get_json_with_retry", fake)
         response = auth_client.get(
             "/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id)
         )
-        assert response.status_code == 200, (
-            "discover should survive transient provider timeout via retry/backoff; "
+        # Retry-count behavior (transient timeout -> backoff -> retry) is now owned and
+        # covered by the `get_json_with_retry` seam; this test pins only the failure
+        # OUTCOME the provider surfaces once retries are exhausted: a 503 provider-
+        # unavailable error bubbling out of discover.
+        assert response.status_code == 503, (
+            "discover should surface provider-unavailable once retries are exhausted; "
             f"got {response.status_code}: {response.text}"
         )
-        assert call_count["value"] == 3, (
-            f"expected timeout retries before success (3 attempts), got {call_count['value']}"
-        )
-        data = response.json()["data"]
-        assert data[0]["title"] == "Retry Podcast"
+        assert (
+            response.json()["error"]["code"] == ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE.value
+        ), f"expected provider-unavailable error code, got {response.text}"
 
 
 class TestPodcastOpmlImportExport:
@@ -7537,7 +7816,6 @@ class TestPodcastTranscriptionAsyncLifecycle:
             user_id,
             podcast_id,
             run_transcription_jobs=run_transcription_jobs,
-            stub_enqueue=True,
         )
 
         with direct_db.session() as session:
@@ -7555,7 +7833,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
             assert media_id is not None
 
         if not run_transcription_jobs:
-            from nexus.services.podcasts import transcripts as podcast_transcript_service
+            from nexus.services.podcasts import transcription as podcast_transcript_service
 
             with direct_db.session() as session:
                 podcast_transcript_service.request_podcast_transcript_for_viewer(
@@ -7625,17 +7903,17 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": [
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=[
                     {"t_start_ms": 0, "t_end_ms": 800, "text": "first"},
                     {"t_start_ms": 900, "t_end_ms": 1700, "text": "second"},
                 ],
-            },
+            ),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -7645,8 +7923,8 @@ class TestPodcastTranscriptionAsyncLifecycle:
             )
             session.commit()
 
-        assert result["status"] == "completed"
-        assert result["segment_count"] == 2
+        assert result.status == "completed"
+        assert result.segment_count == 2
 
         with direct_db.session() as session:
             media_row = session.execute(
@@ -7732,14 +8010,14 @@ class TestPodcastTranscriptionAsyncLifecycle:
             session.commit()
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "stale reclaim"}],
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=[{"t_start_ms": 0, "t_end_ms": 900, "text": "stale reclaim"}],
+            ),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -7749,7 +8027,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
             )
             session.commit()
 
-        assert result["status"] == "completed", (
+        assert result.status == "completed", (
             "worker should reclaim stale running transcription jobs instead of skipping forever"
         )
 
@@ -7804,13 +8082,13 @@ class TestPodcastTranscriptionAsyncLifecycle:
             def now(cls, tz=None):  # noqa: ANN001
                 return datetime(2099, 1, 1, tzinfo=UTC)
 
-        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FutureDateTime)
+        monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FutureDateTime)
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: pytest.fail("live DB-clock job must not be reclaimed"),
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: pytest.fail("live DB-clock job must not be reclaimed"),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -7820,9 +8098,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
             )
             session.commit()
 
-        assert result["status"] == "skipped"
-        assert result["reason"] == "not_pending"
-        assert result["job_status"] == "running"
+        assert result.status == "skipped"
+        assert result.reason == "not_pending"
+        assert result.job_status == "running"
 
         with direct_db.session() as session:
             attempts = session.execute(
@@ -7856,25 +8134,25 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         transcribe_started = threading.Event()
         release_transcribe = threading.Event()
-        worker_result: dict[str, object] = {}
+        worker_result: dict[str, TranscriptionRunResult] = {}
         worker_errors: list[Exception] = []
 
-        def slow_transcribe(_audio_url: str) -> dict[str, object]:
+        def slow_transcribe(self, _audio_url: str) -> TranscriptionResult:
             transcribe_started.set()
             assert release_transcribe.wait(timeout=8), (
                 "worker should stay in-flight while claim timestamps are inspected"
             )
-            return {
-                "status": "completed",
-                "segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "db clock claim"}],
-            }
+            return TranscriptionResult(
+                status="completed",
+                segments=[{"t_start_ms": 0, "t_end_ms": 900, "text": "db clock claim"}],
+            )
 
-        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FutureDateTime)
+        monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FutureDateTime)
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio", slow_transcribe
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe", slow_transcribe
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         def run_worker() -> None:
             try:
@@ -7928,7 +8206,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         assert not worker_errors, f"worker failed unexpectedly: {worker_errors}"
         assert worker_thread.is_alive() is False, "worker should finish after release"
-        assert worker_result["value"]["status"] == "completed"
+        assert worker_result["value"].status == "completed"
 
     def test_manual_transcription_worker_does_not_reclaim_live_running_job_with_heartbeat(
         self, auth_client, monkeypatch, direct_db
@@ -7948,25 +8226,25 @@ class TestPodcastTranscriptionAsyncLifecycle:
         transcribe_started = threading.Event()
         release_first_transcribe = threading.Event()
         transcribe_calls: dict[str, int] = {"count": 0}
-        first_worker_result: dict[str, object] = {}
+        first_worker_result: dict[str, TranscriptionRunResult] = {}
         first_worker_errors: list[Exception] = []
 
-        def slow_transcribe(_audio_url: str) -> dict[str, object]:
+        def slow_transcribe(self, _audio_url: str) -> TranscriptionResult:
             transcribe_calls["count"] += 1
             transcribe_started.set()
             if transcribe_calls["count"] == 1:
                 assert release_first_transcribe.wait(timeout=8), (
                     "first worker should remain in-flight while stale-reclaim check runs"
                 )
-            return {
-                "status": "completed",
-                "segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "heartbeat guard"}],
-            }
+            return TranscriptionResult(
+                status="completed",
+                segments=[{"t_start_ms": 0, "t_end_ms": 1000, "text": "heartbeat guard"}],
+            )
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio", slow_transcribe
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe", slow_transcribe
         )
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         def run_first_worker() -> None:
             try:
@@ -8006,11 +8284,11 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert not first_worker_errors, f"first worker failed unexpectedly: {first_worker_errors}"
         assert worker_thread.is_alive() is False, "first worker should finish after release"
         assert second_result is not None
-        assert second_result["status"] == "skipped"
-        assert second_result["reason"] == "not_pending"
-        assert second_result["job_status"] == "running"
+        assert second_result.status == "skipped"
+        assert second_result.reason == "not_pending"
+        assert second_result.job_status == "running"
         assert transcribe_calls["count"] == 1, "live running job must not be double-transcribed"
-        assert first_worker_result["value"]["status"] == "completed"
+        assert first_worker_result["value"].status == "completed"
 
         with direct_db.session() as session:
             attempts = session.execute(
@@ -8038,14 +8316,14 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": [{"t_start_ms": 0, "t_end_ms": 600, "text": "single"}],
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=[{"t_start_ms": 0, "t_end_ms": 600, "text": "single"}],
+            ),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             first = run_podcast_transcription_now(
@@ -8060,10 +8338,10 @@ class TestPodcastTranscriptionAsyncLifecycle:
             )
             session.commit()
 
-        assert first["status"] == "completed"
-        assert second["status"] == "skipped"
-        assert second["reason"] == "not_pending"
-        assert second["job_status"] == "completed"
+        assert first.status == "completed"
+        assert second.status == "skipped"
+        assert second.reason == "not_pending"
+        assert second.job_status == "completed"
 
         with direct_db.session() as session:
             attempts = session.execute(
@@ -8091,15 +8369,15 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "failed",
-                "error_code": "E_TRANSCRIPTION_FAILED",
-                "error_message": "simulated terminal failure",
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="failed",
+                error_code="E_TRANSCRIPTION_FAILED",
+                error_message="simulated terminal failure",
+            ),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             failed_result = run_podcast_transcription_now(
@@ -8108,7 +8386,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
                 requested_by_user_id=user_id,
             )
             session.commit()
-        assert failed_result["status"] == "failed"
+        assert failed_result.status == "failed"
 
         with direct_db.session() as session:
             queue_rows_before_retry = int(
@@ -8261,13 +8539,18 @@ class TestPodcastShowNotesAndBatchCutover:
             },
         )
 
-        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
+        def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
             if url == payload["feed_url"]:
-                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+                return SafeFetchResult(
+                    final_url=url,
+                    content_type="",
+                    content=feed_xml.encode("utf-8"),
+                    text=feed_xml,
+                )
             raise AssertionError(f"unexpected feed fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
         _run_subscription_sync(
@@ -8702,7 +8985,6 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             user_id,
             podcast_id,
             run_transcription_jobs=False,
-            stub_enqueue=True,
         )
 
         with direct_db.session() as session:
@@ -8729,17 +9011,17 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         media_id: UUID,
         user_id: UUID,
         segments: list[dict[str, object]],
-    ) -> dict:
+    ) -> TranscriptionRunResult:
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
-            lambda _audio_url: {
-                "status": "completed",
-                "segments": segments,
-                "diagnostic_error_code": None,
-            },
+            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
+            lambda self, _audio_url: TranscriptionResult(
+                status="completed",
+                segments=segments,
+                diagnostic_error_code=None,
+            ),
         )
 
-        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+        from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
         with direct_db.session() as session:
             result = run_podcast_transcription_now(
@@ -8811,7 +9093,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 {"t_start_ms": 1000, "t_end_ms": 2200, "text": "second semantic segment"},
             ],
         )
-        assert result["status"] == "completed"
+        assert result.status == "completed"
 
         with direct_db.session() as session:
             final_state = session.execute(
@@ -8821,7 +9103,11 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         mts.transcript_state,
                         mts.transcript_coverage,
                         mts.semantic_status,
-                        mts.active_transcript_version_id,
+                        (
+                            SELECT ptv.id
+                            FROM podcast_transcript_versions ptv
+                            WHERE ptv.media_id = mts.media_id AND ptv.is_active
+                        ),
                         m.processing_status
                     FROM media_transcript_states mts
                     JOIN media m ON m.id = mts.media_id
@@ -8902,7 +9188,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 {"t_start_ms": 1300, "t_end_ms": 2400, "text": "alpha follow up"},
             ],
         )
-        assert first_run["status"] == "completed"
+        assert first_run.status == "completed"
 
         fragments_v1_response = auth_client.get(
             f"/media/{media_id}/fragments",
@@ -8958,7 +9244,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 {"t_start_ms": 6300, "t_end_ms": 7600, "text": "beta follow up"},
             ],
         )
-        assert second_run["status"] == "completed"
+        assert second_run.status == "completed"
 
         fragments_v2_response = auth_client.get(
             f"/media/{media_id}/fragments",
@@ -9037,7 +9323,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 {"t_start_ms": 0, "t_end_ms": 1400, "text": "anchor offset update sample"},
             ],
         )
-        assert first_run["status"] == "completed"
+        assert first_run.status == "completed"
 
         fragments_response = auth_client.get(
             f"/media/{media_id}/fragments",
@@ -9305,6 +9591,335 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             f"after_first={queue_rows_after_retry} after_second={queue_rows_after_second_retry}"
         )
 
+    def test_write_transcript_version_is_the_single_versioning_writer_invariant(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Slice 1 keystone: the PUBLIC writer write_transcript_version pins the
+        version-sequence invariants on the normal path:
+          (a) version_no is contiguous (1, then 2);
+          (b) exactly one row is is_active afterward and it is the latest (v2);
+              the prior version (v1) is is_active=false;
+          (c) no spurious failure is raised on the normal path.
+        """
+        from nexus.services.transcripts.versions import (
+            TranscriptWriteResult,
+            write_transcript_version,
+        )
+
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        with direct_db.session() as session:
+            first_result = write_transcript_version(
+                session,
+                media_id=media_id,
+                created_by_user_id=user_id,
+                request_reason="episode_open",
+                transcript_coverage="full",
+                transcript_segments=[
+                    TranscriptSegmentInput(
+                        segment_idx=0,
+                        t_start_ms=0,
+                        t_end_ms=900,
+                        canonical_text="writer invariant one",
+                        speaker_label=None,
+                    ),
+                ],
+                now=datetime.now(UTC),
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            second_result = write_transcript_version(
+                session,
+                media_id=media_id,
+                created_by_user_id=user_id,
+                request_reason="search",
+                transcript_coverage="full",
+                transcript_segments=[
+                    TranscriptSegmentInput(
+                        segment_idx=0,
+                        t_start_ms=0,
+                        t_end_ms=1000,
+                        canonical_text="writer invariant two",
+                        speaker_label=None,
+                    ),
+                ],
+                now=datetime.now(UTC),
+            )
+            session.commit()
+
+        # (c) the normal path returns a result without raising.
+        assert isinstance(first_result, TranscriptWriteResult)
+        assert isinstance(second_result, TranscriptWriteResult)
+
+        # (a) version_no is contiguous: first call -> 1, second call -> 2.
+        assert first_result.version_no == 1
+        assert second_result.version_no == 2
+
+        with direct_db.session() as session:
+            version_rows = session.execute(
+                text(
+                    """
+                    SELECT version_no, is_active
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    ORDER BY version_no ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+            active_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id AND is_active
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            latest_active_version_no = session.execute(
+                text(
+                    """
+                    SELECT version_no
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id AND is_active
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        # (a) exactly two contiguous versions exist.
+        assert [row[0] for row in version_rows] == [1, 2]
+        # (b) exactly one active row, and it is the latest (v2); v1 is inactive.
+        assert int(active_count) == 1
+        assert int(latest_active_version_no) == 2
+        assert version_rows[0] == (1, False)
+        assert version_rows[1] == (2, True)
+
+    def test_concurrent_write_transcript_version_serializes_without_lost_transcript(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Slice 1 keystone race: two CONCURRENT write_transcript_version calls on the
+        SAME media_id both succeed under the advisory lock — neither raises, the two
+        allocated version_no values are contiguous {1, 2}, exactly one row stays
+        is_active, and BOTH committed transcripts persist (no lost transcript).
+
+        This pins the happy-path lock-serialization that the existing tests leave
+        unproven: the sequential keystone never overlaps, and the conflict-translation
+        test deliberately bypasses the lock with raw-SQL seeding. Here both workers run
+        the REAL writer on independent connections and commit inside the worker, so the
+        pg_advisory_xact_lock('transcript-version:{media_id}') must serialize them.
+        """
+        from nexus.services.transcripts.versions import write_transcript_version
+
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        results_lock = threading.Lock()
+        returned_version_nos: list[int] = []
+
+        def write_one(index: int) -> None:
+            with direct_db.session() as session:
+                result = write_transcript_version(
+                    session,
+                    media_id=media_id,
+                    created_by_user_id=user_id,
+                    request_reason="episode_open",
+                    transcript_coverage="full",
+                    transcript_segments=[
+                        TranscriptSegmentInput(
+                            segment_idx=0,
+                            t_start_ms=0,
+                            t_end_ms=900,
+                            canonical_text=f"concurrent writer {index}",
+                            speaker_label=None,
+                        ),
+                    ],
+                    now=datetime.now(UTC),
+                )
+                session.commit()
+            with results_lock:
+                returned_version_nos.append(result.version_no)
+
+        errors = _run_concurrent_workers(2, write_one)
+
+        # No worker raised: not E_RETRY_INVALID_STATE, not E_TRANSCRIPTION_FAILED, not
+        # an IntegrityError — the lock made both writes succeed.
+        assert not errors, f"concurrent transcript-version writers failed: {errors}"
+
+        # Both returned version_no are contiguous {1, 2} (order is nondeterministic).
+        assert set(returned_version_nos) == {1, 2}, (
+            f"concurrent writers must allocate contiguous versions, got {returned_version_nos}"
+        )
+
+        with direct_db.session() as session:
+            persisted_version_nos = [
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT version_no
+                        FROM podcast_transcript_versions
+                        WHERE media_id = :media_id
+                        ORDER BY version_no ASC
+                        """
+                    ),
+                    {"media_id": media_id},
+                ).fetchall()
+            ]
+            active_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id AND is_active
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            distinct_transcripts = session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT transcript_version_id)
+                    FROM podcast_transcript_segments
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        # Exactly two contiguous version rows persisted.
+        assert persisted_version_nos == [1, 2], (
+            f"expected two contiguous committed versions, got {persisted_version_nos}"
+        )
+        # Exactly one active row survives.
+        assert int(active_count) == 1, (
+            f"exactly one transcript version must remain active, got {active_count}"
+        )
+        # Both transcripts persisted: each version owns its own segments, so neither
+        # committed transcript was lost or overwritten by the other writer.
+        assert int(distinct_transcripts) == 2, (
+            "both committed transcripts must persist (one segment set per version), "
+            f"got {distinct_transcripts}"
+        )
+
+    def test_write_transcript_version_translates_unique_index_conflict_to_retry(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Slice 1 belt-and-suspenders: when a concurrent transaction has already
+        inserted the active row the writer is about to allocate, the partial unique
+        index uix_podcast_transcript_versions_media_active (and the
+        uq_podcast_transcript_versions_media_no unique on (media_id, version_no))
+        reject the writer's INSERT. The raw IntegrityError must be translated into a
+        typed, retryable ApiError(E_RETRY_INVALID_STATE) — NOT a raw IntegrityError
+        and NOT E_TRANSCRIPTION_FAILED.
+
+        The advisory lock serializes two writer calls, so the only way to reach the
+        index conflict is a concurrent transaction whose uncommitted active version
+        row is invisible to the writer's MAX(version_no) allocation but present at
+        INSERT time. A background session inserts version_no=1 (is_active=true)
+        without committing; the writer (running on a separate, advisory-locked
+        session) deactivates nothing it can see, allocates version_no=1, and its
+        INSERT collides with the still-pending duplicate. This pins the translation
+        via the PUBLIC seam only (the colliding row is seeded with raw SQL; no
+        private symbol of versions.py is monkeypatched).
+        """
+        from nexus.services.transcripts.versions import write_transcript_version
+
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        colliding_row_inserted = threading.Event()
+        background_errors: list[Exception] = []
+
+        def _insert_colliding_active_version() -> None:
+            try:
+                with direct_db.session() as session:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO podcast_transcript_versions (
+                                id, media_id, version_no, transcript_coverage,
+                                is_active, request_reason, created_by_user_id,
+                                created_at, updated_at
+                            )
+                            VALUES (
+                                :id, :media_id, 1, 'full', true, 'episode_open',
+                                :created_by_user_id, :now, :now
+                            )
+                            """
+                        ),
+                        {
+                            "id": uuid4(),
+                            "media_id": media_id,
+                            "created_by_user_id": user_id,
+                            "now": datetime.now(UTC),
+                        },
+                    )
+                    # Hold the row uncommitted so the writer's INSERT collides on the
+                    # pending unique key, then let the writer observe the conflict and
+                    # commit to surface a real IntegrityError.
+                    colliding_row_inserted.set()
+                    time.sleep(1.0)
+                    session.commit()
+            except Exception as exc:  # pragma: no cover - surfaced via assertion below
+                background_errors.append(exc)
+                colliding_row_inserted.set()
+
+        background_thread = threading.Thread(target=_insert_colliding_active_version, daemon=True)
+        background_thread.start()
+        try:
+            assert colliding_row_inserted.wait(timeout=5), (
+                "background session must insert the colliding active version row"
+            )
+
+            with direct_db.session() as session:  # noqa: SIM117
+                with pytest.raises(ApiError) as exc_info:
+                    write_transcript_version(
+                        session,
+                        media_id=media_id,
+                        created_by_user_id=user_id,
+                        request_reason="search",
+                        transcript_coverage="full",
+                        transcript_segments=[
+                            TranscriptSegmentInput(
+                                segment_idx=0,
+                                t_start_ms=0,
+                                t_end_ms=900,
+                                canonical_text="retry conflict",
+                                speaker_label=None,
+                            ),
+                        ],
+                        now=datetime.now(UTC),
+                    )
+                session.rollback()
+        finally:
+            background_thread.join(timeout=8)
+
+        assert not background_errors, f"background seeding failed: {background_errors}"
+        assert exc_info.value.code == ApiErrorCode.E_RETRY_INVALID_STATE, (
+            "a lost transcript-version race must translate to a retryable typed error, "
+            f"got {exc_info.value.code}"
+        )
+        assert exc_info.value.code != ApiErrorCode.E_TRANSCRIPTION_FAILED
+
 
 # =============================================================================
 # Multi-library subscription tests (docs/multi-library-assignment.md §13.1)
@@ -9389,7 +10004,7 @@ class TestSubscribeWithLibraryIds:
         self, auth_client, monkeypatch, direct_db
     ):
         """Initial sync backfills existing episodes into the subscription's libraries."""
-        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -9453,7 +10068,7 @@ class TestSubscribeWithLibraryIds:
                 podcast_id=podcast_id,
             )
             session.commit()
-        assert sync_result["sync_status"] in {"complete", "source_limited"}, (
+        assert sync_result.sync_status in {"complete", "source_limited"}, (
             f"sync should complete to backfill episodes; got {sync_result}"
         )
 
@@ -9484,7 +10099,7 @@ class TestSubscribeWithLibraryIds:
         self, auth_client, monkeypatch, direct_db
     ):
         """New episodes synced into an existing subscription inherit its library set."""
-        from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -9592,7 +10207,7 @@ class TestSubscribeWithLibraryIds:
         self, auth_client, monkeypatch, direct_db
     ):
         """`per_feed_library_ids` overrides `default_library_ids` for that feed only."""
-        from nexus.services.podcasts.catalog import validate_and_normalize_feed_url
+        from nexus.services.podcasts.identity import validate_and_normalize_feed_url
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)

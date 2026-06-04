@@ -3655,7 +3655,6 @@ class TestWorkerRuntime:
             table_name="media_transcript_states",
             keys=["updated_at", "media_id"],
             predicate_fragments=[
-                "active_transcript_version_id IS NOT NULL",
                 "ready",
                 "partial",
                 "full",
@@ -6228,7 +6227,7 @@ class TestMigration0026SemanticChunkBackfill:
             state_row = session.execute(
                 text(
                     """
-                    SELECT transcript_state, transcript_coverage, semantic_status, active_transcript_version_id
+                    SELECT transcript_state, transcript_coverage, semantic_status
                     FROM media_transcript_states
                     WHERE media_id = :media_id
                     """
@@ -6279,7 +6278,9 @@ class TestMigration0026SemanticChunkBackfill:
             "legacy transcript rows backfilled before pgvector cutover must be marked pending "
             "until re-indexed with production semantic embeddings"
         )
-        assert state_row[3] is not None
+        # The active version is resolved by podcast_transcript_versions.is_active
+        # (the denormalized active-version pointer was dropped in 0130); the
+        # version_row is_active assertion below covers "legacy media has an active version".
         assert version_row is not None
         assert version_row[1] == 1
         assert version_row[2] is True
@@ -6588,9 +6589,9 @@ class TestLibraryEntriesCutoverMigration:
         assert "ck_library_entries_position_non_negative" in constraint_names
         assert "uq_library_entries_library_media" in constraint_names
         assert "uq_library_entries_library_podcast" in constraint_names
+        assert "uq_library_entries_library_position_unique" in constraint_names
 
         index_names = {row[0] for row in indexes}
-        assert "ix_library_entries_library_position" in index_names
         assert "ix_library_entries_library_order" in index_names
         assert "idx_library_entries_media_library" in index_names
 
@@ -6598,6 +6599,26 @@ class TestLibraryEntriesCutoverMigration:
         assert color_column[1] == "text"
         assert color_column[2] == "YES"
         assert legacy_table is None, "legacy library_media table must be removed at head"
+
+    def test_head_library_entries_fks_are_non_cascading(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            fks = session.execute(
+                text(
+                    """
+                    SELECT conname, confdeltype
+                    FROM pg_constraint
+                    WHERE conrelid = 'library_entries'::regclass
+                      AND contype = 'f'
+                    """
+                )
+            ).fetchall()
+
+        delete_actions = {row[0]: row[1] for row in fks}
+        # 'a' = NO ACTION. Cleanup is explicit in application code (database.md); the
+        # media_id/podcast_id CASCADE and the library_id ORM/DDL mismatch from 0047 are
+        # gone after 0131.
+        assert len(delete_actions) == 3, delete_actions
+        assert all(action == "a" for action in delete_actions.values()), delete_actions
 
     def test_head_contains_request_storm_hot_path_indexes(self, migrated_engine):
         with Session(migrated_engine) as session:

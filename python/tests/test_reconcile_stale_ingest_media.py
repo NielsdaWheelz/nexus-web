@@ -436,7 +436,6 @@ def _insert_ready_podcast_with_semantic_backlog(
                 transcript_state,
                 transcript_coverage,
                 semantic_status,
-                active_transcript_version_id,
                 last_request_reason,
                 last_error_code,
                 created_at,
@@ -447,7 +446,6 @@ def _insert_ready_podcast_with_semantic_backlog(
                 'ready',
                 'full',
                 :semantic_status,
-                :version_id,
                 'search',
                 :last_error_code,
                 :updated_at,
@@ -458,7 +456,6 @@ def _insert_ready_podcast_with_semantic_backlog(
         {
             "media_id": media_id,
             "semantic_status": semantic_status,
-            "version_id": version_id,
             "last_error_code": "E_INTERNAL" if semantic_status == "failed" else None,
             "updated_at": updated_at,
         },

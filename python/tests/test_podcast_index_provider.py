@@ -1,4 +1,10 @@
-"""Unit tests for PodcastIndex provider retry and parsing behavior."""
+"""Unit tests for PodcastIndex provider retry and parsing behavior.
+
+The retry/backoff/Retry-After loop lives in `nexus.services.net.http_retry`
+(`get_json_with_retry`), which `provider._get_json` delegates to. These tests drive
+the public `search_podcasts` and patch the HTTP + sleep seams inside that helper, so
+they exercise the real retry logic end-to-end through the provider.
+"""
 
 from __future__ import annotations
 
@@ -48,16 +54,16 @@ def _install_sequence_get(
     calls: list[str] = []
     sequence = list(responses)
 
-    def fake_get(url: str, **kwargs: Any) -> httpx.Response:
+    def fake_get(_self: Any, url: str, **kwargs: Any) -> httpx.Response:
         calls.append(url)
         if not sequence:
-            raise AssertionError("httpx.get called more times than expected")
+            raise AssertionError("httpx.Client.get called more times than expected")
         next_item = sequence.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
         return next_item
 
-    monkeypatch.setattr("nexus.services.podcasts.provider.httpx.get", fake_get)
+    monkeypatch.setattr("httpx.Client.get", fake_get)
     return calls
 
 
@@ -67,7 +73,7 @@ def _capture_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     def fake_sleep(seconds: float) -> None:
         delays.append(float(seconds))
 
-    monkeypatch.setattr("nexus.services.podcasts.provider.time.sleep", fake_sleep)
+    monkeypatch.setattr("nexus.services.net.http_retry.time.sleep", fake_sleep)
     return delays
 
 
@@ -189,3 +195,13 @@ def test_search_podcasts_returns_empty_list_for_empty_feeds(
     )
 
     assert _client().search_podcasts("systems", 3) == []
+
+
+def test_search_podcasts_fails_on_non_dict_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    # get_json_with_retry rejects a non-object JSON body as a provider error.
+    _install_sequence_get(
+        monkeypatch,
+        [_json_response(status_code=200, payload=["unexpected", "array"])],
+    )
+
+    _assert_provider_unavailable(lambda: _client().search_podcasts("systems", 3))

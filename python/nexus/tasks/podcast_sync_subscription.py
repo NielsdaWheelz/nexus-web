@@ -1,10 +1,11 @@
 """Worker job handler for podcast subscription sync data-plane ingestion."""
 
+from dataclasses import asdict
 from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
 logger = get_logger(__name__)
 
@@ -30,11 +31,12 @@ def podcast_sync_subscription_job(
     session_factory = get_session_factory()
     db = session_factory()
     try:
-        result = run_podcast_subscription_sync_now(
-            db,
-            user_id=user_uuid,
-            podcast_id=podcast_uuid,
-            request_id=request_id,
+        result = asdict(
+            run_podcast_subscription_sync_now(
+                db,
+                user_id=user_uuid,
+                podcast_id=podcast_uuid,
+            )
         )
         logger.info(
             "podcast_sync_task_completed",

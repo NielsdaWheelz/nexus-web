@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import UUID
@@ -330,17 +331,16 @@ def create_nasa_podcast_episode(
     for job_id in job_ids:
         direct_db.register_cleanup("background_jobs", "id", job_id)
 
-    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
         sync_result = run_podcast_subscription_sync_now(
             session,
             user_id=user_id,
             podcast_id=podcast_id,
-            request_id="real-media-podcast-sync-fixture",
         )
         session.commit()
-    assert sync_result["sync_status"] == "complete", sync_result
+    assert sync_result.sync_status == "complete", sync_result
 
     episodes_response = auth_client.get(f"/podcasts/{podcast_id}/episodes", headers=headers)
     assert episodes_response.status_code == 200, episodes_response.text
@@ -362,7 +362,7 @@ def create_nasa_podcast_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
+    from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
     with direct_db.session() as session:
         transcription_result = run_podcast_transcription_now(
@@ -372,17 +372,17 @@ def create_nasa_podcast_episode(
             request_id="real-media-podcast-transcript-fixture",
         )
         session.commit()
-    if transcription_result.get("status") == "skipped":
-        assert transcription_result.get("reason") == "not_pending", transcription_result
-        assert transcription_result.get("job_status") == "completed", transcription_result
+    if transcription_result.status == "skipped":
+        assert transcription_result.reason == "not_pending", transcription_result
+        assert transcription_result.job_status == "completed", transcription_result
     else:
-        assert transcription_result["status"] == "completed", transcription_result
-        assert transcription_result["segment_count"] > 0, transcription_result
+        assert transcription_result.status == "completed", transcription_result
+        assert (transcription_result.segment_count or 0) > 0, transcription_result
 
     assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    return media_id, podcast_id, transcription_result
+    return media_id, podcast_id, asdict(transcription_result)
 
 
 def upload_file_media(
