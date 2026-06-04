@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.services import models as models_service
 
 router = APIRouter(tags=["models"])
@@ -51,4 +51,4 @@ def list_models(
         {"data": [ModelOut, ...]}
     """
     models = models_service.list_available_models(db=db, user_id=viewer.user_id)
-    return success_response([m.model_dump(mode="json") for m in models])
+    return ok(models)

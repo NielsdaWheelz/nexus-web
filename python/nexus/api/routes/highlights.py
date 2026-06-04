@@ -3,21 +3,29 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.highlights import (
     CreateHighlightRequest,
     CreatePdfHighlightRequest,
     UpdateHighlightRequest,
 )
 from nexus.services import highlights as highlights_service
+from nexus.services import pdf_highlights as pdf_highlights_service
 
 router = APIRouter(tags=["highlights"])
+
+
+def _parse_mine_only(raw: str) -> bool:
+    """Coerce the `mine_only` query token, 400ing on anything but true/false."""
+    if raw not in ("true", "false"):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "mine_only must be 'true' or 'false'")
+    return raw == "true"
 
 
 # =============================================================================
@@ -39,30 +47,22 @@ def create_highlight(
         fragment_id=fragment_id,
         req=request,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.get("/fragments/{fragment_id}/highlights")
 def list_highlights(
     fragment_id: UUID,
-    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    mine_only: Annotated[str, Query()] = "true",
 ) -> dict:
     """List highlights for a fragment."""
-    mine_only_raw = request.query_params.get("mine_only", "true")
-    if mine_only_raw not in ("true", "false"):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "mine_only must be 'true' or 'false'",
-        )
-    mine_only = mine_only_raw == "true"
-
     result = highlights_service.list_highlights_for_fragment(
         db=db,
         viewer_id=viewer.user_id,
         fragment_id=fragment_id,
-        mine_only=mine_only,
+        mine_only=_parse_mine_only(mine_only),
     )
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
@@ -70,24 +70,16 @@ def list_highlights(
 @router.get("/media/{media_id}/highlights")
 def list_media_highlights(
     media_id: UUID,
-    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    mine_only: Annotated[str, Query()] = "true",
 ) -> dict:
     """List every highlight of a media across all fragments and PDF pages."""
-    mine_only_raw = request.query_params.get("mine_only", "true")
-    if mine_only_raw not in ("true", "false"):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "mine_only must be 'true' or 'false'",
-        )
-    mine_only = mine_only_raw == "true"
-
     result = highlights_service.list_highlights_for_media(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        mine_only=mine_only,
+        mine_only=_parse_mine_only(mine_only),
     )
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
@@ -105,50 +97,41 @@ def create_pdf_highlight(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Create a PDF geometry highlight on a page."""
-    from nexus.services.pdf_highlights import create_pdf_highlight as svc_create
-
-    result = svc_create(
+    result = pdf_highlights_service.create_pdf_highlight(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
         req=request,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.get("/media/{media_id}/pdf-highlights")
 def list_pdf_highlights(
     media_id: UUID,
-    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    page_number: Annotated[str | None, Query()] = None,
+    mine_only: Annotated[str, Query()] = "true",
 ) -> dict:
     """List PDF highlights for a single page."""
-    from nexus.services.pdf_highlights import list_pdf_highlights as svc_list
-
-    page_raw = request.query_params.get("page_number")
-    if page_raw is None:
+    if page_number is None:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number is required")
     try:
-        page_number = int(page_raw)
+        page = int(page_number)
     except (TypeError, ValueError):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number must be an integer") from None
 
-    mine_only_raw = request.query_params.get("mine_only", "true")
-    if mine_only_raw not in ("true", "false"):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "mine_only must be 'true' or 'false'")
-    mine_only = mine_only_raw == "true"
-
-    result = svc_list(
+    result = pdf_highlights_service.list_pdf_highlights(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        page_number=page_number,
-        mine_only=mine_only,
+        page_number=page,
+        mine_only=_parse_mine_only(mine_only),
     )
     return success_response(
         {
-            "page_number": page_number,
+            "page_number": page,
             "highlights": [h.model_dump(mode="json") for h in result],
         }
     )
@@ -171,7 +154,7 @@ def get_highlight(
         viewer_id=viewer.user_id,
         highlight_id=highlight_id,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.patch("/highlights/{highlight_id}")
@@ -188,7 +171,7 @@ def update_highlight(
         highlight_id=highlight_id,
         req=request,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.delete("/highlights/{highlight_id}", status_code=204)

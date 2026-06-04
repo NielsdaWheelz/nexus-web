@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreatePinnedObjectRefRequest,
     ObjectRef,
@@ -51,7 +51,7 @@ def create_pinned_object(
             order_key=request.order_key,
         ),
     )
-    return success_response(pin.model_dump(mode="json", by_alias=True))
+    return ok(pin, by_alias=True)
 
 
 @router.patch("/{pin_id}")
@@ -70,7 +70,7 @@ def update_pinned_object(
             order_key=request.order_key,
         ),
     )
-    return success_response(pin.model_dump(mode="json", by_alias=True))
+    return ok(pin, by_alias=True)
 
 
 @router.delete("/{pin_id}", status_code=204)

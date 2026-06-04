@@ -1,6 +1,6 @@
 import { getEnv } from "@/lib/env";
-import { createRandomId } from "@/lib/createRandomId";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   PASSWORD_SIGN_IN_FAILURE_MESSAGE,
@@ -41,18 +41,13 @@ async function patchDisplayName(
   accessToken: string,
   displayName: string,
 ): Promise<boolean> {
-  const config = getEnv().internalApi;
+  const { fastApiBaseUrl } = getEnv().internalApi;
   try {
     const response = await boundedAuthFetch(
-      `${config.fastApiBaseUrl}/me`,
+      `${fastApiBaseUrl}/me`,
       {
         method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-          "X-Nexus-Internal": config.internalSecret,
-          "X-Request-ID": createRandomId(),
-        },
+        headers: internalAuthHeaders({ accessToken, json: true }),
         body: JSON.stringify({ display_name: displayName }),
       },
       "Display-name PATCH timed out",

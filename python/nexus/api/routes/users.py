@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.services import users as users_service
 
-router = APIRouter()
+router = APIRouter(tags=["users"])
 
 
 @router.get("/users/search")
@@ -29,4 +29,4 @@ def search_users(
     Minimum query length: 3 characters.
     """
     results = users_service.search_users(db, q, viewer.user_id, limit=limit)
-    return success_response([r.model_dump(mode="json") for r in results])
+    return ok(results)

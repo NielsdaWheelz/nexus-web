@@ -2,13 +2,14 @@ import {
   AUTH_ENDED_FEEDBACK_COOKIE,
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
+import { noStore } from "@/lib/auth/no-store";
 import { normalizeAuthRedirect } from "@/lib/auth/redirects";
 import { refreshSession } from "@/lib/auth/refresh";
+import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import {
   clearSupabaseAuthCookies,
   getSupabaseAuthCookieNames,
 } from "@/lib/auth/session-cookie";
-import { type CookieToSet } from "@/lib/supabase/types";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
@@ -18,25 +19,9 @@ const TEMPORARY_REDIRECT = 307;
 const NO_CONTENT = 204;
 const UNAUTHORIZED = 401;
 
-function applyRotatedCookies(
-  response: NextResponse,
-  cookiesToSet: CookieToSet[]
-): void {
-  for (const { name, value, options } of cookiesToSet) {
-    response.cookies.set(name, value, options);
-  }
-}
-
 async function clearAuthCookies(response: NextResponse): Promise<void> {
   const cookieNames = getSupabaseAuthCookieNames((await cookies()).getAll());
   clearSupabaseAuthCookies(response, cookieNames);
-}
-
-// A response that carries a rotated auth Set-Cookie must never be cached: a
-// cached Set-Cookie would hand one user another user's session.
-function noStore(response: NextResponse): NextResponse {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
 }
 
 function markSessionEnded(response: NextResponse): void {

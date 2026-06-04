@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth/session-cookie";
 import { __resetEnvForTests } from "@/lib/env";
 import {
+  proxyExtensionToFastAPI,
   proxyPublicToFastAPIWithDeps,
   proxyToFastAPI,
   proxyToFastAPIWithDeps,
@@ -706,5 +707,35 @@ describe("proxyPublicToFastAPI", () => {
     });
     expect(backendFetch).not.toHaveBeenCalled();
     expect(readSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("proxyExtensionToFastAPI", () => {
+  beforeEach(() => {
+    __resetEnvForTests();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards the query string to FastAPI", async () => {
+    vi.stubEnv("FASTAPI_BASE_URL", "http://api.local");
+    vi.stubEnv("NEXUS_INTERNAL_SECRET", "internal-secret");
+    const backendFetch = mockBackendFetch();
+    vi.stubGlobal("fetch", backendFetch);
+
+    const response = await proxyExtensionToFastAPI(
+      new Request("http://localhost:3000/api/extension/sync?cursor=abc&limit=20", {
+        headers: { authorization: "Bearer ext-token" },
+      }),
+      "/extension/sync"
+    );
+
+    expect(response.status).toBe(200);
+    const [url] = firstFetchCall(backendFetch);
+    expect(url).toBe("http://api.local/extension/sync?cursor=abc&limit=20");
   });
 });

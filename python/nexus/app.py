@@ -51,9 +51,6 @@ from starlette.requests import ClientDisconnect
 from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
-from nexus.api.routes.media_events import router as media_events_router
-from nexus.api.routes.stream import router as stream_router
-from nexus.api.routes.stream_tokens import router as stream_tokens_router
 from nexus.auth.middleware import AuthMiddleware
 from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
@@ -277,16 +274,11 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
         return await call_next(request)
 
     # Include API routes (must be before middleware for correct ordering)
-    # Use router factory to avoid import-time settings loading
+    # Use router factory to avoid import-time settings loading. The factory owns
+    # every router, including the browser-callable SSE streams and the BFF
+    # stream-token mint.
     api_router = create_api_router()
     app.include_router(api_router)
-
-    # Include browser-callable stream event routes.
-    app.include_router(stream_router)
-    app.include_router(media_events_router)
-
-    # Include stream token minting route (/internal/stream-tokens) for the BFF.
-    app.include_router(stream_tokens_router)
 
     # Add auth middleware (runs on all requests except public paths)
     if not skip_auth_middleware:

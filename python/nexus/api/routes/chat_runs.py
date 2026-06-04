@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
-from nexus.schemas.conversation import ChatRunCreateRequest
+from nexus.responses import ok
+from nexus.schemas.conversation import CHAT_RUN_STATUS_FILTER, ChatRunCreateRequest
 from nexus.services import chat_runs as chat_runs_service
 
 router = APIRouter(tags=["chat-runs"])
@@ -36,8 +36,7 @@ def create_chat_run(
         key_mode=body.key_mode,
         idempotency_key=idempotency_key,
     )
-    payload = result.model_dump(mode="json")
-    return success_response(payload)
+    return ok(result)
 
 
 @router.get("/chat-runs")
@@ -45,7 +44,7 @@ def list_chat_runs(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     conversation_id: Annotated[UUID, Query()],
-    status: Annotated[str, Query()] = "active",
+    status: Annotated[CHAT_RUN_STATUS_FILTER, Query()] = "active",
 ) -> dict:
     results = chat_runs_service.list_chat_runs_for_conversation(
         db=db,
@@ -53,8 +52,7 @@ def list_chat_runs(
         conversation_id=conversation_id,
         status=status,
     )
-    payload = [result.model_dump(mode="json") for result in results]
-    return success_response(payload)
+    return ok(results)
 
 
 @router.get("/chat-runs/{run_id}")
@@ -64,8 +62,7 @@ def get_chat_run(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     result = chat_runs_service.get_chat_run(db=db, viewer_id=viewer.user_id, run_id=run_id)
-    payload = result.model_dump(mode="json")
-    return success_response(payload)
+    return ok(result)
 
 
 @router.post("/chat-runs/{run_id}/cancel")
@@ -75,5 +72,20 @@ def cancel_chat_run(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     result = chat_runs_service.cancel_chat_run(db=db, viewer_id=viewer.user_id, run_id=run_id)
-    payload = result.model_dump(mode="json")
-    return success_response(payload)
+    return ok(result)
+
+
+@router.post("/messages/{assistant_message_id}/retry", status_code=200)
+def retry_failed_assistant_response(
+    assistant_message_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    result = chat_runs_service.retry_failed_assistant_response(
+        db=db,
+        viewer_id=viewer.user_id,
+        assistant_message_id=assistant_message_id,
+        idempotency_key=idempotency_key,
+    )
+    return ok(result)

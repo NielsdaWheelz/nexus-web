@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreateNoteBlockRequest,
     CreatePageRequest,
@@ -44,7 +44,7 @@ def create_page(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     page = notes_service.create_page(db, viewer.user_id, request)
-    return success_response(page.model_dump(mode="json", by_alias=True))
+    return ok(page, by_alias=True)
 
 
 @router.get("/pages/{page_id}")
@@ -54,7 +54,7 @@ def get_page(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     page = notes_service.get_page(db, viewer.user_id, page_id)
-    return success_response(page.model_dump(mode="json", by_alias=True))
+    return ok(page, by_alias=True)
 
 
 @router.patch("/pages/{page_id}")
@@ -65,7 +65,7 @@ def update_page(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     page = notes_service.update_page(db, viewer.user_id, page_id, request)
-    return success_response(page.model_dump(mode="json", by_alias=True))
+    return ok(page, by_alias=True)
 
 
 @router.patch("/pages/{page_id}/document")
@@ -76,7 +76,7 @@ def patch_page_document(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     result = notes_service.patch_page_document(db, viewer.user_id, page_id, request)
-    return success_response(result.model_dump(mode="json", by_alias=True))
+    return ok(result, by_alias=True)
 
 
 @router.delete("/pages/{page_id}", status_code=204)
@@ -100,7 +100,7 @@ def get_daily_note_for_today(
         viewer.user_id,
         time_zone=time_zone,
     )
-    return success_response(daily.model_dump(mode="json", by_alias=True))
+    return ok(daily, by_alias=True)
 
 
 @router.post("/daily/{local_date}/quick-capture", status_code=201)
@@ -118,7 +118,7 @@ def quick_capture_to_daily_date(
         request=request,
         time_zone=time_zone,
     )
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.get("/daily/{local_date}")
@@ -129,7 +129,7 @@ def get_daily_note_by_date(
     time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
 ) -> dict:
     daily = notes_service.get_daily_note(db, viewer.user_id, local_date, time_zone=time_zone)
-    return success_response(daily.model_dump(mode="json", by_alias=True))
+    return ok(daily, by_alias=True)
 
 
 @router.post("/blocks", status_code=201)
@@ -139,7 +139,7 @@ def create_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.create_note_block(db, viewer.user_id, request)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.get("/blocks/{block_id}")
@@ -149,7 +149,7 @@ def get_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.get_note_block(db, viewer.user_id, block_id)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.patch("/blocks/{block_id}")
@@ -160,7 +160,7 @@ def update_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.update_note_block(db, viewer.user_id, block_id, request)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.delete("/blocks/{block_id}", status_code=204)
@@ -182,7 +182,7 @@ def move_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.move_note_block(db, viewer.user_id, block_id, request)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.post("/blocks/{block_id}/split")
@@ -193,7 +193,7 @@ def split_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.split_note_block(db, viewer.user_id, block_id, request)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)
 
 
 @router.post("/blocks/{block_id}/merge")
@@ -203,4 +203,4 @@ def merge_note_block(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     block = notes_service.merge_note_block(db, viewer.user_id, block_id)
-    return success_response(block.model_dump(mode="json", by_alias=True))
+    return ok(block, by_alias=True)

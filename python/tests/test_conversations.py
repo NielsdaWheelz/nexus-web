@@ -306,6 +306,48 @@ class TestListConversations:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_list_conversations_has_reference_ignores_invalid_scope(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """has_reference returns the reference listing even with an invalid scope.
+
+        Pinned bypass (decision 14): when has_reference is set, scope is
+        meaningless (reference filtering is viewer-owned-only) and is neither
+        validated nor applied. An otherwise-400 scope value must NOT 400 here.
+        """
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            library_id = get_user_default_library(session, user_id)
+            assert library_id is not None
+            media_id = create_test_media_in_library(
+                session, user_id, library_id, title="Referenced Doc"
+            )
+            conversation_id = create_test_conversation(session, user_id)
+
+        direct_db.register_cleanup(
+            "conversation_references", "conversation_id", conversation_id
+        )
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        uri = f"media:{media_id}"
+        add_resp = auth_client.post(
+            f"/conversations/{conversation_id}/references",
+            headers=auth_headers(user_id),
+            json={"resource_uri": uri},
+        )
+        assert add_resp.status_code == 201, add_resp.text
+
+        response = auth_client.get(
+            f"/conversations?has_reference={uri}&scope=not-a-valid-scope",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        ids = [c["id"] for c in response.json()["data"]]
+        assert str(conversation_id) in ids
+
 
 # =============================================================================
 # Conversation Get Tests
@@ -936,30 +978,6 @@ class TestListMessages:
 # =============================================================================
 # Removed Streaming Route Tests
 # =============================================================================
-
-
-class TestRemovedStreamingRoutesReturnNotFound:
-    """Removed conversation-scoped streaming routes return 404."""
-
-    def test_new_conversation_stream_route_returns_404(self, auth_client):
-        user_id = create_test_user_id()
-
-        response = auth_client.post(
-            "/conversations/messages/stream",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
-
-    def test_existing_conversation_stream_route_returns_404(self, auth_client):
-        user_id = create_test_user_id()
-
-        response = auth_client.post(
-            f"/conversations/{uuid4()}/messages/stream",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
 
 
 # =============================================================================

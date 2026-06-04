@@ -4,14 +4,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
-    OBJECT_TYPE_VALUES,
     CreateObjectLinkRequest,
     ObjectRef,
     UpdateObjectLinkRequest,
@@ -28,9 +28,10 @@ def _object_ref_or_400(
         return None
     if object_type is None or object_id is None:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"{name}_type and {name}_id must be paired")
-    if object_type not in OBJECT_TYPE_VALUES:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"{name}_type is invalid")
-    return ObjectRef.model_validate({"object_type": object_type, "object_id": object_id})
+    try:
+        return ObjectRef.model_validate({"object_type": object_type, "object_id": object_id})
+    except ValidationError:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"{name}_type is invalid") from None
 
 
 @router.get("")
@@ -76,7 +77,7 @@ def create_object_link(
             metadata=request.metadata,
         ),
     )
-    return success_response(link.model_dump(mode="json", by_alias=True))
+    return ok(link, by_alias=True)
 
 
 @router.patch("/{link_id}")
@@ -95,11 +96,9 @@ def update_object_link(
             a_order_key=request.a_order_key,
             b_order_key=request.b_order_key,
             metadata=request.metadata,
-            set_a_order_key="a_order_key" in request.model_fields_set,
-            set_b_order_key="b_order_key" in request.model_fields_set,
         ),
     )
-    return success_response(link.model_dump(mode="json", by_alias=True))
+    return ok(link, by_alias=True)
 
 
 @router.delete("/{link_id}", status_code=204)

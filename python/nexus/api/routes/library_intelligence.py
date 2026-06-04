@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.services import library_intelligence as library_intelligence_service
 
-router = APIRouter()
+router = APIRouter(tags=["library-intelligence"])
 
 
 @router.get("/libraries/{library_id}/intelligence")
@@ -26,7 +26,7 @@ def get_library_intelligence(
         viewer.user_id,
         library_id,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.post("/libraries/{library_id}/intelligence/refresh", status_code=202)
@@ -40,4 +40,4 @@ def refresh_library_intelligence(
         viewer.user_id,
         library_id,
     )
-    return JSONResponse(status_code=202, content=success_response(result.model_dump(mode="json")))
+    return JSONResponse(status_code=202, content=ok(result))

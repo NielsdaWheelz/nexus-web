@@ -3,14 +3,11 @@
 Push-driven: an AFTER trigger ``pg_notify``s the per-run / per-reading channel
 on each new event; the tail uses the shared stream LISTEN resource and re-reads
 on each notification. The synchronous DB reads run in a threadpool so they
-never block the event loop.
+never block the event loop. The framing and tail envelope live in ``_sse``.
 """
 
 from __future__ import annotations
 
-import json
-import time
-from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
@@ -18,38 +15,16 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from nexus.auth.stream_token import verify_stream_token
-from nexus.db.listen import StreamNotificationListener, open_stream_listener
+from nexus.api.deps import get_stream_viewer
+from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import set_stream_jti
 from nexus.schemas.conversation import ChatRunEventOut
 from nexus.schemas.oracle import OracleReadingEventOut
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import oracle as oracle_service
 
 router = APIRouter(tags=["streaming"])
-
-STREAM_IDLE_TTL_SECONDS = 45.0
-KEEPALIVE_INTERVAL_SECONDS = STREAM_IDLE_TTL_SECONDS / 3.0
-
-
-def get_stream_viewer(request: Request) -> UUID:
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Missing or invalid Authorization header",
-        )
-
-    token = auth_header[7:].strip()
-    if not token:
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Empty bearer token")
-
-    user_id, jti = verify_stream_token(token)
-    if jti:
-        set_stream_jti(jti)
-    return user_id
 
 
 @router.get("/chat-runs/{run_id}/events")
@@ -62,22 +37,16 @@ async def stream_chat_run_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     await run_in_threadpool(_assert_chat_run_owner, viewer_id, run_id)
-    listener = await open_stream_listener(
-        "chat_run_events", str(run_id), KEEPALIVE_INTERVAL_SECONDS
-    )
+    listener = await open_sse_listener("chat_run_events", str(run_id))
     return StreamingResponse(
-        _tail_chat_run_events(
+        tail_cursor_stream(
             request=request,
-            run_id=run_id,
-            viewer_id=viewer_id,
-            after=cursor,
             listener=listener,
+            after=cursor,
+            read_after=lambda c: _read_chat_run_events(viewer_id, run_id, c),
         ),
         media_type="text/event-stream; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
 
 
@@ -97,73 +66,6 @@ def _read_chat_run_events(
     return events, terminal
 
 
-async def _tail_chat_run_events(
-    *,
-    request: Request,
-    run_id: UUID,
-    viewer_id: UUID,
-    after: int,
-    listener: StreamNotificationListener,
-) -> AsyncIterator[str]:
-    cursor = after
-    last_keepalive = time.monotonic()
-    close_reason = "closed"
-
-    try:
-        async for _ in listener.notifications():
-            if await request.is_disconnected():
-                close_reason = "client_disconnected"
-                return
-
-            try:
-                events, terminal = await run_in_threadpool(
-                    _read_chat_run_events, viewer_id, run_id, cursor
-                )
-            except ApiError as exc:
-                if exc.code == ApiErrorCode.E_NOT_FOUND:
-                    close_reason = "not_found"
-                    return
-                raise
-
-            for event in events:
-                cursor = event.seq
-                yield _format_sse_event(event.seq, event.event_type, event.payload)
-                if event.event_type == "done":
-                    close_reason = "terminal"
-                    return
-
-            if terminal:
-                close_reason = "terminal"
-                return
-
-            now = time.monotonic()
-            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
-                yield ": keepalive\n\n"
-                last_keepalive = now
-    except BaseException:
-        close_reason = "error"
-        raise
-    finally:
-        await listener.close(reason=close_reason)
-
-
-def _parse_last_event_id(value: str | None) -> int:
-    if value is None or not value.strip():
-        return 0
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be an integer") from exc
-    if parsed < 0:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be non-negative")
-    return parsed
-
-
-def _format_sse_event(seq: int, event_type: str, payload: dict) -> str:
-    data = json.dumps(payload, separators=(",", ":"))
-    return f"id: {seq}\nevent: {event_type}\ndata: {data}\n\n"
-
-
 @router.get("/stream/oracle-readings/{reading_id}/events")
 async def stream_oracle_reading_events(
     request: Request,
@@ -174,15 +76,13 @@ async def stream_oracle_reading_events(
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
     await run_in_threadpool(_assert_reading_owner, viewer_id, reading_id)
-    listener = await open_stream_listener(
-        "oracle_reading_events", str(reading_id), KEEPALIVE_INTERVAL_SECONDS
-    )
+    listener = await open_sse_listener("oracle_reading_events", str(reading_id))
     return StreamingResponse(
-        _tail_oracle_reading_events(
+        tail_cursor_stream(
             request=request,
-            reading_id=reading_id,
-            after=cursor,
             listener=listener,
+            after=cursor,
+            read_after=lambda c: _read_reading_events(reading_id, c),
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
@@ -201,42 +101,13 @@ def _read_reading_events(reading_id: UUID, after: int) -> tuple[list[OracleReadi
     return events, terminal
 
 
-async def _tail_oracle_reading_events(
-    *,
-    request: Request,
-    reading_id: UUID,
-    after: int,
-    listener: StreamNotificationListener,
-) -> AsyncIterator[str]:
-    cursor = after
-    last_keepalive = time.monotonic()
-    close_reason = "closed"
-
+def _parse_last_event_id(value: str | None) -> int:
+    if value is None or not value.strip():
+        return 0
     try:
-        async for _ in listener.notifications():
-            if await request.is_disconnected():
-                close_reason = "client_disconnected"
-                return
-
-            events, terminal = await run_in_threadpool(_read_reading_events, reading_id, cursor)
-
-            for event in events:
-                cursor = event.seq
-                yield _format_sse_event(event.seq, event.event_type, event.payload)
-                if event.event_type == "done":
-                    close_reason = "terminal"
-                    return
-
-            if terminal:
-                close_reason = "terminal"
-                return
-
-            now = time.monotonic()
-            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
-                yield ": keepalive\n\n"
-                last_keepalive = now
-    except BaseException:
-        close_reason = "error"
-        raise
-    finally:
-        await listener.close(reason=close_reason)
+        parsed = int(value)
+    except ValueError as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be an integer") from exc
+    if parsed < 0:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be non-negative")
+    return parsed

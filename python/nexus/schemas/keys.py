@@ -15,42 +15,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from nexus.llm_catalog import (
-    VALID_PROVIDERS,
-    LLMProvider,
-    ModelAvailableVia,
-    ModelTier,
-    ReasoningMode,
-)
+from nexus.llm_catalog import VALID_PROVIDERS, LLMProvider
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]
 KeyProviderStateStatus = Literal["missing", "untested", "valid", "invalid", "revoked"]
-
-
-# =============================================================================
-# Model Registry Schemas
-# =============================================================================
-
-
-class ModelOut(BaseModel):
-    """Response schema for an LLM model.
-
-    Models are global registry entries. The models returned are filtered
-    by availability to the current user based on key status.
-    """
-
-    id: UUID
-    provider: str
-    provider_display_name: str
-    model_name: str
-    model_display_name: str
-    model_tier: ModelTier
-    reasoning_modes: list[ReasoningMode]
-    max_context_tokens: int
-    available_via: ModelAvailableVia
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # =============================================================================

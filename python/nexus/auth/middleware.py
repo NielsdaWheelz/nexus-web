@@ -18,9 +18,11 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import error_response
+from nexus.stream_paths import is_stream_path
 
 logger = logging.getLogger(__name__)
 
@@ -140,17 +142,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # Stream routes use Depends(verify_stream_token) instead of Supabase auth.
-        # The iss/aud requirement on stream tokens prevents accidental acceptance
-        # of supabase JWTs even if someone hits a stream endpoint with regular auth.
-        path = request.url.path
-        if (
-            (path.startswith("/chat-runs/") and path.endswith("/events"))
-            or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
-            or (path.startswith("/stream/conversations/") and path.endswith("/messages"))
-            or path == "/stream/conversations/messages"
-            or (path.startswith("/media/") and path.endswith("/events"))
-        ):
+        # Stream routes authenticate via the stream-token bearer (get_stream_viewer)
+        # instead of Supabase auth. The iss/aud requirement on stream tokens prevents
+        # accidental acceptance of supabase JWTs if one hits a stream endpoint.
+        if is_stream_path(request.url.path):
             return await call_next(request)
 
         # Step 1: Check internal header if required
@@ -276,51 +271,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
             Tuple of (token, error_response). Token is empty string if error.
         """
         auth_header = request.headers.get(AUTHORIZATION_HEADER)
-
         if not auth_header:
             logger.warning(
                 "auth_failure",
-                extra={
-                    "reason": "missing_header",
-                    "request_path": request.url.path,
-                },
+                extra={"reason": "missing_header", "request_path": request.url.path},
             )
             return "", self._error_json_response(
-                ApiErrorCode.E_UNAUTHENTICATED,
-                "Authentication required",
-                401,
+                ApiErrorCode.E_UNAUTHENTICATED, "Authentication required", 401
             )
 
-        # Check for Bearer prefix (case-insensitive)
-        if not auth_header.lower().startswith("bearer "):
+        token = parse_bearer_token(auth_header)
+        if token is None:
             logger.warning(
                 "auth_failure",
-                extra={
-                    "reason": "invalid_header_format",
-                    "request_path": request.url.path,
-                },
+                extra={"reason": "invalid_header_format", "request_path": request.url.path},
             )
             return "", self._error_json_response(
-                ApiErrorCode.E_UNAUTHENTICATED,
-                "Invalid authorization header format",
-                401,
-            )
-
-        # Extract token (everything after "Bearer ")
-        token = auth_header[7:].strip()
-
-        if not token:
-            logger.warning(
-                "auth_failure",
-                extra={
-                    "reason": "invalid_header_format",
-                    "request_path": request.url.path,
-                },
-            )
-            return "", self._error_json_response(
-                ApiErrorCode.E_UNAUTHENTICATED,
-                "Invalid authorization header format",
-                401,
+                ApiErrorCode.E_UNAUTHENTICATED, "Invalid authorization header format", 401
             )
 
         return token, None

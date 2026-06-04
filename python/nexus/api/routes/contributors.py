@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorExternalIdCreateRequest,
@@ -48,7 +48,7 @@ def get_contributor(
         contributor_handle,
         viewer.user_id,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.get("/{contributor_handle}/works")
@@ -87,7 +87,7 @@ def add_contributor_alias(
         contributor_handle=contributor_handle,
         request=request,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.delete("/{contributor_handle}/aliases/{alias_id}")
@@ -104,7 +104,7 @@ def delete_contributor_alias(
         contributor_handle=contributor_handle,
         alias_id=alias_id,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.post("/{contributor_handle}/external-ids", status_code=201)
@@ -121,7 +121,7 @@ def add_contributor_external_id(
         contributor_handle=contributor_handle,
         request=request,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.delete("/{contributor_handle}/external-ids/{external_id_id}")
@@ -138,7 +138,7 @@ def delete_contributor_external_id(
         contributor_handle=contributor_handle,
         external_id_id=external_id_id,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.post("/{contributor_handle}/split", status_code=201)
@@ -155,7 +155,7 @@ def split_contributor(
         contributor_handle=contributor_handle,
         request=request,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)
 
 
 @router.post("/{contributor_handle}/tombstone")
@@ -170,4 +170,4 @@ def tombstone_contributor(
         actor_roles=viewer.roles,
         contributor_handle=contributor_handle,
     )
-    return success_response(contributor.model_dump(mode="json"))
+    return ok(contributor)

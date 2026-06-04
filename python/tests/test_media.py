@@ -18,7 +18,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
+from starlette.routing import Match
 
+from nexus.api.routes import create_api_router
 from nexus.db.models import (
     EpubResource,
     EpubTocNode,
@@ -5245,3 +5247,37 @@ class TestUploadInitLibraryIds:
         assert epub_confirm_memberships == {epub_default_library, epub_lib}, (
             f"epub confirm is additive + idempotent on library_ids; got {epub_confirm_memberships}"
         )
+
+
+# Static `/media/<literal>` paths collide with `/media/{media_id}` once the media
+# god-file is split across routers (Starlette matches in registration order, with
+# no static-before-dynamic precedence). The static routers must register before the
+# `media` router; this gate locks that include order so a future router rename or
+# reorder cannot silently turn `/media/image` into a `/media/{media_id}` UUID parse.
+STATIC_MEDIA_ROUTES = [
+    ("GET", "/media/image"),
+    ("POST", "/media/from_url"),
+    ("POST", "/media/capture/article"),
+    ("POST", "/media/capture/file"),
+    ("POST", "/media/capture/url"),
+    ("POST", "/media/upload/init"),
+    ("POST", "/media/listening-state/batch"),
+    ("POST", "/media/transcript/request/batch"),
+    ("POST", "/media/transcript/forecasts"),
+]
+
+
+@pytest.mark.parametrize("method,path", STATIC_MEDIA_ROUTES)
+def test_static_media_path_resolves_before_media_id(method: str, path: str) -> None:
+    router = create_api_router()
+    scope = {"type": "http", "method": method, "path": path, "headers": []}
+    matched = next(
+        (route for route in router.routes if route.matches(scope)[0] == Match.FULL),
+        None,
+    )
+    assert matched is not None, f"{method} {path} matched no route"
+    assert matched.path == path, (
+        f"{method} {path} resolved to {matched.path!r}, not its own static handler — "
+        "a static `/media/<literal>` router is registered after the `media` router "
+        "(include-order regression; the literal is being parsed as /media/{media_id})"
+    )

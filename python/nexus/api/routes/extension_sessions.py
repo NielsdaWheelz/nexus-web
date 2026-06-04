@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
@@ -38,11 +39,11 @@ def revoke_current_extension_session_route(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
+    token = parse_bearer_token(request.headers.get("authorization"))
+    if token is None:
         raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Extension token required")
 
-    if not revoke_extension_session_token(db, authorization[7:].strip()):
+    if not revoke_extension_session_token(db, token):
         raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid extension token")
 
     return Response(status_code=204)

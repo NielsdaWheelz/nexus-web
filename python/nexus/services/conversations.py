@@ -30,10 +30,6 @@ from nexus.db.models import (
     ChatRun,
     Conversation,
     Message,
-    MessageRerankLedger,
-    MessageRetrieval,
-    MessageRetrievalCandidateLedger,
-    MessageToolCall,
 )
 from nexus.errors import (
     CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
@@ -48,8 +44,6 @@ from nexus.schemas.conversation import (
     MessageDocument,
     MessageOut,
     MessagePageInfo,
-    MessageRerankLedgerOut,
-    MessageRetrievalCandidateLedgerOut,
     PageInfo,
 )
 from nexus.services import conversation_references as conversation_references_service
@@ -365,9 +359,15 @@ def list_conversations(
     viewer_id: UUID,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
-    scope: str = "mine",
+    scope: str | None = None,
+    has_reference: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """List conversations with scope-based visibility.
+    """List conversations.
+
+    When ``has_reference`` is supplied, returns conversations whose
+    references contain that URI (single-user: viewer-owned only); ``scope`` is
+    meaningless there and is neither validated nor applied (pinned bypass).
+    Otherwise lists by visibility scope (defaulting to 'mine').
 
     Args:
         db: Database session.
@@ -375,26 +375,38 @@ def list_conversations(
         limit: Maximum number of results (clamped to 1-100).
         cursor: Opaque pagination cursor.
         scope: One of 'mine' (default), 'all', 'shared'.
+        has_reference: Resource URI to filter conversations by reference.
 
     Returns:
         Tuple of (conversations, page_info).
 
     Raises:
-        InvalidRequestError(E_INVALID_REQUEST): If scope is invalid.
+        InvalidRequestError(E_INVALID_REQUEST): If scope is invalid, or the
+            has_reference URI is malformed.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
-    if scope not in VALID_SCOPES:
+    if has_reference is not None:
+        return conversation_references_service.list_conversations_with_reference(
+            db=db,
+            resource_uri=has_reference,
+            viewer_id=viewer_id,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    effective_scope = scope if scope is not None else "mine"
+    if effective_scope not in VALID_SCOPES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid scope: {scope}. Must be one of: mine, all, shared",
+            f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
         )
 
     limit = clamp_limit(limit)
 
-    if scope == "mine":
+    if effective_scope == "mine":
         return _list_conversations_mine(db, viewer_id, limit, cursor)
     else:
-        return _list_conversations_visible(db, viewer_id, limit, cursor, scope)
+        return _list_conversations_visible(db, viewer_id, limit, cursor, effective_scope)
 
 
 def _list_conversations_mine(
@@ -532,7 +544,7 @@ def list_messages(
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
     before_cursor: str | None = None,
-    window: str = "start",
+    window: str | None = None,
 ) -> tuple[list[MessageOut], MessagePageInfo]:
     """List messages in a conversation.
 
@@ -543,7 +555,8 @@ def list_messages(
         limit: Maximum number of results (clamped to 1-100).
         cursor: Opaque forward pagination cursor.
         before_cursor: Opaque older-history pagination cursor.
-        window: "start" for the oldest page, or "latest" for the newest window.
+        window: "start" (default) for the oldest page, or "latest" for the
+            newest window.
 
     Returns:
         Tuple of (messages, page_info).
@@ -551,8 +564,26 @@ def list_messages(
     Raises:
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
+        InvalidRequestError(E_INVALID_REQUEST): If pagination mode args conflict.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
+    if cursor is not None and before_cursor is not None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "cursor and before_cursor cannot be used together",
+        )
+    window = window if window is not None else "start"
+    if window not in ("start", "latest"):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "window must be one of: start, latest",
+        )
+    if cursor is not None and window == "latest":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "window=latest cannot be used with cursor",
+        )
+
     # Verify read visibility (shared readers can list messages too)
     get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
 
@@ -565,6 +596,7 @@ def list_messages(
 
     next_cursor = None
     before_cursor_out = None
+    has_older = False
     if before_cursor:
         cursor_seq, cursor_id = decode_message_cursor(before_cursor)
         rows = [row for row in rows if (row[1], row[0]) < (cursor_seq, cursor_id)]
@@ -618,145 +650,6 @@ def list_messages(
         next_cursor=next_cursor,
         before_cursor=before_cursor_out,
     )
-
-
-def _get_message_for_visible_read_or_404(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-) -> Message:
-    message = db.get(Message, message_id)
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    try:
-        get_conversation_for_visible_read_or_404(db, viewer_id, message.conversation_id)
-    except NotFoundError:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found") from None
-    return message
-
-
-def list_message_retrieval_candidate_ledgers(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-    tool_call_id: UUID | None = None,
-) -> list[MessageRetrievalCandidateLedgerOut]:
-    _get_message_for_visible_read_or_404(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-    )
-    stmt = (
-        select(
-            MessageRetrievalCandidateLedger,
-            MessageRetrieval.included_in_prompt,
-        )
-        .join(
-            MessageToolCall,
-            MessageToolCall.id == MessageRetrievalCandidateLedger.tool_call_id,
-        )
-        .outerjoin(
-            MessageRetrieval,
-            MessageRetrieval.id == MessageRetrievalCandidateLedger.retrieval_id,
-        )
-        .where(MessageToolCall.assistant_message_id == message_id)
-        .order_by(
-            MessageToolCall.tool_call_index.asc(),
-            MessageRetrievalCandidateLedger.ordinal.asc(),
-            MessageRetrievalCandidateLedger.id.asc(),
-        )
-    )
-    if tool_call_id is not None:
-        stmt = stmt.where(MessageRetrievalCandidateLedger.tool_call_id == tool_call_id)
-
-    rows = db.execute(stmt).all()
-    return [
-        _retrieval_candidate_ledger_to_out(row, linked_retrieval_included_in_prompt)
-        for row, linked_retrieval_included_in_prompt in rows
-    ]
-
-
-def _retrieval_candidate_ledger_to_out(
-    row: MessageRetrievalCandidateLedger,
-    linked_retrieval_included_in_prompt: bool | None,
-) -> MessageRetrievalCandidateLedgerOut:
-    if linked_retrieval_included_in_prompt is None:
-        included_in_prompt = row.included_in_prompt
-        included_in_prompt_source = "candidate_ledger"
-        included_in_prompt_reconciled = True
-    else:
-        included_in_prompt = linked_retrieval_included_in_prompt
-        included_in_prompt_source = "linked_retrieval"
-        included_in_prompt_reconciled = (
-            row.included_in_prompt == linked_retrieval_included_in_prompt
-        )
-
-    return MessageRetrievalCandidateLedgerOut(
-        id=row.id,
-        tool_call_id=row.tool_call_id,
-        retrieval_id=row.retrieval_id,
-        ordinal=row.ordinal,
-        result_type=cast(Any, row.result_type),
-        source_id=row.source_id,
-        score=row.score,
-        selected=row.selected,
-        included_in_prompt=included_in_prompt,
-        ledger_included_in_prompt=row.included_in_prompt,
-        linked_retrieval_included_in_prompt=linked_retrieval_included_in_prompt,
-        included_in_prompt_source=cast(Any, included_in_prompt_source),
-        included_in_prompt_reconciled=included_in_prompt_reconciled,
-        selection_status=row.selection_status,
-        selection_reason=row.selection_reason,
-        result_ref=cast(Any, row.result_ref),
-        locator=cast(Any, row.locator),
-        source_version=row.source_version,
-        created_at=row.created_at,
-    )
-
-
-def list_message_rerank_ledgers(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-    tool_call_id: UUID | None = None,
-) -> list[MessageRerankLedgerOut]:
-    _get_message_for_visible_read_or_404(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-    )
-    stmt = (
-        select(MessageRerankLedger)
-        .join(MessageToolCall, MessageToolCall.id == MessageRerankLedger.tool_call_id)
-        .where(MessageToolCall.assistant_message_id == message_id)
-        .order_by(
-            MessageToolCall.tool_call_index.asc(),
-            MessageRerankLedger.created_at.asc(),
-            MessageRerankLedger.id.asc(),
-        )
-    )
-    if tool_call_id is not None:
-        stmt = stmt.where(MessageRerankLedger.tool_call_id == tool_call_id)
-
-    rows = db.scalars(stmt).all()
-    return [
-        MessageRerankLedgerOut(
-            id=row.id,
-            tool_call_id=row.tool_call_id,
-            strategy=row.strategy,
-            input_count=row.input_count,
-            selected_count=row.selected_count,
-            budget_chars=row.budget_chars,
-            selected_chars=row.selected_chars,
-            status=row.status,
-            metadata=row.metadata_,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
 
 
 def _selected_path_message_rows(db: Session, viewer_id: UUID, conversation_id: UUID) -> list:

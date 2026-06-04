@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Model
 from nexus.llm_catalog import (
+    ModelAvailableVia,
     enabled_provider_names,
     model_catalog_entry,
     platform_provider_names,
     provider_sort_rank,
 )
 from nexus.logging import get_logger
-from nexus.schemas.keys import ModelAvailableVia, ModelOut
+from nexus.schemas.models import ModelOut
 from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.user_keys import get_usable_key_providers
 

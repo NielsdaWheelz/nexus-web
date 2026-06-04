@@ -23,6 +23,7 @@ import {
   type SessionState,
 } from "@/lib/auth/session-cookie";
 import { refreshSession } from "@/lib/auth/refresh";
+import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import { isAbortError } from "@/lib/errors";
 import { type CookieToSet } from "@/lib/supabase/types";
 
@@ -474,9 +475,7 @@ export async function proxyToFastAPIWithDeps(
       headers: responseHeaders,
     });
 
-    for (const { name, value, options } of rotatedCookies) {
-      proxied.cookies.set(name, value, options);
-    }
+    applyRotatedCookies(proxied, rotatedCookies);
     return proxied;
   } catch (error) {
     if (isAbortError(error)) {
@@ -647,8 +646,10 @@ export async function proxyExtensionToFastAPI(
     FASTAPI_FETCH_TIMEOUT_MS
   );
 
+  const queryString = new URL(request.url).search; // includes leading '?' if present
+
   try {
-    const response = await fetch(`${fastApiBaseUrl}${path}`, {
+    const response = await fetch(`${fastApiBaseUrl}${path}${queryString}`, {
       method: request.method,
       headers,
       body,

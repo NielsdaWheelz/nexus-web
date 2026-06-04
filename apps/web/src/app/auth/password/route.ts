@@ -3,6 +3,7 @@ import {
   PASSWORD_SIGN_IN_FAILURE_MESSAGE,
   PASSWORD_SIGN_UP_FAILURE_MESSAGE,
 } from "@/lib/auth/messages";
+import { noStore } from "@/lib/auth/no-store";
 import {
   DEFAULT_AUTH_REDIRECT,
   normalizeAuthRedirect,
@@ -16,11 +17,6 @@ import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 export const runtime = "nodejs";
 
 const SEE_OTHER = 303;
-
-function noStore(response: NextResponse): NextResponse {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
 
 function formString(formData: FormData, key: string): string {
   const value = formData.get(key);

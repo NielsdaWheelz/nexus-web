@@ -12,8 +12,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.auth.stream_token import mint_stream_token
+from nexus.responses import success_response
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.stream_tokens import mint_stream_token
 
 router = APIRouter(tags=["stream-tokens"])
 
@@ -34,9 +35,15 @@ def create_stream_token(
             "expires_at": "2026-02-08T21:01:00+00:00"
         }
     """
-    # Share RPM limit with chat run creation.
-    rate_limiter = get_rate_limiter()
-    rate_limiter.check_rpm_limit(viewer.user_id)
+    # Cross-endpoint throttle shared with chat-run creation — an explicit route
+    # guard, deliberately not folded into the service mint.
+    get_rate_limiter().check_rpm_limit(viewer.user_id)
 
     result = mint_stream_token(viewer.user_id)
-    return {"data": result}
+    return success_response(
+        {
+            "token": result.token,
+            "stream_base_url": result.stream_base_url,
+            "expires_at": result.expires_at,
+        }
+    )

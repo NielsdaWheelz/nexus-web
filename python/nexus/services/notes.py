@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any, cast, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,7 +27,6 @@ from nexus.db.session import use_serializable_if_available
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
-    OBJECT_TYPE_VALUES,
     OBJECT_TYPES,
     CreateNoteBlockRequest,
     CreatePageRequest,
@@ -76,7 +75,7 @@ def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
         if match.start() > position:
             _append_text_and_break_nodes(content, markdown[position : match.start()])
         object_type = match.group(1)
-        if object_type not in OBJECT_TYPE_VALUES:
+        if object_type not in get_args(OBJECT_TYPES):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object reference type is invalid")
         content.append(
             {

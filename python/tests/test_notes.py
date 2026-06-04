@@ -16,6 +16,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
+    UNSET,
     CreateNoteBlockRequest,
     CreatePageRequest,
     LinkedObjectRequest,
@@ -25,6 +26,7 @@ from nexus.schemas.notes import (
     QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
+    UpdateObjectLinkRequest,
     UpdatePageRequest,
 )
 from nexus.services import notes, object_links, object_refs
@@ -153,6 +155,23 @@ def test_note_body_pm_json_rejects_non_prosemirror_shapes():
                 "content": [{"type": "unknown_node", "text": "bad"}],
             },
         )
+
+
+def test_update_object_link_request_distinguishes_absent_null_and_value():
+    """The order-key sentinel separates an omitted field, an explicit null, and a value."""
+    absent = UpdateObjectLinkRequest()
+    assert absent.a_order_key is UNSET
+    assert absent.b_order_key is UNSET
+
+    cleared = UpdateObjectLinkRequest(a_order_key=None)
+    assert cleared.a_order_key is None
+    assert cleared.b_order_key is UNSET
+
+    valued = UpdateObjectLinkRequest(a_order_key="0000000001")
+    assert valued.a_order_key == "0000000001"
+
+    with pytest.raises(ValidationError):
+        UpdateObjectLinkRequest(a_order_key="")
 
 
 @pytest.mark.integration

@@ -1,5 +1,6 @@
 """Reader profile and per-media reader state service layer."""
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -119,6 +120,30 @@ def _deserialize_reader_state(
             "Stored reader state is invalid",
         ) from exc
     return locator
+
+
+def parse_reader_resume_state(raw_body: bytes) -> ReaderResumeState | None:
+    """Parse a PUT /media/{id}/reader-state request body. An empty body is
+    rejected; a JSON ``null`` clears the state (returns None); anything else must
+    validate as a ReaderResumeState."""
+    if not raw_body:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required."
+        )
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Reader state body must be valid JSON."
+        ) from exc
+    if payload is None:
+        return None
+    try:
+        return READER_RESUME_STATE_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Invalid reader state payload."
+        ) from exc
 
 
 def get_reader_profile(db: Session, user_id: UUID) -> ReaderProfileOut:

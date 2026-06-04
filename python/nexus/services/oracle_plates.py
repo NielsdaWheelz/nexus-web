@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from nexus import web_paths
 from nexus.db.models import OracleCorpusImage
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
@@ -39,7 +40,7 @@ class OraclePlateMetadata:
 
 
 def oracle_plate_url(image_id: UUID) -> str:
-    return f"/api/oracle/plates/{image_id}"
+    return web_paths.oracle_plate_url(image_id)
 
 
 def get_oracle_plate_metadata(

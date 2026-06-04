@@ -7,9 +7,8 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.auth.stream_token import mint_stream_token
 from nexus.db.session import get_db, get_session_factory
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.oracle import (
     OracleReadingCreateRequest,
     OracleReadingCreateResponse,
@@ -18,6 +17,7 @@ from nexus.schemas.oracle import (
 from nexus.services import oracle as oracle_service
 from nexus.services import oracle_plates
 from nexus.services.image_proxy import etags_match
+from nexus.services.stream_tokens import mint_stream_token
 
 router = APIRouter(tags=["oracle"])
 
@@ -34,19 +34,19 @@ def create_oracle_reading(
         question=body.question,
     )
     stream_token = mint_stream_token(viewer.user_id)
-    stream_base_url = str(stream_token["stream_base_url"]).rstrip("/")
+    stream_base_url = stream_token.stream_base_url
     response = OracleReadingCreateResponse(
         reading_id=reading.id,
         folio_number=reading.folio_number,
         status=reading.status,
         stream=OracleStreamConnectionOut(
-            token=str(stream_token["token"]),
+            token=stream_token.token,
             stream_base_url=stream_base_url,
             event_url=f"{stream_base_url}/stream/oracle-readings/{reading.id}/events",
-            expires_at=str(stream_token["expires_at"]),
+            expires_at=stream_token.expires_at,
         ),
     )
-    return success_response(response.model_dump(mode="json"))
+    return ok(response)
 
 
 @router.get("/oracle/readings")
@@ -55,7 +55,7 @@ def list_oracle_readings(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     rows = oracle_service.list_all_readings(db, viewer_id=viewer.user_id)
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.get("/oracle/readings/{reading_id}/concordance")
@@ -67,7 +67,7 @@ def get_oracle_reading_concordance(
     entries = oracle_service.compute_concordance(
         db, viewer_id=viewer.user_id, reading_id=reading_id
     )
-    return success_response([e.model_dump(mode="json") for e in entries])
+    return ok(entries)
 
 
 @router.get("/oracle/readings/{reading_id}")
@@ -77,7 +77,7 @@ def get_oracle_reading(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     detail = oracle_service.get_reading_detail(db, viewer_id=viewer.user_id, reading_id=reading_id)
-    return success_response(detail.model_dump(mode="json"))
+    return ok(detail)
 
 
 @router.get("/oracle/plates/{image_id}")

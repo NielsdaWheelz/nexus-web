@@ -10,14 +10,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.library import (
     DefaultLibraryBackfillJobOut,
     RequeueDefaultLibraryBackfillJobRequest,
 )
 from nexus.services.default_library_closure import requeue_backfill_job
 
-router = APIRouter()
+router = APIRouter(tags=["internal"])
 
 
 @router.post("/internal/libraries/backfill-jobs/requeue")
@@ -37,4 +37,4 @@ def requeue_backfill_job_endpoint(
         body.user_id,
     )
     out = DefaultLibraryBackfillJobOut.model_validate(result)
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)

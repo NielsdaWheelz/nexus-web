@@ -1,8 +1,15 @@
-"""Stream token auth for direct browser-callable SSE endpoints."""
+"""Stream-token service: mint/verify the short-lived JWTs that authenticate
+direct browser-callable SSE endpoints, backed by a JTI replay-prevention table.
+
+Moved out of `auth/` because it owns persistence (the `stream_token_jti_claims`
+table) and a serializable-retry loop — the definition of a service, not an auth
+adapter. Returns typed results so call sites never index string keys.
+"""
 
 import base64
 import binascii
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -25,6 +32,19 @@ STREAM_TOKEN_SCOPE = "stream"
 STREAM_TOKEN_TTL_SECONDS = 60
 
 
+@dataclass(frozen=True)
+class StreamTokenResult:
+    token: str
+    stream_base_url: str  # normalized, no trailing slash
+    expires_at: str  # ISO-8601
+
+
+@dataclass(frozen=True)
+class VerifiedStreamToken:
+    user_id: UUID
+    jti: str
+
+
 def _get_signing_key_bytes() -> bytes:
     """Decode the base64-encoded signing key to raw bytes."""
     settings = get_settings()
@@ -40,55 +60,31 @@ def _get_signing_key_bytes() -> bytes:
     return key_bytes
 
 
-def mint_stream_token(user_id: UUID) -> dict:
-    """Mint a short-lived stream token JWT.
-
-    Args:
-        user_id: The authenticated user's ID.
-
-    Returns:
-        Dict with token, stream_base_url, expires_at.
-    """
+def mint_stream_token(user_id: UUID) -> StreamTokenResult:
+    """Mint a short-lived stream token JWT for the given user."""
     settings = get_settings()
     now = int(time.time())
-    jti = str(uuid4())
-
     payload = {
         "iss": STREAM_TOKEN_ISSUER,
         "aud": STREAM_TOKEN_AUDIENCE,
         "sub": str(user_id),
         "exp": now + STREAM_TOKEN_TTL_SECONDS,
         "iat": now,
-        "jti": jti,
+        "jti": str(uuid4()),
         "scope": STREAM_TOKEN_SCOPE,
     }
-
-    key_bytes = _get_signing_key_bytes()
-    token = jwt.encode(payload, key_bytes, algorithm="HS256")
-
+    token = jwt.encode(payload, _get_signing_key_bytes(), algorithm="HS256")
     expires_at = datetime.fromtimestamp(now + STREAM_TOKEN_TTL_SECONDS, tz=UTC).isoformat()
+    return StreamTokenResult(
+        token=token,
+        stream_base_url=settings.effective_stream_base_url.rstrip("/"),
+        expires_at=expires_at,
+    )
 
-    return {
-        "token": token,
-        "stream_base_url": settings.effective_stream_base_url,
-        "expires_at": expires_at,
-    }
 
-
-def verify_stream_token(token: str) -> tuple[UUID, str]:
-    """Verify a stream token and return the user_id and jti.
-
-    Args:
-        token: The JWT string from Authorization header.
-
-    Returns:
-        Tuple of (user_id UUID, jti string).
-
-    Raises:
-        ApiError: On any verification failure.
-    """
+def verify_stream_token(token: str) -> VerifiedStreamToken:
+    """Verify a stream token and claim its JTI once. Raises ApiError on failure."""
     key_bytes = _get_signing_key_bytes()
-
     try:
         payload = jwt.decode(
             token,
@@ -99,40 +95,26 @@ def verify_stream_token(token: str) -> tuple[UUID, str]:
             options={"require": ["exp", "iss", "aud", "sub", "jti", "scope"]},
         )
     except jwt.ExpiredSignatureError as err:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_EXPIRED,
-            "Stream token has expired",
-        ) from err
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_EXPIRED, "Stream token has expired") from err
     except jwt.InvalidTokenError as e:
         logger.warning("stream_token_invalid", error=str(e))
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Invalid stream token",
-        ) from e
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token") from e
 
-    # Verify scope
     if payload.get("scope") != STREAM_TOKEN_SCOPE:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Invalid stream token scope",
-        )
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token scope")
 
     jti = payload["jti"]
     try:
         user_id = UUID(payload["sub"])
     except (TypeError, ValueError) as exc:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Invalid stream token subject",
-        ) from exc
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token subject") from exc
     _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=int(payload["exp"]))
-    return user_id, jti
+    return VerifiedStreamToken(user_id=user_id, jti=jti)
 
 
 def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
     expires_at = datetime.fromtimestamp(exp_epoch, tz=UTC)
-    session_factory = get_session_factory()
-    db = session_factory()
+    db = get_session_factory()()
     try:
         for attempt in range(3):
             use_serializable_if_available(db)
@@ -161,20 +143,13 @@ def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
     except SQLAlchemyError as exc:
         logger.warning("stream_token_jti_claim_failed", error=str(exc))
         raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Unable to verify stream token",
+            ApiErrorCode.E_STREAM_TOKEN_INVALID, "Unable to verify stream token"
         ) from exc
     finally:
         db.close()
 
 
-def _claim_jti_once_transaction(
-    db,
-    *,
-    jti: str,
-    user_id: UUID,
-    expires_at: datetime,
-) -> None:
+def _claim_jti_once_transaction(db, *, jti: str, user_id: UUID, expires_at: datetime) -> None:
     with transaction(db):
         db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
         existing = db.execute(
@@ -184,8 +159,7 @@ def _claim_jti_once_transaction(
         if existing is not None:
             logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
             raise ApiError(
-                ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
-                "Stream token has already been used",
+                ApiErrorCode.E_STREAM_TOKEN_REPLAYED, "Stream token has already been used"
             )
         result = db.execute(
             text(
@@ -199,11 +173,7 @@ def _claim_jti_once_transaction(
                 VALUES (:jti, :user_id, :expires_at, now())
                 """
             ),
-            {
-                "jti": jti,
-                "user_id": user_id,
-                "expires_at": expires_at,
-            },
+            {"jti": jti, "user_id": user_id, "expires_at": expires_at},
         )
         if getattr(result, "rowcount", None) != 1:
             raise RuntimeError("stream token JTI claim insert affected an unexpected row count")

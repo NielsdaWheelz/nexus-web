@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseWebOriginList } from "@/lib/security/origin";
@@ -61,7 +62,7 @@ export async function GET(req: Request) {
   session.state satisfies "active";
 
   const requestId = createRandomId();
-  const config = getEnv().internalApi;
+  const { fastApiBaseUrl } = getEnv().internalApi;
 
   const sessionFailedRedirect = () => {
     redirectUrl.hash = new URLSearchParams({
@@ -74,16 +75,13 @@ export async function GET(req: Request) {
   let response: Response;
   try {
     response = await boundedAuthFetch(
-      `${config.fastApiBaseUrl}/auth/extension-sessions`,
+      `${fastApiBaseUrl}/auth/extension-sessions`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.accessToken}`,
-          "X-Request-ID": requestId,
-          ...(config.internalSecret
-            ? { "X-Nexus-Internal": config.internalSecret }
-            : {}),
-        },
+        headers: internalAuthHeaders({
+          accessToken: session.accessToken,
+          requestId,
+        }),
       },
       "Extension session request timed out"
     );

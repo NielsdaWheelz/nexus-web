@@ -18,6 +18,7 @@ from urllib.parse import quote, urljoin, urlparse
 from lxml.etree import ParserError
 from lxml.html import HtmlElement, document_fromstring, tostring
 
+from nexus import web_paths
 from nexus.services.html_tree import remove_element, unwrap_element
 
 ALLOWED_TAGS = frozenset(
@@ -80,9 +81,6 @@ FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
 
 # Regex to detect event handlers
 EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
-
-# Image proxy URL template
-IMAGE_PROXY_URL = "/api/media/image?url={encoded_url}"
 
 
 def sanitize_html(
@@ -314,5 +312,5 @@ def _sanitize_image(element: HtmlElement, base_url: str) -> None:
 
     # Rewrite to image proxy
     encoded_url = quote(absolute_url, safe="")
-    proxy_url = IMAGE_PROXY_URL.format(encoded_url=encoded_url)
+    proxy_url = web_paths.media_image_url(encoded_url)
     element.set("src", proxy_url)

@@ -37,6 +37,7 @@ from nexus.services.oracle import (
     compute_concordance,
     create_reading,
     execute_reading,
+    is_reading_terminal,
 )
 from nexus.services.semantic_chunks import (
     build_text_embedding,
@@ -2247,3 +2248,11 @@ def test_concordance_endpoint_returns_404_for_another_users_reading(
 def test_all_oracle_themes_are_valid(db_session: Session, oracle_schema) -> None:
     assert len(ORACLE_THEMES) == 24
     assert len(set(ORACLE_THEMES)) == 24  # no duplicates
+
+
+def test_is_reading_terminal_treats_missing_reading_as_terminal(db_session: Session) -> None:
+    """A reading deleted mid-stream is terminal, so the oracle SSE tail closes
+    cleanly instead of streaming forever. Regression lock for the is_reading_terminal
+    fix that the unified cursor stream relies on for its gone-terminal close path.
+    """
+    assert is_reading_terminal(db_session, reading_id=uuid4()) is True

@@ -25,9 +25,11 @@ This document covers the architectural layers and their responsibilities.
   FastAPI directly except streaming SSE.
 - OAuth is initiated server-side via a server route or server action. There is no
   browser Supabase client; the browser holds no tokens.
-- The Data Access Layer is the only place a verified session is checked. Every
-  protected page, route handler, and server action calls it directly. A
-  middleware or layout check does not protect them.
+- The Data Access Layer is the authoritative place a verified session is checked
+  for resource authorization. Every protected page, route handler, and server
+  action calls it directly. A middleware or layout check does not protect them.
+  (The BFF proxy also resolves the session at the route boundary to attach the
+  viewer bearer, but performs no resource-ownership check — that stays in the DAL.)
 - Each auth network operation owns a single total deadline covering the whole
   operation. A per-fetch abort is not a substitute.
 - Android shell code does not call FastAPI, Supabase, or product APIs directly.

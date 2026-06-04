@@ -596,10 +596,13 @@ transcribe, embed, metadata, other}`; only `source` and `metadata` are
 user-retryable. `failure_stage='metadata'` and `'embed'` are soft warnings that
 coexist with readable media.
 
-**Capture entry points** (`api/routes/media.py`): `POST /media/from-url`,
+**Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/upload/init` + `POST /media/{id}/ingest`, and
 `POST /media/capture/{article,file,url}`. Routes are transport adapters; they
-call exactly one service owner.
+call exactly one service owner. (The media routers are split per capability:
+`media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
+serving, `reader.py` reader read-model, `listening_state.py`, and
+`podcast_transcripts.py` — each importing only the services it delegates to.)
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
@@ -632,7 +635,7 @@ The core idea is two coordinate systems, both **codepoint-based**:
 EPUB ingestion (`services/epub_ingest.py`) produces fragments + a `EpubNavLocation`
 per section, where the `section_id` is the path-encodable `href_path[#fragment]`
 used in reader URLs. Navigation, sections, and resume state are served from
-`api/routes/media.py`; resume stores reflow-safe canonical offsets (web/transcript)
+`api/routes/reader.py`; resume stores reflow-safe canonical offsets (web/transcript)
 or page/zoom (PDF), never pixels.
 
 EPUB resource assets use a private media asset lane:
@@ -712,13 +715,22 @@ pane system).
 
 ### 8.5 Libraries, sharing & the default-library closure
 
-Content organization + access control (`services/libraries.py`).
+Content organization + access control, split into three owned modules:
+`services/library_governance.py` (the `libraries`/`memberships` tables: CRUD,
+roles, ownership transfer, membership guards, ingest access checks),
+`services/library_entries.py` (the **sole writer** of `library_entries` — the
+`EntryTarget` media|podcast union, the locked append, position ordering, and all
+item-in-library commands), and `services/library_invitations.py` (the
+`library_invitations` table). Visibility itself is enforced by the boolean
+predicates in `auth/permissions.py`; the search/object readers read
+`library_entries` under an explicit Tier-R allowlist.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive podcasts) plus shareable libraries with `memberships`
   (`admin`/`member` roles; owner is a distinct concept layered on admin).
   `library_entries` point at exactly one media or podcast and carry an integer
-  `position`.
+  `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
+  invariant since migration `0131`, with cleanup explicit in app code).
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
   admin/owner-gated, with masked-404 for non-members.
 - **The default-library closure** (`services/default_library_closure.py`) makes a
@@ -984,7 +996,7 @@ The things most likely to bite you, distilled:
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |
 | Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation,resource_resolver}.py` |
 | Agent tools | `python/nexus/services/agent_tools/` |
-| Libraries / contributors / notes | `python/nexus/services/{libraries,default_library_closure,contributors,notes}.py` |
+| Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |
 | Podcasts / playback | `python/nexus/services/podcasts/`, `playback_queue.py` |
 | Auth / billing / keys / rate limit | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/` |
 | Frontend BFF / auth / SSE | `apps/web/src/lib/{api,auth,supabase}/` |

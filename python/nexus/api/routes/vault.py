@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.vault import VaultConflict, VaultFile, VaultSnapshotOut, VaultSyncRequest
 from nexus.services import vault as vault_service
 
@@ -24,7 +24,7 @@ def export_vault(
     response = VaultSnapshotOut(
         files=[VaultFile(path=file["path"], content=file["content"]) for file in files]
     )
-    return success_response(response.model_dump(mode="json"))
+    return ok(response)
 
 
 @router.get("/vault/download")
@@ -72,4 +72,4 @@ def sync_vault(
             for conflict in result["conflicts"]
         ],
     )
-    return success_response(response.model_dump(mode="json"))
+    return ok(response)

@@ -12,6 +12,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from nexus.stream_paths import is_stream_path
+
 
 class StreamCORSMiddleware:
     """Pure ASGI middleware for path-scoped CORS on stream routes.
@@ -25,7 +27,7 @@ class StreamCORSMiddleware:
         self.allowed_origins = set(allowed_origins)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not _is_stream_path(scope["path"]):
+        if scope["type"] != "http" or not is_stream_path(scope["path"]):
             await self.app(scope, receive, send)
             return
 
@@ -65,11 +67,3 @@ class StreamCORSMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_cors)
-
-
-def _is_stream_path(path: str) -> bool:
-    return (
-        (path.startswith("/chat-runs/") and path.endswith("/events"))
-        or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
-        or (path.startswith("/media/") and path.endswith("/events"))
-    )

@@ -1,7 +1,8 @@
 import { getEnv } from "@/lib/env";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
-import { createRandomId } from "@/lib/createRandomId";
+import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
+import { noStore } from "@/lib/auth/no-store";
 import {
   AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -16,14 +17,6 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const TEMPORARY_REDIRECT = 307;
-
-// The handoff route sets `HttpOnly` session cookies on every success response;
-// a cached response would hand one user another user's session, so every path
-// — including the catch — must be `no-store`.
-function noStore<T extends Response>(response: T): T {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
 
 // Error codes produced by `/auth/callback` in handoff mode.
 // This route owns the public copy because no other surface renders it.
@@ -81,22 +74,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const config = getEnv().internalApi;
-    const requestId = createRandomId();
+    const { fastApiBaseUrl } = getEnv().internalApi;
 
     let consumeResponse: Response;
     try {
       consumeResponse = await boundedAuthFetch(
-        `${config.fastApiBaseUrl}/auth/handoff-codes/consume`,
+        `${fastApiBaseUrl}/auth/handoff-codes/consume`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Request-ID": requestId,
-            ...(config.internalSecret
-              ? { "X-Nexus-Internal": config.internalSecret }
-              : {}),
-          },
+          headers: internalAuthHeaders({ json: true }),
           body: JSON.stringify({ code, verifier: hv }),
         },
         "Handoff consume request timed out"

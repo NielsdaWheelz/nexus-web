@@ -39,6 +39,7 @@ from nexus.errors import (
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
+    CHAT_RUN_STATUS_FILTER,
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunResponse,
@@ -936,18 +937,18 @@ def list_chat_runs_for_conversation(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-    status: str,
+    status: CHAT_RUN_STATUS_FILTER,
 ) -> list[ChatRunResponse]:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
+    # "active" means non-terminal; every other value is an exact status match. The
+    # filter vocabulary is validated once at the boundary by CHAT_RUN_STATUS_FILTER.
     if status == "active":
         filters = [ChatRun.status.notin_(TERMINAL_RUN_STATUSES)]
-    elif status in {"queued", "running", "complete", "error", "cancelled"}:
-        filters = [ChatRun.status == status]
     else:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid chat run status")
+        filters = [ChatRun.status == status]
 
     runs = (
         db.execute(

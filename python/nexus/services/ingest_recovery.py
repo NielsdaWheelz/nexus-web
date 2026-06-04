@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Media, ProcessingStatus
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 
@@ -49,8 +50,8 @@ def get_stale_ingest_backlog_health(
     }
 
 
-def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> bool:
-    """Best-effort enqueue of stale-ingest reconciler task."""
+def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> None:
+    """Enqueue the stale-ingest reconciler task, raising E_INTERNAL on failure."""
     session_factory = get_session_factory()
     db = session_factory()
     try:
@@ -60,7 +61,6 @@ def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> bool:
             payload={"request_id": request_id},
         )
         db.commit()
-        return True
     except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
@@ -68,6 +68,9 @@ def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> bool:
             error=str(exc),
             request_id=request_id,
         )
-        return False
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Failed to enqueue stale ingest reconciler.",
+        ) from exc
     finally:
         db.close()

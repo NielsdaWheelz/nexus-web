@@ -4,13 +4,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.notes import OBJECT_TYPE_VALUES, ObjectRef
+from nexus.schemas.notes import ObjectRef
 from nexus.services.object_refs import (
     hydrate_object_ref,
     search_object_refs,
@@ -34,13 +35,11 @@ def resolve_object_refs(
             object_id = UUID(object_id_raw)
         except ValueError:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "ref id must be a UUID") from None
-        if object_type not in OBJECT_TYPE_VALUES:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "ref type is invalid")
-        hydrated = hydrate_object_ref(
-            db,
-            viewer.user_id,
-            ObjectRef.model_validate({"object_type": object_type, "object_id": object_id}),
-        )
+        try:
+            ref = ObjectRef.model_validate({"object_type": object_type, "object_id": object_id})
+        except ValidationError:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "ref type is invalid") from None
+        hydrated = hydrate_object_ref(db, viewer.user_id, ref)
         objects.append(hydrated.model_dump(mode="json", by_alias=True))
     return success_response({"objects": objects})
 

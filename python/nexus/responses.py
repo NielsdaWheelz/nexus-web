@@ -7,10 +7,12 @@ All API responses use a consistent envelope:
 The request_id is included in error responses for debugging and support.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.exc import TimeoutError as SAQueuePoolTimeout
 from sqlalchemy.pool import QueuePool
 
@@ -31,6 +33,29 @@ def success_response(data: Any) -> dict[str, Any]:
         Dict with "data" key containing the response.
     """
     return {"data": data}
+
+
+def ok(data: BaseModel | Sequence[BaseModel], *, by_alias: bool = False) -> dict[str, Any]:
+    """Envelope a model (or list of models) as ``{"data": ...}``.
+
+    The single owner of the serialize-then-envelope projection for model payloads,
+    replacing the hand-written ``success_response(x.model_dump(mode="json"))`` idiom.
+    Binary/204 and named-key wrapper responses are not plain model payloads and keep
+    their own shape.
+    """
+    if isinstance(data, BaseModel):
+        return {"data": data.model_dump(mode="json", by_alias=by_alias)}
+    return {"data": [item.model_dump(mode="json", by_alias=by_alias) for item in data]}
+
+
+def ok_page(
+    items: Sequence[BaseModel], page: BaseModel, *, by_alias: bool = False
+) -> dict[str, Any]:
+    """Envelope a page of models as ``{"data": [...], "page": {...}}``."""
+    return {
+        "data": [item.model_dump(mode="json", by_alias=by_alias) for item in items],
+        "page": page.model_dump(mode="json", by_alias=by_alias),
+    }
 
 
 def error_response(

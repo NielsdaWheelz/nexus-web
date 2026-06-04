@@ -23,14 +23,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 from llm_calling.router import LLMRouter
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_llm_router
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiError, ApiErrorCode
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.keys import UserApiKeyCreate
 from nexus.services import user_keys as user_keys_service
 
@@ -51,7 +49,7 @@ def list_keys(
         {"data": [UserApiKeyOut, ...]}
     """
     keys = user_keys_service.list_user_keys(db=db, user_id=viewer.user_id)
-    return success_response([k.model_dump(mode="json") for k in keys])
+    return ok(keys)
 
 
 @router.post("/keys", status_code=201)
@@ -82,22 +80,18 @@ def upsert_key(
         E_KEY_PROVIDER_INVALID (400): Unknown provider
         E_KEY_INVALID_FORMAT (400): Key too short or contains whitespace
     """
-    try:
-        key_out, is_created = user_keys_service.upsert_user_key(
-            db=db,
-            user_id=viewer.user_id,
-            provider=body.provider,
-            api_key=body.api_key,
-        )
-    except ValidationError as e:
-        # Pydantic validation already handled by FastAPI, but just in case
-        raise ApiError(ApiErrorCode.E_KEY_INVALID_FORMAT, str(e)) from e
+    key_out, is_created = user_keys_service.upsert_user_key(
+        db=db,
+        user_id=viewer.user_id,
+        provider=body.provider,
+        api_key=body.api_key,
+    )
 
     # Set status code based on whether key was created or updated
     if not is_created:
         response.status_code = 200
 
-    return success_response(key_out.model_dump(mode="json"))
+    return ok(key_out)
 
 
 @router.post("/keys/{key_id}/test")
@@ -114,7 +108,7 @@ async def test_key(
         key_id=key_id,
         router=llm_router,
     )
-    return success_response(key_out.model_dump(mode="json"))
+    return ok(key_out)
 
 
 @router.delete("/keys/{key_id}", status_code=204)

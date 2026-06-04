@@ -14,9 +14,11 @@ from llm_calling.types import LLMChunk, LLMUsage
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from nexus.api.routes import _sse
 from nexus.api.routes import stream as stream_routes
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.stream_token import (
+from nexus.db.listen import StreamListenCapacityError
+from nexus.services.stream_tokens import (
     STREAM_TOKEN_AUDIENCE,
     STREAM_TOKEN_ISSUER,
     STREAM_TOKEN_SCOPE,
@@ -25,7 +27,6 @@ from nexus.auth.stream_token import (
     mint_stream_token,
     verify_stream_token,
 )
-from nexus.db.listen import StreamListenCapacityError
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -288,16 +289,16 @@ class TestStreamTokenMint:
     def test_mint_returns_token_and_url(self):
         user_id = uuid4()
         result = mint_stream_token(user_id)
-        assert isinstance(result["token"], str)
-        assert result["stream_base_url"]
-        assert result["expires_at"]
+        assert isinstance(result.token, str)
+        assert result.stream_base_url
+        assert result.expires_at
 
     def test_mint_token_is_valid_jwt(self):
         user_id = uuid4()
         result = mint_stream_token(user_id)
         key = _get_signing_key_bytes()
         payload = jwt.decode(
-            result["token"],
+            result.token,
             key,
             algorithms=["HS256"],
             audience=STREAM_TOKEN_AUDIENCE,
@@ -315,7 +316,8 @@ class TestStreamTokenVerify:
             ensure_user_and_default_library(session, user_id)
             session.commit()
         result = mint_stream_token(user_id)
-        uid, jti = verify_stream_token(result["token"])
+        verified = verify_stream_token(result.token)
+        uid, jti = verified.user_id, verified.jti
         direct_db.register_cleanup("stream_token_jti_claims", "jti", jti)
         assert uid == user_id
         assert isinstance(jti, str) and jti
@@ -325,8 +327,8 @@ class TestStreamTokenVerify:
         with direct_db.session() as session:
             ensure_user_and_default_library(session, user_id)
             session.commit()
-        token = mint_stream_token(user_id)["token"]
-        _, jti = verify_stream_token(token)
+        token = mint_stream_token(user_id).token
+        jti = verify_stream_token(token).jti
         direct_db.register_cleanup("stream_token_jti_claims", "jti", jti)
 
         with pytest.raises(ApiError) as exc:
@@ -369,7 +371,8 @@ class TestStreamTokenVerify:
             algorithm="HS256",
         )
 
-        uid, claimed_jti = verify_stream_token(token)
+        verified = verify_stream_token(token)
+        uid, claimed_jti = verified.user_id, verified.jti
 
         assert uid == user_id
         assert claimed_jti == jti
@@ -431,7 +434,7 @@ class TestChatRunEventStream:
     ):
         user_id = uuid4()
         run_id, _conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
-        stream_token = mint_stream_token(user_id)["token"]
+        stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
             f"/chat-runs/{run_id}/events?after=1",
@@ -487,7 +490,7 @@ class TestChatRunEventStream:
             )
             session.commit()
 
-        stream_token = mint_stream_token(user_id)["token"]
+        stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
             f"/chat-runs/{run_id}/events?after=1",
@@ -509,7 +512,7 @@ class TestChatRunEventStream:
     ):
         user_id = uuid4()
         run_id, _conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
-        stream_token = mint_stream_token(user_id)["token"]
+        stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
             f"/chat-runs/{run_id}/events",
@@ -536,7 +539,7 @@ class TestChatRunEventStream:
     ):
         user_id = uuid4()
         run_id, _conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
-        stream_token = mint_stream_token(user_id)["token"]
+        stream_token = mint_stream_token(user_id).token
 
         response = auth_client.get(
             f"/chat-runs/{run_id}/events?after=3",
@@ -549,29 +552,27 @@ class TestChatRunEventStream:
         assert response.text == ""
 
     @pytest.mark.asyncio
-    async def test_tail_closes_when_run_disappears_after_stream_open(self, monkeypatch):
+    async def test_tail_closes_when_run_disappears_after_stream_open(self):
         class Request:
             async def is_disconnected(self) -> bool:
                 return False
 
-        def missing_run(*_args):
+        def missing_run(_cursor):
             raise ApiError(ApiErrorCode.E_NOT_FOUND, "Not found")
 
-        monkeypatch.setattr(stream_routes, "_read_chat_run_events", missing_run)
         listener = _FakeListener()
         chunks = [
             chunk
-            async for chunk in stream_routes._tail_chat_run_events(
+            async for chunk in _sse.tail_cursor_stream(
                 request=Request(),
-                run_id=uuid4(),
-                viewer_id=uuid4(),
-                after=0,
                 listener=listener,
+                after=0,
+                read_after=missing_run,
             )
         ]
 
         assert chunks == []
-        assert listener.closed_reason == "not_found"
+        assert listener.closed_reason == "gone"
 
     @pytest.mark.asyncio
     async def test_route_rejects_listener_capacity_before_response(self, monkeypatch):
@@ -579,7 +580,7 @@ class TestChatRunEventStream:
             raise StreamListenCapacityError()
 
         monkeypatch.setattr(stream_routes, "_assert_chat_run_owner", lambda *_args: None)
-        monkeypatch.setattr(stream_routes, "open_stream_listener", reject_capacity)
+        monkeypatch.setattr(stream_routes, "open_sse_listener", reject_capacity)
 
         with pytest.raises(StreamListenCapacityError):
             await stream_routes.stream_chat_run_events(

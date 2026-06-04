@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.playback import PlaybackQueueAddRequest, PlaybackQueueOrderRequest
 from nexus.services import playback_queue as playback_queue_service
 
-router = APIRouter()
+router = APIRouter(tags=["playback"])
 
 
 @router.get("/playback/queue")
@@ -21,7 +21,7 @@ def get_playback_queue(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     rows = playback_queue_service.list_queue_for_viewer(db, viewer.user_id)
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.post("/playback/queue/items")
@@ -37,7 +37,7 @@ def post_playback_queue_items(
         insert_position=body.insert_position,
         current_media_id=body.current_media_id,
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.delete("/playback/queue/items/{item_id}")
@@ -47,7 +47,7 @@ def delete_playback_queue_item(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     rows = playback_queue_service.remove_queue_item_for_viewer(db, viewer.user_id, item_id)
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.put("/playback/queue/order")
@@ -61,7 +61,7 @@ def put_playback_queue_order(
         viewer.user_id,
         item_ids=body.item_ids,
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.post("/playback/queue/clear")
@@ -70,7 +70,7 @@ def clear_playback_queue(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     rows = playback_queue_service.clear_queue_for_viewer(db, viewer.user_id)
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.get("/playback/queue/next")

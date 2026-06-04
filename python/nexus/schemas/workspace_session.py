@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 MAX_WORKSPACE_STATE_BYTES = 65_536
 
 
+class WorkspaceSessionOut(BaseModel):
+    """API projection of a stored workspace session row."""
+
+    state: dict[str, object]
+    updated_at: str
+
+
 class WorkspaceSessionPutRequest(BaseModel):
     """PUT body for a per-device workspace session."""
 

@@ -1,10 +1,23 @@
 """Schemas for notes, universal object refs, and object links."""
 
+import enum
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class _UnsetType(enum.Enum):
+    """Sentinel distinguishing an omitted PATCH field from an explicit null."""
+
+    UNSET = "UNSET"
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _UnsetType.UNSET
 
 OBJECT_TYPES = Literal[
     "page",
@@ -29,19 +42,6 @@ OBJECT_LINK_RELATIONS = Literal[
     "related",
 ]
 
-OBJECT_TYPE_VALUES = {
-    "page",
-    "note_block",
-    "media",
-    "highlight",
-    "conversation",
-    "message",
-    "podcast",
-    "content_chunk",
-    "fragment",
-    "contributor",
-    "evidence_span",
-}
 NOTE_BLOCK_KIND_VALUES = {"bullet", "heading", "todo", "quote", "code", "image", "embed"}
 NOTE_PM_BODY_NODE_TYPES = {"paragraph", "code_block", "object_embed"}
 NOTE_PM_NODE_TYPES = {
@@ -354,7 +354,7 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path} must be an object")
         object_type = attrs.get("objectType")
         object_id = attrs.get("objectId")
-        if not isinstance(object_type, str) or object_type not in OBJECT_TYPE_VALUES:
+        if not isinstance(object_type, str) or object_type not in get_args(OBJECT_TYPES):
             raise ValueError(f"{path}.objectType must be a known object type")
         if not isinstance(object_id, str):
             raise ValueError(f"{path}.objectId must be a UUID string")
@@ -502,8 +502,8 @@ class CreateObjectLinkRequest(BaseModel):
 
 class UpdateObjectLinkRequest(BaseModel):
     relation_type: OBJECT_LINK_RELATIONS | None = None
-    a_order_key: str | None = Field(default=None, min_length=1, max_length=64)
-    b_order_key: str | None = Field(default=None, min_length=1, max_length=64)
+    a_order_key: str | None | _UnsetType = Field(default=UNSET, min_length=1, max_length=64)
+    b_order_key: str | None | _UnsetType = Field(default=UNSET, min_length=1, max_length=64)
     metadata: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")

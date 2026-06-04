@@ -50,6 +50,9 @@ APP_SEARCH_RESULT_TYPES = Literal[
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
+# Filter vocabulary for GET /chat-runs: the run statuses plus the synthetic
+# "active" (non-terminal) filter. Owned once at the boundary; the service maps it.
+CHAT_RUN_STATUS_FILTER = Literal["active", "queued", "running", "complete", "error", "cancelled"]
 BRANCH_ANCHOR_KINDS = Literal[
     "none",
     "assistant_message",
@@ -432,18 +435,6 @@ REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high",
 
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
-
-
-class MessageRetrievalCandidateLedgerListResponse(BaseModel):
-    data: list[MessageRetrievalCandidateLedgerOut]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageRerankLedgerListResponse(BaseModel):
-    data: list[MessageRerankLedgerOut]
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class PageInfo(BaseModel):

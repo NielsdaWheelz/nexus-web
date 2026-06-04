@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.billing import BillingCheckoutRequest, BillingSessionOut
 from nexus.services import billing as billing_service
 
@@ -21,7 +21,7 @@ def get_billing_account(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     out = billing_service.get_billing_account(db, viewer.user_id)
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post("/billing/checkout")
@@ -36,7 +36,7 @@ def create_checkout_session(
         viewer.email,
         body.plan_tier,
     )
-    return success_response(BillingSessionOut(url=url).model_dump(mode="json"))
+    return ok(BillingSessionOut(url=url))
 
 
 @router.post("/billing/portal")
@@ -45,7 +45,7 @@ def create_customer_portal_session(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     url = billing_service.create_customer_portal_session(db, viewer.user_id)
-    return success_response(BillingSessionOut(url=url).model_dump(mode="json"))
+    return ok(BillingSessionOut(url=url))
 
 
 @router.post("/billing/stripe/webhook")

@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from nexus.jobs.registry import get_task_contract_version
 from nexus.responses import success_response
 
-router = APIRouter()
+router = APIRouter(tags=["health"])
 
 
 @router.get("/health")

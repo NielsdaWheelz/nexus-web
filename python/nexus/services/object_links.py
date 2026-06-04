@@ -14,10 +14,12 @@ from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import ObjectLink
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
+    UNSET,
     OBJECT_LINK_RELATIONS,
     OBJECT_TYPES,
     ObjectLinkOut,
     ObjectRef,
+    _UnsetType,
 )
 from nexus.services.object_refs import hydrate_object_ref
 
@@ -35,11 +37,9 @@ class CreateObjectLinkInput:
 @dataclass(frozen=True)
 class UpdateObjectLinkPatch:
     relation_type: str | None = None
-    a_order_key: str | None = None
-    b_order_key: str | None = None
+    a_order_key: str | None | _UnsetType = UNSET
+    b_order_key: str | None | _UnsetType = UNSET
     metadata: dict[str, Any] | None = None
-    set_a_order_key: bool = False
-    set_b_order_key: bool = False
 
 
 def create_object_link(
@@ -152,9 +152,9 @@ def update_object_link(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object link not found")
     if patch.relation_type is not None:
         link.relation_type = patch.relation_type
-    if patch.set_a_order_key:
+    if patch.a_order_key is not UNSET:
         link.a_order_key = patch.a_order_key
-    if patch.set_b_order_key:
+    if patch.b_order_key is not UNSET:
         link.b_order_key = patch.b_order_key
     if patch.metadata is not None:
         link.metadata_json = patch.metadata

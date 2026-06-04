@@ -1,152 +1,27 @@
-"""Media routes.
+"""Media catalog routes: list, get, delete, fragments, libraries, refresh.
 
-Routes are transport-only:
-- Extract viewer_user_id from request.state
-- Call exactly one service function
-- Return success(...) or raise ApiError
-
-No domain logic or raw DB access in routes.
+Transport-only: validate input, call exactly one service, return the envelope.
+Asset serving, ingestion, reader, listening-state, and transcript routes live in
+their own routers (media_assets, media_ingest, reader, listening_state,
+podcast_transcripts). Those routers own static `/media/<literal>` paths and are
+registered before this one so the literals are not parsed as `/media/{media_id}`.
 """
 
-import json
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Query, Request
-from fastapi.responses import JSONResponse, Response
-from pydantic import TypeAdapter, ValidationError
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
-from nexus.api.query_params import parse_comma_list
-from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_session_factory
-from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import success_response
-from nexus.schemas.media import (
-    ArticleCaptureRequest,
-    FromUrlRequest,
-    ListeningStateBatchUpsertRequest,
-    ListeningStateUpsertRequest,
-    MediaEvidenceResponse,
-    MediaIngestRequest,
-    MediaLibrariesRequest,
-    MediaLibrariesResponse,
-    RetryRequest,
-    TranscriptForecastBatchRequest,
-    TranscriptRequestBatchRequest,
-    TranscriptRequestRequest,
-    UploadInitRequest,
-)
-from nexus.schemas.reader import ReaderResumeState
-from nexus.services import (
-    epub_assets,
-    epub_lifecycle,
-    epub_read,
-    image_proxy,
-    library_entries,
-    listening_state,
-    locator_resolver,
-    media_file_access,
-    media_ingest,
-    reader_navigation,
-)
+from nexus.db.session import get_db
+from nexus.responses import ok, success_response
+from nexus.schemas.media import MediaLibrariesRequest
+from nexus.services import library_entries
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
-from nexus.services import reader as reader_service
-from nexus.services import upload as upload_service
-from nexus.services.podcasts import transcription as podcast_transcript_service
 
-router = APIRouter()
-_READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
-
-
-async def _reader_resume_state_body(request: Request) -> ReaderResumeState | None:
-    raw_body = await request.body()
-    if not raw_body:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Reader state body is required.")
-    try:
-        payload = json.loads(raw_body)
-    except json.JSONDecodeError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Reader state body must be valid JSON.",
-        ) from exc
-    if payload is None:
-        return None
-    try:
-        return _READER_RESUME_STATE_ADAPTER.validate_python(payload)
-    except ValidationError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Invalid reader state payload.",
-        ) from exc
-
-
-# =============================================================================
-# Image Proxy Endpoint (MUST be defined before /media/{media_id} to avoid
-# FastAPI matching "image" as a UUID)
-# =============================================================================
-
-
-@router.get("/media/image")
-def get_proxied_image(
-    url: str,
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> Response:
-    """Proxy an external image through the server with SSRF protection.
-
-    This endpoint fetches external images safely, validating URLs and content
-    to prevent SSRF attacks and ensure only valid images are served.
-
-    The endpoint:
-    - Validates URL scheme (http/https only), port (80/443 only), no credentials
-    - Blocks requests to private/internal IP addresses
-    - Validates image content type and decodes with Pillow
-    - Caches images by normalized URL with ETag support
-    - Returns 304 Not Modified for conditional GET with matching ETag
-
-    Args:
-        url: The external image URL to fetch (must be percent-encoded).
-        request: FastAPI request object for reading If-None-Match header.
-        viewer: Authenticated viewer (required for auth enforcement).
-
-    Returns:
-        Response with image bytes and appropriate headers.
-
-    Raises:
-        E_SSRF_BLOCKED (403): URL violates security rules.
-        E_IMAGE_FETCH_FAILED (502): Failed to fetch from upstream.
-        E_INGEST_TIMEOUT (504): Upstream fetch timed out.
-        E_IMAGE_TOO_LARGE (413): Image exceeds 10MB or 4096x4096 dimensions.
-        E_INVALID_REQUEST (400): Malformed URL or invalid image content.
-    """
-    # Check If-None-Match for conditional GET
-    if_none_match = request.headers.get("If-None-Match")
-
-    result = image_proxy.fetch_image(url, if_none_match=if_none_match)
-
-    if result.not_modified:
-        return Response(
-            status_code=304,
-            headers={"ETag": result.etag},
-        )
-
-    return Response(
-        content=result.data,
-        media_type=result.content_type,
-        headers={
-            "Cache-Control": "private, max-age=86400",
-            "ETag": result.etag,
-        },
-    )
-
-
-# =============================================================================
-# Media CRUD Endpoints
-# =============================================================================
+router = APIRouter(tags=["media"])
 
 
 @router.get("/media")
@@ -170,112 +45,7 @@ def list_media(
         cursor=cursor,
         limit=limit,
     )
-    return {
-        "data": [media.model_dump(mode="json") for media in media_list],
-        "page": {"next_cursor": next_cursor},
-    }
-
-
-@router.post("/media/from_url", status_code=202)
-def create_from_url(
-    request_body: FromUrlRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-) -> dict:
-    """Create media from URL and enqueue ingestion.
-
-    Kind classification happens in the service layer:
-    - YouTube URLs -> canonical `video` identity with create-or-reuse semantics
-    - X/Twitter post URLs -> canonical same-author thread `web_article`
-    - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
-    - Other URLs -> provisional `web_article`
-
-    Returns 202 Accepted with:
-        - media_id: UUID of the created or reused media
-        - idempotency_outcome: `created` or `reused`
-        - processing_status: current lifecycle snapshot (`pending`, `ready_for_reading`, etc.)
-        - ingest_enqueued: True if task was enqueued
-
-    Clients should poll GET /media/{id} for status updates after submitting a PDF, EPUB, article, or video URL.
-    """
-    # Get request_id from state if available (set by request-id middleware)
-    request_id = getattr(request.state, "request_id", None)
-
-    result = media_ingest.enqueue_media_from_url(
-        db=db,
-        viewer_id=viewer.user_id,
-        url=request_body.url,
-        library_ids=request_body.library_ids,
-        request_id=request_id,
-    )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/media/capture/article", status_code=201)
-def create_captured_article(
-    request_body: ArticleCaptureRequest,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = media_service.create_captured_web_article(
-        db=db,
-        viewer_id=viewer.user_id,
-        url=request_body.url,
-        title=request_body.title,
-        byline=request_body.byline,
-        excerpt=request_body.excerpt,
-        site_name=request_body.site_name,
-        published_time=request_body.published_time,
-        content_html=request_body.content_html,
-        library_ids=request_body.library_ids,
-    )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/media/capture/file", status_code=202)
-async def create_captured_file(
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    library_ids_header = request.headers.get("x-nexus-library-ids", "")
-    try:
-        library_ids = [UUID(value) for value in parse_comma_list(library_ids_header) or []]
-    except ValueError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "invalid x-nexus-library-ids header"
-        ) from exc
-    body = await request.body()
-    result = await run_in_threadpool(
-        media_service.create_captured_file,
-        db=db,
-        viewer_id=viewer.user_id,
-        payload=body,
-        filename=request.headers.get("x-nexus-filename") or "",
-        content_type=request.headers.get("content-type") or "",
-        library_ids=library_ids,
-        source_url=request.headers.get("x-nexus-source-url"),
-        request_id=getattr(request.state, "request_id", None),
-    )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/media/capture/url", status_code=202)
-def create_captured_url(
-    request_body: FromUrlRequest,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-) -> dict:
-    result = media_ingest.enqueue_media_from_url(
-        db=db,
-        viewer_id=viewer.user_id,
-        url=request_body.url,
-        library_ids=request_body.library_ids,
-        request_id=getattr(request.state, "request_id", None),
-    )
-    return success_response(result.model_dump(mode="json"))
+    return {**ok(media_list), "page": {"next_cursor": next_cursor}}
 
 
 @router.get("/media/{media_id}")
@@ -284,13 +54,9 @@ def get_media(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get media by ID.
-
-    Returns media metadata if the viewer can read it.
-    Returns 404 if media does not exist or viewer cannot read it (masks existence).
-    """
+    """Get media by ID. Returns 404 if it does not exist or the viewer cannot read it."""
     result = media_service.get_media_for_viewer(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.delete("/media/{media_id}")
@@ -306,26 +72,7 @@ def remove_media(
         result = media_deletion_service.remove_document_from_library(
             db, viewer.user_id, media_id, library_id
         )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.get(
-    "/media/{media_id}/evidence/{evidence_span_id}",
-    response_model=MediaEvidenceResponse,
-)
-def resolve_media_evidence(
-    media_id: UUID,
-    evidence_span_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = locator_resolver.resolve_evidence_span(
-        db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        evidence_span_id=evidence_span_id,
-    )
-    return success_response(result)
+    return ok(result)
 
 
 @router.get("/media/{media_id}/libraries")
@@ -337,7 +84,7 @@ def get_media_libraries(
     rows = library_entries.list_item_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.get("/media/{media_id}/fragments")
@@ -346,181 +93,9 @@ def get_media_fragments(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get fragments for a media item.
-
-    Returns fragments ordered by idx ASC if the viewer can read the media.
-    Returns 404 if media does not exist or viewer cannot read it (masks existence).
-    """
+    """Get fragments ordered by idx ASC. Returns 404 if not readable (masks existence)."""
     result = media_service.list_fragments_for_viewer(db, viewer.user_id, media_id)
-    return success_response([fragment.model_dump(mode="json") for fragment in result])
-
-
-@router.get("/media/{media_id}/reader-state")
-def get_reader_state(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get per-media reader state."""
-    result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json") if result else None)
-
-
-@router.put("/media/{media_id}/reader-state")
-def put_reader_state(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    body: Annotated[ReaderResumeState | None, Depends(_reader_resume_state_body)],
-) -> dict:
-    """Replace per-media reader state."""
-    result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
-    return success_response(result.model_dump(mode="json") if result else None)
-
-
-@router.get("/media/{media_id}/listening-state")
-def get_listening_state(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get per-media listening state for the authenticated viewer."""
-    result = listening_state.get_listening_state_for_viewer(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.put("/media/{media_id}/listening-state", status_code=204)
-def put_listening_state(
-    media_id: UUID,
-    body: ListeningStateUpsertRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Upsert per-media listening state for the authenticated viewer."""
-    listening_state.upsert_listening_state_for_viewer(
-        db,
-        viewer.user_id,
-        media_id,
-        position_ms=body.position_ms,
-        duration_ms=body.duration_ms,
-        playback_speed=body.playback_speed,
-        is_completed=body.is_completed,
-    )
-    return Response(status_code=204)
-
-
-@router.post("/media/listening-state/batch", status_code=204)
-def post_listening_state_batch(
-    body: ListeningStateBatchUpsertRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Batch mark many visible podcast episodes played/unplayed."""
-    listening_state.batch_mark_listening_state_for_viewer(
-        db,
-        viewer.user_id,
-        media_ids=body.media_ids,
-        is_completed=body.is_completed,
-    )
-    return Response(status_code=204)
-
-
-# =============================================================================
-# Upload / Ingest Endpoints
-# =============================================================================
-
-
-@router.post("/media/upload/init")
-def upload_init(
-    request: UploadInitRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Initialize a file upload.
-
-    Creates media stub and returns signed upload URL.
-    Client should upload file directly to storage using the returned URL,
-    then call POST /media/{id}/ingest to confirm.
-
-    Returns:
-        - media_id: UUID of the created media
-        - upload_url: Presigned PUT URL for direct browser upload
-        - expires_at: When the signed URL expires
-    """
-    result = upload_service.init_upload(
-        db=db,
-        viewer_id=viewer.user_id,
-        kind=request.kind,
-        filename=request.filename,
-        content_type=request.content_type,
-        size_bytes=request.size_bytes,
-        library_ids=request.library_ids,
-    )
-    return success_response(result)
-
-
-@router.post("/media/{media_id}/ingest")
-def confirm_ingest(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-    body: Annotated[MediaIngestRequest | None, Body()] = None,
-) -> dict:
-    """Confirm upload and process file.
-
-    Validates the uploaded file, computes SHA-256 hash, and handles deduplication.
-    For EPUB: runs archive safety preflight and dispatches extraction.
-    Only the creator can confirm their upload.
-
-    Returns:
-        - media_id: UUID of the media (may differ if duplicate detected)
-        - duplicate: True if an existing duplicate was found
-        - processing_status: Current processing status snapshot
-        - ingest_enqueued: True if extraction task was dispatched
-    """
-    request_id = getattr(request.state, "request_id", None)
-    ingest_request = body if body is not None else MediaIngestRequest()
-    result = epub_lifecycle.confirm_ingest_for_viewer(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        library_ids=ingest_request.library_ids,
-        request_id=request_id,
-    )
-    return success_response(result)
-
-
-@router.post("/media/{media_id}/retry", status_code=202)
-def retry_ingest(
-    media_id: UUID,
-    body: RetryRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-) -> dict:
-    """Retry processing or re-enrich metadata for a viewer's media."""
-    from nexus.services.metadata_lifecycle import retry_metadata_for_viewer
-    from nexus.services.pdf_lifecycle import retry_for_viewer_unified
-
-    request_id = getattr(request.state, "request_id", None)
-    if body.from_stage == "source":
-        return success_response(
-            retry_for_viewer_unified(
-                db=db,
-                viewer_id=viewer.user_id,
-                media_id=media_id,
-                request_id=request_id,
-            )
-        )
-    return success_response(
-        retry_metadata_for_viewer(
-            db=db,
-            viewer_id=viewer.user_id,
-            media_id=media_id,
-            request_id=request_id,
-        )
-    )
+    return ok(result)
 
 
 @router.post("/media/{media_id}/libraries")
@@ -532,21 +107,13 @@ def add_media_libraries(
 ) -> dict:
     """Additively attach the media to one or more libraries.
 
-    Idempotent: ids already present are deduplicated; the viewer's default
-    library id is silently deduped. Existing memberships are preserved.
-
-    Returns the subset of ids actually inserted (excludes already-present and
-    default-library dedupes).
+    Idempotent: ids already present and the viewer's default library id are
+    deduped. Returns the subset of ids actually inserted.
     """
-    media_service.get_media_for_viewer(db, viewer.user_id, media_id)
-    inserted = library_entries.add_media_to_libraries(
+    result = library_entries.add_media_to_libraries_for_viewer(
         db, viewer.user_id, media_id, body.library_ids
     )
-    return success_response(
-        MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted).model_dump(
-            mode="json"
-        )
-    )
+    return ok(result)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)
@@ -562,145 +129,5 @@ def refresh_media_source(
         viewer_id=viewer.user_id,
         media_id=media_id,
         request_id=getattr(request.state, "request_id", None),
-    )
-    return success_response(result)
-
-
-@router.post("/media/transcript/request/batch")
-def request_podcast_transcript_batch(
-    body: TranscriptRequestBatchRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Admit transcript requests for multiple podcast episodes sequentially."""
-    result = podcast_transcript_service.request_podcast_transcripts_batch_for_viewer(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_ids=body.media_ids,
-        reason=body.reason,
-    )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/media/{media_id}/transcript/request")
-def request_podcast_transcript(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    body: Annotated[TranscriptRequestRequest | None, Body()] = None,
-) -> Response:
-    """Admit (or forecast) an explicit transcript request for a podcast episode."""
-    transcript_request = body if body is not None else TranscriptRequestRequest()
-    result = podcast_transcript_service.request_podcast_transcript_for_viewer(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        reason=transcript_request.reason,
-        dry_run=transcript_request.dry_run,
-    )
-    status_code = 202 if result.request_enqueued else 200
-    return JSONResponse(
-        status_code=status_code,
-        content=success_response(result.model_dump(mode="json")),
-    )
-
-
-@router.post("/media/transcript/forecasts")
-def forecast_podcast_transcripts(
-    body: TranscriptForecastBatchRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Return dry-run transcript forecasts for many visible podcast episodes."""
-    result = podcast_transcript_service.forecast_podcast_transcripts_for_viewer(
-        db=db,
-        viewer_id=viewer.user_id,
-        requests=[(item.media_id, item.reason) for item in body.requests],
-    )
-    payload = [row.model_dump(mode="json") for row in result]
-    return success_response(payload)
-
-
-@router.get("/media/{media_id}/assets/{asset_key:path}")
-def get_epub_asset(
-    media_id: UUID,
-    asset_key: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> Response:
-    """Serve an EPUB reader image asset through the canonical safe fetch path.
-
-    Returns binary payload with resolved content type and cache headers.
-    Visibility, kind, readiness, and key-format guards enforced by service layer.
-    """
-    result = epub_assets.get_epub_asset_for_viewer(
-        session_factory=get_session_factory(),
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        asset_key=asset_key,
-    )
-    headers = {
-        "Cache-Control": "private, max-age=86400, immutable",
-        "Content-Length": str(len(result.data)),
-        "X-Content-Type-Options": "nosniff",
-    }
-    if result.content_type == "image/svg+xml":
-        headers["Content-Security-Policy"] = (
-            "default-src 'none'; img-src 'self' data:; script-src 'none'; "
-            "object-src 'none'; base-uri 'none'"
-        )
-    return Response(
-        content=result.data,
-        media_type=result.content_type,
-        headers=headers,
-    )
-
-
-# =============================================================================
-# EPUB Read Endpoints
-# =============================================================================
-
-
-@router.get("/media/{media_id}/sections/{section_id:path}")
-def get_epub_section(
-    media_id: UUID,
-    section_id: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get a canonical EPUB section by encoded section id."""
-    result = epub_read.get_epub_section_for_viewer(db, viewer.user_id, media_id, section_id)
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.get("/media/{media_id}/navigation")
-def get_media_navigation(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get canonical reader navigation payload."""
-    result = reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.get("/media/{media_id}/file")
-def get_media_file(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get signed download URL for a media file.
-
-    Returns a short-lived signed URL for downloading the original file.
-    Only available for PDF/EPUB media with uploaded files.
-
-    Returns:
-        - url: Signed download URL
-        - expires_at: When the URL expires
-    """
-    result = media_file_access.get_signed_download_url(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
     )
     return success_response(result)

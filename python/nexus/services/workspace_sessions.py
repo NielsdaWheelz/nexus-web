@@ -7,11 +7,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import WorkspaceSession
+from nexus.schemas.workspace_session import WorkspaceSessionOut
 
 
-def get_workspace_session(db: Session, user_id: UUID, device_id: str) -> WorkspaceSession | None:
+def _to_out(session: WorkspaceSession | None) -> WorkspaceSessionOut | None:
+    """Project a stored session row into its API shape, or None when absent."""
+    if session is None:
+        return None
+    return WorkspaceSessionOut(state=session.state, updated_at=session.updated_at.isoformat())
+
+
+def get_workspace_session(
+    db: Session, user_id: UUID, device_id: str
+) -> WorkspaceSessionOut | None:
     """Get this device's own workspace session."""
-    return (
+    return _to_out(
         db.query(WorkspaceSession)
         .filter(
             WorkspaceSession.user_id == user_id,
@@ -23,9 +33,9 @@ def get_workspace_session(db: Session, user_id: UUID, device_id: str) -> Workspa
 
 def get_most_recent_session_elsewhere(
     db: Session, user_id: UUID, device_id: str
-) -> WorkspaceSession | None:
+) -> WorkspaceSessionOut | None:
     """Get the user's most recent workspace session from another device."""
-    return (
+    return _to_out(
         db.query(WorkspaceSession)
         .filter(
             WorkspaceSession.user_id == user_id,
@@ -38,7 +48,7 @@ def get_most_recent_session_elsewhere(
 
 def upsert_workspace_session(
     db: Session, user_id: UUID, device_id: str, state: dict[str, object]
-) -> WorkspaceSession:
+) -> WorkspaceSessionOut:
     """Upsert this device's workspace session (last-write-wins)."""
     session = (
         db.query(WorkspaceSession)
@@ -59,7 +69,9 @@ def upsert_workspace_session(
         try:
             db.commit()
             db.refresh(session)
-            return session
+            return WorkspaceSessionOut(
+                state=session.state, updated_at=session.updated_at.isoformat()
+            )
         except IntegrityError:
             db.rollback()
             session = (
@@ -75,4 +87,4 @@ def upsert_workspace_session(
     session.updated_at = func.now()
     db.commit()
     db.refresh(session)
-    return session
+    return WorkspaceSessionOut(state=session.state, updated_at=session.updated_at.isoformat())

@@ -9,26 +9,23 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.models import WorkspaceSession
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok, success_response
 from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
-from nexus.schemas.workspace_session import WorkspaceSessionPutRequest
+from nexus.schemas.workspace_session import WorkspaceSessionOut, WorkspaceSessionPutRequest
 from nexus.services import command_palette as command_palette_service
 from nexus.services import reader as reader_service
 from nexus.services import users as users_service
 from nexus.services import workspace_sessions as workspace_sessions_service
 
-router = APIRouter()
+router = APIRouter(tags=["user"])
 
 
-def _workspace_session_payload(session: WorkspaceSession | None) -> dict | None:
-    """Shape a workspace session row for the API, or None when absent."""
-    if session is None:
-        return None
-    return {"state": session.state, "updated_at": session.updated_at.isoformat()}
+def _workspace_session_payload(session: WorkspaceSessionOut | None) -> dict | None:
+    """Serialize a workspace session projection for the API, or None when absent."""
+    return session.model_dump(mode="json") if session is not None else None
 
 
 @router.get("/me")
@@ -44,7 +41,7 @@ def get_me(
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )
-    return success_response(profile.model_dump(mode="json"))
+    return ok(profile)
 
 
 @router.patch("/me")
@@ -58,7 +55,7 @@ def patch_me(
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )
-    return success_response(profile.model_dump(mode="json"))
+    return ok(profile)
 
 
 @router.get("/me/reader-profile")
@@ -68,7 +65,7 @@ def get_reader_profile(
 ) -> dict:
     """Get reader profile (per-user defaults). Returns defaults when none exists."""
     result = reader_service.get_reader_profile(db, viewer.user_id)
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.patch("/me/reader-profile")
@@ -79,7 +76,7 @@ def patch_reader_profile(
 ) -> dict:
     """Update reader profile (partial)."""
     result = reader_service.patch_reader_profile(db, viewer.user_id, body)
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.get("/me/palette-history")
@@ -90,7 +87,7 @@ def get_palette_history(
 ) -> dict:
     """Get command palette usage history for the current viewer."""
     result = command_palette_service.get_history_for_viewer(db, viewer.user_id, query=query)
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.post("/me/palette-selections")
@@ -110,7 +107,7 @@ def post_palette_selection(
         title_snapshot=body.title_snapshot,
         source=body.source,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.get("/me/workspace-session")

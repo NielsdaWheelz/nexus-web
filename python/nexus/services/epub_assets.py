@@ -30,6 +30,8 @@ _EPUB_ASSET_CONTENT_TYPES = frozenset(
 class EpubAssetOut:
     data: bytes
     content_type: str
+    cache_control: str
+    content_security_policy: str | None
 
 
 @dataclass(frozen=True)
@@ -70,7 +72,20 @@ def get_epub_asset_for_viewer(
             "Stored EPUB asset object is missing or unreadable",
         ) from exc
 
-    return EpubAssetOut(data=data, content_type=asset_metadata.content_type)
+    # SVG can carry script; lock served EPUB SVG assets down at the response level.
+    content_security_policy = (
+        "default-src 'none'; img-src 'self' data:; script-src 'none'; "
+        "object-src 'none'; base-uri 'none'"
+        if asset_metadata.content_type == "image/svg+xml"
+        else None
+    )
+    return EpubAssetOut(
+        data=data,
+        content_type=asset_metadata.content_type,
+        # Reader EPUB assets are content-addressed and immutable.
+        cache_control="private, max-age=86400, immutable",
+        content_security_policy=content_security_policy,
+    )
 
 
 def _get_epub_asset_metadata_for_viewer(

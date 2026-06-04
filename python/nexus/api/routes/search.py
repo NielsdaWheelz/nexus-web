@@ -19,12 +19,10 @@ from sqlalchemy.orm import Session
 from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.schemas.search import (
-    SearchResponse,
-)
+from nexus.schemas.search import SearchResponse
 from nexus.services import search as search_service
 
-router = APIRouter()
+router = APIRouter(tags=["search"])
 
 
 @router.get("/search", response_model=SearchResponse, response_model_by_alias=False)

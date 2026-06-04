@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.podcast import (
     PodcastEnsureRequest,
     PodcastOpmlImportRequest,
@@ -24,7 +24,7 @@ from nexus.services.podcasts import poll as podcast_sync_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
 
-router = APIRouter()
+router = APIRouter(tags=["podcasts"])
 
 
 @router.get("/podcasts/discover")
@@ -37,7 +37,7 @@ def discover_podcasts(
     """Discover podcasts globally (not library-scoped)."""
     _ = viewer
     rows = podcast_discovery_service.discover_podcasts(db, q, limit=limit)
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.post("/podcasts/ensure")
@@ -49,7 +49,7 @@ def ensure_podcast(
     """Ensure one discovered podcast exists locally and return its local id."""
     _ = viewer
     out = podcast_identity_service.ensure_podcast(db, body)
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post("/podcasts/subscriptions")
@@ -60,7 +60,7 @@ def subscribe_to_podcast(
 ) -> dict:
     """Subscribe viewer and enqueue async data-plane podcast sync."""
     out = podcast_subscription_service.subscribe_to_podcast(db, viewer.user_id, body)
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/podcasts/subscriptions")
@@ -91,7 +91,7 @@ def list_subscriptions(
         filter=filter,
         library_id=library_id,
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.post("/podcasts/import/opml")
@@ -108,7 +108,7 @@ def import_subscriptions_from_opml(
         default_library_ids=body.default_library_ids,
         per_feed_library_ids=body.per_feed_library_ids,
     )
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/podcasts/export/opml")
@@ -133,7 +133,7 @@ def get_subscription_status(
 ) -> dict:
     """Read viewer-visible sync status for one podcast subscription."""
     out = podcast_subscription_service.get_subscription_status(db, viewer.user_id, podcast_id)
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/podcasts/{podcast_id}/libraries")
@@ -145,7 +145,7 @@ def get_podcast_libraries(
     rows = library_entries.list_item_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")
@@ -162,7 +162,7 @@ def patch_subscription_settings(
         podcast_id=podcast_id,
         body=body,
     )
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post("/podcasts/subscriptions/{podcast_id}/sync", status_code=202)
@@ -177,7 +177,7 @@ def refresh_subscription_sync(
         viewer_id=viewer.user_id,
         podcast_id=podcast_id,
     )
-    return JSONResponse(status_code=202, content=success_response(out.model_dump(mode="json")))
+    return JSONResponse(status_code=202, content=ok(out))
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")
@@ -192,7 +192,7 @@ def unsubscribe_from_podcast(
         viewer.user_id,
         podcast_id,
     )
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/podcasts/{podcast_id}")
@@ -205,7 +205,7 @@ def get_podcast_detail(
     out = podcast_subscriptions_query_service.get_podcast_detail_for_viewer(
         db, viewer.user_id, podcast_id
     )
-    return success_response(out.model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/podcasts/{podcast_id}/episodes")
@@ -230,4 +230,4 @@ def list_podcast_episodes(
         sort=sort,
         q=q,
     )
-    return success_response([row.model_dump(mode="json") for row in rows])
+    return ok(rows)

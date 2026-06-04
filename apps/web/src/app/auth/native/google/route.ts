@@ -1,6 +1,4 @@
-import { getEnv } from "@/lib/env";
-import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
-import { createRandomId } from "@/lib/createRandomId";
+import { mintHandoffCode } from "@/lib/auth/mint-handoff-code";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
@@ -26,8 +24,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "invalid_request" }, { status: 400 });
     }
 
-    const config = getEnv().internalApi;
-
     const { supabase } = await createRouteHandlerClient();
     const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "google",
@@ -42,59 +38,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const requestId = createRandomId();
-
-    let mintResponse: Response;
-    try {
-      mintResponse = await boundedAuthFetch(
-        `${config.fastApiBaseUrl}/auth/handoff-codes`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${data.session.access_token}`,
-            "Content-Type": "application/json",
-            "X-Request-ID": requestId,
-            ...(config.internalSecret
-              ? { "X-Nexus-Internal": config.internalSecret }
-              : {}),
-          },
-          body: JSON.stringify({
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token,
-            challenge: hc,
-          }),
-        },
-        "Handoff mint request timed out"
-      );
-    } catch (mintError) {
-      if (!(mintError instanceof Error)) {
-        throw mintError;
-      }
-      // justify-ignore-error: a timed-out or failed mint surfaces to the
-      // native caller as handoff_mint_failed, the same as a non-2xx response.
+    const mintResult = await mintHandoffCode({
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      challenge: hc,
+    });
+    if ("error" in mintResult) {
+      // justify-ignore-error: a timed-out, non-2xx, or malformed mint all
+      // surface to the native caller as a single handoff_mint_failed.
       return NextResponse.json(
         { error: "handoff_mint_failed" },
         { status: 502 }
       );
     }
 
-    if (!mintResponse.ok) {
-      return NextResponse.json(
-        { error: "handoff_mint_failed" },
-        { status: 502 }
-      );
-    }
-
-    const mintBody = await mintResponse.json();
-    const code = mintBody?.data?.code;
-    if (typeof code !== "string" || !code) {
-      return NextResponse.json(
-        { error: "handoff_mint_failed" },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ data: { code } }, { status: 200 });
+    return NextResponse.json({ data: { code: mintResult.code } }, { status: 200 });
   } catch (error) {
     if (!(error instanceof Error)) {
       throw error;

@@ -29,6 +29,7 @@ from lxml.html import HtmlElement, document_fromstring, tostring
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus import web_paths
 from nexus.config import get_settings
 from nexus.db.models import (
     EpubFragmentSource,
@@ -1187,7 +1188,7 @@ def _rewrite_image_resource_url(
     )
     if key is None:
         return None
-    rewritten = f"/api/media/{media_id}/assets/{key}"
+    rewritten = web_paths.media_asset_url(media_id, key)
     return f"{rewritten}#{parsed.fragment}" if parsed.fragment else rewritten
 
 
@@ -1560,7 +1561,7 @@ def _is_safe_svg_image_href(value: str) -> bool:
     scheme = parsed.scheme.lower()
     if scheme:
         return False
-    return value.startswith("/api/media/")
+    return web_paths.is_media_asset_path(value)
 
 
 def _is_safe_svg_url_reference(value: str) -> bool:

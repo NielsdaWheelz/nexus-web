@@ -150,13 +150,11 @@ def create_reading(
     viewer_id: UUID,
     question: str,
 ) -> OracleReading:
-    """Insert one pending reading row and enqueue its generation job."""
-    cleaned = question.strip()
-    if not cleaned or len(cleaned) > 280:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Oracle question must be 1-280 characters",
-        )
+    """Insert one pending reading row and enqueue its generation job.
+
+    The question is strip+length validated once at the boundary
+    (OracleReadingCreateRequest: str_strip_whitespace + min/max_length).
+    """
     _validate_oracle_pre_enqueue_controls(viewer_id=viewer_id)
 
     for attempt in range(ORACLE_FOLIO_ALLOCATE_ATTEMPTS):
@@ -164,7 +162,7 @@ def create_reading(
             reading = _insert_reading_with_next_folio(
                 db,
                 viewer_id=viewer_id,
-                question=cleaned,
+                question=question,
             )
             db.commit()
             db.refresh(reading)
@@ -573,7 +571,9 @@ def is_reading_terminal(db: Session, *, reading_id: UUID) -> bool:
     status = db.execute(
         select(OracleReading.status).where(OracleReading.id == reading_id)
     ).scalar_one_or_none()
-    return status in ("complete", "failed")
+    # A missing row (reading deleted mid-stream) is terminal — otherwise the SSE
+    # tail would stream forever. assert_reading_owner proved it existed at open.
+    return status is None or status in ("complete", "failed")
 
 
 def fail_reading_after_worker_exception(db: Session, *, reading_id: UUID) -> dict[str, Any]:
