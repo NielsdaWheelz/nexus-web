@@ -75,7 +75,7 @@ def _next_position(db: Session, library_id: UUID) -> int:
     return int(value or 0)
 
 
-def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> None:
+def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     """Append the target to the library at next_position if absent. The sole inserter —
     replaces the inline add inserts and the closure's per-media append.
 
@@ -96,7 +96,7 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> None:
         {"lib": library_id, "tid": target.id},
     ).fetchone()
     if existing is not None:
-        return
+        return False
     db.execute(
         text("""
             INSERT INTO library_entries (library_id, media_id, podcast_id, position)
@@ -109,6 +109,7 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> None:
             "position": _next_position(db, library_id),
         },
     )
+    return True
 
 
 def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
@@ -175,14 +176,6 @@ def entry_exists(db: Session, library_id: UUID, target: EntryTarget) -> bool:
         {"lib": library_id, "tid": target.id},
     ).fetchone()
     return row is not None
-
-
-def list_library_ids_for_media(db: Session, media_id: UUID) -> list[UUID]:
-    rows = db.execute(
-        text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    ).fetchall()
-    return [UUID(str(row[0])) for row in rows]
 
 
 def list_media_ids_in_library(db: Session, library_id: UUID) -> list[UUID]:
@@ -702,14 +695,13 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
 def add_media_to_libraries_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> MediaLibrariesResponse:
-    """Verify the viewer can read the media (404 masks existence), then additively attach
-    it to the given accessible non-default libraries. Returns the subset of ids actually
-    inserted (excludes already-present and the viewer's default id)."""
+    """Verify the viewer can read the media, then add selected writable destinations."""
     from nexus.services import media as media_service
 
-    media_service.get_media_for_viewer(db, viewer_id, media_id)
-    targets = governance.resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
-    inserted = _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+    with transaction(db):
+        media_service.get_media_for_viewer(db, viewer_id, media_id)
+        targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
+        inserted = _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
     return MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted)
 
 
@@ -718,26 +710,42 @@ def _add_media_to_resolved_libraries(
 ) -> list[UUID]:
     if not library_ids:
         return []
-    existing_rows = db.execute(
-        text("""
-            SELECT library_id FROM library_entries
-            WHERE media_id = :media_id AND library_id = ANY(:library_ids)
-        """),
-        {"media_id": media_id, "library_ids": library_ids},
-    ).fetchall()
-    already_present = {UUID(str(row[0])) for row in existing_rows}
-    to_insert = [lid for lid in library_ids if lid not in already_present]
-    for library_id in to_insert:
-        add_media_to_library(db, viewer_id, library_id, media_id)
-    return to_insert
+    from nexus.services.default_library_closure import add_media_to_non_default_closure
+    from nexus.services.media_deletion import clear_user_media_deletion
+
+    clear_user_media_deletion(db, viewer_id, media_id)
+    locked_contexts = {
+        library_id: governance.lock_library_for_member(db, viewer_id, library_id)
+        for library_id in sorted(library_ids)
+    }
+    for ctx in locked_contexts.values():
+        governance.require_non_default(ctx.is_default)
+        governance.require_admin(ctx.role)
+
+    inserted: list[UUID] = []
+    for library_id in library_ids:
+        if ensure_entry(db, library_id, media_target(media_id)):
+            inserted.append(library_id)
+        add_media_to_non_default_closure(db, library_id, media_id)
+    return inserted
 
 
 def assign_libraries_for_media(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
-    """Attach media to the viewer's default library + every accessible id in
-    library_ids. Additive and idempotent; the default id is silently deduped."""
-    targets = governance.resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
+    """Attach media to the viewer's default library plus selected destinations.
+
+    Standalone assignment owns its transaction. Creation workflows that already
+    own a transaction must call `assign_libraries_for_media_in_current_transaction`.
+    """
+    with transaction(db):
+        assign_libraries_for_media_in_current_transaction(db, viewer_id, media_id, library_ids)
+
+
+def assign_libraries_for_media_in_current_transaction(
+    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
+) -> None:
+    targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
     ensure_media_in_default_library(db, viewer_id, media_id)
     _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 
@@ -748,34 +756,48 @@ def set_subscription_libraries(
     subscription_podcast_id: UUID,
     library_ids: list[UUID],
 ) -> None:
-    """Replace the library set attached to a podcast subscription. Validates
-    accessibility for all ids; the viewer's default id is silently deduped."""
-    targets = governance.resolve_accessible_non_default_library_ids(
+    """Replace the writable non-default library set attached to a subscription.
+
+    Standalone replacement owns its transaction. Subscription workflows that
+    already own a transaction must call
+    `set_subscription_libraries_in_current_transaction`.
+    """
+    with transaction(db):
+        set_subscription_libraries_in_current_transaction(
+            db, subscription_user_id, subscription_podcast_id, library_ids
+        )
+
+
+def set_subscription_libraries_in_current_transaction(
+    db: Session,
+    subscription_user_id: UUID,
+    subscription_podcast_id: UUID,
+    library_ids: list[UUID],
+) -> None:
+    targets = governance.resolve_writable_non_default_library_ids(
         db, subscription_user_id, library_ids
     )
-
-    with transaction(db):
+    db.execute(
+        text("""
+            DELETE FROM podcast_subscription_libraries
+            WHERE subscription_user_id = :user_id
+              AND subscription_podcast_id = :podcast_id
+        """),
+        {"user_id": subscription_user_id, "podcast_id": subscription_podcast_id},
+    )
+    for library_id in targets:
         db.execute(
             text("""
-                DELETE FROM podcast_subscription_libraries
-                WHERE subscription_user_id = :user_id
-                  AND subscription_podcast_id = :podcast_id
+                INSERT INTO podcast_subscription_libraries
+                    (subscription_user_id, subscription_podcast_id, library_id)
+                VALUES (:user_id, :podcast_id, :library_id)
             """),
-            {"user_id": subscription_user_id, "podcast_id": subscription_podcast_id},
+            {
+                "user_id": subscription_user_id,
+                "podcast_id": subscription_podcast_id,
+                "library_id": library_id,
+            },
         )
-        for library_id in targets:
-            db.execute(
-                text("""
-                    INSERT INTO podcast_subscription_libraries
-                        (subscription_user_id, subscription_podcast_id, library_id)
-                    VALUES (:user_id, :podcast_id, :library_id)
-                """),
-                {
-                    "user_id": subscription_user_id,
-                    "podcast_id": subscription_podcast_id,
-                    "library_id": library_id,
-                },
-            )
 
 
 # ---------------------------------------------------------------------------

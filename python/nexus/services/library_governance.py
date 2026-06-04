@@ -6,9 +6,12 @@ libraries/memberships access checks used by ingest paths. Entry rows, invitation
 and the default-library closure are owned by their own modules.
 """
 
+import base64
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -22,7 +25,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.library import LibraryMemberOut, LibraryOut, LibraryRole
+from nexus.schemas.library import LibraryDestinationOut, LibraryMemberOut, LibraryOut, LibraryRole
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -52,6 +55,16 @@ def _library_out_from_row(row) -> LibraryOut:
         owner_user_id=row["owner_user_id"],
         is_default=row["is_default"],
         role=row["role"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _library_destination_out_from_row(row) -> LibraryDestinationOut:
+    return LibraryDestinationOut(
+        id=row["id"],
+        name=row["name"],
+        color=row["color"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -380,6 +393,128 @@ def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[Libra
     return [_library_out_from_row(row) for row in rows]
 
 
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _encode_destination_cursor(row) -> str:
+    payload = {
+        "rank": int(row["match_rank"]),
+        "updated_at": row["updated_at"].isoformat(),
+        "created_at": row["created_at"].isoformat(),
+        "id": str(row["id"]),
+        "q": str(row["cursor_q"]),
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_destination_cursor(cursor: str, q: str) -> tuple[int, datetime, datetime, UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if payload["q"] != q:
+            raise ValueError
+        return (
+            int(payload["rank"]),
+            datetime.fromisoformat(str(payload["updated_at"])),
+            datetime.fromisoformat(str(payload["created_at"])),
+            UUID(str(payload["id"])),
+        )
+    except Exception:
+        # justify-ignore-error: malformed cursor input is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid cursor") from None
+
+
+def list_writable_library_destinations(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    q: str | None = None,
+    cursor: str | None = None,
+    limit: int = 25,
+) -> tuple[list[LibraryDestinationOut], str | None]:
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 50)
+    query = q or ""
+    cursor_clause = ""
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "q": query,
+        "prefix_q": f"{_escape_like(query)}%",
+        "contains_q": f"%{_escape_like(query)}%",
+        "limit": limit + 1,
+    }
+    if cursor is not None:
+        rank, updated_at, created_at, library_id = _decode_destination_cursor(cursor, query)
+        cursor_clause = """
+          AND (
+            ranked.match_rank > :cursor_rank
+            OR (ranked.match_rank = :cursor_rank AND ranked.updated_at < :cursor_updated_at)
+            OR (
+              ranked.match_rank = :cursor_rank
+              AND ranked.updated_at = :cursor_updated_at
+              AND ranked.created_at < :cursor_created_at
+            )
+            OR (
+              ranked.match_rank = :cursor_rank
+              AND ranked.updated_at = :cursor_updated_at
+              AND ranked.created_at = :cursor_created_at
+              AND ranked.id > :cursor_id
+            )
+          )
+        """
+        params.update(
+            {
+                "cursor_rank": rank,
+                "cursor_updated_at": updated_at,
+                "cursor_created_at": created_at,
+                "cursor_id": library_id,
+            }
+        )
+
+    rows = (
+        db.execute(
+            text(f"""
+            WITH ranked AS (
+                SELECT
+                    l.id,
+                    l.name,
+                    l.color,
+                    l.created_at,
+                    l.updated_at,
+                    :q AS cursor_q,
+                    CASE
+                        WHEN :q = '' THEN 3
+                        WHEN lower(l.name) = :q THEN 0
+                        WHEN lower(l.name) LIKE :prefix_q ESCAPE '\\' THEN 1
+                        ELSE 2
+                    END AS match_rank
+                FROM libraries l
+                LEFT JOIN memberships m
+                  ON m.library_id = l.id AND m.user_id = :viewer_id
+                WHERE l.is_default = false
+                  AND (l.owner_user_id = :viewer_id OR m.role = 'admin')
+                  AND (:q = '' OR lower(l.name) LIKE :contains_q ESCAPE '\\')
+            )
+            SELECT *
+            FROM ranked
+            WHERE 1 = 1
+              {cursor_clause}
+            ORDER BY match_rank ASC, updated_at DESC, created_at DESC, id ASC
+            LIMIT :limit
+        """),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+    page_rows = rows[:limit]
+    next_cursor = _encode_destination_cursor(page_rows[-1]) if len(rows) > limit else None
+    return [_library_destination_out_from_row(row) for row in page_rows], next_cursor
+
+
 def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     """Get a single library the viewer is a member of; mask a non-member as 404."""
     row = (
@@ -617,40 +752,49 @@ def default_library_id_for_user(db: Session, user_id: UUID) -> UUID:
     return library_id
 
 
-def resolve_accessible_non_default_library_ids(
+def resolve_writable_non_default_library_ids(
     db: Session, viewer_id: UUID, library_ids: list[UUID]
 ) -> list[UUID]:
-    """Dedupe the viewer's default id, then assert every remaining id is one the viewer
-    owns or is a member of. Raises E_LIBRARY_FORBIDDEN if any is inaccessible; returns
-    the accessible non-default target set."""
+    """Validate user-selected write destinations and preserve input order."""
     if not library_ids:
         return []
-    default_library_id = default_library_id_for_user(db, viewer_id)
-    targets = list({lid for lid in library_ids if lid != default_library_id})
-    if not targets:
-        return []
-    accessible_rows = db.execute(
-        text("""
-            SELECT l.id
-            FROM libraries l
-            LEFT JOIN memberships m
-              ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE l.id = ANY(:library_ids)
-              AND (l.owner_user_id = :viewer_id OR m.user_id IS NOT NULL)
-        """),
-        {"viewer_id": viewer_id, "library_ids": targets},
-    ).fetchall()
-    accessible_ids = {UUID(str(row[0])) for row in accessible_rows}
-    if accessible_ids != set(targets):
-        raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not accessible")
+    if len(set(library_ids)) != len(library_ids):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "library_ids must not contain duplicates",
+        )
+    rows = (
+        db.execute(
+            text("""
+                SELECT l.id, l.is_default, l.owner_user_id, m.role
+                FROM libraries l
+                LEFT JOIN memberships m
+                  ON m.library_id = l.id AND m.user_id = :viewer_id
+                WHERE l.id = ANY(:library_ids)
+            """),
+            {"viewer_id": viewer_id, "library_ids": library_ids},
+        )
+        .mappings()
+        .all()
+    )
+    rows_by_id = {UUID(str(row["id"])): row for row in rows}
+    targets: list[UUID] = []
+    for library_id in library_ids:
+        row = rows_by_id.get(library_id)
+        if row is None:
+            raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
+        if row["owner_user_id"] != viewer_id and row["role"] != "admin":
+            raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
+        if row["is_default"]:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Default library cannot be selected",
+            )
+        targets.append(library_id)
     return targets
 
 
-def validate_libraries_accessible(db: Session, viewer_id: UUID, library_ids: list[UUID]) -> None:
-    """Raise ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible.
-
-    Use at the top of any ingest path before creating media, so a forbidden
-    library_id rejects the request atomically (no orphan rows). The viewer's default
-    library id and duplicates are silently deduped. An empty list is a no-op.
-    """
-    resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
+def validate_writable_library_destinations(
+    db: Session, viewer_id: UUID, library_ids: list[UUID]
+) -> None:
+    resolve_writable_non_default_library_ids(db, viewer_id, library_ids)

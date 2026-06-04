@@ -34,7 +34,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
-from nexus.services import library_entries
+from nexus.services import library_entries, library_governance
 from nexus.services.epub_ingest import check_archive_safety
 from nexus.services.file_ingest_validation import validate_file_source_integrity
 from nexus.services.media_processing_state import begin_extraction, mark_failed
@@ -61,10 +61,10 @@ def confirm_ingest_for_viewer(
     For PDF: delegates to the PDF lifecycle module.
     For non-EPUB/non-PDF: delegates to base confirm_ingest.
 
-    Library assignment is applied once here at the top-level. It is additive +
-    idempotent — even if init_upload already attached the same set, re-applying
-    is safe. Raises ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible
-    to the viewer.
+    Library destination IDs are validated before file-confirm work starts, then
+    applied to the actual confirmed media row after dedupe resolution. New
+    PDF/EPUB rows attach destinations in the same transaction that enqueues
+    extraction.
     """
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
 
@@ -77,15 +77,20 @@ def confirm_ingest_for_viewer(
             "Only the creator can confirm upload",
         )
 
-    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
 
     if media.kind == "pdf":
         from nexus.services.pdf_lifecycle import confirm_pdf_ingest
 
-        return confirm_pdf_ingest(db, viewer_id, media_id, request_id=request_id)
+        return confirm_pdf_ingest(
+            db, viewer_id, media_id, library_ids=library_ids, request_id=request_id
+        )
 
     if media.kind != "epub":
         result = _base_confirm_ingest(db, viewer_id, media_id)
+        library_entries.assign_libraries_for_media(
+            db, viewer_id, UUID(result["media_id"]), library_ids
+        )
         return {
             "media_id": result["media_id"],
             "duplicate": result["duplicate"],
@@ -93,7 +98,9 @@ def confirm_ingest_for_viewer(
             "ingest_enqueued": False,
         }
 
-    return _confirm_epub_ingest(db, viewer_id, media_id, request_id=request_id)
+    return _confirm_epub_ingest(
+        db, viewer_id, media_id, library_ids=library_ids, request_id=request_id
+    )
 
 
 def _confirm_epub_ingest(
@@ -101,6 +108,7 @@ def _confirm_epub_ingest(
     viewer_id: UUID,
     media_id: UUID,
     *,
+    library_ids: list[UUID],
     request_id: str | None = None,
 ) -> dict:
     """EPUB-specific ingest confirm with preflight and dispatch."""
@@ -109,6 +117,7 @@ def _confirm_epub_ingest(
     actual_media_id = UUID(base_result["media_id"])
 
     if base_result["duplicate"]:
+        library_entries.assign_libraries_for_media(db, viewer_id, actual_media_id, library_ids)
         winner = db.get(Media, actual_media_id)
         return {
             "media_id": base_result["media_id"],
@@ -123,6 +132,10 @@ def _confirm_epub_ingest(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     if media.processing_status != ProcessingStatus.pending:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
+        db.commit()
         return {
             "media_id": str(media.id),
             "duplicate": False,
@@ -181,6 +194,10 @@ def _confirm_epub_ingest(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     if media.processing_status != ProcessingStatus.pending:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
+        db.commit()
         return {
             "media_id": str(media.id),
             "duplicate": False,
@@ -210,6 +227,9 @@ def _confirm_epub_ingest(
         )
         raise InvalidRequestError(ApiErrorCode.E_ARCHIVE_UNSAFE, safety_err.error_message)
 
+    library_entries.assign_libraries_for_media_in_current_transaction(
+        db, viewer_id, media.id, library_ids
+    )
     begin_extraction(db, media)
 
     try:

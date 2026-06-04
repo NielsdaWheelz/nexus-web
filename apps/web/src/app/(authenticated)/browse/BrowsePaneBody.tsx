@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import MediaImage from "@/components/ui/MediaImage";
 import { FileText, Mic, Play, Video } from "lucide-react";
-import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
+import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import {
   FeedbackNotice,
   toFeedback,
@@ -53,7 +53,6 @@ import {
   type BrowseVideoResult,
 } from "./browseState";
 import { useStringIdSet } from "@/lib/useStringIdSet";
-import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import BrowseTypeFilters from "./BrowseTypeFilters";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import styles from "./page.module.css";
@@ -74,7 +73,6 @@ export default function BrowsePaneBody() {
   >(new Set());
   const busyKeys = useStringIdSet();
   const [actionError, setActionError] = useState<FeedbackContent | null>(null);
-  const libraryPicker = useNonDefaultLibraries();
   const [rowLibraryIds, setRowLibraryIds] = useState<Record<string, string[]>>(
     {},
   );
@@ -97,16 +95,6 @@ export default function BrowsePaneBody() {
     return null;
   }, [actionError, browseResource]);
 
-  const pickerLibraries = useMemo(
-    () =>
-      libraryPicker.libraries.map((library) => ({
-        id: library.id,
-        name: library.name,
-        color: library.color,
-      })),
-    [libraryPicker.libraries],
-  );
-
   const getRowLibraryIds = useCallback(
     (rowKey: string): string[] => rowLibraryIds[rowKey] ?? [],
     [rowLibraryIds],
@@ -115,11 +103,6 @@ export default function BrowsePaneBody() {
   const setRowSelection = useCallback((rowKey: string, next: string[]) => {
     setRowLibraryIds((current) => ({ ...current, [rowKey]: next }));
   }, []);
-
-  const { load: loadLibraries } = libraryPicker;
-  useEffect(() => {
-    void loadLibraries();
-  }, [loadLibraries]);
 
   useEffect(() => {
     setDraftQuery(appliedQuery);
@@ -460,11 +443,10 @@ export default function BrowsePaneBody() {
                       />
                       <div className={styles.actions}>
                         {!result.media_id ? (
-                          <LibraryMultiSelectPicker
-                            mode="dropdown"
+                          <LibraryDestinationPicker
                             selectedLibraryIds={selectedLibraryIds}
                             onChange={(next) => setRowSelection(rowKey, next)}
-                            libraries={pickerLibraries}
+                            label="Libraries"
                           />
                         ) : null}
                         <Button
@@ -542,11 +524,10 @@ export default function BrowsePaneBody() {
                       />
                       <div className={styles.actions}>
                         {!result.media_id ? (
-                          <LibraryMultiSelectPicker
-                            mode="dropdown"
+                          <LibraryDestinationPicker
                             selectedLibraryIds={selectedLibraryIds}
                             onChange={(next) => setRowSelection(rowKey, next)}
-                            libraries={pickerLibraries}
+                            label="Libraries"
                           />
                         ) : null}
                         <Button
@@ -645,13 +626,12 @@ export default function BrowsePaneBody() {
                           </Button>
                         ) : (
                           <>
-                            <LibraryMultiSelectPicker
-                              mode="dropdown"
+                            <LibraryDestinationPicker
                               selectedLibraryIds={selectedLibraryIds}
                               onChange={(next) =>
                                 setRowSelection(rowKey, next)
                               }
-                              libraries={pickerLibraries}
+                              label="Libraries"
                             />
                             <Button
                               variant="primary"

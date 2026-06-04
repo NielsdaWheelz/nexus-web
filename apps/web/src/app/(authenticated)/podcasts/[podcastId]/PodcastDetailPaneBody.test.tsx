@@ -5,7 +5,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
@@ -211,13 +210,25 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       if (url.pathname === "/api/podcasts/podcast-1/episodes") {
         return jsonResponse({ data: [] });
       }
-      if (url.pathname === "/api/libraries") {
+      if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({
           data: [
-            { id: "lib-default", name: "My Library", is_default: true, color: null },
-            { id: "lib-research", name: "Research", is_default: false, color: "#0ea5e9" },
-            { id: "lib-books", name: "Books", is_default: false, color: "#22c55e" },
+            {
+              id: "lib-research",
+              name: "Research",
+              color: "#0ea5e9",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+            {
+              id: "lib-books",
+              name: "Books",
+              color: "#22c55e",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
           ],
+          page: { next_cursor: null },
         });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -233,17 +244,11 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
     expect(subscribeButton).toBeInTheDocument();
 
-    // Open the library picker (the chip showing "My Library only").
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /My Library only/ })
-      ).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: /My Library only/ }));
-
-    const panel = await screen.findByRole("dialog", { name: "Select libraries" });
-    fireEvent.click(within(panel).getByRole("option", { name: /Research/ }));
-    fireEvent.click(within(panel).getByRole("option", { name: /Books/ }));
+    const picker = screen.getByRole("combobox", { name: "Libraries" });
+    fireEvent.focus(picker);
+    fireEvent.click(await screen.findByRole("option", { name: "Research" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Books" }));
+    fireEvent.keyDown(picker, { key: "Escape" });
 
     fireEvent.click(subscribeButton);
 
@@ -274,8 +279,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries") {
-        return jsonResponse({ data: [] });
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
@@ -330,8 +335,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           data: [episodeMedia({ id: "episode-2", title: "Current Episode" })],
         });
       }
-      if (url.pathname === "/api/libraries") {
-        return jsonResponse({ data: [] });
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
@@ -381,8 +386,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries") {
-        return jsonResponse({ data: [] });
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         forecastCalls += 1;

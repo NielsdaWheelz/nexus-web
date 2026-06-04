@@ -32,7 +32,10 @@ import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
 import PodcastSubscriptionSettingsModal from "./PodcastSubscriptionSettingsModal";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
-import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
+import {
+  listMemberLibraries,
+  type MemberLibrary,
+} from "@/lib/libraries/client";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -77,9 +80,8 @@ export default function PodcastsPaneBody() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
-  const availableLibraries = useNonDefaultLibraries();
-  const libraries = availableLibraries.libraries;
-  const librariesLoading = availableLibraries.loading;
+  const [libraries, setLibraries] = useState<MemberLibrary[]>([]);
+  const [librariesLoading, setLibrariesLoading] = useState(false);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>("");
   const [librariesByPodcastId, setLibrariesByPodcastId] = useState<
     Record<string, PodcastLibraryMembership[]>
@@ -173,16 +175,25 @@ export default function PodcastsPaneBody() {
     }
   }, [subscriptionListResource]);
 
-  const { load: loadAvailableLibraries } = availableLibraries;
   useEffect(() => {
-    void loadAvailableLibraries();
-  }, [loadAvailableLibraries]);
-
-  useEffect(() => {
-    if (availableLibraries.error) {
-      setError(availableLibraries.error);
-    }
-  }, [availableLibraries.error]);
+    let cancelled = false;
+    setLibrariesLoading(true);
+    void listMemberLibraries({ limit: 200 })
+      .then((data) => {
+        if (!cancelled) setLibraries(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(toFeedback(err, { fallback: "Failed to load libraries" }));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLibrariesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadMoreSubscriptions = useCallback(
     async () => {

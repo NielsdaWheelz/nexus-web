@@ -34,7 +34,7 @@ from nexus.storage.paths import (
     build_upload_staging_storage_path,
     get_file_extension,
 )
-from tests.factories import add_media_to_library
+from tests.factories import add_media_to_library, create_test_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
 from tests.support.storage import FakeStorageClient
@@ -128,6 +128,19 @@ def _upload_storage_path(init_data: dict, kind: str) -> str:
 
 def _final_storage_path(init_data: dict, kind: str) -> str:
     return build_storage_path(UUID(init_data["media_id"]), get_file_extension(kind))
+
+
+def _library_entries_for_media(direct_db: DirectSessionManager, media_id: str | UUID) -> set[UUID]:
+    with direct_db.session() as session:
+        rows = session.execute(
+            text("""
+                SELECT library_id
+                FROM library_entries
+                WHERE media_id = :media_id
+            """),
+            {"media_id": UUID(str(media_id))},
+        ).fetchall()
+    return {UUID(str(row[0])) for row in rows}
 
 
 def _seed_duplicate_upload_loser_rows(
@@ -1276,6 +1289,109 @@ class TestUploadProvenance:
                 {"dl": dl[0], "m": winner_id},
             ).fetchone()
             assert intrinsic is not None
+
+    def test_duplicate_confirm_applies_selected_libraries_to_winner(
+        self, upload_client, fake_storage, direct_db: DirectSessionManager
+    ):
+        """Confirm-time destinations attach to the dedupe winner, not the loser."""
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            selected_library_id = create_test_library(
+                session, user_id, "Duplicate Confirm Destination"
+            )
+        direct_db.register_cleanup("memberships", "library_id", selected_library_id)
+        direct_db.register_cleanup("libraries", "id", selected_library_id)
+
+        init1 = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "winner.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+        winner_media_id = init1["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", winner_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", winner_media_id)
+        direct_db.register_cleanup("media_file", "media_id", winner_media_id)
+        direct_db.register_cleanup("media", "id", winner_media_id)
+        fake_storage.put_object(_upload_storage_path(init1, "pdf"), PDF_CONTENT, "application/pdf")
+        first_confirm = upload_client.post(
+            f"/media/{winner_media_id}/ingest",
+            headers=auth_headers(user_id),
+        )
+        assert first_confirm.status_code == 200
+
+        init2 = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "loser.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+        loser_media_id = init2["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", loser_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", loser_media_id)
+        direct_db.register_cleanup("media_file", "media_id", loser_media_id)
+        direct_db.register_cleanup("media", "id", loser_media_id)
+        fake_storage.put_object(_upload_storage_path(init2, "pdf"), PDF_CONTENT, "application/pdf")
+
+        duplicate_confirm = upload_client.post(
+            f"/media/{loser_media_id}/ingest",
+            json={"library_ids": [str(selected_library_id)]},
+            headers=auth_headers(user_id),
+        )
+
+        assert duplicate_confirm.status_code == 200
+        assert duplicate_confirm.json()["data"]["media_id"] == winner_media_id
+        assert selected_library_id in _library_entries_for_media(direct_db, winner_media_id)
+
+    def test_invalid_confirm_does_not_attach_confirm_time_libraries(
+        self, upload_client, fake_storage, direct_db: DirectSessionManager
+    ):
+        """Failed confirm validates destinations without writing destination rows."""
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            selected_library_id = create_test_library(session, user_id, "Invalid Confirm Library")
+        direct_db.register_cleanup("memberships", "library_id", selected_library_id)
+        direct_db.register_cleanup("libraries", "id", selected_library_id)
+
+        init_data = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "invalid-confirm.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(INVALID_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+        media_id = init_data["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        fake_storage.put_object(
+            _upload_storage_path(init_data, "pdf"), INVALID_CONTENT, "application/pdf"
+        )
+
+        response = upload_client.post(
+            f"/media/{media_id}/ingest",
+            json={"library_ids": [str(selected_library_id)]},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_FILE_TYPE"
+        assert selected_library_id not in _library_entries_for_media(direct_db, media_id)
 
 
 class TestEpubIngestLifecycle:

@@ -24,6 +24,7 @@ def create_or_reuse_youtube_video(
     viewer_id: UUID,
     url: str,
     *,
+    library_ids: list[UUID],
     enqueue_task: bool = False,
     request_id: str | None = None,
 ) -> FromUrlResponse:
@@ -82,10 +83,11 @@ def create_or_reuse_youtube_video(
             media.canonical_source_url = identity.watch_url
         media.updated_at = now
 
-    library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
-
     ingest_enqueued = False
     try:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
         if created and enqueue_task:
             ingest_enqueued = enqueue_youtube_ingest_task(
                 db,

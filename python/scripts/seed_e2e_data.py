@@ -786,6 +786,7 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             db=db,
             viewer_id=user_id,
             url=NON_PDF_SOURCE_URL,
+            library_ids=[],
             enqueue_task=False,
         )
         media_id = provisional.media_id
@@ -884,6 +885,7 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             db=db,
             viewer_id=user_id,
             url=YOUTUBE_WATCH_URL,
+            library_ids=[],
             enqueue_task=False,
         )
         transcript_media_id = transcript_resp.media_id
@@ -947,6 +949,7 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             db=db,
             viewer_id=user_id,
             url=YOUTUBE_PLAYBACK_ONLY_WATCH_URL,
+            library_ids=[],
             enqueue_task=False,
         )
         playback_only_media_id = playback_only_resp.media_id
@@ -1088,6 +1091,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
             db=db,
             viewer_id=user_id,
             url=READER_RESUME_WEB_SOURCE_URL,
+            library_ids=[],
             enqueue_task=False,
         )
         web_media_id = provisional.media_id
@@ -1289,6 +1293,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             db=db,
             viewer_id=user_id,
             url=READER_OVERVIEW_RULER_SOURCE_URL,
+            library_ids=[],
             enqueue_task=False,
         )
         media_id = provisional.media_id

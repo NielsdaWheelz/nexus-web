@@ -216,6 +216,111 @@ class TestListLibraries:
         assert response.status_code in (400, 422)
 
 
+class TestWritableLibraryDestinations:
+    """Tests for GET /libraries/writable-destinations."""
+
+    def test_lists_only_writable_non_default_libraries(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        from tests.factories import add_library_member, create_test_library
+
+        viewer_id = create_test_user_id()
+        default_library_id = UUID(
+            auth_client.get("/me", headers=auth_headers(viewer_id)).json()["data"][
+                "default_library_id"
+            ]
+        )
+        other_owner_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(other_owner_id))
+
+        with direct_db.session() as session:
+            owned_id = create_test_library(session, viewer_id, "Owned Writable")
+            admin_id = create_test_library(session, other_owner_id, "Shared Admin")
+            member_id = create_test_library(session, other_owner_id, "Shared Member")
+            add_library_member(session, admin_id, viewer_id, role="admin")
+            add_library_member(session, member_id, viewer_id, role="member")
+
+        for library_id in (owned_id, admin_id, member_id):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        response = auth_client.get(
+            "/libraries/writable-destinations",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 200, response.text
+        ids = {UUID(row["id"]) for row in response.json()["data"]}
+        assert owned_id in ids
+        assert admin_id in ids
+        assert member_id not in ids
+        assert default_library_id not in ids
+
+    def test_search_finds_library_beyond_default_library_limit(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        for idx in range(105):
+            response = auth_client.post(
+                "/libraries",
+                json={"name": f"Destination {idx:03d}"},
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 201, response.text
+
+        response = auth_client.get(
+            "/libraries/writable-destinations?q=Destination%20104",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        assert [row["name"] for row in response.json()["data"]] == ["Destination 104"]
+
+    def test_cursor_paginates_stably(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        for idx in range(4):
+            response = auth_client.post(
+                "/libraries",
+                json={"name": f"Paged Destination {idx}"},
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 201, response.text
+
+        first = auth_client.get(
+            "/libraries/writable-destinations?q=Paged%20Destination&limit=2",
+            headers=auth_headers(user_id),
+        )
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        second = auth_client.get(
+            f"/libraries/writable-destinations?q=Paged%20Destination&limit=2&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert second.status_code == 200, second.text
+        first_ids = {row["id"] for row in first_body["data"]}
+        second_ids = {row["id"] for row in second.json()["data"]}
+        assert first_ids
+        assert second_ids
+        assert first_ids.isdisjoint(second_ids)
+
+    def test_malformed_cursor_returns_invalid_request(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.get(
+            "/libraries/writable-destinations?cursor=not-a-cursor",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
 # =============================================================================
 # Library Rename Tests
 # =============================================================================

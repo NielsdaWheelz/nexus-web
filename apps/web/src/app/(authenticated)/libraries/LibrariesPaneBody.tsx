@@ -25,6 +25,7 @@ import {
   type LibraryMember,
   type UserSearchResult,
 } from "@/lib/libraries/sharing";
+import { createLibrary } from "@/lib/libraries/client";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import styles from "./page.module.css";
 
@@ -86,10 +87,7 @@ export default function LibrariesPaneBody() {
 
     setCreating(true);
     try {
-      await apiFetch("/api/libraries", {
-        method: "POST",
-        body: JSON.stringify({ name: newLibraryName.trim() }),
-      });
+      await createLibrary({ name: newLibraryName.trim() });
       setNewLibraryName("");
       refreshLibraries();
     } catch (err) {

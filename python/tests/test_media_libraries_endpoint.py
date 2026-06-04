@@ -4,7 +4,7 @@ Covers the additive bulk-add endpoint per docs/multi-library-assignment.md §7.2
 - 200 response with `library_ids_added` exactly equal to inserted ids.
 - Idempotent: re-call with same ids returns empty `library_ids_added`.
 - 403 `E_LIBRARY_FORBIDDEN` for inaccessible ids, atomic (no partial inserts).
-- Default library id is silently deduped (no error, no double row).
+- Default and duplicate destination ids are rejected.
 """
 
 from uuid import UUID
@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.factories import (
+    add_library_member,
     create_test_library,
     create_test_media,
 )
@@ -156,6 +157,43 @@ class TestPostMediaLibrariesEndpoint:
             "memberships must be unchanged after idempotent re-call"
         )
 
+    def test_post_media_libraries_reports_only_new_inserts(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Existing entries stay idempotent; response lists only rows inserted by this call."""
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Partial Existing Media")
+            existing_lib = create_test_library(session, viewer_id, "Already Present")
+            new_lib = create_test_library(session, viewer_id, "New Destination")
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        for library_id in (existing_lib, new_lib):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        first = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(existing_lib)]},
+            headers=auth_headers(viewer_id),
+        )
+        assert first.status_code == 200, first.text
+
+        second = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(existing_lib), str(new_lib)]},
+            headers=auth_headers(viewer_id),
+        )
+
+        assert second.status_code == 200, second.text
+        assert second.json()["data"]["library_ids_added"] == [str(new_lib)]
+
     def test_post_media_libraries_forbids_inaccessible(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -202,10 +240,47 @@ class TestPostMediaLibrariesEndpoint:
         )
         assert other_lib not in memberships
 
-    def test_post_media_libraries_default_is_silently_deduped(
+    def test_post_media_libraries_forbids_member_only_without_partial_insert(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Passing the viewer's default library id is silently deduped (200, empty added)."""
+        """Member-only libraries are visible but not writable destinations."""
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        other_owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, other_owner_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Member Only Media")
+            viewer_lib = create_test_library(session, viewer_id, "Writable Lib")
+            member_only_lib = create_test_library(session, other_owner_id, "Member Only Lib")
+            add_library_member(session, member_only_lib, viewer_id, role="member")
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        for library_id in (viewer_lib, member_only_lib):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+
+        response = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(viewer_lib), str(member_only_lib)]},
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
+        memberships = _library_entry_ids_for_media(direct_db, media_id)
+        assert viewer_lib not in memberships
+        assert member_only_lib not in memberships
+
+    def test_post_media_libraries_rejects_default_library_id(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Passing the viewer's default library id is invalid."""
         viewer_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, viewer_id)
 
@@ -225,10 +300,34 @@ class TestPostMediaLibrariesEndpoint:
             headers=auth_headers(viewer_id),
         )
 
-        assert response.status_code == 200, (
-            "passing the default library id is silently deduped, never an error, "
-            f"got {response.status_code}: {response.text}"
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_post_media_libraries_rejects_duplicate_ids(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Duplicate destination ids are invalid."""
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Duplicate Destination Media")
+            library_id = create_test_library(session, viewer_id, "Duplicate Destination")
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+
+        response = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(library_id), str(library_id)]},
+            headers=auth_headers(viewer_id),
         )
-        assert response.json()["data"]["library_ids_added"] == [], (
-            "default library must not appear in library_ids_added (already implicit)"
-        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"

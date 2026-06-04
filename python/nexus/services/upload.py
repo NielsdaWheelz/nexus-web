@@ -80,12 +80,12 @@ def init_upload(
 
     Raises:
         InvalidRequestError: If validation fails.
-        ForbiddenError: If any id in library_ids is inaccessible to the viewer.
+        ForbiddenError: If any id in library_ids is not writable by the viewer.
         ApiError: If signing fails.
     """
     settings = get_settings()
 
-    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
 
     # Validate request
     validate_file_ingest_request(kind, content_type, size_bytes)
@@ -144,8 +144,10 @@ def init_upload(
     db.flush()
 
     # Attach to viewer's default library + every additional library in library_ids.
-    # Raises ForbiddenError(E_LIBRARY_FORBIDDEN) atomically if any id is inaccessible.
-    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+    # Raises before DB commit if any destination id is not writable.
+    library_entries.assign_libraries_for_media_in_current_transaction(
+        db, viewer_id, media_id, library_ids
+    )
 
     db.commit()
 

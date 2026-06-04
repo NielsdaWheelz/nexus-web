@@ -9,8 +9,10 @@ The domain is split into three owned modules, each owning its own tables:
   tables: library CRUD, membership/role management, ownership transfer, the
   membership guards (`lock_library_for_member` returns a frozen
   `LibraryMembershipContext`; `require_admin` / `require_non_default`), the
-  libraries/memberships access checks ingest paths call
-  (`validate_libraries_accessible`, `resolve_accessible_non_default_library_ids`,
+  writable-destination contract ingest paths call
+  (`list_writable_library_destinations`,
+  `validate_writable_library_destinations`,
+  `resolve_writable_non_default_library_ids`,
   `default_library_id_for_user`), and library-intelligence cascade cleanup.
 - **`services/library_entries.py`** is the **sole writer and lifecycle owner of
   the `library_entries` table**. It owns the `EntryTarget` discriminated union
@@ -21,6 +23,7 @@ The domain is split into three owned modules, each owning its own tables:
   `normalize_positions`, all read accessors, hydration, and the item-in-library
   commands (`list_item_libraries`, `add_media_to_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
+  `add_media_to_libraries_for_viewer`, `assign_libraries_for_media`,
   `set_subscription_libraries`, `remove_user_podcast_subscription_libraries`, …).
 - **`services/library_invitations.py`** owns the `library_invitations` table:
   create/list/list-for-viewer/accept/decline/revoke. The accept path's durable
@@ -68,9 +71,33 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   `library_entries` / `default_library_intrinsics` /
   `default_library_closure_edges` SQL.
 
+## Writable library destinations
+
+`library_ids` in ingest and assignment request bodies means selected
+non-default libraries where the viewer can write entries. It does not mean every
+library the viewer can read.
+
+- **Search/list.** `GET /libraries/writable-destinations` is the sole backend
+  list contract for destination pickers. It excludes the default library and
+  member-only libraries, performs server-side search, and pages with an opaque
+  cursor.
+- **Validation.** Write paths call
+  `validate_writable_library_destinations` or
+  `resolve_writable_non_default_library_ids`; default IDs, duplicate IDs,
+  inaccessible IDs, and member-only IDs are invalid for destination arrays.
+- **Assignment.** `library_entries.assign_libraries_for_media` is the standalone
+  transaction-owning command for attaching media to the viewer's default library
+  plus selected destinations. Media creation workflows that already own a
+  transaction call `assign_libraries_for_media_in_current_transaction` before
+  committing the created media. `add_media_to_libraries_for_viewer` adds
+  post-hoc destinations atomically and returns only IDs that were actually
+  inserted.
+
 ## Composition Rules
 
-- URL ingest validates requested library IDs once at the dispatch boundary.
+- URL ingest validates requested writable destination IDs at the dispatch
+  boundary; source owners assign default plus selected destinations through
+  `library_entries` inside their creation transactions.
 - Source owners (`x_ingest.py`, `youtube_ingest.py`, `remote_file_ingest.py`,
   web-article creation) attach resulting media through library services.
 - Library entries never make a private media file public.

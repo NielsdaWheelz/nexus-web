@@ -28,6 +28,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
+from nexus.services import library_entries
 from nexus.services.file_ingest_validation import validate_file_source_integrity
 from nexus.services.media_processing_state import begin_extraction, mark_failed
 from nexus.services.pdf_ingest import (
@@ -78,6 +79,7 @@ def confirm_pdf_ingest(
     viewer_id: UUID,
     media_id: UUID,
     *,
+    library_ids: list[UUID],
     request_id: str | None = None,
 ) -> dict:
     """PDF-specific ingest confirm with dispatch.
@@ -89,6 +91,7 @@ def confirm_pdf_ingest(
     actual_media_id = UUID(base_result["media_id"])
 
     if base_result["duplicate"]:
+        library_entries.assign_libraries_for_media(db, viewer_id, actual_media_id, library_ids)
         winner = db.get(Media, actual_media_id)
         return {
             "media_id": base_result["media_id"],
@@ -103,6 +106,10 @@ def confirm_pdf_ingest(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     if media.processing_status != ProcessingStatus.pending:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
+        db.commit()
         return {
             "media_id": str(media.id),
             "duplicate": False,
@@ -124,6 +131,9 @@ def confirm_pdf_ingest(
             "Upload not found. Please try again.",
         )
 
+    library_entries.assign_libraries_for_media_in_current_transaction(
+        db, viewer_id, media.id, library_ids
+    )
     begin_extraction(db, media)
 
     try:

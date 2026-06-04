@@ -4753,50 +4753,114 @@ class TestFromUrlLibraryIds:
             ).scalar_one()
         assert count == 0, "atomic rejection: no media row should exist after E_LIBRARY_FORBIDDEN"
 
-    def test_from_url_default_library_in_list_dedupes(
+    def test_from_url_rejects_default_library_id(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Default library id in library_ids is silently deduplicated."""
+        """Default library id in library_ids is rejected before media creation."""
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user_default_library(auth_client, user_id)
 
-        url = f"https://example.com/dedupe-{uuid4().hex[:8]}"
+        url = f"https://example.com/default-rejected-{uuid4().hex[:8]}"
         response = auth_client.post(
             "/media/from_url",
             json={"url": url, "library_ids": [str(default_library_id)]},
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 202, (
-            "default library id is silently deduped, never an error, "
-            f"got {response.status_code}: {response.text}"
-        )
-        media_id = UUID(response.json()["data"]["media_id"])
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
         with direct_db.session() as session:
-            default_entry_count = session.execute(
+            count = session.execute(
                 text(
                     """
                     SELECT COUNT(*) FROM library_entries
-                    WHERE media_id = :media_id
-                      AND library_id = :library_id
+                    JOIN media ON media.id = library_entries.media_id
+                    WHERE media.created_by_user_id = :user_id
+                      AND media.requested_url = :url
                     """
                 ),
-                {"media_id": media_id, "library_id": default_library_id},
+                {"user_id": user_id, "url": url},
             ).scalar_one()
-        assert default_entry_count == 1, (
-            f"default library entry must appear exactly once, got {default_entry_count}"
+        assert count == 0
+
+    def test_from_url_rejects_duplicate_library_ids(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Duplicate destination ids are rejected before media creation."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        _bootstrap_user_default_library(auth_client, user_id)
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Duplicate Destination")
+
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        url = f"https://example.com/duplicate-rejected-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(library_id), str(library_id)]},
+            headers=auth_headers(user_id),
         )
 
-        memberships = _library_entries_for_media(direct_db, media_id)
-        assert memberships == {default_library_id}, (
-            f"only default library expected; got {memberships}"
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        with direct_db.session() as session:
+            count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM media
+                    WHERE created_by_user_id = :user_id
+                      AND requested_url = :url
+                    """
+                ),
+                {"user_id": user_id, "url": url},
+            ).scalar_one()
+        assert count == 0
+
+    def test_from_url_rejects_member_only_library(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Member-only libraries are not writable destinations."""
+        from tests.factories import add_library_member, create_test_library
+
+        user_id = create_test_user_id()
+        _bootstrap_user_default_library(auth_client, user_id)
+        other_owner_id = create_test_user_id()
+        _bootstrap_user_default_library(auth_client, other_owner_id)
+
+        with direct_db.session() as session:
+            member_only_library = create_test_library(
+                session, other_owner_id, "Member Only Destination"
+            )
+            add_library_member(session, member_only_library, user_id, role="member")
+
+        direct_db.register_cleanup("memberships", "library_id", member_only_library)
+        direct_db.register_cleanup("libraries", "id", member_only_library)
+
+        url = f"https://example.com/member-rejected-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(member_only_library)]},
+            headers=auth_headers(user_id),
         )
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
+        with direct_db.session() as session:
+            count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM media
+                    WHERE created_by_user_id = :user_id
+                      AND requested_url = :url
+                    """
+                ),
+                {"user_id": user_id, "url": url},
+            ).scalar_one()
+        assert count == 0
 
     def test_reshare_adds_libraries_to_existing_media(
         self, auth_client, direct_db: DirectSessionManager

@@ -43,7 +43,7 @@ describe("AddContentTray", () => {
     document.body.style.overflow = "";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/libraries") {
+      if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
@@ -190,13 +190,13 @@ describe("AddContentTray", () => {
       vi.restoreAllMocks();
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
-        if (url.pathname === "/api/libraries") {
+        if (url.pathname === "/api/libraries/writable-destinations") {
           return jsonResponse({
             data: [
-              { id: "lib-default", name: "My Library", is_default: true, color: null },
-              { id: "lib-research", name: "Research", is_default: false, color: "#0ea5e9" },
-              { id: "lib-books", name: "Books", is_default: false, color: "#22c55e" },
+              { id: "lib-research", name: "Research", color: "#0ea5e9" },
+              { id: "lib-books", name: "Books", color: "#22c55e" },
             ],
+            page: { next_cursor: null },
           });
         }
         if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
@@ -216,16 +216,12 @@ describe("AddContentTray", () => {
       });
     }
 
-    async function openBatchPicker() {
+    async function selectBatchLibrary(name: string) {
       const dialog = await screen.findByRole("dialog", { name: "Add content" });
-      // The first picker in the dialog body is the batch picker (under the "Also add to" label).
-      const batchTrigger = within(dialog).getAllByRole("button", {
-        name: /My Library only|\+ /,
-      })[0];
-      expect(within(dialog).getByText("Also add to")).toBeInTheDocument();
-      expect(batchTrigger).toBeInTheDocument();
-      fireEvent.click(batchTrigger);
-      return screen.getByRole("dialog", { name: "Select libraries" });
+      const input = within(dialog).getByRole("combobox", { name: "Also add to" });
+      fireEvent.focus(input);
+      fireEvent.click(await screen.findByRole("option", { name }));
+      fireEvent.keyDown(input, { key: "Escape" });
     }
 
     it("applies the batch picker to subsequently enqueued items but not to previously enqueued ones", async () => {
@@ -237,13 +233,6 @@ describe("AddContentTray", () => {
       openTray();
       await screen.findByRole("dialog", { name: "Add content" });
 
-      // Wait for libraries to be loaded so the batch picker has selectable options.
-      await waitFor(() => {
-        expect(
-          screen.getAllByRole("button", { name: /My Library only/ }).length
-        ).toBeGreaterThan(0);
-      });
-
       // 1. Enqueue first item under the default empty batch selection.
       dispatchPaste(window, "https://example.com/first.pdf");
       await waitFor(() => {
@@ -253,10 +242,7 @@ describe("AddContentTray", () => {
       });
 
       // 2. Change batch picker to add "Research".
-      const batchPanel = await openBatchPicker();
-      fireEvent.click(
-        within(batchPanel).getByRole("option", { name: /Research/ })
-      );
+      await selectBatchLibrary("Research");
 
       // 3. Enqueue another item; this one should pick up "Research" only.
       dispatchPaste(window, "https://example.com/second.pdf");
@@ -283,13 +269,13 @@ describe("AddContentTray", () => {
       vi.restoreAllMocks();
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
-        if (url.pathname === "/api/libraries") {
+        if (url.pathname === "/api/libraries/writable-destinations") {
           return jsonResponse({
             data: [
-              { id: "lib-default", name: "My Library", is_default: true, color: null },
-              { id: "lib-research", name: "Research", is_default: false, color: "#0ea5e9" },
-              { id: "lib-books", name: "Books", is_default: false, color: "#22c55e" },
+              { id: "lib-research", name: "Research", color: "#0ea5e9" },
+              { id: "lib-books", name: "Books", color: "#22c55e" },
             ],
+            page: { next_cursor: null },
           });
         }
         if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
@@ -320,12 +306,6 @@ describe("AddContentTray", () => {
       openTray();
       await screen.findByRole("dialog", { name: "Add content" });
 
-      await waitFor(() => {
-        expect(
-          screen.getAllByRole("button", { name: /My Library only/ }).length
-        ).toBeGreaterThan(0);
-      });
-
       // Enqueue three URLs; MAX_ACTIVE_UPLOADS=2 keeps the third one queued
       // (and therefore showing its per-row library picker chip).
       dispatchPaste(
@@ -343,29 +323,19 @@ describe("AddContentTray", () => {
         expect(calls.length).toBe(2);
       });
 
-      // Find the queued row's per-row picker (the chip in the row's actions
-      // column). The Remove button's aria-label uniquely identifies the row.
       const removeButton = screen.getByRole("button", {
         name: "Remove https://example.com/third.pdf",
       });
       const queue = screen.getByLabelText("Ingestion queue");
       expect(removeButton).toBeInTheDocument();
-      const rowPickerTrigger = within(queue).getByRole("button", {
-        name: /My Library only/,
-      });
-      fireEvent.click(rowPickerTrigger);
-
-      const rowPanel = await screen.findByRole("dialog", {
-        name: "Select libraries",
-      });
-      fireEvent.click(within(rowPanel).getByRole("option", { name: /Books/ }));
+      const rowPicker = within(queue).getByRole("combobox", { name: "Libraries" });
+      fireEvent.focus(rowPicker);
+      fireEvent.click(await screen.findByRole("option", { name: "Books" }));
 
       // The row's chip should now reflect the override.
       await waitFor(() => {
         expect(
-          within(queue).getByRole("button", {
-            name: /\+ Books/,
-          })
+          within(queue).getByRole("button", { name: "Remove Books" })
         ).toBeInTheDocument();
       });
 
@@ -408,17 +378,7 @@ describe("AddContentTray", () => {
       openTray();
       await screen.findByRole("dialog", { name: "Add content" });
 
-      await waitFor(() => {
-        expect(
-          screen.getAllByRole("button", { name: /My Library only/ }).length
-        ).toBeGreaterThan(0);
-      });
-
-      // Open the batch picker and select Research.
-      const batchPanel = await openBatchPicker();
-      fireEvent.click(
-        within(batchPanel).getByRole("option", { name: /Research/ })
-      );
+      await selectBatchLibrary("Research");
 
       dispatchPaste(window, "https://example.com/alpha.pdf");
       await waitFor(() => {
@@ -427,14 +387,11 @@ describe("AddContentTray", () => {
         ).toBeDefined();
       });
 
-      // The batch panel is still open. Toggle to Books only (deselect
-      // Research, select Books) within the same panel session.
-      fireEvent.click(
-        within(batchPanel).getByRole("option", { name: /Research/ })
-      );
-      fireEvent.click(
-        within(batchPanel).getByRole("option", { name: /Books/ })
-      );
+      const dialog = await screen.findByRole("dialog", { name: "Add content" });
+      const batchInput = within(dialog).getByRole("combobox", { name: "Also add to" });
+      fireEvent.focus(batchInput);
+      fireEvent.click(await screen.findByRole("option", { name: "Research" }));
+      fireEvent.click(await screen.findByRole("option", { name: "Books" }));
 
       dispatchPaste(window, "https://example.com/beta.pdf");
       await waitFor(() => {

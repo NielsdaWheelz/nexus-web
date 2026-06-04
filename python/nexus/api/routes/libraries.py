@@ -120,6 +120,24 @@ def list_libraries(
     return ok(result)
 
 
+@router.get("/libraries/writable-destinations")
+def list_writable_library_destinations(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    q: str | None = Query(default=None, max_length=100, description="Name search query"),
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
+    limit: int = Query(default=25, ge=1, le=50, description="Maximum results"),
+) -> dict:
+    result, next_cursor = library_governance.list_writable_library_destinations(
+        db,
+        viewer.user_id,
+        q=(q or "").strip().lower(),
+        cursor=cursor,
+        limit=limit,
+    )
+    return {"data": result, "page": {"next_cursor": next_cursor}}
+
+
 @router.post("/libraries", status_code=201)
 def create_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],

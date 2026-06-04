@@ -738,7 +738,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/xss-script")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -779,7 +779,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/xss-handler")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -820,7 +820,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/styled")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -861,7 +861,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/bad-urls")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -901,7 +901,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/svg")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -941,7 +941,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/with-image")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -979,7 +979,7 @@ class TestSanitizationSecurityRegression:
         )
 
         url = httpserver.url_for("/ext-link")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -1028,7 +1028,7 @@ class TestProcessingStateRegression:
         )
 
         url = httpserver.url_for("/attempts")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Check initial attempts
@@ -1068,7 +1068,7 @@ class TestProcessingStateRegression:
         )
 
         url = httpserver.url_for("/success")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Verify initial state
@@ -1110,7 +1110,7 @@ class TestProcessingStateRegression:
         httpserver.expect_request("/fail").respond_with_data("Not Found", status=404)
 
         url = httpserver.url_for("/fail")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Run ingestion (will fail)
@@ -1215,7 +1215,7 @@ class TestRedirectDedup:
         )
 
         url = httpserver.url_for("/old")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -1258,13 +1258,13 @@ class TestRedirectDedup:
 
         # Create and ingest first media
         url1 = httpserver.url_for("/alias1")
-        result1 = create_provisional_web_article(db_session, user_id, url1)
+        result1 = create_provisional_web_article(db_session, user_id, url1, library_ids=[])
         media_id1 = result1.media_id
         run_ingest_sync(db_session, media_id1, user_id)
 
         # Create and ingest second media (should dedup)
         url2 = httpserver.url_for("/alias2")
-        result2 = create_provisional_web_article(db_session, user_id, url2)
+        result2 = create_provisional_web_article(db_session, user_id, url2, library_ids=[])
         media_id2 = result2.media_id
         ingest_result2 = run_ingest_sync(db_session, media_id2, user_id)
 

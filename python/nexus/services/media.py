@@ -698,7 +698,7 @@ def create_captured_web_article(
     published_time: str | None = None,
 ) -> ArticleCaptureResponse:
     """Persist a browser-rendered article capture as readable media."""
-    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
     validate_requested_url(url)
 
     if len(content_html.encode("utf-8")) > WEB_ARTICLE_HTML_MAX_BYTES:
@@ -778,7 +778,9 @@ def create_captured_web_article(
                     )
             replace_media_contributor_credits(db, media_id=media.id, credits=credits)
 
-        library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
         fragment_id = fragment.id
         media_id = media.id
         media_language = media.language
@@ -798,8 +800,6 @@ def create_captured_web_article(
     )
 
     _try_enrich_dispatch(str(media.id), None)
-
-    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     return ArticleCaptureResponse(
         media_id=media.id,
@@ -821,7 +821,7 @@ def create_captured_file(
     """Persist a browser-fetched PDF/EPUB and run the existing file ingest lifecycle."""
     from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
 
-    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
     cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
     lower_filename = cleaned_filename.lower()
@@ -897,7 +897,9 @@ def create_captured_file(
         db.add(media)
         db.add(media_file)
         db.flush()
-        library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media_id, library_ids
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -936,6 +938,7 @@ def create_provisional_web_article(
     viewer_id: UUID,
     url: str,
     *,
+    library_ids: list[UUID],
     enqueue_task: bool = False,
     request_id: str | None = None,
 ) -> FromUrlResponse:
@@ -949,7 +952,8 @@ def create_provisional_web_article(
     - canonical_source_url = normalize_url_for_display(url)
     - title = truncated URL or 'Untitled'
 
-    The media is immediately attached to the viewer's default library.
+    The media is immediately attached to the viewer's default library and
+    selected writable destinations.
 
     Args:
         db: Database session.
@@ -992,10 +996,11 @@ def create_provisional_web_article(
     db.add(media)
     db.flush()  # Get the generated ID
 
-    library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
-
     ingest_enqueued = False
     try:
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, library_ids
+        )
         if enqueue_task:
             ingest_enqueued = _enqueue_ingest_task(db, media.id, viewer_id, request_id)
         db.commit()

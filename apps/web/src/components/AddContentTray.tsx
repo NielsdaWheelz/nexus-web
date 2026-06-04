@@ -17,7 +17,7 @@ import {
   isAddContentMode,
   type AddContentMode,
 } from "@/components/addContentEvents";
-import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
+import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import {
   FeedbackNotice,
   toFeedback,
@@ -32,7 +32,6 @@ import {
   getFileUploadError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
-import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
@@ -73,7 +72,6 @@ export default function AddContentTray() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [urlText, setUrlText] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
-  const libraryPicker = useNonDefaultLibraries();
   const [batchLibraryIds, setBatchLibraryIds] = useState<string[]>([]);
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteFeedback, setNoteFeedback] = useState<FeedbackContent | null>(null);
@@ -225,14 +223,6 @@ export default function AddContentTray() {
       window.removeEventListener(OPEN_ADD_CONTENT_EVENT, openHandler);
     };
   }, []);
-
-  const { load: loadLibraries } = libraryPicker;
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    void loadLibraries();
-  }, [loadLibraries, open]);
 
   useEffect(() => {
     const onDragEnter = (event: DragEvent) => {
@@ -460,20 +450,13 @@ export default function AddContentTray() {
               {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
 
               <div className={styles.libraryField}>
-                <label className={styles.libraryLabel}>Also add to</label>
-                <LibraryMultiSelectPicker
-                  mode="dropdown"
+                <LibraryDestinationPicker
                   selectedLibraryIds={batchLibraryIds}
                   onChange={setBatchLibraryIds}
-                  libraries={libraryPicker.libraries.map((library) => ({
-                    id: library.id,
-                    name: library.name,
-                    color: library.color,
-                  }))}
+                  label="Also add to"
                 />
                 <small className={styles.libraryHelp}>
-                  {libraryPicker.error?.title ??
-                    "Add new items to one or more libraries on top of My Library."}
+                  Add new items to one or more libraries on top of My Library.
                 </small>
               </div>
 
@@ -560,8 +543,7 @@ export default function AddContentTray() {
                         </div>
                         <div className={styles.itemActions}>
                           {allowRowPicker ? (
-                            <LibraryMultiSelectPicker
-                              mode="dropdown"
+                            <LibraryDestinationPicker
                               selectedLibraryIds={item.libraryIds}
                               onChange={(next) =>
                                 setQueue((current) =>
@@ -572,11 +554,7 @@ export default function AddContentTray() {
                                   )
                                 )
                               }
-                              libraries={libraryPicker.libraries.map((library) => ({
-                                id: library.id,
-                                name: library.name,
-                                color: library.color,
-                              }))}
+                              label="Libraries"
                             />
                           ) : null}
                           {item.status === "success" && href ? (

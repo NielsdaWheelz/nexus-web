@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.media import FromUrlResponse
 from nexus.services import (
-    library_entries,
     library_governance,
     remote_file_ingest,
     x_ingest,
@@ -27,7 +26,7 @@ def enqueue_media_from_url(
     request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create media from URL with source-owner dispatch."""
-    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
     validate_requested_url(url)
 
     youtube_identity = classify_youtube_url(url)
@@ -36,10 +35,10 @@ def enqueue_media_from_url(
             db=db,
             viewer_id=viewer_id,
             url=url,
+            library_ids=library_ids,
             enqueue_task=True,
             request_id=request_id,
         )
-        library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     if is_youtube_url(url):
@@ -69,17 +68,17 @@ def enqueue_media_from_url(
             viewer_id=viewer_id,
             url=url,
             kind=remote_file_kind,
+            library_ids=library_ids,
             request_id=request_id,
         )
-        library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     result = media_service.create_provisional_web_article(
         db,
         viewer_id,
         url,
+        library_ids=library_ids,
         enqueue_task=True,
         request_id=request_id,
     )
-    library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
     return result

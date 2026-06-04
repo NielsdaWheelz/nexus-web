@@ -39,6 +39,8 @@ def create_file_media_from_remote_url(
     viewer_id: UUID,
     url: str,
     kind: str,
+    *,
+    library_ids: list[UUID],
     request_id: str | None = None,
 ) -> FromUrlResponse:
     if kind not in REMOTE_FILE_CONTENT_TYPES:
@@ -58,7 +60,9 @@ def create_file_media_from_remote_url(
     try:
         existing = _find_existing_by_hash(db, viewer_id, kind, fetched.sha256)
         if existing is not None:
-            library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
+            library_entries.assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, existing.id, library_ids
+            )
             db.commit()
             _delete_remote_object(storage_client, storage_path, media_id, "duplicate_reused")
             return FromUrlResponse(
@@ -91,7 +95,9 @@ def create_file_media_from_remote_url(
             )
         )
         db.flush()
-        library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media_id, library_ids
+        )
         begin_extraction(db, media)
         _enqueue_extraction(db, media_id, kind, request_id)
         db.commit()
@@ -101,7 +107,9 @@ def create_file_media_from_remote_url(
         if existing is None:
             _delete_remote_object(storage_client, storage_path, media_id, "integrity_failed")
             raise
-        library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, existing.id, library_ids
+        )
         db.commit()
         _delete_remote_object(storage_client, storage_path, media_id, "integrity_duplicate")
         return FromUrlResponse(

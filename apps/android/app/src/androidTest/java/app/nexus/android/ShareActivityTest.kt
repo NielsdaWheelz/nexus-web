@@ -1,12 +1,15 @@
 package app.nexus.android
 
 import android.content.Intent
+import android.net.Uri
 import android.os.SystemClock
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -49,6 +52,16 @@ class ShareActivityTest {
                 scenario.state == Lifecycle.State.DESTROYED
             }
         }
+    }
+
+    @Test
+    fun shareCallbackFilterOnlyHandlesDocumentedCallbacks() {
+        assertTrue(isHandledShareCallback(Uri.parse("nexus-share://open?path=%2Fmedia%2F123")))
+        assertTrue(isHandledShareCallback(Uri.parse("nexus-share://done")))
+        assertTrue(isHandledShareCallback(Uri.parse("nexus-share://dismiss")))
+
+        assertFalse(isHandledShareCallback(Uri.parse("nexus-share://unknown")))
+        assertFalse(isHandledShareCallback(Uri.parse("https://example.com")))
     }
 
     private fun sendIntent(mimeType: String, sharedText: CharSequence?): Intent {

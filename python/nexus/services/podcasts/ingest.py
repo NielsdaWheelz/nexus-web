@@ -19,7 +19,7 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     replace_media_contributor_credits,
 )
-from nexus.services.library_entries import assign_libraries_for_media
+from nexus.services.library_entries import assign_libraries_for_media_in_current_transaction
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.versions import (
@@ -122,7 +122,9 @@ def sync_subscription_ingest(
         media_id: UUID
         if existing_media_id is not None:
             media_id = existing_media_id
-            assign_libraries_for_media(db, viewer_id, media_id, subscription_library_ids)
+            assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, media_id, subscription_library_ids
+            )
             db.execute(
                 text(
                     """
@@ -315,7 +317,9 @@ def sync_subscription_ingest(
             )
             if not author_names:
                 enrichment_media_ids.add(media_id)
-            assign_libraries_for_media(db, viewer_id, media_id, subscription_library_ids)
+            assign_libraries_for_media_in_current_transaction(
+                db, viewer_id, media_id, subscription_library_ids
+            )
             ingested_episode_count += 1
             ingested_media_ids.append(media_id)
             enrichment_media_ids.add(media_id)

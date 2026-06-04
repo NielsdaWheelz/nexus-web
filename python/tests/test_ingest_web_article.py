@@ -59,7 +59,7 @@ class TestIngestionStateTransitions:
 
         # Create provisional media
         url = httpserver.url_for("/article")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Verify initial state
@@ -102,7 +102,7 @@ class TestIngestionStateTransitions:
         httpserver.expect_request("/missing").respond_with_data("Not Found", status=404)
 
         url = httpserver.url_for("/missing")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Run ingestion
@@ -232,7 +232,7 @@ class TestDeduplication:
 
         # Create first media via old URL
         old_url = httpserver.url_for("/old-url")
-        result1 = create_provisional_web_article(db_session, user_id, old_url)
+        result1 = create_provisional_web_article(db_session, user_id, old_url, library_ids=[])
         media_id1 = result1.media_id
 
         # Ingest first media
@@ -246,7 +246,9 @@ class TestDeduplication:
         if media1 and media1["canonical_url"]:
             # Create second media via canonical URL directly
             canonical_url = httpserver.url_for("/canonical")
-            result2 = create_provisional_web_article(db_session, user_id, canonical_url)
+            result2 = create_provisional_web_article(
+                db_session, user_id, canonical_url, library_ids=[]
+            )
             media_id2 = result2.media_id
             loser_fragment_id = _seed_duplicate_loser_child_rows(
                 db_session,
@@ -294,7 +296,7 @@ class TestFragmentPersistence:
         )
 
         url = httpserver.url_for("/article")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -332,7 +334,7 @@ class TestFragmentPersistence:
         )
 
         url = httpserver.url_for("/multiblock")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
@@ -384,7 +386,7 @@ class TestProcessingAttempts:
         )
 
         url = httpserver.url_for("/article")
-        result = create_provisional_web_article(db_session, user_id, url)
+        result = create_provisional_web_article(db_session, user_id, url, library_ids=[])
         media_id = result.media_id
 
         # Check initial attempts

@@ -23,7 +23,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
-import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
+import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import SectionCard from "@/components/ui/SectionCard";
 import {
@@ -43,7 +43,6 @@ import {
 } from "../podcastSubscriptions";
 import { usePodcastSubscriptionActions } from "../usePodcastSubscriptionActions";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
-import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
 import {
   deriveEpisodeState,
@@ -105,7 +104,6 @@ export default function PodcastDetailPaneBody() {
   );
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const availableLibraries = useNonDefaultLibraries();
   const [podcastLibraries, setPodcastLibraries] = useState<
     PodcastLibraryMembership[]
   >([]);
@@ -292,11 +290,6 @@ export default function PodcastDetailPaneBody() {
       setLoading(false);
     }
   }, [applyPodcastDetailLoad, podcastDetailResource, podcastId]);
-
-  const { load: loadAvailableLibraries } = availableLibraries;
-  useEffect(() => {
-    void loadAvailableLibraries();
-  }, [loadAvailableLibraries]);
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
@@ -853,15 +846,10 @@ export default function PodcastDetailPaneBody() {
               <div className={styles.headerButtons}>
                 {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
-                    <LibraryMultiSelectPicker
-                      mode="dropdown"
+                    <LibraryDestinationPicker
                       selectedLibraryIds={selectedLibraryIds}
                       onChange={setSelectedLibraryIds}
-                      libraries={availableLibraries.libraries.map((library) => ({
-                        id: library.id,
-                        name: library.name,
-                        color: library.color,
-                      }))}
+                      label="Libraries"
                     />
                     <Button
                       variant="primary"

@@ -9,17 +9,6 @@ export interface LibraryTargetPickerItem {
   canRemove: boolean;
 }
 
-export interface LibrarySummary {
-  id: string;
-  name: string;
-  is_default: boolean;
-  color?: string | null;
-}
-
-interface LibraryListResponse {
-  data: LibrarySummary[];
-}
-
 interface MediaLibrariesResponse {
   data: Array<{
     id: string;
@@ -34,11 +23,6 @@ interface MediaLibrariesResponse {
 
 interface MediaDeleteResponse {
   data: { hard_deleted: boolean };
-}
-
-export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
-  const response = await apiFetch<LibraryListResponse>("/api/libraries");
-  return response.data.filter((library) => !library.is_default);
 }
 
 interface FetchMediaLibraryMembershipsOptions {
@@ -73,27 +57,6 @@ export async function addMediaToLibrary(
     method: "POST",
     body: JSON.stringify({ media_id: mediaId }),
   });
-}
-
-interface AddMediaToLibrariesResponse {
-  data: {
-    media_id: string;
-    library_ids_added: string[];
-  };
-}
-
-export async function addMediaToLibraries(
-  mediaId: string,
-  libraryIds: string[],
-): Promise<{ media_id: string; library_ids_added: string[] }> {
-  const response = await apiFetch<AddMediaToLibrariesResponse>(
-    `/api/media/${mediaId}/libraries`,
-    {
-      method: "POST",
-      body: JSON.stringify({ library_ids: libraryIds }),
-    },
-  );
-  return response.data;
 }
 
 export async function removeMediaFromLibrary(

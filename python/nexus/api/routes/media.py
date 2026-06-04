@@ -107,8 +107,9 @@ def add_media_libraries(
 ) -> dict:
     """Additively attach the media to one or more libraries.
 
-    Idempotent: ids already present and the viewer's default library id are
-    deduped. Returns the subset of ids actually inserted.
+    Idempotent: ids already present are not reinserted. The viewer's default
+    library id is rejected because destination writes are writable non-default
+    libraries only. Returns the subset of ids actually inserted.
     """
     result = library_entries.add_media_to_libraries_for_viewer(
         db, viewer.user_id, media_id, body.library_ids

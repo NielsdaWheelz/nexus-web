@@ -33,9 +33,9 @@ from nexus.schemas.podcast import (
 )
 from nexus.services.library_entries import (
     remove_user_podcast_subscription_libraries,
-    set_subscription_libraries,
+    set_subscription_libraries_in_current_transaction,
 )
-from nexus.services.library_governance import validate_libraries_accessible
+from nexus.services.library_governance import validate_writable_library_destinations
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .identity import (
@@ -68,9 +68,9 @@ def import_subscriptions_from_opml(
             ApiErrorCode.E_INVALID_REQUEST,
             "OPML import requires the OPML payload as a string.",
         )
-    validate_libraries_accessible(db, viewer_id, default_library_ids)
+    validate_writable_library_destinations(db, viewer_id, default_library_ids)
     for feed_library_ids in per_feed_library_ids.values():
-        validate_libraries_accessible(db, viewer_id, feed_library_ids)
+        validate_writable_library_destinations(db, viewer_id, feed_library_ids)
     payload_bytes = opml_xml.encode("utf-8")
     if not payload_bytes:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "OPML file is empty.")
@@ -167,7 +167,9 @@ def import_subscriptions_from_opml(
                 if not subscription_created and existing_status != "unsubscribed":
                     summary.skipped_already_subscribed += 1
                     continue
-                set_subscription_libraries(db, viewer_id, podcast_id, library_ids)
+                set_subscription_libraries_in_current_transaction(
+                    db, viewer_id, podcast_id, library_ids
+                )
                 enqueue_podcast_subscription_sync(
                     db,
                     user_id=viewer_id,
@@ -249,7 +251,7 @@ def subscribe_to_podcast(
     viewer_id: UUID,
     body: PodcastSubscribeRequest,
 ) -> PodcastSubscribeOut:
-    validate_libraries_accessible(db, viewer_id, body.library_ids)
+    validate_writable_library_destinations(db, viewer_id, body.library_ids)
     normalized_feed_url = validate_and_normalize_feed_url(body.feed_url)
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
     now = datetime.now(UTC)
@@ -263,7 +265,9 @@ def subscribe_to_podcast(
             now=now,
             auto_queue=body.auto_queue,
         )
-        set_subscription_libraries(db, viewer_id, podcast_id, body.library_ids)
+        set_subscription_libraries_in_current_transaction(
+            db, viewer_id, podcast_id, body.library_ids
+        )
         sync_enqueued = enqueue_podcast_subscription_sync(
             db,
             user_id=viewer_id,

@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
+import { useEffect, useMemo, useRef, useState } from "react";
+import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import { extractUrls } from "@/lib/extractUrls";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
-import { useAddMediaToLibraries } from "@/lib/media/useAddMediaToLibraries";
-import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { quickCaptureDailyNote } from "@/lib/notes/api";
-import { deepLinkBack } from "./shareDeepLink";
 import styles from "./share.module.css";
 
 // One captured item. A failed capture carries no destination; a successful one
@@ -30,70 +27,25 @@ export default function ShareCapture({
   isShell: boolean;
 }) {
   const trimmed = text.trim();
-  // `null` while capturing; the settled list once every item is done.
+  const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<CaptureResult[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pickerBusy, setPickerBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
   // Capture fires once per attempt. The guard survives React's mount-effect
   // double-invoke, which would otherwise post a second daily-note bullet
   // (quickCaptureDailyNote is not idempotent, unlike from-url).
   const capturedAttempt = useRef<number | null>(null);
-
-  // Post-add library picker state. Modal opens once after every URL has been
-  // processed; the same selection is applied to every created media row.
-  const [createdMediaIds, setCreatedMediaIds] = useState<string[]>([]);
-  const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
 
-  const libraryPicker = useNonDefaultLibraries();
-  const loadLibraries = libraryPicker.load;
-  const { add: addLibraries } = useAddMediaToLibraries();
-
   useEffect(() => {
-    if (!trimmed || capturedAttempt.current === attempt) {
+    if (!trimmed || urls.length > 0 || capturedAttempt.current === attempt) {
       return;
     }
     capturedAttempt.current = attempt;
     setResults(null);
-    setCreatedMediaIds([]);
-    setSelectedLibraryIds([]);
-    setShowLibraryModal(false);
 
     void (async () => {
-      const urls = extractUrls(trimmed);
-      if (urls.length > 0) {
-        const settled = await Promise.all(
-          urls.map(async (url): Promise<CaptureResult> => {
-            try {
-              const { mediaId, duplicate } = await addMediaFromUrl({
-                url,
-                libraryIds: [],
-              });
-              return {
-                label: url,
-                ok: true,
-                status: duplicate ? "Already in your library" : "Saved",
-                path: `/media/${mediaId}`,
-                mediaId,
-              };
-            } catch {
-              return { label: url, ok: false };
-            }
-          }),
-        );
-        setResults(settled);
-        const createdIds = settled
-          .filter(
-            (entry): entry is Extract<CaptureResult, { ok: true }> => entry.ok,
-          )
-          .map((entry) => entry.mediaId)
-          .filter((id): id is string => Boolean(id));
-        if (createdIds.length > 0) {
-          setCreatedMediaIds(createdIds);
-          setShowLibraryModal(true);
-          void loadLibraries();
-        }
-        return;
-      }
       try {
         await quickCaptureDailyNote({ bodyMarkdown: trimmed });
         setResults([
@@ -108,9 +60,40 @@ export default function ShareCapture({
         setResults([{ label: trimmed, ok: false }]);
       }
     })();
-  }, [trimmed, attempt, loadLibraries]);
+  }, [trimmed, urls.length, attempt]);
 
-  const doneHref = isShell ? "nexus-share://dismiss" : "/";
+  const doneHref = isShell ? "nexus-share://done" : "/libraries";
+  const cancelHref = isShell ? "nexus-share://dismiss" : "/libraries";
+
+  async function saveUrls(targetUrls: string[]) {
+    if (saving || pickerBusy) return;
+    setSaving(true);
+    const settled = await Promise.all(
+      targetUrls.map(async (url): Promise<CaptureResult> => {
+        try {
+          const { mediaId, duplicate } = await addMediaFromUrl({
+            url,
+            libraryIds: selectedLibraryIds,
+          });
+          return {
+            label: url,
+            ok: true,
+            status: duplicate ? "Already in your library" : "Saved",
+            path: `/media/${mediaId}`,
+            mediaId,
+          };
+        } catch {
+          return { label: url, ok: false };
+        }
+      }),
+    );
+    setResults((current) => {
+      if (!current) return settled;
+      const replacements = new Map(settled.map((result) => [result.label, result]));
+      return current.map((result) => replacements.get(result.label) ?? result);
+    });
+    setSaving(false);
+  }
 
   if (!trimmed) {
     return (
@@ -128,7 +111,44 @@ export default function ShareCapture({
     );
   }
 
-  if (results === null) {
+  if (urls.length > 0 && results === null) {
+    return (
+      <>
+        <h1 className={styles.heading}>Save to Nexus</h1>
+        <div className={styles.results}>
+          {urls.map((url) => (
+            <div key={url} className={styles.resultItem}>
+              <span className={styles.resultLabel} title={url}>
+                {url}
+              </span>
+            </div>
+          ))}
+        </div>
+        <LibraryDestinationPicker
+          selectedLibraryIds={selectedLibraryIds}
+          onChange={setSelectedLibraryIds}
+          disabled={saving}
+          label="Library destinations"
+          onBusyChange={setPickerBusy}
+        />
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.actionPrimary}
+            disabled={saving || pickerBusy}
+            onClick={() => void saveUrls(urls)}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <a className={styles.action} href={cancelHref}>
+            Cancel
+          </a>
+        </div>
+      </>
+    );
+  }
+
+  if (results === null || saving) {
     return (
       <>
         <h1 className={styles.heading}>Saving to Nexus…</h1>
@@ -138,6 +158,7 @@ export default function ShareCapture({
   }
 
   const anyFailed = results.some((result) => !result.ok);
+  const failedUrls = results.filter((result) => !result.ok).map((result) => result.label);
 
   return (
     <>
@@ -179,7 +200,14 @@ export default function ShareCapture({
           <button
             type="button"
             className={styles.actionPrimary}
-            onClick={() => setAttempt((value) => value + 1)}
+            disabled={saving || pickerBusy}
+            onClick={() => {
+              if (urls.length > 0) {
+                void saveUrls(failedUrls);
+                return;
+              }
+              setAttempt((value) => value + 1);
+            }}
           >
             Retry
           </button>
@@ -191,25 +219,6 @@ export default function ShareCapture({
           Done
         </a>
       </div>
-      <LibraryMultiSelectPicker
-        mode="modal"
-        open={showLibraryModal}
-        selectedLibraryIds={selectedLibraryIds}
-        onChange={setSelectedLibraryIds}
-        libraries={libraryPicker.libraries}
-        onConfirm={async (ids) => {
-          for (const mediaId of createdMediaIds) {
-            await addLibraries(mediaId, ids);
-          }
-          setShowLibraryModal(false);
-          deepLinkBack();
-        }}
-        onSkip={() => {
-          setShowLibraryModal(false);
-          deepLinkBack();
-        }}
-        title="Add to libraries?"
-      />
     </>
   );
 }

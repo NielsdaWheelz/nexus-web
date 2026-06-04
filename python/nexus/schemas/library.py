@@ -79,6 +79,16 @@ class LibraryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LibraryDestinationOut(BaseModel):
+    id: UUID
+    name: str
+    color: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LibraryPodcastOut(BaseModel):
     id: UUID
     provider: str

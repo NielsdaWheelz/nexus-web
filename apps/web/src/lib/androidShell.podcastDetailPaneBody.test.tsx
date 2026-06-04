@@ -134,8 +134,8 @@ describe("PodcastDetailPaneBody transcript billing", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries") {
-        return jsonResponse({ data: [] });
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         return jsonResponse({ data: [] });

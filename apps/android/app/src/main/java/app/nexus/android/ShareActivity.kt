@@ -10,6 +10,16 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 
+internal fun isHandledShareCallback(uri: Uri): Boolean {
+    if (uri.scheme != "nexus-share") {
+        return false
+    }
+    return when (uri.host) {
+        "open", "done", "dismiss" -> true
+        else -> false
+    }
+}
+
 class ShareActivity : AppCompatActivity() {
     // Set only once a non-empty share arrives; an empty share finishes the
     // activity in onCreate before any WebView is created.
@@ -37,7 +47,7 @@ class ShareActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri = request?.url ?: return false
-                if (uri.scheme != "nexus-share") {
+                if (!isHandledShareCallback(uri)) {
                     return false
                 }
                 if (uri.host == "open") {

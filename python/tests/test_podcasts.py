@@ -10000,6 +10000,64 @@ class TestSubscribeWithLibraryIds:
             f"got {library_ids_on_subscription}"
         )
 
+    @pytest.mark.parametrize(
+        ("case", "expected_status", "expected_code"),
+        [
+            ("default", 400, "E_INVALID_REQUEST"),
+            ("duplicate", 400, "E_INVALID_REQUEST"),
+            ("member_only", 403, "E_LIBRARY_FORBIDDEN"),
+        ],
+    )
+    def test_subscribe_rejects_invalid_library_ids(
+        self,
+        auth_client,
+        monkeypatch,
+        direct_db,
+        case: str,
+        expected_status: int,
+        expected_code: str,
+    ):
+        """Subscribe library_ids are writable destinations, not defaults or member-only libs."""
+        from tests.factories import add_library_member
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        other_owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, other_owner_id)
+
+        with direct_db.session() as session:
+            writable_id = _create_test_library(session, user_id, f"{case} Writable")
+            member_only_id = _create_test_library(session, other_owner_id, f"{case} Member Only")
+            add_library_member(session, member_only_id, user_id, role="member")
+
+        for library_id in (writable_id, member_only_id):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        provider_podcast_id = f"reject-libs-{case}-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, f"Reject Libs {case}")
+        if case == "default":
+            payload["library_ids"] = [str(default_library_id)]
+        elif case == "duplicate":
+            payload["library_ids"] = [str(writable_id), str(writable_id)]
+        else:
+            payload["library_ids"] = [str(member_only_id)]
+
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+
+        response = auth_client.post(
+            "/podcasts/subscriptions",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == expected_status, response.text
+        assert response.json()["error"]["code"] == expected_code
+
     def test_subscribe_backfills_existing_episodes_to_libraries(
         self, auth_client, monkeypatch, direct_db
     ):

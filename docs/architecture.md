@@ -603,6 +603,9 @@ call exactly one service owner. (The media routers are split per capability:
 `media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `listening_state.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
+Ingest `library_ids` are writable non-default destinations; media services
+validate them through library governance and assign default plus selected
+destinations through `library_entries`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
@@ -733,6 +736,10 @@ predicates in `auth/permissions.py`; the search/object readers read
   invariant since migration `0131`, with cleanup explicit in app code).
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
   admin/owner-gated, with masked-404 for non-members.
+- **Writable destinations**: destination pickers use
+  `GET /libraries/writable-destinations`; default libraries, member-only
+  libraries, duplicate IDs, and inaccessible IDs are not valid write
+  destinations.
 - **The default-library closure** (`services/default_library_closure.py`) makes a
   user's default library reflect everything visible across their shared libraries
   without duplication. Two provenance tables: `default_library_intrinsics` (direct
