@@ -34,7 +34,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries
 from nexus.services.epub_ingest import check_archive_safety
 from nexus.services.file_ingest_validation import validate_file_source_integrity
 from nexus.services.media_processing_state import begin_extraction, mark_failed
@@ -77,7 +77,7 @@ def confirm_ingest_for_viewer(
             "Only the creator can confirm upload",
         )
 
-    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     if media.kind == "pdf":
         from nexus.services.pdf_lifecycle import confirm_pdf_ingest

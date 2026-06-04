@@ -17,7 +17,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import FromUrlResponse
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries
 from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
@@ -85,7 +85,7 @@ def create_or_reuse_x_author_thread_article(
         .one_or_none()
     )
     if media is not None:
-        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
         db.commit()
         return FromUrlResponse(
             media_id=media.id,
@@ -192,7 +192,7 @@ def create_or_reuse_x_author_thread_article(
                 }
             ],
         )
-        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
         db.commit()
     except IntegrityError as exc:
         if not _is_media_provider_conflict(exc):
@@ -208,7 +208,7 @@ def create_or_reuse_x_author_thread_article(
         )
         if media is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Unable to resolve canonical X thread") from exc
-        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
         db.commit()
     except Exception:
         db.rollback()
@@ -315,7 +315,7 @@ def _refresh_x_author_thread_media_for_viewer(
     )
     source_library_ids = _attached_library_ids(db, media.id)
     if existing_thread_media is not None:
-        libraries_service.assign_libraries_for_media(
+        library_entries.assign_libraries_for_media(
             db,
             viewer_id,
             existing_thread_media.id,
@@ -444,13 +444,7 @@ def _refresh_x_author_thread_media_for_viewer(
 
 
 def _attached_library_ids(db: Session, media_id: UUID) -> list[UUID]:
-    return [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        ).fetchall()
-    ]
+    return library_entries.list_library_ids_for_media(db, media_id)
 
 
 def _delete_web_article_refresh_artifacts(db: Session, media_id: UUID) -> None:
@@ -504,7 +498,7 @@ def _create_or_reuse_x_snapshot_post_media(
         .one_or_none()
     )
     if media is not None:
-        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
         return media, None, False
 
     prepared_fragment = _build_x_fragment(
@@ -555,7 +549,7 @@ def _create_or_reuse_x_snapshot_post_media(
                 }
             ],
         )
-    libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
     return media, prepared_fragment, True
 
 

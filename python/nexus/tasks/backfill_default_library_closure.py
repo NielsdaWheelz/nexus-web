@@ -21,6 +21,7 @@ from nexus.services.default_library_closure import (
     get_backfill_backlog_health,
     handle_backfill_job_failure,
     mark_backfill_job_completed,
+    mark_backfill_job_terminally_failed,
     materialize_closure_for_source,
     validate_backfill_job_tuple,
 )
@@ -92,7 +93,14 @@ def _execute_backfill(
     if error is not None:
         logger.warning("backfill_tuple_invalid", error=error, **log_ctx)
         # Terminal failure: mark failed without retry
-        _mark_terminal_failure(db, dl_uuid, src_uuid, uid_uuid, f"tuple_invalid:{error}")
+        mark_backfill_job_terminally_failed(
+            db,
+            default_library_id=dl_uuid,
+            source_library_id=src_uuid,
+            user_id=uid_uuid,
+            error_code=f"tuple_invalid:{error}",
+        )
+        db.commit()
         return {"status": "failed", "reason": f"tuple_invalid:{error}"}
 
     # Step 2: Claim pending row atomically
@@ -204,39 +212,3 @@ def _handle_failure(
         attempts=result.attempts,
         **log_ctx,
     )
-
-
-def _mark_terminal_failure(
-    db,
-    dl_uuid: UUID,
-    src_uuid: UUID,
-    uid_uuid: UUID,
-    error_code: str,
-) -> None:
-    """Mark a backfill job as terminal failed without retry."""
-    from datetime import UTC, datetime
-
-    from sqlalchemy import text
-
-    now = datetime.now(UTC)
-    db.execute(
-        text("""
-            UPDATE default_library_backfill_jobs
-            SET status = 'failed',
-                attempts = attempts + 1,
-                last_error_code = :error_code,
-                finished_at = :now,
-                updated_at = :now
-            WHERE default_library_id = :dl
-              AND source_library_id = :source
-              AND user_id = :uid
-        """),
-        {
-            "dl": dl_uuid,
-            "source": src_uuid,
-            "uid": uid_uuid,
-            "error_code": error_code,
-            "now": now,
-        },
-    )
-    db.commit()

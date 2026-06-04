@@ -26,6 +26,7 @@ from nexus.auth.permissions import (
     can_read_media,
     is_library_member,
 )
+from nexus.services import library_entries
 from nexus.services.media_document_map import load_media_document_summary
 from nexus.services.notes import linked_note_blocks_for_highlights
 
@@ -175,8 +176,7 @@ def _load_library(
     rows = db.execute(
         text(
             """
-            SELECT l.id, l.name,
-                   (SELECT COUNT(*) FROM library_entries le WHERE le.library_id = l.id) AS item_count
+            SELECT l.id, l.name
             FROM libraries l
             WHERE l.id = ANY(:ids)
             """
@@ -184,6 +184,7 @@ def _load_library(
         {"ids": ids},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
+    counts = library_entries.count_entries_by_library(db, ids)
     out: list[LoadedResource] = []
     for p in items:
         row = by_id.get(p.resource_id)
@@ -192,7 +193,10 @@ def _load_library(
             continue
         out.append(
             LoadedResource(
-                uri=p.raw, scheme="library", title=str(row[1]), item_count=int(row[2] or 0)
+                uri=p.raw,
+                scheme="library",
+                title=str(row[1]),
+                item_count=int(counts.get(row[0], 0)),
             )
         )
     return out

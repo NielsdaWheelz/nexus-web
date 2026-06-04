@@ -6589,7 +6589,7 @@ class TestLibraryEntriesCutoverMigration:
         assert "ck_library_entries_position_non_negative" in constraint_names
         assert "uq_library_entries_library_media" in constraint_names
         assert "uq_library_entries_library_podcast" in constraint_names
-        assert "uq_library_entries_library_position_unique" in constraint_names
+        assert "uq_library_entries_library_position" in constraint_names
 
         index_names = {row[0] for row in indexes}
         assert "ix_library_entries_library_order" in index_names
@@ -6605,7 +6605,7 @@ class TestLibraryEntriesCutoverMigration:
             fks = session.execute(
                 text(
                     """
-                    SELECT conname, confdeltype
+                    SELECT confrelid::regclass::text AS referenced_table, confdeltype
                     FROM pg_constraint
                     WHERE conrelid = 'library_entries'::regclass
                       AND contype = 'f'
@@ -6613,12 +6613,20 @@ class TestLibraryEntriesCutoverMigration:
                 )
             ).fetchall()
 
-        delete_actions = {row[0]: row[1] for row in fks}
         # 'a' = NO ACTION. Cleanup is explicit in application code (database.md); the
         # media_id/podcast_id CASCADE and the library_id ORM/DDL mismatch from 0047 are
-        # gone after 0131.
+        # gone after 0131. Pin FK identity (referenced table) so a future migration cannot
+        # silently swap one non-cascading FK for another and still pass.
+        delete_actions = {row[0]: row[1] for row in fks}
+        for referenced_table in ("media", "podcasts", "libraries"):
+            assert referenced_table in delete_actions, (
+                f"library_entries must keep its FK to {referenced_table}: {delete_actions}"
+            )
+            assert delete_actions[referenced_table] == "a", (
+                f"library_entries→{referenced_table} FK must be NO ACTION, "
+                f"got {delete_actions[referenced_table]!r}: {delete_actions}"
+            )
         assert len(delete_actions) == 3, delete_actions
-        assert all(action == "a" for action in delete_actions.values()), delete_actions
 
     def test_head_contains_request_storm_hot_path_indexes(self, migrated_engine):
         with Session(migrated_engine) as session:

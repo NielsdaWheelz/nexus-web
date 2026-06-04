@@ -12,7 +12,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import FromUrlResponse
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.youtube_identity import classify_youtube_url
 
@@ -82,7 +82,7 @@ def create_or_reuse_youtube_video(
             media.canonical_source_url = identity.watch_url
         media.updated_at = now
 
-    libraries_service.ensure_media_in_default_library(db, viewer_id, media.id)
+    library_entries.ensure_media_in_default_library(db, viewer_id, media.id)
 
     ingest_enqueued = False
     try:

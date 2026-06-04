@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import success_response
+from nexus.responses import ok
 from nexus.schemas.library import (
     AddMediaRequest,
     AddPodcastRequest,
@@ -31,9 +31,9 @@ from nexus.schemas.library import (
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
 )
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries, library_governance, library_invitations
 
-router = APIRouter()
+router = APIRouter(tags=["libraries"])
 
 
 # =============================================================================
@@ -54,8 +54,8 @@ def list_viewer_invites(
 
     Returns invites where invitee_user_id = viewer, ordered by created_at DESC.
     """
-    result = libraries_service.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
-    return success_response([inv.model_dump(mode="json") for inv in result])
+    result = library_invitations.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
+    return ok(result)
 
 
 @router.post("/libraries/invites/{invite_id}/accept")
@@ -69,8 +69,8 @@ def accept_library_invite(
     Invitee-only. Transactionally creates membership and upserts backfill job.
     Idempotent when already accepted.
     """
-    result = libraries_service.accept_library_invite(db, viewer.user_id, invite_id)
-    return success_response(result.model_dump(mode="json"))
+    result = library_invitations.accept_library_invite(db, viewer.user_id, invite_id)
+    return ok(result)
 
 
 @router.post("/libraries/invites/{invite_id}/decline")
@@ -83,8 +83,8 @@ def decline_library_invite(
 
     Invitee-only. Idempotent when already declined.
     """
-    result = libraries_service.decline_library_invite(db, viewer.user_id, invite_id)
-    return success_response(result.model_dump(mode="json"))
+    result = library_invitations.decline_library_invite(db, viewer.user_id, invite_id)
+    return ok(result)
 
 
 @router.delete("/libraries/invites/{invite_id}", status_code=204)
@@ -97,7 +97,7 @@ def revoke_library_invite(
 
     Admin/owner of the invite's library only. Idempotent when already revoked.
     """
-    libraries_service.revoke_library_invite(db, viewer.user_id, invite_id)
+    library_invitations.revoke_library_invite(db, viewer.user_id, invite_id)
     return Response(status_code=204)
 
 
@@ -116,8 +116,8 @@ def list_libraries(
 
     Returns libraries ordered by created_at ASC, id ASC.
     """
-    result = libraries_service.list_libraries(db, viewer.user_id, limit=limit)
-    return success_response([lib.model_dump(mode="json") for lib in result])
+    result = library_governance.list_libraries(db, viewer.user_id, limit=limit)
+    return ok(result)
 
 
 @router.post("/libraries", status_code=201)
@@ -130,8 +130,8 @@ def create_library(
 
     The viewer becomes the owner and admin of the new library.
     """
-    result = libraries_service.create_library(db, viewer.user_id, body.name)
-    return success_response(result.model_dump(mode="json"))
+    result = library_governance.create_library(db, viewer.user_id, body.name)
+    return ok(result)
 
 
 @router.get("/libraries/{library_id}")
@@ -144,8 +144,8 @@ def get_library(
 
     Viewer must be a member. Non-members get masked 404.
     """
-    result = libraries_service.get_library(db, viewer.user_id, library_id)
-    return success_response(result.model_dump(mode="json"))
+    result = library_governance.get_library(db, viewer.user_id, library_id)
+    return ok(result)
 
 
 @router.patch("/libraries/{library_id}")
@@ -159,8 +159,8 @@ def rename_library(
 
     Only admins can rename libraries. Cannot rename default library.
     """
-    result = libraries_service.rename_library(db, viewer.user_id, library_id, body.name)
-    return success_response(result.model_dump(mode="json"))
+    result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
+    return ok(result)
 
 
 @router.delete("/libraries/{library_id}", status_code=204)
@@ -173,7 +173,7 @@ def delete_library(
 
     Owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
     """
-    libraries_service.delete_library(db, viewer.user_id, library_id)
+    library_governance.delete_library(db, viewer.user_id, library_id)
     return Response(status_code=204)
 
 
@@ -191,7 +191,7 @@ def create_library_invite(
 
     Admin/owner only. Invitee must exist. Default library targets forbidden.
     """
-    result = libraries_service.create_library_invite(
+    result = library_invitations.create_library_invite(
         db,
         viewer.user_id,
         library_id,
@@ -199,7 +199,7 @@ def create_library_invite(
         body.role,
         invitee_email=body.invitee_email,
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.get("/libraries/{library_id}/invites")
@@ -216,10 +216,10 @@ def list_library_invites(
 
     Admin/owner only. Ordered by created_at DESC, id DESC.
     """
-    result = libraries_service.list_library_invites(
+    result = library_invitations.list_library_invites(
         db, viewer.user_id, library_id, status=status, limit=limit
     )
-    return success_response([inv.model_dump(mode="json") for inv in result])
+    return ok(result)
 
 
 # ---- Members ----
@@ -236,8 +236,8 @@ def list_library_members(
 
     Admin-only. Owner first, then admins, then members, then created_at ASC.
     """
-    result = libraries_service.list_library_members(db, viewer.user_id, library_id, limit=limit)
-    return success_response([m.model_dump(mode="json") for m in result])
+    result = library_governance.list_library_members(db, viewer.user_id, library_id, limit=limit)
+    return ok(result)
 
 
 @router.patch("/libraries/{library_id}/members/{user_id}")
@@ -253,10 +253,10 @@ def update_library_member_role(
     Admin-only. Cannot change owner role.
     Default library forbidden.
     """
-    result = libraries_service.update_library_member_role(
+    result = library_governance.update_library_member_role(
         db, viewer.user_id, library_id, user_id, body.role
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 @router.delete("/libraries/{library_id}/members/{user_id}", status_code=204)
@@ -271,7 +271,7 @@ def remove_library_member(
     Admin-only. Cannot remove owner.
     Default library forbidden. Idempotent for absent targets.
     """
-    libraries_service.remove_library_member(db, viewer.user_id, library_id, user_id)
+    library_governance.remove_library_member(db, viewer.user_id, library_id, user_id)
     return Response(status_code=204)
 
 
@@ -290,10 +290,10 @@ def transfer_library_ownership(
     Owner-only. Target must be existing member. Previous owner stays admin.
     Default library forbidden.
     """
-    result = libraries_service.transfer_library_ownership(
+    result = library_governance.transfer_library_ownership(
         db, viewer.user_id, library_id, body.new_owner_user_id
     )
-    return success_response(result.model_dump(mode="json"))
+    return ok(result)
 
 
 # ---- Library Entries ----
@@ -311,14 +311,14 @@ def list_library_entries(
 
     Returns one mixed list of podcasts and media ordered by entry position ASC.
     """
-    result = libraries_service.list_library_entries(
+    result = library_entries.list_library_entries(
         db,
         viewer.user_id,
         library_id,
         limit=limit,
         offset=offset,
     )
-    return success_response([entry.model_dump(mode="json") for entry in result])
+    return ok(result)
 
 
 @router.patch("/libraries/{library_id}/entries/reorder")
@@ -329,8 +329,8 @@ def patch_library_entry_order(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Replace full entry ordering for a library."""
-    result = libraries_service.reorder_library_entries(db, viewer.user_id, library_id, body)
-    return success_response([entry.model_dump(mode="json") for entry in result])
+    result = library_entries.reorder_entries(db, viewer.user_id, library_id, body)
+    return ok(result)
 
 
 @router.post("/libraries/{library_id}/media", status_code=201)
@@ -344,8 +344,8 @@ def add_media_to_library(
 
     Only admins can add media. Enforces default library closure.
     """
-    result = libraries_service.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
-    return success_response(result.model_dump(mode="json"))
+    result = library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
+    return ok(result)
 
 
 @router.post("/libraries/{library_id}/podcasts", status_code=201)
@@ -356,10 +356,8 @@ def add_podcast_to_library(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Add a subscribed podcast reference to a non-default library."""
-    result = libraries_service.add_podcast_to_library(
-        db, viewer.user_id, library_id, body.podcast_id
-    )
-    return success_response(result.model_dump(mode="json"))
+    result = library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
+    return ok(result)
 
 
 @router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)
@@ -370,5 +368,5 @@ def remove_podcast_from_library(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Remove a podcast reference from one non-default library."""
-    libraries_service.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
+    library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
     return Response(status_code=204)

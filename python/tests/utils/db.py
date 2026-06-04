@@ -288,6 +288,16 @@ class DirectSessionManager:
                         text("DELETE FROM conversations WHERE owner_user_id = :value"),
                         {"value": value},
                     )
+                    # libraries.owner_user_id cascades on user delete, but
+                    # library_entries.library_id is non-cascading (migration 0131): clear
+                    # the user's library entries before the user (and thus its libraries).
+                    session.execute(
+                        text(
+                            "DELETE FROM library_entries WHERE library_id IN "
+                            "(SELECT id FROM libraries WHERE owner_user_id = :value)"
+                        ),
+                        {"value": value},
+                    )
 
                 if table == "media" and column == "id":
                     session.execute(
@@ -346,6 +356,13 @@ class DirectSessionManager:
                         text("DELETE FROM contributor_credits WHERE media_id = :value"),
                         {"value": value},
                     )
+                    # library_entries.media_id lost its ON DELETE CASCADE in migration 0131,
+                    # so clear entries explicitly before the media row. (intrinsics + closure
+                    # edges still cascade from media.id — the DELETE FROM media handles them.)
+                    session.execute(
+                        text("DELETE FROM library_entries WHERE media_id = :value"),
+                        {"value": value},
+                    )
 
                 if table == "content_chunks" and column == "media_id":
                     session.execute(
@@ -374,6 +391,28 @@ class DirectSessionManager:
                 if table == "podcasts" and column == "id":
                     session.execute(
                         text("DELETE FROM contributor_credits WHERE podcast_id = :value"),
+                        {"value": value},
+                    )
+                    # library_entries.podcast_id is non-cascading (migration 0131).
+                    session.execute(
+                        text("DELETE FROM library_entries WHERE podcast_id = :value"),
+                        {"value": value},
+                    )
+
+                # library_entries.library_id is non-cascading (migration 0131): remove a
+                # library's entries before the library row.
+                if table == "libraries" and column == "id":
+                    session.execute(
+                        text("DELETE FROM library_entries WHERE library_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "libraries" and column == "owner_user_id":
+                    session.execute(
+                        text(
+                            "DELETE FROM library_entries WHERE library_id IN "
+                            "(SELECT id FROM libraries WHERE owner_user_id = :value)"
+                        ),
                         {"value": value},
                     )
 

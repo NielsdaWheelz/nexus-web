@@ -6,9 +6,14 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.media import FromUrlResponse
-from nexus.services import libraries as libraries_service
+from nexus.services import (
+    library_entries,
+    library_governance,
+    remote_file_ingest,
+    x_ingest,
+    youtube_ingest,
+)
 from nexus.services import media as media_service
-from nexus.services import remote_file_ingest, x_ingest, youtube_ingest
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
@@ -22,7 +27,7 @@ def enqueue_media_from_url(
     request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create media from URL with source-owner dispatch."""
-    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
     validate_requested_url(url)
 
     youtube_identity = classify_youtube_url(url)
@@ -34,7 +39,7 @@ def enqueue_media_from_url(
             enqueue_task=True,
             request_id=request_id,
         )
-        libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     if is_youtube_url(url):
@@ -66,7 +71,7 @@ def enqueue_media_from_url(
             kind=remote_file_kind,
             request_id=request_id,
         )
-        libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
+        library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     result = media_service.create_provisional_web_article(
@@ -76,5 +81,5 @@ def enqueue_media_from_url(
         enqueue_task=True,
         request_id=request_id,
     )
-    libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
     return result

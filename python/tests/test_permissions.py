@@ -24,6 +24,7 @@ from nexus.auth.permissions import (
     is_library_member,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from tests.factories import add_library_entry_only
 
 pytestmark = pytest.mark.integration
 
@@ -65,25 +66,9 @@ def _create_media(db: Session, title: str = "Test", kind: str = "web_article") -
 
 
 def _add_media_to_library(db: Session, library_id, media_id) -> None:
-    existing = db.execute(
-        text("""
-            SELECT 1
-            FROM library_entries
-            WHERE library_id = :lib
-              AND media_id = :media
-        """),
-        {"lib": library_id, "media": media_id},
-    ).first()
-    if existing is not None:
-        return
-
-    db.execute(
-        text("""
-            INSERT INTO library_entries (library_id, media_id)
-            VALUES (:lib, :media)
-        """),
-        {"lib": library_id, "media": media_id},
-    )
+    # Entry-only (no intrinsic), so the entry-vs-intrinsic visibility-path tests below stay
+    # honest. Delegates to the canonical factory; flush keeps the local call-site contract.
+    add_library_entry_only(db, library_id, media_id)
     db.flush()
 
 

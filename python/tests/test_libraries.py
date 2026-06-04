@@ -9,10 +9,12 @@ Tests cover:
 - Visibility masking
 """
 
+import threading
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from tests.factories import create_test_media
 from tests.helpers import auth_headers, create_test_user_id
@@ -1407,6 +1409,114 @@ class TestReorderLibraryMedia:
         )
         assert reorder_resp.status_code == 403
         assert reorder_resp.json()["error"]["code"] == "E_FORBIDDEN"
+
+    def test_reorder_library_entries_mixes_media_and_podcast(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Reorder is target.kind-agnostic: a library holding both a media and a podcast
+        entry reorders by entry id and stays dense (0..n-1)."""
+        user_id = create_test_user_id()
+        library_id = auth_client.post(
+            "/libraries", json={"name": "Mixed order"}, headers=auth_headers(user_id)
+        ).json()["data"]["id"]
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Mixed media")
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcast_index', 'mixed-order', 'Mixed Order',
+                            'https://example.com/mixed.xml')
+                """),
+                {"id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                """),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        assert auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        ).status_code in (200, 201)
+        assert (
+            auth_client.post(
+                f"/libraries/{library_id}/podcasts",
+                json={"podcast_id": str(podcast_id)},
+                headers=auth_headers(user_id),
+            ).status_code
+            == 201
+        )
+
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        media_entry_id = next(row["id"] for row in entries if row["kind"] == "media")
+        podcast_entry_id = next(row["id"] for row in entries if row["kind"] == "podcast")
+
+        reorder_resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": [podcast_entry_id, media_entry_id]},
+            headers=auth_headers(user_id),
+        )
+        assert reorder_resp.status_code == 200, reorder_resp.text
+
+        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        assert [row["id"] for row in after] == [podcast_entry_id, media_entry_id]
+        assert [row["position"] for row in after] == [0, 1]
+
+    @pytest.mark.parametrize("bad_set_kind", ["duplicate", "foreign"])
+    def test_reorder_library_entries_rejects_bad_sets(
+        self, auth_client, direct_db: DirectSessionManager, bad_set_kind: str
+    ):
+        """Reorder requires the exact existing set: duplicate ids (same length, wrong set)
+        and foreign ids both 400 and leave the stored order untouched."""
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        with direct_db.session() as session:
+            media_a = create_test_media(session, title="Bad set A")
+            media_b = create_test_media(session, title="Bad set B")
+            session.commit()
+        for media_id in (media_a, media_b):
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+            auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(user_id),
+            )
+
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entry_id_a = next(
+            row["id"] for row in entries if row["media"] and row["media"]["id"] == str(media_a)
+        )
+        bad_entry_ids = (
+            [entry_id_a, entry_id_a] if bad_set_kind == "duplicate" else [entry_id_a, str(uuid4())]
+        )
+
+        resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": bad_entry_ids},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        assert _library_entry_media_ids(after) == [str(media_a), str(media_b)]
 
 
 # =============================================================================
@@ -4370,3 +4480,95 @@ class TestLibraryListPdfCapabilities:
         assert list_caps["can_read"] == detail_caps["can_read"]
         assert list_caps["can_quote"] == detail_caps["can_quote"]
         assert list_caps["can_search"] == detail_caps["can_search"]
+
+
+# =============================================================================
+# Position invariant (migration 0131) — final-state library_entries behavior
+# =============================================================================
+
+
+class TestLibraryEntryPositionInvariant:
+    """The per-library position total order is a DB invariant after the cutover."""
+
+    def test_duplicate_position_rejected_at_commit(self, auth_client, direct_db):
+        """UNIQUE (library_id, position) is DEFERRABLE: a colliding position is accepted
+        mid-transaction but rejected at COMMIT."""
+        user_id = create_test_user_id()
+        me = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            media_a = create_test_media(session, title="Pos A")
+            media_b = create_test_media(session, title="Pos B")
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_a)
+        direct_db.register_cleanup("media", "id", media_b)
+
+        with direct_db.session() as session:
+            for media_id in (media_a, media_b):
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries "
+                        "(library_id, media_id, podcast_id, position) "
+                        "VALUES (:lib, :media, NULL, 0)"
+                    ),
+                    {"lib": library_id, "media": media_id},
+                )
+            # Both inserts succeed mid-transaction — an INITIALLY IMMEDIATE constraint would
+            # have rejected the second insert here. The collision surfaces only at COMMIT,
+            # which is what DEFERRABLE INITIALLY DEFERRED guarantees.
+            with pytest.raises(IntegrityError) as exc_info:
+                session.commit()
+            assert "uq_library_entries_library_position" in str(exc_info.value)
+            session.rollback()
+
+    def test_concurrent_appends_get_distinct_positions(self, auth_client, direct_db):
+        """Key Decision 8: ensure_entry's library-row lock serializes concurrent appends,
+        so two overlapping transactions both commit with distinct dense positions instead
+        of colliding on the unique constraint."""
+        from nexus.services import library_entries
+
+        user_id = create_test_user_id()
+        me = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = UUID(me.json()["data"]["default_library_id"])
+
+        with direct_db.session() as session:
+            media_a = create_test_media(session, title="Concur A")
+            media_b = create_test_media(session, title="Concur B")
+            session.commit()
+        direct_db.register_cleanup("media", "id", media_a)
+        direct_db.register_cleanup("media", "id", media_b)
+
+        errors: list[Exception] = []
+        barrier = threading.Barrier(2)
+
+        def append(media_id: UUID) -> None:
+            try:
+                barrier.wait(timeout=5)
+                with direct_db.session() as session:
+                    library_entries.ensure_entry(
+                        session, library_id, library_entries.media_target(media_id)
+                    )
+                    session.commit()
+            except Exception as exc:  # noqa: BLE001 — surfaced to the asserting thread
+                errors.append(exc)
+
+        threads = [threading.Thread(target=append, args=(m,)) for m in (media_a, media_b)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        assert errors == [], errors
+        with direct_db.session() as session:
+            positions = [
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT position FROM library_entries "
+                        "WHERE library_id = :lib ORDER BY position"
+                    ),
+                    {"lib": library_id},
+                ).fetchall()
+            ]
+        assert positions == [0, 1]

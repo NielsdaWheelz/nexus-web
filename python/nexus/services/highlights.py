@@ -2,11 +2,15 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, exists, func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, highlight_visibility_filter
+from nexus.auth.permissions import (
+    can_read_media,
+    highlight_library_intersection_exists,
+    highlight_visibility_filter,
+)
 from nexus.db.models import (
     Conversation,
     ConversationReference,
@@ -14,9 +18,7 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     HighlightPdfAnchor,
-    LibraryEntry,
     Media,
-    Membership,
     ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -132,28 +134,6 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
 
 
-def _highlight_library_intersection_exists(
-    db: Session,
-    viewer_id: UUID,
-    author_id: UUID,
-    media_id: UUID,
-) -> bool:
-    """Return whether viewer and author share a library containing the media."""
-
-    viewer_membership = Membership.__table__.alias("highlight_viewer_membership")
-    author_membership = Membership.__table__.alias("highlight_author_membership")
-    statement = select(
-        exists().where(
-            LibraryEntry.media_id == media_id,
-            LibraryEntry.library_id == viewer_membership.c.library_id,
-            viewer_membership.c.user_id == viewer_id,
-            LibraryEntry.library_id == author_membership.c.library_id,
-            author_membership.c.user_id == author_id,
-        )
-    )
-    return bool(db.execute(statement).scalar_one())
-
-
 def _require_typed_highlight_or_404(highlight: Highlight) -> None:
     """Require a highlight to carry a canonical typed anchor row."""
 
@@ -184,7 +164,16 @@ def get_highlight_for_visible_read_or_404(
     media_id = highlight.anchor_media_id
     if media_id is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if not _highlight_library_intersection_exists(db, viewer_id, highlight.user_id, media_id):
+    shares_library = db.scalar(
+        select(
+            highlight_library_intersection_exists(
+                viewer_user_id=viewer_id,
+                author_user_id_expr=highlight.user_id,
+                media_id=media_id,
+            )
+        )
+    )
+    if not shares_library:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
 

@@ -1415,7 +1415,7 @@ class LibraryEntry(Base):
         UniqueConstraint(
             "library_id",
             "position",
-            name="uq_library_entries_library_position_unique",
+            name="uq_library_entries_library_position",
             deferrable=True,
             initially="DEFERRED",
         ),

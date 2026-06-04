@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory, transaction
 from nexus.jobs.queue import enqueue_job
+from nexus.services import library_entries
 
 logger = logging.getLogger(__name__)
 
@@ -73,27 +74,6 @@ BACKFILL_PENDING_COUNT_GUARDRAIL: int = 500
 # ---------------------------------------------------------------------------
 
 
-def _ensure_library_entry_for_media(db: Session, library_id: UUID, media_id: UUID) -> None:
-    """Append a media row to library_entries at the next position if absent."""
-    entry_exists = db.execute(
-        text("SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"),
-        {"lib": library_id, "media": media_id},
-    ).fetchone()
-    if entry_exists is not None:
-        return
-    next_position = db.execute(
-        text("SELECT COALESCE(MAX(position), -1) + 1 FROM library_entries WHERE library_id = :lib"),
-        {"lib": library_id},
-    ).scalar()
-    db.execute(
-        text(
-            "INSERT INTO library_entries (library_id, media_id, podcast_id, position) "
-            "VALUES (:lib, :media, NULL, :position)"
-        ),
-        {"lib": library_id, "media": media_id, "position": int(next_position or 0)},
-    )
-
-
 def _ensure_closure_edge(
     db: Session,
     default_library_id: UUID,
@@ -130,7 +110,7 @@ def ensure_default_intrinsic(
     Used by all default-library direct writer paths (upload, from_url, etc.).
     Never writes closure edges.
     """
-    _ensure_library_entry_for_media(db, default_library_id, media_id)
+    library_entries.ensure_entry(db, default_library_id, library_entries.media_target(media_id))
 
     intrinsic_exists = db.execute(
         text("""
@@ -176,7 +156,7 @@ def add_media_to_non_default_closure(
     ).fetchall()
     for (default_library_id,) in default_library_rows:
         _ensure_closure_edge(db, default_library_id, media_id, source_library_id)
-        _ensure_library_entry_for_media(db, default_library_id, media_id)
+        library_entries.ensure_entry(db, default_library_id, library_entries.media_target(media_id))
 
 
 def remove_media_from_non_default_closure(
@@ -300,18 +280,169 @@ def _gc_default_library_entry(
     if has_edge is not None:
         return
 
+    library_entries.delete_entry(db, default_library_id, library_entries.media_target(media_id))
+
+
+def detach_media_from_default_library(
+    db: Session, *, default_library_id: UUID, media_id: UUID
+) -> bool:
+    """Remove a media's intrinsic, closure edges, and default-library entry. Returns
+    whether a library entry was present (so the caller can report the removal)."""
     db.execute(
-        text("""
-            DELETE FROM library_entries
-            WHERE library_id = :dl AND media_id = :media
-        """),
+        text(
+            "DELETE FROM default_library_intrinsics "
+            "WHERE default_library_id = :dl AND media_id = :media"
+        ),
         {"dl": default_library_id, "media": media_id},
+    )
+    db.execute(
+        text(
+            "DELETE FROM default_library_closure_edges "
+            "WHERE default_library_id = :dl AND media_id = :media"
+        ),
+        {"dl": default_library_id, "media": media_id},
+    )
+    return library_entries.delete_entry(
+        db, default_library_id, library_entries.media_target(media_id)
+    )
+
+
+def remove_media_from_default_intrinsic(
+    db: Session, *, default_library_id: UUID, media_id: UUID
+) -> bool:
+    """Remove a media's intrinsic from a default library and GC the entry if no intrinsic
+    and no closure edge remain. Returns whether an intrinsic was present."""
+    existing = db.execute(
+        text(
+            "SELECT 1 FROM default_library_intrinsics "
+            "WHERE default_library_id = :dl AND media_id = :media"
+        ),
+        {"dl": default_library_id, "media": media_id},
+    ).fetchone()
+    if existing is None:
+        return False
+    db.execute(
+        text(
+            "DELETE FROM default_library_intrinsics "
+            "WHERE default_library_id = :dl AND media_id = :media"
+        ),
+        {"dl": default_library_id, "media": media_id},
+    )
+    _gc_default_library_entry(db, default_library_id, media_id)
+    return True
+
+
+def purge_media_default_references(db: Session, media_id: UUID) -> None:
+    """Delete every closure edge and intrinsic for a media across all default libraries
+    (hard-delete preparation). The library entries are removed by the entries owner."""
+    db.execute(
+        text("DELETE FROM default_library_closure_edges WHERE media_id = :media"),
+        {"media": media_id},
+    )
+    db.execute(
+        text("DELETE FROM default_library_intrinsics WHERE media_id = :media"),
+        {"media": media_id},
+    )
+
+
+def count_default_references(db: Session, *, media_id: UUID) -> int:
+    """Count a media's references in the closure-owned tables (intrinsics + edges)."""
+    return int(
+        db.execute(
+            text("""
+                SELECT (SELECT COUNT(*) FROM default_library_intrinsics WHERE media_id = :media)
+                     + (SELECT COUNT(*) FROM default_library_closure_edges WHERE media_id = :media)
+            """),
+            {"media": media_id},
+        ).scalar_one()
     )
 
 
 # ---------------------------------------------------------------------------
 # Backfill job state machine helpers
 # ---------------------------------------------------------------------------
+
+
+def read_backfill_job_status(
+    db: Session, *, default_library_id: UUID, source_library_id: UUID, user_id: UUID
+) -> str | None:
+    """The current status of a (default, source, user) backfill job, or None when no job row
+    exists (default library absent, or the job already cleaned up)."""
+    return db.execute(
+        text("""
+            SELECT status FROM default_library_backfill_jobs
+            WHERE default_library_id = :dl AND source_library_id = :source AND user_id = :uid
+        """),
+        {"dl": default_library_id, "source": source_library_id, "uid": user_id},
+    ).scalar()
+
+
+def upsert_backfill_job_pending(
+    db: Session, *, default_library_id: UUID, source_library_id: UUID, user_id: UUID
+) -> None:
+    """(Re)set the (default, source, user) backfill job to pending/attempts=0/no error via
+    explicit SELECT-then-INSERT/UPDATE."""
+    existing = db.execute(
+        text("""
+            SELECT 1 FROM default_library_backfill_jobs
+            WHERE default_library_id = :dl AND source_library_id = :source AND user_id = :uid
+        """),
+        {"dl": default_library_id, "source": source_library_id, "uid": user_id},
+    ).fetchone()
+    if existing is None:
+        db.execute(
+            text("""
+                INSERT INTO default_library_backfill_jobs
+                    (default_library_id, source_library_id, user_id,
+                     status, attempts, last_error_code, updated_at, finished_at)
+                VALUES (:dl, :source, :uid, 'pending', 0, NULL, now(), NULL)
+            """),
+            {"dl": default_library_id, "source": source_library_id, "uid": user_id},
+        )
+    else:
+        db.execute(
+            text("""
+                UPDATE default_library_backfill_jobs
+                SET status = 'pending', attempts = 0, last_error_code = NULL,
+                    updated_at = now(), finished_at = NULL
+                WHERE default_library_id = :dl AND source_library_id = :source AND user_id = :uid
+            """),
+            {"dl": default_library_id, "source": source_library_id, "uid": user_id},
+        )
+
+
+def mark_backfill_job_terminally_failed(
+    db: Session,
+    *,
+    default_library_id: UUID,
+    source_library_id: UUID,
+    user_id: UUID,
+    error_code: str,
+) -> None:
+    """Unconditionally fail a backfill job. For terminal failures detected before the
+    pending→running claim (e.g. an invalid tuple), where the status-guarded
+    `mark_backfill_job_failed` would not match a still-pending row."""
+    now = datetime.now(UTC)
+    db.execute(
+        text("""
+            UPDATE default_library_backfill_jobs
+            SET status = 'failed',
+                attempts = attempts + 1,
+                last_error_code = :error_code,
+                finished_at = :now,
+                updated_at = :now
+            WHERE default_library_id = :dl
+              AND source_library_id = :source
+              AND user_id = :uid
+        """),
+        {
+            "dl": default_library_id,
+            "source": source_library_id,
+            "uid": user_id,
+            "error_code": error_code,
+            "now": now,
+        },
+    )
 
 
 def validate_backfill_job_tuple(
@@ -667,25 +798,13 @@ def materialize_closure_for_source(
     source_library_id: UUID,
 ) -> int:
     """Insert missing closure edges and default media entries for one source library."""
-    source_media_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text("""
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :source
-                  AND media_id IS NOT NULL
-                ORDER BY position ASC, created_at DESC, id DESC
-            """),
-            {"source": source_library_id},
-        ).fetchall()
-    ]
+    source_media_ids = library_entries.list_media_ids_in_library(db, source_library_id)
 
     edges_count = 0
     for media_id in source_media_ids:
         if _ensure_closure_edge(db, default_library_id, media_id, source_library_id):
             edges_count += 1
-        _ensure_library_entry_for_media(db, default_library_id, media_id)
+        library_entries.ensure_entry(db, default_library_id, library_entries.media_target(media_id))
 
     return edges_count
 

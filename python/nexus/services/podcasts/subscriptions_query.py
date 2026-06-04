@@ -91,8 +91,8 @@ def list_subscriptions(
             "sa.latest_published_at DESC NULLS LAST, ps.updated_at DESC, ps.podcast_id DESC"
         )
 
-    # libraries.py owns the library-membership tables: derive the membership/scope sets
-    # via its readers so this query never touches them. `not_in_library` and the
+    # library_entries.py owns the library-membership reads: derive the membership/scope sets
+    # via its readers so this query never touches the tables. `not_in_library` and the
     # library_id scope both gate which rows are paginated, so they stay in WHERE as id sets.
     in_library_podcast_ids: list[UUID] = []
     if filter == "not_in_library":

@@ -334,6 +334,36 @@ def add_media_to_library(session: Session, library_id: UUID, media_id: UUID) -> 
         )
 
 
+def add_library_entry_only(session: Session, library_id: UUID, media_id: UUID) -> None:
+    """Attach media as a library_entries row only — no default-library intrinsic — at the
+    next position. For tests that control intrinsic/closure provenance explicitly (and so
+    must NOT get an implicit intrinsic). Idempotent."""
+    existing = session.execute(
+        text(
+            "SELECT 1 FROM library_entries WHERE library_id = :library_id AND media_id = :media_id"
+        ),
+        {"library_id": library_id, "media_id": media_id},
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+    next_position = int(
+        session.execute(
+            text(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM library_entries "
+                "WHERE library_id = :library_id"
+            ),
+            {"library_id": library_id},
+        ).scalar_one()
+    )
+    session.execute(
+        text(
+            "INSERT INTO library_entries (library_id, position, media_id) "
+            "VALUES (:library_id, :position, :media_id)"
+        ),
+        {"library_id": library_id, "position": next_position, "media_id": media_id},
+    )
+
+
 def create_test_media_in_library(
     session: Session,
     user_id: UUID,

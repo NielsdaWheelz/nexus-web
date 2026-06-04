@@ -14,7 +14,7 @@ from nexus.db.models import Media, MediaFile, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.jobs.queue import enqueue_job
 from nexus.schemas.media import FromUrlResponse
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries
 from nexus.services.file_ingest_validation import validate_file_ingest_request
 from nexus.services.media_processing_state import begin_extraction
 from nexus.services.remote_file_client import REMOTE_FILE_CONTENT_TYPES, fetch_to_storage
@@ -58,7 +58,7 @@ def create_file_media_from_remote_url(
     try:
         existing = _find_existing_by_hash(db, viewer_id, kind, fetched.sha256)
         if existing is not None:
-            libraries_service.ensure_media_in_default_library(db, viewer_id, existing.id)
+            library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
             db.commit()
             _delete_remote_object(storage_client, storage_path, media_id, "duplicate_reused")
             return FromUrlResponse(
@@ -91,7 +91,7 @@ def create_file_media_from_remote_url(
             )
         )
         db.flush()
-        libraries_service.ensure_media_in_default_library(db, viewer_id, media_id)
+        library_entries.ensure_media_in_default_library(db, viewer_id, media_id)
         begin_extraction(db, media)
         _enqueue_extraction(db, media_id, kind, request_id)
         db.commit()
@@ -101,7 +101,7 @@ def create_file_media_from_remote_url(
         if existing is None:
             _delete_remote_object(storage_client, storage_path, media_id, "integrity_failed")
             raise
-        libraries_service.ensure_media_in_default_library(db, viewer_id, existing.id)
+        library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
         db.commit()
         _delete_remote_object(storage_client, storage_path, media_id, "integrity_duplicate")
         return FromUrlResponse(

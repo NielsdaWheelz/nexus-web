@@ -33,7 +33,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.services import libraries as libraries_service
+from nexus.services import library_entries, library_governance
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -85,7 +85,7 @@ def init_upload(
     """
     settings = get_settings()
 
-    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
+    library_governance.validate_libraries_accessible(db, viewer_id, library_ids)
 
     # Validate request
     validate_file_ingest_request(kind, content_type, size_bytes)
@@ -145,7 +145,7 @@ def init_upload(
 
     # Attach to viewer's default library + every additional library in library_ids.
     # Raises ForbiddenError(E_LIBRARY_FORBIDDEN) atomically if any id is inaccessible.
-    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+    library_entries.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     db.commit()
 
@@ -438,7 +438,7 @@ def confirm_ingest(
     existing = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
 
     if existing and existing.id != media.id:
-        libraries_service.ensure_media_in_default_library(db, viewer_id, existing.id)
+        library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
         _delete_duplicate_upload_loser(
             db,
             storage_client,
@@ -462,7 +462,7 @@ def confirm_ingest(
         db.rollback()
         winner = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
         if winner:
-            libraries_service.ensure_media_in_default_library(db, viewer_id, winner.id)
+            library_entries.ensure_media_in_default_library(db, viewer_id, winner.id)
             _delete_duplicate_upload_loser(
                 db,
                 storage_client,

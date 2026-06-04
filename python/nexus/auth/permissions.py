@@ -32,7 +32,7 @@ Highlight Visibility (can_read_highlight):
 from uuid import UUID
 
 from sqlalchemy import exists, literal, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
     Conversation,
@@ -191,9 +191,9 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
     return bool(result.scalar())
 
 
-def _highlight_library_intersection_exists(
+def highlight_library_intersection_exists(
     viewer_user_id: UUID,
-    author_user_id_expr,
+    author_user_id_expr: UUID | InstrumentedAttribute[UUID],
     media_id: UUID,
 ):
     """Core SQL exists expression for highlight library intersection check.
@@ -261,7 +261,7 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
     Caller must separately verify viewer can read the anchor media
     (e.g. via get_fragment_for_viewer_or_404).
     """
-    return _highlight_library_intersection_exists(
+    return highlight_library_intersection_exists(
         viewer_user_id=viewer_user_id,
         author_user_id_expr=Highlight.user_id,
         media_id=media_id,
@@ -278,7 +278,7 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
     Returns False if highlight_id does not exist (no existence leak).
     Returns False on irreconcilable typed-anchor state.
 
-    Consumes canonical _highlight_library_intersection_exists helper.
+    Consumes canonical highlight_library_intersection_exists helper.
     """
     highlight = session.get(Highlight, highlight_id)
     if highlight is None:
@@ -293,7 +293,7 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
     if not can_read_media(session, viewer_user_id, media_id):
         return False
 
-    intersection_expr = _highlight_library_intersection_exists(
+    intersection_expr = highlight_library_intersection_exists(
         viewer_user_id=viewer_user_id,
         author_user_id_expr=author_id,
         media_id=media_id,

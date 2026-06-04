@@ -14,9 +14,15 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
+from nexus.services import library_entries
 from nexus.services.content_indexing import delete_media_content_index
-from nexus.services.default_library_closure import remove_media_from_non_default_closure
-from nexus.services.libraries import normalize_library_entry_positions
+from nexus.services.default_library_closure import (
+    count_default_references,
+    detach_media_from_default_library,
+    purge_media_default_references,
+    remove_media_from_default_intrinsic,
+    remove_media_from_non_default_closure,
+)
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -29,6 +35,14 @@ _DOCUMENT_KINDS = {
     MediaKind.epub.value,
     MediaKind.web_article.value,
 }
+
+
+def _total_reference_count(db: Session, media_id: UUID) -> int:
+    """All remaining references to a media across the two owned surfaces: non-default
+    library entries + default-library closure references."""
+    return library_entries.count_entries_for_media(db, media_id) + count_default_references(
+        db, media_id=media_id
+    )
 
 
 def delete_document_for_viewer(
@@ -69,77 +83,24 @@ def delete_document_for_viewer(
         ).fetchone()
         if default_library is not None:
             default_library_id = default_library[0]
-            default_row = db.execute(
-                text("""
-                    SELECT 1
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            ).fetchone()
-            db.execute(
-                text("""
-                    DELETE FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            db.execute(
-                text("""
-                    DELETE FROM default_library_closure_edges
-                    WHERE default_library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            db.execute(
-                text("""
-                    DELETE FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            if default_row is not None:
+            if detach_media_from_default_library(
+                db, default_library_id=default_library_id, media_id=media_id
+            ):
                 removed_from_library_ids.append(UUID(str(default_library_id)))
-            normalize_library_entry_positions(db, default_library_id)
+                library_entries.normalize_positions(db, default_library_id)
 
-        controlled_libraries = [
-            row[0]
-            for row in db.execute(
-                text("""
-                    SELECT l.id
-                    FROM library_entries le
-                    JOIN libraries l ON l.id = le.library_id
-                    JOIN memberships m
-                      ON m.library_id = l.id
-                     AND m.user_id = :viewer_id
-                     AND m.role = 'admin'
-                    WHERE le.media_id = :media_id
-                      AND l.is_default = false
-                    ORDER BY l.created_at ASC, l.id ASC
-                """),
-                {"viewer_id": viewer_id, "media_id": media_id},
-            ).fetchall()
-        ]
+        controlled_libraries = library_entries.admin_non_default_library_ids_for_media(
+            db, viewer_id=viewer_id, media_id=media_id
+        )
         for library_id in controlled_libraries:
-            db.execute(
-                text("""
-                    DELETE FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
+            library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
             remove_media_from_non_default_closure(db, library_id, media_id)
-            normalize_library_entry_positions(db, library_id)
+            library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
         _delete_viewer_media_state(db, viewer_id, media_id)
 
-        remaining_reference_count = _remaining_reference_count(db, media_id)
+        remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0:
             paths = delete_document_media_if_unreferenced(db, media_id)
             if paths is not None:
@@ -227,51 +188,21 @@ def remove_document_from_library(
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
         if bool(library[1]):
-            direct_default = db.execute(
-                text("""
-                    SELECT 1
-                    FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            ).fetchone()
-            if direct_default is None:
+            if not remove_media_from_default_intrinsic(
+                db, default_library_id=library_id, media_id=media_id
+            ):
                 raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-            db.execute(
-                text("""
-                    DELETE FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
-            _gc_default_library_entry(db, library_id, media_id)
         else:
-            entry = db.execute(
-                text("""
-                    SELECT 1
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            ).fetchone()
-            if entry is None:
+            if not library_entries.entry_exists(
+                db, library_id, library_entries.media_target(media_id)
+            ):
                 raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-            db.execute(
-                text("""
-                    DELETE FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
+            library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
             remove_media_from_non_default_closure(db, library_id, media_id)
 
-        normalize_library_entry_positions(db, library_id)
+        library_entries.normalize_positions(db, library_id)
 
-        remaining_reference_count = _remaining_reference_count(db, media_id)
+        remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0:
             paths = delete_document_media_if_unreferenced(db, media_id)
             if paths is not None:
@@ -331,26 +262,15 @@ def _delete_document_media_with_references(
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return []
 
-    affected_library_ids = _library_ids_referencing_media(db, media_id)
-    db.execute(
-        text("DELETE FROM default_library_closure_edges WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("DELETE FROM default_library_intrinsics WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("DELETE FROM library_entries WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
+    purge_media_default_references(db, media_id)
+    affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
 
     storage_paths = delete_document_media_if_unreferenced(db, media_id)
     if storage_paths is None:
         raise RuntimeError(f"{defect_context} left references behind")
 
     for library_id in affected_library_ids:
-        normalize_library_entry_positions(db, library_id)
+        library_entries.normalize_positions(db, library_id)
     return storage_paths
 
 
@@ -369,7 +289,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     ).fetchone()
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return None
-    if _remaining_reference_count(db, media_id) != 0:
+    if _total_reference_count(db, media_id) != 0:
         return None
 
     storage_paths: list[str] = []
@@ -532,27 +452,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     return storage_paths
 
 
-def _library_ids_referencing_media(db: Session, media_id: UUID) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT library_id AS id
-            FROM library_entries
-            WHERE media_id = :media_id
-            UNION
-            SELECT default_library_id AS id
-            FROM default_library_intrinsics
-            WHERE media_id = :media_id
-            UNION
-            SELECT default_library_id AS id
-            FROM default_library_closure_edges
-            WHERE media_id = :media_id
-            ORDER BY id
-        """),
-        {"media_id": media_id},
-    ).fetchall()
-    return [UUID(str(row[0])) for row in rows]
-
-
 def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     db.execute(
         text("""
@@ -670,60 +569,6 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
               AND media_id = :media_id
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
-    )
-
-
-def _remaining_reference_count(db: Session, media_id: UUID) -> int:
-    return int(
-        db.execute(
-            text("""
-                SELECT COUNT(*)
-                FROM (
-                    SELECT media_id FROM library_entries WHERE media_id = :media_id
-                    UNION ALL
-                    SELECT media_id FROM default_library_intrinsics WHERE media_id = :media_id
-                    UNION ALL
-                    SELECT media_id FROM default_library_closure_edges WHERE media_id = :media_id
-                ) refs
-            """),
-            {"media_id": media_id},
-        ).scalar_one()
-    )
-
-
-def _gc_default_library_entry(db: Session, default_library_id: UUID, media_id: UUID) -> None:
-    intrinsic = db.execute(
-        text("""
-            SELECT 1
-            FROM default_library_intrinsics
-            WHERE default_library_id = :library_id
-              AND media_id = :media_id
-        """),
-        {"library_id": default_library_id, "media_id": media_id},
-    ).fetchone()
-    if intrinsic is not None:
-        return
-
-    edge = db.execute(
-        text("""
-            SELECT 1
-            FROM default_library_closure_edges
-            WHERE default_library_id = :library_id
-              AND media_id = :media_id
-            LIMIT 1
-        """),
-        {"library_id": default_library_id, "media_id": media_id},
-    ).fetchone()
-    if edge is not None:
-        return
-
-    db.execute(
-        text("""
-            DELETE FROM library_entries
-            WHERE library_id = :library_id
-              AND media_id = :media_id
-        """),
-        {"library_id": default_library_id, "media_id": media_id},
     )
 
 

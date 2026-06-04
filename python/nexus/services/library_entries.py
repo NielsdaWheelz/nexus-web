@@ -26,6 +26,7 @@ from nexus.schemas.library import (
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
 )
+from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.services import library_governance as governance
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
@@ -65,7 +66,7 @@ class PodcastLibraryRemovalResult:
 # ---------------------------------------------------------------------------
 
 
-def next_position(db: Session, library_id: UUID) -> int:
+def _next_position(db: Session, library_id: UUID) -> int:
     """The next dense append position for a library (MAX(position)+1, or 0 if empty)."""
     value = db.execute(
         text("SELECT COALESCE(MAX(position), -1) + 1 FROM library_entries WHERE library_id = :lib"),
@@ -105,7 +106,7 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> None:
             "lib": library_id,
             "media_id": target.id if target.kind == "media" else None,
             "podcast_id": target.id if target.kind == "podcast" else None,
-            "position": next_position(db, library_id),
+            "position": _next_position(db, library_id),
         },
     )
 
@@ -115,7 +116,9 @@ def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     renormalize — the caller decides when to close position gaps."""
     column = _TARGET_COLUMN[target.kind]
     deleted = db.execute(
-        text(f"DELETE FROM library_entries WHERE library_id = :lib AND {column} = :tid RETURNING id"),
+        text(
+            f"DELETE FROM library_entries WHERE library_id = :lib AND {column} = :tid RETURNING id"
+        ),
         {"lib": library_id, "tid": target.id},
     ).fetchone()
     return deleted is not None
@@ -266,8 +269,9 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
 
     podcast_rows_by_id = {}
     if podcast_ids:
-        podcast_rows = db.execute(
-            text(f"""
+        podcast_rows = (
+            db.execute(
+                text(f"""
                 WITH visible_media AS (
                     {visible_media_ids_cte_sql()}
                 ),
@@ -314,8 +318,11 @@ def _hydrate_entries(db: Session, viewer_id: UUID, rows) -> list[LibraryEntryOut
                   ON ps.podcast_id = p.id AND ps.user_id = :viewer_id
                 WHERE p.id = ANY(:podcast_ids)
             """),
-            {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
-        ).mappings().all()
+                {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
+            )
+            .mappings()
+            .all()
+        )
         podcast_rows_by_id = {UUID(str(row["podcast_id"])): row for row in podcast_rows}
     contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, podcast_ids)
 
@@ -419,8 +426,9 @@ def list_item_libraries(
         assert_never(target.kind)
 
     column = _TARGET_COLUMN[target.kind]
-    rows = db.execute(
-        text(f"""
+    rows = (
+        db.execute(
+            text(f"""
             SELECT
                 l.id, l.name, l.color,
                 EXISTS(
@@ -433,8 +441,11 @@ def list_item_libraries(
             WHERE l.is_default = false
             ORDER BY l.created_at ASC, l.id ASC
         """),
-        {"viewer_id": viewer_id, "target_id": target.id},
-    ).mappings().all()
+            {"viewer_id": viewer_id, "target_id": target.id},
+        )
+        .mappings()
+        .all()
+    )
 
     return [
         ItemLibraryMembershipOut(
@@ -478,13 +489,17 @@ def add_media_to_library(
             ensure_entry(db, library_id, media_target(media_id))
             add_media_to_non_default_closure(db, library_id, media_id)
 
-        row = db.execute(
-            text(
-                f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                "WHERE library_id = :library_id AND media_id = :media_id"
-            ),
-            {"library_id": library_id, "media_id": media_id},
-        ).mappings().fetchone()
+        row = (
+            db.execute(
+                text(
+                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
+                    "WHERE library_id = :library_id AND media_id = :media_id"
+                ),
+                {"library_id": library_id, "media_id": media_id},
+            )
+            .mappings()
+            .fetchone()
+        )
 
     return _hydrate_entries(db, viewer_id, [row])[0]
 
@@ -513,13 +528,17 @@ def add_podcast_to_library(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
 
         ensure_entry(db, library_id, podcast_target(podcast_id))
-        row = db.execute(
-            text(
-                f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                "WHERE library_id = :library_id AND podcast_id = :podcast_id"
-            ),
-            {"library_id": library_id, "podcast_id": podcast_id},
-        ).mappings().fetchone()
+        row = (
+            db.execute(
+                text(
+                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
+                    "WHERE library_id = :library_id AND podcast_id = :podcast_id"
+                ),
+                {"library_id": library_id, "podcast_id": podcast_id},
+            )
+            .mappings()
+            .fetchone()
+        )
 
     return _hydrate_entries(db, viewer_id, [row])[0]
 
@@ -532,7 +551,9 @@ def remove_podcast_from_library(
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
         governance.require_non_default(ctx.is_default)
-        if not _remove_podcast_from_library_in_txn(db, library_id=library_id, podcast_id=podcast_id):
+        if not _remove_podcast_from_library_in_txn(
+            db, library_id=library_id, podcast_id=podcast_id
+        ):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found in library")
 
 
@@ -602,15 +623,19 @@ def list_library_entries(
     if member is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-    rows = db.execute(
-        text(f"""
+    rows = (
+        db.execute(
+            text(f"""
             SELECT {_ENTRY_COLUMNS} FROM library_entries
             WHERE library_id = :library_id
             ORDER BY {_ENTRY_ORDER}
             LIMIT :limit OFFSET :offset
         """),
-        {"library_id": library_id, "limit": limit, "offset": offset},
-    ).mappings().all()
+            {"library_id": library_id, "limit": limit, "offset": offset},
+        )
+        .mappings()
+        .all()
+    )
     return _hydrate_entries(db, viewer_id, rows)
 
 
@@ -627,7 +652,9 @@ def reorder_entries(
         existing_ids = [
             UUID(str(row[0]))
             for row in db.execute(
-                text(f"SELECT id FROM library_entries WHERE library_id = :library_id ORDER BY {_ENTRY_ORDER}"),
+                text(
+                    f"SELECT id FROM library_entries WHERE library_id = :library_id ORDER BY {_ENTRY_ORDER}"
+                ),
                 {"library_id": library_id},
             ).fetchall()
         ]
@@ -672,13 +699,18 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     clear_user_media_deletion(db, user_id, media_id)
 
 
-def add_media_to_libraries(
+def add_media_to_libraries_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> list[UUID]:
-    """Additive add of media to multiple accessible non-default libraries. Returns the
-    subset actually inserted (excludes already-present and the viewer's default id)."""
+) -> MediaLibrariesResponse:
+    """Verify the viewer can read the media (404 masks existence), then additively attach
+    it to the given accessible non-default libraries. Returns the subset of ids actually
+    inserted (excludes already-present and the viewer's default id)."""
+    from nexus.services import media as media_service
+
+    media_service.get_media_for_viewer(db, viewer_id, media_id)
     targets = governance.resolve_accessible_non_default_library_ids(db, viewer_id, library_ids)
-    return _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+    inserted = _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+    return MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted)
 
 
 def _add_media_to_resolved_libraries(
@@ -762,21 +794,27 @@ def visible_non_default_libraries_for_viewer(
     """
     if not podcast_ids:
         return {}
-    rows = db.execute(
-        text("""
-            SELECT le.podcast_id, l.id, l.name, l.color
+    rows = (
+        db.execute(
+            text("""
+            SELECT le.podcast_id, l.id AS library_id, l.name, l.color
             FROM library_entries le
             JOIN libraries l ON l.id = le.library_id AND l.is_default = false
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE le.podcast_id = ANY(:podcast_ids)
             ORDER BY le.podcast_id, l.created_at ASC, l.id ASC
         """),
-        {"viewer_id": viewer_id, "podcast_ids": list(podcast_ids)},
-    ).fetchall()
+            {"viewer_id": viewer_id, "podcast_ids": list(podcast_ids)},
+        )
+        .mappings()
+        .all()
+    )
     result: dict[UUID, list[PodcastSubscriptionVisibleLibraryOut]] = {}
     for row in rows:
-        result.setdefault(UUID(str(row[0])), []).append(
-            PodcastSubscriptionVisibleLibraryOut(id=row[1], name=row[2], color=row[3])
+        result.setdefault(UUID(str(row["podcast_id"])), []).append(
+            PodcastSubscriptionVisibleLibraryOut(
+                id=row["library_id"], name=row["name"], color=row["color"]
+            )
         )
     return result
 
