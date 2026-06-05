@@ -2,9 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/lib/api/client";
 import { fetchEditableLibrarySharing } from "./sharing";
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: vi.fn(),
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+  };
+});
 
 const apiFetchMock = vi.mocked(apiFetch);
 

@@ -6,9 +6,15 @@ import {
 } from "./pinnedObjects";
 import { apiFetch } from "@/lib/api/client";
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: vi.fn(),
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+  };
+});
 
 const mockApiFetch = vi.mocked(apiFetch);
 

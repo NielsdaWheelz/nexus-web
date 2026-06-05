@@ -30,10 +30,17 @@ vi.mock("@/lib/vault/localVault", () => ({
   writeVaultPayload: (...args: unknown[]) => writeVaultPayloadMock(...args),
 }));
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
-  isApiError: () => false,
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: (...args: unknown[]) => apiFetchMock(...args),
+    isApiError: () => false,
+    isUnauthenticatedApiError: () => false,
+  };
+});
 
 import LocalVaultAutoSync from "@/app/(authenticated)/LocalVaultAutoSync";
 

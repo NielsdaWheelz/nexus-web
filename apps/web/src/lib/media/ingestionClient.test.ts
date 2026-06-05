@@ -9,9 +9,15 @@ import {
   uploadIngestFile,
 } from "./ingestionClient";
 
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: vi.fn(),
-}));
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+  };
+});
 
 const apiFetchMock = vi.mocked(apiFetch);
 const fetchMock = vi.spyOn(globalThis, "fetch");

@@ -26,62 +26,69 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
   usePaneMobileChromeController: () => null,
 }));
 
-vi.mock("@/lib/api/client", () => ({
-  ApiError: class ApiError extends Error {},
-  isApiError: (error: unknown) =>
-    error instanceof Error && error.name === "ApiError",
-  apiFetch: vi.fn(async (path: string, init?: RequestInit) => {
-    if (path === "/api/media/media-1/file") {
-      return {
-        data: {
-          url: "https://example.test/document.pdf",
-          expires_at: "2099-01-01T00:00:00.000Z",
-        },
-      };
-    }
-
-    if (
-      (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
-        path ===
-          "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
-      (init?.method ?? "GET") === "GET"
-    ) {
-      return {
-        data: {
-          page_number: 1,
-          highlights: pdfRuntimeState.pageHighlights,
-        },
-      };
-    }
-
-    if (
-      path === "/api/media/media-1/pdf-highlights" &&
-      init?.method === "POST"
-    ) {
-      return {
-        data: {
-          id: pdfRuntimeState.createdHighlightId,
-          anchor: {
-            type: "pdf_page_geometry",
-            media_id: "media-1",
-            page_number: 1,
-            quads: [],
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    ApiError: class ApiError extends Error {},
+    isApiError: (error: unknown) =>
+      error instanceof Error && error.name === "ApiError",
+    isUnauthenticatedApiError: () => false,
+    apiFetch: vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/media/media-1/file") {
+        return {
+          data: {
+            url: "https://example.test/document.pdf",
+            expires_at: "2099-01-01T00:00:00.000Z",
           },
-          color: "yellow",
-          exact: "selected quote",
-          prefix: "",
-          suffix: "",
-          created_at: "2026-01-01T00:00:00.000Z",
-          updated_at: "2026-01-01T00:00:00.000Z",
-          author_user_id: "user-1",
-          is_owner: true,
-        },
-      };
-    }
+        };
+      }
 
-    throw new Error(`Unexpected apiFetch call: ${path}`);
-  }),
-}));
+      if (
+        (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
+          path ===
+            "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        return {
+          data: {
+            page_number: 1,
+            highlights: pdfRuntimeState.pageHighlights,
+          },
+        };
+      }
+
+      if (
+        path === "/api/media/media-1/pdf-highlights" &&
+        init?.method === "POST"
+      ) {
+        return {
+          data: {
+            id: pdfRuntimeState.createdHighlightId,
+            anchor: {
+              type: "pdf_page_geometry",
+              media_id: "media-1",
+              page_number: 1,
+              quads: [],
+            },
+            color: "yellow",
+            exact: "selected quote",
+            prefix: "",
+            suffix: "",
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+            author_user_id: "user-1",
+            is_owner: true,
+          },
+        };
+      }
+
+      throw new Error(`Unexpected apiFetch call: ${path}`);
+    }),
+  };
+});
 
 vi.mock("@/components/pdfReaderRuntime", () => {
   function setElementRect(element: HTMLElement, rect: DOMRect): void {

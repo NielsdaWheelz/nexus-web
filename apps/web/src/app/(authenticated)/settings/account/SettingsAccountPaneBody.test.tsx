@@ -21,22 +21,29 @@ vi.mock("@/lib/auth/password-actions", () => ({
   removePasswordAction: vi.fn(),
 }));
 
-vi.mock("@/lib/api/client", () => ({
-  ApiError: class ApiError extends Error {
-    readonly status: number;
-    readonly code: string;
-    readonly requestId?: string;
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return {
+    ...actual,
+    ApiError: class ApiError extends Error {
+      readonly status: number;
+      readonly code: string;
+      readonly requestId?: string;
 
-    constructor(status: number, code: string, message: string, requestId?: string) {
-      super(message);
-      this.status = status;
-      this.code = code;
-      this.requestId = requestId;
-    }
-  },
-  apiFetch: (...args: unknown[]) => apiFetch(...args),
-  isApiError: () => false,
-}));
+      constructor(status: number, code: string, message: string, requestId?: string) {
+        super(message);
+        this.status = status;
+        this.code = code;
+        this.requestId = requestId;
+      }
+    },
+    apiFetch: (...args: unknown[]) => apiFetch(...args),
+    isApiError: () => false,
+    isUnauthenticatedApiError: () => false,
+  };
+});
 
 import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 
