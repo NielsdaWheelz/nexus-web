@@ -343,13 +343,24 @@ def _patch_file_extractors_success(
     monkeypatch,
     direct_db: DirectSessionManager,
 ) -> None:
-    def _materialize_success(_db, *, media_id: UUID) -> dict[str, object]:
+    def _materialize_pdf_success(
+        _db,
+        *,
+        media_id: UUID,
+        request_id: str | None = None,
+    ) -> dict[str, object]:
         return {"status": "success", "media_id": str(media_id)}
 
-    monkeypatch.setattr("nexus.services.pdf_lifecycle.materialize_pdf_source", _materialize_success)
+    def _materialize_epub_success(_db, *, media_id: UUID) -> dict[str, object]:
+        return {"status": "success", "media_id": str(media_id)}
+
+    monkeypatch.setattr(
+        "nexus.services.pdf_lifecycle.materialize_pdf_source",
+        _materialize_pdf_success,
+    )
     monkeypatch.setattr(
         "nexus.services.epub_lifecycle.materialize_epub_source",
-        _materialize_success,
+        _materialize_epub_success,
     )
 
 
