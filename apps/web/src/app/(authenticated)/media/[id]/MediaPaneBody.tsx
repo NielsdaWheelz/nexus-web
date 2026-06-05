@@ -37,6 +37,7 @@ import PdfReader, {
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { mediaFragmentsResource, mediaResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -1250,7 +1251,8 @@ export default function MediaPaneBody() {
   const pollMetadataRetryState = useCallback(async () => {
     try {
       await refreshMetadataRetryState();
-    } catch {
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       setMetadataRetryPollsRemaining((remaining) => Math.max(remaining - 1, 0));
     }
   }, [refreshMetadataRetryState]);
@@ -2045,6 +2047,9 @@ export default function MediaPaneBody() {
           if (cancelled || version !== highlightVersionRef.current) {
             return;
           }
+          if (handleUnauthenticatedApiError(err)) {
+            return;
+          }
 
           const shouldRetry =
             attempt < retryDelaysMs.length - 1 &&
@@ -2080,6 +2085,7 @@ export default function MediaPaneBody() {
         }
       })
       .catch((err) => {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to load media highlights:", err);
       });
     return () => {
@@ -2093,6 +2099,7 @@ export default function MediaPaneBody() {
     void fetchMediaHighlights(id)
       .then(setMediaHighlights)
       .catch((err) => {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to refresh media highlights:", err);
       });
   }, [id]);
@@ -2772,10 +2779,12 @@ export default function MediaPaneBody() {
             setHighlights(newHighlights);
           })
           .catch((err) => {
+            if (handleUnauthenticatedApiError(err)) return;
             console.error("Failed to refresh highlights after create:", err);
           });
         return createdHighlight;
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return null;
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
           try {
             const requestVersion = ++highlightVersionRef.current;
@@ -2799,6 +2808,7 @@ export default function MediaPaneBody() {
             clearRetainedSelection(true);
             return existing ?? null;
           } catch (refreshErr) {
+            if (handleUnauthenticatedApiError(refreshErr)) return null;
             console.error(
               "Failed to refresh highlights after conflict:",
               refreshErr,
@@ -2935,6 +2945,7 @@ export default function MediaPaneBody() {
         cancelEditBounds();
         clearRetainedSelection(true);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to update bounds:", err);
         feedback.show({
           severity: "error",

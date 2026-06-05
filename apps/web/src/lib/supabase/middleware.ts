@@ -1,9 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
-  DEFAULT_AUTH_REDIRECT,
-  buildLoginRedirectUrl,
-  buildLoginUrlWithError,
-  normalizeAuthRedirect,
+  buildAuthRefreshUrl,
+  buildAuthReturnTargetUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import {
   AUTH_ENDED_FEEDBACK_COOKIE,
@@ -48,14 +48,15 @@ function clearAndRedirectToLogin(
   cookieNames: string[],
   options?: { sessionEndedFeedback?: boolean }
 ): NextResponse {
+  const target = parseAuthReturnTarget(
+    `${request.nextUrl.pathname}${request.nextUrl.search}`
+  );
   const response = NextResponse.redirect(
-    options?.sessionEndedFeedback
-      ? buildLoginUrlWithError(
-          request.nextUrl.origin,
-          `${request.nextUrl.pathname}${request.nextUrl.search}`,
-          SESSION_ENDED_MESSAGE
-        )
-      : buildLoginRedirectUrl(request.nextUrl)
+    buildLoginUrl(request.nextUrl.origin, target, {
+      errorDescription: options?.sessionEndedFeedback
+        ? SESSION_ENDED_MESSAGE
+        : undefined,
+    })
   );
   clearSupabaseAuthCookies(response, cookieNames);
   if (options?.sessionEndedFeedback) {
@@ -105,12 +106,9 @@ export function updateSession(
       !isSessionEndedLoginRequest(request)
     ) {
       return NextResponse.redirect(
-        new URL(
-          normalizeAuthRedirect(
-            request.nextUrl.searchParams.get("next"),
-            DEFAULT_AUTH_REDIRECT
-          ),
-          request.nextUrl.origin
+        buildAuthReturnTargetUrl(
+          request.nextUrl.origin,
+          parseAuthReturnTarget(request.nextUrl.searchParams.get("next"))
         )
       );
     }
@@ -151,12 +149,15 @@ export function updateSession(
       }
       // Silent refresh. Do not clear the cookie — the refresh route needs the
       // refresh token it carries.
-      const refreshUrl = new URL("/auth/refresh", request.nextUrl.origin);
-      refreshUrl.searchParams.set(
-        "next",
-        `${request.nextUrl.pathname}${request.nextUrl.search}`
+      return NextResponse.redirect(
+        buildAuthRefreshUrl(
+          request.nextUrl.origin,
+          parseAuthReturnTarget(
+            `${request.nextUrl.pathname}${request.nextUrl.search}`
+          )
+        ),
+        { status: TEMPORARY_REDIRECT }
       );
-      return NextResponse.redirect(refreshUrl, { status: TEMPORARY_REDIRECT });
     }
     case "ended":
     case "anonymous":

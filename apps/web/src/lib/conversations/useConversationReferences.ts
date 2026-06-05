@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
 import { compareStableString } from "@/lib/display/format";
@@ -49,6 +50,7 @@ export function useConversationReferences(conversationId: string | null) {
         ) {
           return;
         }
+        handleUnauthenticatedApiError(err);
       } finally {
         if (refreshControllerRef.current === controller) {
           refreshControllerRef.current = null;

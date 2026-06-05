@@ -5,6 +5,7 @@ import {
   type FeedbackContent,
   toFeedback,
 } from "@/components/feedback/Feedback";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   getPodcastSubscriptionSettingsDraft,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
@@ -78,6 +79,7 @@ export function usePodcastSubscriptionSettingsModal({
       onSaved(response);
       setPodcastId(null);
     } catch (saveError) {
+      if (handleUnauthenticatedApiError(saveError)) return;
       setError(
         toFeedback(saveError, {
           fallback: "Failed to save subscription settings",

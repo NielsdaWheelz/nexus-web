@@ -9,6 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   toChatSSEEvent,
   type SSEEvent,
@@ -259,6 +260,7 @@ export function useChatRunTail({
           }
           return response.data;
         } catch (err) {
+          if (handleUnauthenticatedApiError(err)) return null;
           console.error("Failed to reconcile chat run:", err);
           return null;
         }
@@ -308,6 +310,7 @@ export function useChatRunTail({
           streamBaseUrl = tokenResponse.stream_base_url;
           firstStreamToken = tokenResponse.token;
         } catch (err) {
+          if (handleUnauthenticatedApiError(err)) return;
           console.error("Failed to fetch chat stream token:", err);
           await continueAfterStreamBoundary(false);
           return;

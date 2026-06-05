@@ -6,6 +6,7 @@ import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { copyText } from "@/lib/ui/copyText";
 import { matchesKeyEvent } from "@/lib/keybindings";
@@ -174,6 +175,7 @@ export function usePaletteController(): PaletteController {
         })
         .catch((error: unknown) => {
           if (isAbortError(error)) return;
+          if (handleUnauthenticatedApiError(error)) return;
           if (!cancelled) setSearchResults([]);
         })
         .finally(() => {
@@ -325,13 +327,15 @@ export function usePaletteController(): PaletteController {
           title_snapshot: item.title,
           source: item.source,
         }),
-      }).catch((error) =>
-        feedback.show(toFeedback(error, { fallback: "Command history was not saved" })),
-      );
+      }).catch((error) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        feedback.show(toFeedback(error, { fallback: "Command history was not saved" }));
+      });
 
-      void navigate(item).catch((error) =>
-        feedback.show(toFeedback(error, { fallback: "Command failed" })),
-      );
+      void navigate(item).catch((error) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        feedback.show(toFeedback(error, { fallback: "Command failed" }));
+      });
     },
     [androidShell, feedback, intent.term, navigate],
   );

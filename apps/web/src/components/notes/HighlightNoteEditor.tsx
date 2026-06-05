@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { fetchNoteBlock } from "@/lib/notes/api";
@@ -149,6 +150,7 @@ export default function HighlightNoteEditor({
     resourceKey,
     save: saveDoc,
     onError: (error) => {
+      if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Failed to save note" }));
     },
     onConflict: (error) => {
@@ -174,6 +176,7 @@ export default function HighlightNoteEditor({
       persistedRevisionRef.current = latestBlock.revision;
       flushSession();
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Latest note revision could not be loaded" }));
     } finally {
       setConflictAction(null);
@@ -209,6 +212,7 @@ export default function HighlightNoteEditor({
       );
       setEditorResetVersion((version) => version + 1);
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Latest note could not be loaded" }));
     } finally {
       setConflictAction(null);
@@ -240,6 +244,7 @@ export default function HighlightNoteEditor({
         const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
         href = resolved?.route ?? null;
       } catch (error: unknown) {
+        if (handleUnauthenticatedApiError(error)) return;
         feedback.show(toFeedback(error, { fallback: "Linked object could not be opened." }));
         return;
       }

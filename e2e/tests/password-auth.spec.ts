@@ -74,11 +74,12 @@ test.describe("password auth", () => {
       await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
-      // Sign back in with the same credentials.
+      // Sign back in with the same credentials and a non-default return target.
+      await page.goto("/login?next=%2Fbrowse");
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /^continue$/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(/\/browse/);
     } finally {
       await context.close();
     }
@@ -261,14 +262,21 @@ test.describe("password auth", () => {
       await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
 
-      // Wrong password is rejected with the exact whitelisted constant.
+      // Wrong password is rejected with the exact whitelisted constant and
+      // preserves the non-default return target.
+      await page.goto("/login?next=%2Fbrowse");
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill("WrongPassword12345");
       await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(
         page.getByText("Email or password is incorrect.")
       ).toBeVisible();
-      await expect(page).toHaveURL(/\/login/);
+      await expect(page).toHaveURL((url) => {
+        return (
+          url.pathname === "/login" &&
+          url.searchParams.get("next") === "/browse"
+        );
+      });
     } finally {
       await context.close();
     }

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
-import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
+import {
+  buildAuthRefreshUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
+} from "@/lib/auth/redirects";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseWebOriginList } from "@/lib/security/origin";
 import {
@@ -49,15 +53,20 @@ export async function GET(req: Request) {
     parseCookieHeader(req.headers.get("cookie"))
   );
   if (session.state === "refreshable") {
-    const refreshUrl = new URL("/auth/refresh", requestUrl.origin);
-    refreshUrl.searchParams.set(
-      "next",
-      `${requestUrl.pathname}${requestUrl.search}`
+    return NextResponse.redirect(
+      buildAuthRefreshUrl(
+        requestUrl.origin,
+        parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
+      )
     );
-    return NextResponse.redirect(refreshUrl);
   }
   if (session.state === "ended" || session.state === "anonymous") {
-    return NextResponse.redirect(buildLoginRedirectUrl(requestUrl));
+    return NextResponse.redirect(
+      buildLoginUrl(
+        requestUrl.origin,
+        parseAuthReturnTarget(`${requestUrl.pathname}${requestUrl.search}`)
+      )
+    );
   }
   session.state satisfies "active";
 

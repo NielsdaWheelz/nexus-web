@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
   toFeedback,
@@ -177,6 +178,7 @@ export default function SettingsBillingPaneBody() {
         });
         window.location.assign(response.data.url);
       } catch (checkoutError) {
+        if (handleUnauthenticatedApiError(checkoutError)) return;
         setActionError(toFeedback(checkoutError, { fallback: "Failed to start checkout" }));
       } finally {
         setCheckoutBusy(null);
@@ -198,6 +200,7 @@ export default function SettingsBillingPaneBody() {
       });
       window.location.assign(response.data.url);
     } catch (portalError) {
+      if (handleUnauthenticatedApiError(portalError)) return;
       setActionError(toFeedback(portalError, { fallback: "Failed to open billing portal" }));
     } finally {
       setPortalBusy(false);

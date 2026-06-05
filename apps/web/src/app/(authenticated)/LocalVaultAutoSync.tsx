@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
 import {
@@ -75,6 +76,7 @@ export default function LocalVaultAutoSync() {
       }
 
       const sync = runLocalVaultSync(feedback).catch((error) => {
+        if (handleUnauthenticatedApiError(error)) return;
         if (!isLocalVaultSyncCancelled()) {
           feedback.show(toFeedback(error, { fallback: "Local Vault refresh failed" }));
         }

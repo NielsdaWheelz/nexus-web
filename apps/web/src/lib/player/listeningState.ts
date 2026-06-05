@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { apiFetch, apiKeepaliveJson, type ApiPath } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const SYNC_INTERVAL_MS = 15_000;
@@ -55,7 +56,8 @@ async function persist(
       method: "PUT",
       body: JSON.stringify(payload),
     });
-  } catch {
+  } catch (error) {
+    if (!keepalive && handleUnauthenticatedApiError(error)) return;
     // Non-fatal: persistence must not block playback.
   }
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
   parseReaderResumeState,
@@ -67,6 +68,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       stateRef.current = savedState;
       setState(savedState);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       console.error("Failed to save reader state:", err);
       if (hydratedRef.current && hydratedMediaIdRef.current === targetMediaId) {
         pendingRef.current = payload;
@@ -127,6 +129,8 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       if (isApiError(err) && err.status === 404) {
         stateRef.current = null;
         setState(null);
+      } else if (handleUnauthenticatedApiError(err)) {
+        return;
       } else {
         setError(toFeedback(err, { fallback: "Failed to load reader state" }).title);
       }

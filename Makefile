@@ -5,7 +5,7 @@
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui test-csp \
-	smoke verify verify-android verify-android-release verify-full \
+	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
 	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
@@ -77,6 +77,7 @@ help:
 	@echo "  make verify             - check + build + test"
 	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
 	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
+	@echo "  make smoke-auth-redirects - Auth redirect/provider smoke and Supabase allowlist verification"
 	@echo ""
 	@echo "Focused targets:"
 	@echo "  make type-back             - Backend type checking"
@@ -490,6 +491,9 @@ verify-full:
 
 smoke:
 	./deploy/smoke/auth-smoke.sh
+
+smoke-auth-redirects:
+	./deploy/smoke/auth-redirect-construction-smoke.sh --mode prod-readonly
 
 _ensure-node-ingest:
 	@if [ ! -d "node/ingest/node_modules" ]; then \

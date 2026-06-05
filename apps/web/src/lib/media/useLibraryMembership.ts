@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toFeedback } from "@/components/feedback/Feedback";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   addMediaToLibrary,
   fetchMediaLibraryMemberships,
@@ -56,6 +57,7 @@ export function useLibraryMembership(
         await fetchMediaLibraryMemberships(mediaId, { excludeDefault: true }),
       );
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setLibraries([]);
       setError(toFeedback(err, { fallback: "Failed to load libraries" }).title);
     } finally {
@@ -76,6 +78,7 @@ export function useLibraryMembership(
           patchLibraryMembership(current, libraryId, true),
         );
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setError(
           toFeedback(err, { fallback: "Failed to add media to library" }).title,
         );
@@ -106,6 +109,7 @@ export function useLibraryMembership(
           patchLibraryMembership(current, libraryId, false),
         );
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setError(
           toFeedback(err, { fallback: "Failed to remove media from library" })
             .title,

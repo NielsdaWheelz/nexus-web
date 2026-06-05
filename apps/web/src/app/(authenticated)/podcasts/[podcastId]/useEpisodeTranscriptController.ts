@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useStringIdSet } from "@/lib/useStringIdSet";
@@ -88,6 +89,15 @@ export function useEpisodeTranscriptController({
           apiFetch<{ data: PodcastEpisodeMedia }>(`/api/media/${mediaId}`),
         ),
       );
+      if (
+        refreshResults.some(
+          (result) =>
+            result.status === "rejected" &&
+            handleUnauthenticatedApiError(result.reason),
+        )
+      ) {
+        return;
+      }
       const refreshedByMediaId = new Map<string, PodcastEpisodeMedia>();
       refreshResults.forEach((result, index) => {
         if (result.status !== "fulfilled") {
@@ -189,6 +199,7 @@ export function useEpisodeTranscriptController({
       );
       reload();
     } catch (requestError) {
+      if (handleUnauthenticatedApiError(requestError)) return;
       setError(
         toFeedback(requestError, {
           fallback: "Failed to request batch transcripts",
@@ -287,7 +298,9 @@ export function useEpisodeTranscriptController({
   useIntervalPoll({
     enabled: provisioningEpisodeIds.length > 0,
     onPoll: async () => {
-      await refreshEpisodeStates(provisioningEpisodeIds);
+      await refreshEpisodeStates(provisioningEpisodeIds).catch((error) => {
+        handleUnauthenticatedApiError(error);
+      });
     },
     pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   });
@@ -336,7 +349,8 @@ export function useEpisodeTranscriptController({
           return;
         }
         applyTranscriptForecasts(results, pendingForecastRequests);
-      } catch {
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
         // Keep CTA enabled when forecast preflight fails.
       } finally {
         for (const key of pendingForecastKeys) {
@@ -420,10 +434,12 @@ export function useEpisodeTranscriptController({
         }));
         try {
           await refreshEpisodeState(mediaId);
-        } catch {
+        } catch (error) {
+          if (handleUnauthenticatedApiError(error)) return;
           // Keep optimistic row state if one refresh fails; polling continues.
         }
       } catch (requestError) {
+        if (handleUnauthenticatedApiError(requestError)) return;
         setError(
           toFeedback(requestError, {
             fallback: "Failed to request transcript",

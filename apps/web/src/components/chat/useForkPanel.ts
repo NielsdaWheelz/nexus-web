@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   buildForkTree,
@@ -135,6 +136,7 @@ export function useForkPanel(input: {
         setError(null);
         onForksChanged?.();
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to rename fork:", err);
         setError("Fork rename failed.");
       }
@@ -166,6 +168,7 @@ export function useForkPanel(input: {
         setPendingDeleteId(null);
         onForksChanged?.();
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to delete fork:", err);
         setError("Fork delete failed.");
       }

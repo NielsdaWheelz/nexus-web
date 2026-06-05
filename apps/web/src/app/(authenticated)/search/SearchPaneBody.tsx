@@ -21,6 +21,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import SearchResultRow from "@/components/search/SearchResultRow";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
   ALL_SEARCH_TYPES,
@@ -238,6 +239,7 @@ export default function SearchPaneBody() {
         setHasSearched(true);
       } catch (err) {
         if (requestId !== requestIdRef.current) return;
+        if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Search failed" }));
       } finally {
         if (requestId === requestIdRef.current) {

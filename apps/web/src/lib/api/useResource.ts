@@ -4,6 +4,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import { HydrationCacheContext } from "@/lib/api/hydrationCache";
 import type { ResourceDescriptor } from "@/lib/api/resource";
+import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 
 export type AsyncResource<T> =
@@ -71,6 +72,7 @@ export function useResource<T, P>(
   // Seed "ready" and skip the first fetch for the initial cacheKey when the
   // server prefetched it into the hydration cache (consume-once).
   const cache = useContext(HydrationCacheContext);
+  const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
   const seededRef = useRef<{ key: string; data: T } | null>(null);
   if (seededRef.current === null && cacheKey !== null) {
     if (cache !== null && cache.has(cacheKey)) {
@@ -111,6 +113,7 @@ export function useResource<T, P>(
         setResource({ status: "ready", data });
       } catch (err) {
         if (isAbortError(err) || controller.signal.aborted) return;
+        if (handleUnauthenticatedApiError(err)) return;
         const retryable = !isApiError(err) || err.status >= 500;
         if (retryable && attempt < MAX_ATTEMPTS) {
           attempt += 1;
@@ -138,7 +141,7 @@ export function useResource<T, P>(
       controller.abort();
       if (delayTimer !== null) clearTimeout(delayTimer);
     };
-  }, [cacheKey, retryTick, retry]);
+  }, [cacheKey, retryTick, retry, handleUnauthenticatedApiError]);
 
   return resource;
 }

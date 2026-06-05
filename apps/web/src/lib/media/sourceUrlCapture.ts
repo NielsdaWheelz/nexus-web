@@ -1,4 +1,5 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { isUnauthenticatedApiError } from "@/lib/api/client";
 import {
   mediaCaptureStatus,
   toMediaCaptureFeedback,
@@ -59,6 +60,7 @@ export async function captureSourceUrl({
       result,
     };
   } catch (error) {
+    if (isUnauthenticatedApiError(error)) throw error;
     return {
       label: url,
       ok: false,

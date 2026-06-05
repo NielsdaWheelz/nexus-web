@@ -3,8 +3,8 @@ import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { type OAuthProvider } from "@/lib/auth/identities";
 import {
   buildAuthCallbackUrl,
-  buildLoginUrlWithError,
-  normalizeAuthRedirect,
+  buildLoginUrl,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
@@ -15,7 +15,7 @@ const TEMPORARY_REDIRECT = 307;
 
 // Identity linking always returns to the identities pane; the requested-page
 // `next` only applies to a fresh sign-in.
-const IDENTITY_LINK_RETURN_PATH = "/settings/identities";
+const IDENTITY_LINK_RETURN_TARGET = parseAuthReturnTarget("/settings/identities");
 
 // The `provider` query param is untrusted browser input; accept only the two
 // configured providers before handing it to the Supabase SDK.
@@ -32,30 +32,28 @@ export async function GET(request: Request): Promise<NextResponse> {
   const mode = requestUrl.searchParams.get("mode") === "link" ? "link" : "signin";
   const isHandoff = requestUrl.searchParams.get("flow") === "handoff";
   const hc = requestUrl.searchParams.get("hc");
-  const nextPath =
+  const target =
     mode === "link"
-      ? IDENTITY_LINK_RETURN_PATH
-      : normalizeAuthRedirect(requestUrl.searchParams.get("next"));
+      ? IDENTITY_LINK_RETURN_TARGET
+      : parseAuthReturnTarget(requestUrl.searchParams.get("next"));
 
   const redirectOrigin = resolveCallbackRedirectOrigin(request, requestUrl);
 
   if (!isSupportedProvider(provider)) {
     return NextResponse.redirect(
-      buildLoginUrlWithError(
-        redirectOrigin,
-        nextPath,
-        OAUTH_START_FAILURE_MESSAGE
-      ),
+      buildLoginUrl(redirectOrigin, target, {
+        errorDescription: OAUTH_START_FAILURE_MESSAGE,
+      }),
       { status: TEMPORARY_REDIRECT }
     );
   }
 
   const redirectTo = isHandoff
-    ? buildAuthCallbackUrl(redirectOrigin, nextPath, {
+    ? buildAuthCallbackUrl(redirectOrigin, target, {
         flow: "handoff",
         challenge: hc ?? "",
       })
-    : buildAuthCallbackUrl(redirectOrigin, nextPath);
+    : buildAuthCallbackUrl(redirectOrigin, target);
 
   const { supabase, applyCookies } = await createRouteHandlerClient();
   // signInWithOAuth and linkIdentity share the OAuth response shape
@@ -71,11 +69,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (error || !data.url) {
     return applyCookies(
       NextResponse.redirect(
-        buildLoginUrlWithError(
-          redirectOrigin,
-          nextPath,
-          OAUTH_START_FAILURE_MESSAGE
-        ),
+        buildLoginUrl(redirectOrigin, target, {
+          errorDescription: OAUTH_START_FAILURE_MESSAGE,
+        }),
         { status: TEMPORARY_REDIRECT }
       )
     );

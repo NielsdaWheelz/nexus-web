@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { quickCaptureDailyNote } from "@/lib/notes/api";
 import {
   FeedbackNotice,
@@ -35,6 +36,7 @@ export default function QuickNotePanel({ onClose }: { onClose: () => void }) {
       setText("");
       setFeedback({ severity: "success", title: "Added to today." });
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Quick note could not be added." }));
     } finally {
       setBusy(false);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Node as ProseMirrorNode } from "prosemirror-model";
 import { isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 
@@ -149,6 +150,9 @@ export function useNoteEditorSession({
           const isLatestSequence = sequence === localSequenceRef.current;
           const hasQueuedWork =
             pendingDocRef.current !== null || queuedDocRef.current !== null;
+          if (handleUnauthenticatedApiError(error)) {
+            return;
+          }
           if (isNoteConflictError(error)) {
             if (isLatestSequence && !hasQueuedWork) {
               pendingDocRef.current = doc;

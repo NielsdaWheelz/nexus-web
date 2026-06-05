@@ -13,6 +13,7 @@ import Pill from "@/components/ui/Pill";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { contributorResource } from "@/lib/api/resource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchContributor, fetchContributorWorks } from "@/lib/contributors/api";
 import { useResource } from "@/lib/api/useResource";
 import type {
@@ -182,6 +183,7 @@ export default function AuthorPaneBody() {
             : current
         );
       } catch (loadError) {
+        if (handleUnauthenticatedApiError(loadError)) return;
         if (!cancelled && requestId === worksRequestIdRef.current) {
           setError(toFeedback(loadError, { fallback: "Failed to load author works" }));
         }

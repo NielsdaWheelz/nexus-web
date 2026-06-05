@@ -131,7 +131,7 @@ describe("updateSession", () => {
     );
 
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Flibraries&error_description=Your+session+ended.+Please+sign+in+again."
+      "http://localhost:3000/login?error_description=Your+session+ended.+Please+sign+in+again."
     );
     expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
     expect(warn).toHaveBeenCalledWith(

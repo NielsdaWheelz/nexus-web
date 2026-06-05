@@ -11,6 +11,7 @@ import Button from "@/components/ui/Button";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
@@ -142,6 +143,7 @@ export default function LibraryIntelligenceView({ libraryId }: { libraryId: stri
       );
       setRefreshVersion((version) => version + 1);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(
         toFeedback(err, {
           fallback: "Failed to refresh library intelligence",

@@ -213,7 +213,7 @@ class MainActivity : AppCompatActivity() {
     internal fun startAuthFlow(triggerUri: Uri) {
         val provider = triggerUri.getQueryParameter("provider")
         val mode = triggerUri.getQueryParameter("mode") ?: "signin"
-        val next = triggerUri.getQueryParameter("next") ?: "/"
+        val next = triggerUri.getQueryParameter("next") ?: DEFAULT_AUTH_RETURN_TARGET
         if (provider !in setOf("google", "github") || mode !in setOf("signin", "link")) {
             return
         }
@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             .appendQueryParameter("mode", mode)
             .appendQueryParameter("flow", "handoff")
             .appendQueryParameter("hc", challenge)
-            .appendQueryParameter("next", next)
+            .appendNonDefaultAuthReturnTarget(next)
             .build()
         try {
             CustomTabsIntent.Builder()

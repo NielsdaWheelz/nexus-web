@@ -311,10 +311,11 @@ as a fallback path.
 `deploy/smoke/auth-smoke.sh` is the post-deploy auth gate. Run it after every
 frontend/backend release once traffic is live; it exits nonzero on any failed
 check. It verifies the production cutover behavior end to end: anonymous
-protected pages redirect to `/login` with a preserved `next`, a valid-shaped
-expired cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`,
-public pages return `200`, BFF routes return JSON `401 E_UNAUTHENTICATED`,
-`/docs` is not reachable, and the API health endpoint returns `200`.
+default protected pages redirect to `/login` without redundant `next`,
+anonymous non-default protected pages preserve `next`, a valid-shaped expired
+cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`, public pages
+return `200`, BFF routes return JSON `401 E_UNAUTHENTICATED`, `/docs` is not
+reachable, and the API health endpoint returns `200`.
 
 ```bash
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
@@ -376,15 +377,16 @@ the read-only evidence above and do not fake the canary with lab-only fixtures.
 Redirect construction has a separate explicit smoke entrypoint. Production
 defaults to read-only verification: it checks hosted Supabase Auth redirect
 configuration, verifies the smoke URLs match the same env files, then runs the
-safe auth HTTP smoke above. Mutating canary modes require dedicated smoke
-accounts and mailbox automation before they can be enabled.
+safe auth HTTP smoke above. Auth redirect/provider releases must run this lane,
+not only `make smoke`. Mutating canary modes require dedicated smoke accounts
+and mailbox automation before they can be enabled.
 
 ```bash
 SUPABASE_MANAGEMENT_ACCESS_TOKEN=<operator-token> \
 NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
 NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
 NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
-  ./deploy/smoke/auth-redirect-construction-smoke.sh --mode prod-readonly
+  make smoke-auth-redirects
 ```
 
 Staging can run the mutating redirect-construction proof against a controlled
@@ -476,7 +478,7 @@ restore its schedule to `0`, sync env again without
 - `deploy/vercel/sync-env.sh`: pushes Vercel env.
 - `deploy/supabase/verify-auth-redirects.sh`: read-only hosted Auth redirect allowlist verifier.
 - `deploy/smoke/auth-smoke.sh`: post-deploy auth smoke check.
-- `deploy/smoke/auth-redirect-construction-smoke.sh`: explicit redirect-construction smoke wrapper.
+- `deploy/smoke/auth-redirect-construction-smoke.sh`: explicit redirect-construction smoke wrapper (`make smoke-auth-redirects`).
 - `.dockerignore`: keeps VPS Docker build contexts small.
 - `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
 - `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.

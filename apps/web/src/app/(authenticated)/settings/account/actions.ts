@@ -7,8 +7,13 @@ import {
   EMAIL_CHANGE_FAILURE_MESSAGE,
   toPublicAuthErrorMessage,
 } from "@/lib/auth/messages";
-import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
+import {
+  buildAuthCallbackUrl,
+  parseAuthReturnTarget,
+} from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/server";
+
+const SETTINGS_ACCOUNT_RETURN_TARGET = parseAuthReturnTarget("/settings/account");
 
 export async function changeEmailAction({
   email,
@@ -40,7 +45,10 @@ export async function changeEmailAction({
   const { error } = await supabase.auth.updateUser(
     { email: normalized },
     {
-      emailRedirectTo: buildAuthCallbackUrl(redirectOrigin, "/settings/account"),
+      emailRedirectTo: buildAuthCallbackUrl(
+        redirectOrigin,
+        SETTINGS_ACCOUNT_RETURN_TARGET
+      ),
     }
   );
   if (error) {

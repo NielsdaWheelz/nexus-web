@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { pluralize } from "@/lib/text/pluralize";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
@@ -119,6 +120,7 @@ export default function SettingsLocalVaultPaneBody() {
   }, [initResource]);
 
   const showError = useCallback((error: unknown, fallback: string) => {
+    if (handleUnauthenticatedApiError(error)) return;
     setStatus("error");
     setMessage(toFeedback(error, { fallback }).title);
   }, []);

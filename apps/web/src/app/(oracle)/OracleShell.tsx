@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from "react";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
+import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import styles from "./OracleShell.module.css";
 
 const HeadlineContext = createContext<{
@@ -54,20 +55,22 @@ export default function OracleShell({ children }: { children: ReactNode }) {
 
   return (
     <HeadlineContext.Provider value={contextValue}>
-      <SessionRefresher />
-      <header className={styles.topBar} role="banner">
-        <a href={href} className={styles.back}>
-          {label}
-        </a>
-        <div
-          className={styles.title}
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {stickyTitle ?? ""}
-        </div>
-      </header>
-      {children}
+      <UnauthenticatedApiBoundary>
+        <SessionRefresher />
+        <header className={styles.topBar} role="banner">
+          <a href={href} className={styles.back}>
+            {label}
+          </a>
+          <div
+            className={styles.title}
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {stickyTitle ?? ""}
+          </div>
+        </header>
+        {children}
+      </UnauthenticatedApiBoundary>
     </HeadlineContext.Provider>
   );
 }

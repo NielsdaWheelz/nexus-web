@@ -115,11 +115,11 @@ test.describe("auth silent refresh", () => {
 
       await gotoAllowingTerminalRedirectAbort(page, "/libraries");
 
-      // The failed refresh is terminal: it lands on /login, preserving `next`.
+      // The failed refresh is terminal: default app home does not add `next`.
       await page.waitForURL(
         (url) =>
           url.pathname === "/login" &&
-          url.searchParams.get("next") === "/libraries",
+          !url.searchParams.has("next"),
         { timeout: PROMPT_RESOLUTION_MS },
       );
 
@@ -131,6 +131,32 @@ test.describe("auth silent refresh", () => {
       await expect(
         page.getByRole("button", { name: /continue with google/i }),
       ).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("a revoked refresh token preserves a non-default return target", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+    });
+    try {
+      const page = await context.newPage();
+      await bootstrapMagicLinkSession(page, context.request);
+
+      await leaveAppDocument(page);
+      await expireAccessTokenWithRevokedRefreshToken(context, APP_BASE_URL);
+
+      await gotoAllowingTerminalRedirectAbort(page, "/browse");
+
+      await page.waitForURL(
+        (url) =>
+          url.pathname === "/login" &&
+          url.searchParams.get("next") === "/browse",
+        { timeout: PROMPT_RESOLUTION_MS },
+      );
     } finally {
       await context.close();
     }

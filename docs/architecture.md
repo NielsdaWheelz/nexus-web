@@ -599,12 +599,11 @@ capability-owned:
   reingest reset and ready-for-reading completion.
 
 **Entity & state machine:** `media.processing_status` runs
-`pending → extracting → ready_for_reading`. (`embedding`/`ready` enum values
-exist but are unused on the document path; search/embedding readiness lives on
-the separate `media_content_index_states` machine.) `failure_stage ∈ {extract,
-transcribe, embed, metadata, other}`; only `source` and `metadata` are
-user-retryable. `failure_stage='metadata'` and `'embed'` are soft warnings that
-coexist with readable media.
+`pending → extracting → ready_for_reading` or `failed`. Search/embedding
+readiness lives on the separate `media_content_index_states` machine.
+`failure_stage ∈ {extract, transcribe, embed, metadata, other}`; only `source`
+and `metadata` are user-retryable. `failure_stage='metadata'` and `'embed'` are
+soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/upload/init` + `POST /media/{id}/ingest`, and
@@ -828,9 +827,10 @@ internalize first:
 `(authenticated)` layout renders a fixed `AuthenticatedShell` and *ignores*
 `children`. Each route's `page.tsx` exists only so Next resolves the URL; the
 actual body is a `*PaneBody` component that the **pane route registry**
-(`lib/panes/paneRouteRegistry.tsx`) imports and renders inside a pane. The URL is a
-*projection* of the active pane (mirrored via `history.replaceState`), not the
-driver. New devs frequently look in `page.tsx` for behavior that lives in
+(`lib/panes/paneRouteModel.ts`, `lib/panes/paneRouteTable.ts`, and
+`lib/panes/paneRenderRegistry.tsx`) resolves and renders inside a pane. The URL
+is a *projection* of the active pane (mirrored via `history.replaceState`), not
+the driver. New devs frequently look in `page.tsx` for behavior that lives in
 `*PaneBody.tsx`.
 
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
@@ -839,10 +839,11 @@ driver. New devs frequently look in `page.tsx` for behavior that lives in
   is persisted **per-user-per-device** to `workspace_sessions` (debounced PUT,
   keepalive flush). A pane is identified by a `resourceKey` (`media:<id>` etc.) —
   the de-dup, title-cache, and remount key. Routes resolve via a pure model
-  (`paneRouteModel.ts`) bound to React bodies (`paneRouteRegistry.tsx`). Bodies talk
-  to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`,
-  `usePaneParam`, `useSetPaneTitle`, `usePaneSecondary`). Secondary panes (reader
-  tools, conversation context, library tools) are runtime-published sidebars.
+  (`paneRouteModel.ts`) plus metadata table (`paneRouteTable.ts`) bound to React
+  bodies (`paneRenderRegistry.tsx`). Bodies talk to the shell only through
+  `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`, `useSetPaneTitle`,
+  `usePaneSecondary`). Secondary panes (reader tools, conversation context,
+  library tools) are runtime-published sidebars.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/

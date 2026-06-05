@@ -7,6 +7,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import Button from "@/components/ui/Button";
 import styles from "./AddContentTray.module.css";
 
@@ -61,6 +62,7 @@ export default function OpmlImportPanel({
       }
       setImportResult(responseBody.data);
     } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       setImportError(toFeedback(error, { fallback: "Failed to import OPML file" }));
     } finally {
       setImportBusy(false);

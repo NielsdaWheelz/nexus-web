@@ -4,8 +4,9 @@ import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
-  DEFAULT_AUTH_REDIRECT,
-  normalizeAuthRedirect,
+  buildAuthRefreshUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
@@ -45,10 +46,14 @@ async function clearAuthCookies(cookieNames: string[]): Promise<void> {
 async function redirectCarryingNext(
   target: "/login" | "/auth/refresh",
 ): Promise<never> {
-  const requestPath =
-    (await headers()).get(REQUEST_PATH_HEADER) ?? DEFAULT_AUTH_REDIRECT;
-  const nextPath = normalizeAuthRedirect(requestPath, DEFAULT_AUTH_REDIRECT);
-  redirect(`${target}?next=${encodeURIComponent(nextPath)}`);
+  const returnTarget = parseAuthReturnTarget(
+    (await headers()).get(REQUEST_PATH_HEADER)
+  );
+  const url =
+    target === "/login"
+      ? buildLoginUrl("http://localhost", returnTarget)
+      : buildAuthRefreshUrl("http://localhost", returnTarget);
+  redirect(`${url.pathname}${url.search}`);
 }
 
 /**

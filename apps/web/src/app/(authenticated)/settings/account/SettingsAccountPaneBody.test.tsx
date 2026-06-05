@@ -16,8 +16,6 @@ vi.mock("./actions", () => ({
 }));
 
 vi.mock("@/lib/auth/password-actions", () => ({
-  signInWithPasswordAction: vi.fn(),
-  signUpWithPasswordAction: vi.fn(),
   setPasswordAction: vi.fn(),
   changePasswordAction: vi.fn(),
   removePasswordAction: vi.fn(),

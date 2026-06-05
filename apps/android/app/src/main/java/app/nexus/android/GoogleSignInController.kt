@@ -26,7 +26,7 @@ internal class GoogleSignInController(private val activity: MainActivity) {
         if (triggerUri.getQueryParameter("provider") != "google") {
             return
         }
-        val next = triggerUri.getQueryParameter("next") ?: "/"
+        val next = triggerUri.getQueryParameter("next") ?: DEFAULT_AUTH_RETURN_TARGET
 
         activity.lifecycleScope.launch {
             val rawNonceBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
@@ -125,7 +125,7 @@ internal class GoogleSignInController(private val activity: MainActivity) {
                 .appendEncodedPath("auth/handoff")
                 .appendQueryParameter("code", code)
                 .appendQueryParameter("hv", rawVerifier)
-                .appendQueryParameter("next", next)
+                .appendNonDefaultAuthReturnTarget(next)
                 .build()
                 .toString()
             activity.runOnUiThread { activity.webView.loadUrl(successUrl) }
@@ -136,7 +136,7 @@ internal class GoogleSignInController(private val activity: MainActivity) {
         val url = Uri.parse(BuildConfig.NEXUS_BASE_URL).buildUpon()
             .appendEncodedPath("auth/handoff")
             .appendQueryParameter("error", "native_google_signin_failed")
-            .appendQueryParameter("next", next)
+            .appendNonDefaultAuthReturnTarget(next)
             .build()
             .toString()
         activity.runOnUiThread { activity.webView.loadUrl(url) }

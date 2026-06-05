@@ -35,6 +35,14 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+export function isUnauthenticatedApiError(error: unknown): error is ApiError {
+  return (
+    isApiError(error) &&
+    error.status === 401 &&
+    error.code === "E_UNAUTHENTICATED"
+  );
+}
+
 /**
  * Response shape for API errors.
  */
@@ -119,29 +127,6 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   }
 
   if (!response.ok) {
-    if (
-      response.status === 401 &&
-      isErrorResponse(body) &&
-      body.error.code === "E_UNAUTHENTICATED"
-    ) {
-      if (
-        typeof window !== "undefined" &&
-        window.location.pathname !== "/login"
-      ) {
-        const loginUrl = new URL("/login", window.location.origin);
-        loginUrl.searchParams.set(
-          "next",
-          `${window.location.pathname}${window.location.search}`
-        );
-        window.location.assign(loginUrl.toString());
-      }
-      throw new ApiError(
-        401,
-        body.error.code,
-        body.error.message,
-        body.error.request_id
-      );
-    }
     if (isErrorResponse(body)) {
       throw new ApiError(
         response.status,

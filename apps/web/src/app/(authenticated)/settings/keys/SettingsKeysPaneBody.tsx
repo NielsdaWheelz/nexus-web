@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { apiFetch } from "@/lib/api/client";
 import { settingsKeysResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
   toFeedback,
@@ -173,6 +174,7 @@ export default function SettingsKeysPaneBody() {
         setEditing(null);
         refreshKeys();
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setFormError(toFeedback(err, { fallback: "Failed to save key" }));
       } finally {
         // SECURITY: always clear key input regardless of success/failure
@@ -198,6 +200,7 @@ export default function SettingsKeysPaneBody() {
           title: `${providerLabel(key.provider, key)} key revoked.`,
         });
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setFormError(toFeedback(err, { fallback: "Failed to revoke key" }));
       } finally {
         setBusyProvider(null);
@@ -227,6 +230,7 @@ export default function SettingsKeysPaneBody() {
           title: `${providerLabel(key.provider, key)} key tested.`,
         });
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setFormError(toFeedback(err, { fallback: "Failed to test key" }));
       } finally {
         setBusyProvider(null);

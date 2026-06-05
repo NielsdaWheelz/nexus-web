@@ -9,6 +9,7 @@ import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
+import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
@@ -39,16 +40,18 @@ export default function AuthenticatedShell({
 }) {
   return (
     <RenderEnvironmentProvider value={renderEnvironment}>
-      <SessionRefresher />
-      <LocalVaultAutoSync />
-      <WebVitalsReporter />
-      <BootstrapHydrationProvider value={resources}>
-        <KeybindingsProvider>
-          <ReaderProvider initialProfile={readerProfile}>
-            <AuthenticatedWorkspace initialHref={initialHref} />
-          </ReaderProvider>
-        </KeybindingsProvider>
-      </BootstrapHydrationProvider>
+      <UnauthenticatedApiBoundary>
+        <SessionRefresher />
+        <LocalVaultAutoSync />
+        <WebVitalsReporter />
+        <BootstrapHydrationProvider value={resources}>
+          <KeybindingsProvider>
+            <ReaderProvider initialProfile={readerProfile}>
+              <AuthenticatedWorkspace initialHref={initialHref} />
+            </ReaderProvider>
+          </KeybindingsProvider>
+        </BootstrapHydrationProvider>
+      </UnauthenticatedApiBoundary>
     </RenderEnvironmentProvider>
   );
 }

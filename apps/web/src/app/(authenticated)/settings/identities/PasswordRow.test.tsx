@@ -8,8 +8,6 @@ const changePasswordAction = vi.hoisted(() => vi.fn());
 const removePasswordAction = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/password-actions", () => ({
-  signInWithPasswordAction: vi.fn(),
-  signUpWithPasswordAction: vi.fn(),
   setPasswordAction,
   changePasswordAction,
   removePasswordAction,

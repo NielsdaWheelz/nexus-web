@@ -10,6 +10,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   PDF_PASSWORD_PROTECTED_MESSAGE,
   toFeedback,
@@ -1672,6 +1673,7 @@ export default function PdfReader({
         clearSelection();
         return createdHighlight;
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return null;
         setSelectionError(toUserFacingError(err));
         return null;
       } finally {

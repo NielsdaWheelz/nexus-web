@@ -69,6 +69,10 @@ function readSources(): Source[] {
   });
 }
 
+function sourceText(path: string): string {
+  return readFileSync(join(process.cwd(), path), "utf8");
+}
+
 function lineNumber(source: ts.SourceFile, node: ts.Node): number {
   return source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 }
@@ -285,6 +289,64 @@ function formatFullPaneRuntimeDependency(
 }
 
 describe("effect discipline source shape", () => {
+  it("keeps the browser API client navigation-free", () => {
+    expect(sourceText("src/lib/api/client.ts")).not.toMatch(
+      /window\.location|location\.(assign|replace|href)|router\.(push|replace)|redirectToLoginForCurrentLocation|buildLoginUrlForCurrentLocation|client-return-target|next\/navigation/,
+    );
+  });
+
+  it("keeps auth return-target query construction in the auth owner", () => {
+    const offenders = readSources()
+      .filter((source) => source.path !== "src/lib/auth/redirects.ts")
+      .flatMap((source) => {
+        const text = source.ast.getFullText();
+        return /searchParams\.set\((["'])next\1/.test(text)
+          ? [source.path]
+          : [];
+      });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("requires caught client API errors to classify unauthenticated errors", () => {
+    const catchPattern = /\bcatch\s*(?:\(|\{)|\.catch\s*\(/;
+    const authHandlerPattern =
+      /handleUnauthenticatedApiError|isUnauthenticatedApiError|useUnauthenticatedApiHandler/;
+    const offenders = sourceFiles(join(process.cwd(), "src"))
+      .map((path) => ({ path: repoPath(path), text: readFileSync(path, "utf8") }))
+      .filter((source) => source.path !== "src/lib/api/server.ts")
+      .filter((source) => catchPattern.test(source.text))
+      .filter((source) =>
+        /from "@\/lib\/api\/client"|apiFetch\(|apiPostFormData\(|apiKeepaliveJson\(/.test(
+          source.text,
+        ),
+      )
+      .filter((source) => !authHandlerPattern.test(source.text))
+      .map((source) => source.path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("requires caught feedback errors to classify unauthenticated errors", () => {
+    const catchPattern = /\bcatch\s*(?:\(|\{)|\.catch\s*\(/;
+    const authHandlerPattern =
+      /handleUnauthenticatedApiError|isUnauthenticatedApiError|useUnauthenticatedApiHandler/;
+    const offenders = sourceFiles(join(process.cwd(), "src"))
+      .map((path) => ({ path: repoPath(path), text: readFileSync(path, "utf8") }))
+      .filter((source) =>
+        source.path.startsWith("src/app/(authenticated)") ||
+        source.path.startsWith("src/app/(oracle)") ||
+        source.path.startsWith("src/components") ||
+        source.path.startsWith("src/lib"),
+      )
+      .filter((source) => catchPattern.test(source.text))
+      .filter((source) => /toFeedback\(/.test(source.text))
+      .filter((source) => !authHandlerPattern.test(source.text))
+      .map((source) => source.path);
+
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps raw fetch in explicit boundary modules", () => {
     const offenders = readSources()
       .filter((file) => {

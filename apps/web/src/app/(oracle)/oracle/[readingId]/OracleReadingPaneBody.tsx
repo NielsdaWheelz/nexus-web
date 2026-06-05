@@ -9,6 +9,7 @@ import {
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
@@ -510,6 +511,7 @@ export default function OracleReadingPaneBody({
       );
       router.push(`/oracle/${body.data.reading_id}`);
     } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       setRetryError(
         toFeedback(error, {
           fallback: "The retry could not begin. Please try again.",
@@ -579,6 +581,7 @@ export default function OracleReadingPaneBody({
       } catch (error) {
         if (cancelled) return;
         if (!isAbortError(error)) {
+          if (handleUnauthenticatedApiError(error)) return;
           setLoadError(
             toFeedback(error, {
               fallback: STREAM_ERROR_MESSAGE,

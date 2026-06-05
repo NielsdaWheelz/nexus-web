@@ -25,6 +25,7 @@ import {
 } from "@/components/feedback/Feedback";
 import QuickNotePanel from "@/components/QuickNotePanel";
 import OpmlImportPanel from "@/components/OpmlImportPanel";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
 import {
@@ -223,6 +224,7 @@ export default function AddContentTray() {
           );
         }
       } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
         setQueue((current) =>
           current.map((row) =>
             row.id === item.id
@@ -389,6 +391,7 @@ export default function AddContentTray() {
       setOpen(false);
       requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       setNoteFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     } finally {
       setNoteBusy(false);

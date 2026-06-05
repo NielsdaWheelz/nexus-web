@@ -5,6 +5,7 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type {
   LibraryInvite,
   LibraryMember,
@@ -130,7 +131,8 @@ export default function LibraryEditDialog({
         }
         setSearchResults(results);
         setShowResults(results.length > 0);
-      } catch {
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         if (searchRequestRef.current === requestId) {
           setSearchResults([]);
           setShowResults(false);

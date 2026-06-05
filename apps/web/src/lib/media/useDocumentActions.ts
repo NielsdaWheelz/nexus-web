@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import {
@@ -83,6 +84,7 @@ export function useDocumentActions({
       });
       router.push("/libraries");
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to delete document" }),
       });
@@ -111,6 +113,7 @@ export function useDocumentActions({
       });
       feedback.show(projection.feedback);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to retry processing" }),
       });
@@ -139,6 +142,7 @@ export function useDocumentActions({
       });
       feedback.show(projection.feedback);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to refresh source" }),
       });
@@ -167,6 +171,7 @@ export function useDocumentActions({
         title: "Metadata re-enrichment started.",
       });
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to re-enrich metadata" }),
       });

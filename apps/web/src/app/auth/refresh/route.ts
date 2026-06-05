@@ -3,7 +3,11 @@ import {
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
 import { noStore } from "@/lib/auth/no-store";
-import { normalizeAuthRedirect } from "@/lib/auth/redirects";
+import {
+  buildAuthReturnTargetUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
+} from "@/lib/auth/redirects";
 import { refreshSession } from "@/lib/auth/refresh";
 import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import {
@@ -38,22 +42,22 @@ function markSessionEnded(response: NextResponse): void {
 // redirects back into a state that re-evaluates as `refreshable`.
 export async function GET(request: Request): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
-  const nextPath = normalizeAuthRedirect(requestUrl.searchParams.get("next"));
+  const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
 
   const result = await refreshSession();
 
   if (result.status === "refreshed") {
     const response = NextResponse.redirect(
-      new URL(nextPath, requestUrl.origin),
+      buildAuthReturnTargetUrl(requestUrl.origin, target),
       { status: TEMPORARY_REDIRECT }
     );
     applyRotatedCookies(response, result.cookiesToSet);
     return noStore(response);
   }
 
-  const loginUrl = new URL("/login", requestUrl.origin);
-  loginUrl.searchParams.set("next", nextPath);
-  loginUrl.searchParams.set("error_description", SESSION_ENDED_MESSAGE);
+  const loginUrl = buildLoginUrl(requestUrl.origin, target, {
+    errorDescription: SESSION_ENDED_MESSAGE,
+  });
   const response = NextResponse.redirect(loginUrl, {
     status: TEMPORARY_REDIRECT,
   });

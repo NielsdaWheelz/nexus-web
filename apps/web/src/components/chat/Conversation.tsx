@@ -33,6 +33,7 @@ import {
   resourceObjectTypeForScheme,
 } from "@/lib/resources/resourceKind";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
   toFeedback,
@@ -178,6 +179,7 @@ export default function Conversation() {
       await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
       router.push("/conversations");
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setDeleteError(
         toFeedback(err, { fallback: "Failed to delete conversation" }),
       );
@@ -227,6 +229,7 @@ export default function Conversation() {
         if (!href) return;
         openInNewPane?.(href);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to open reference:", err);
       }
     },

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback } from "@/components/feedback/Feedback";
 import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
 
@@ -41,6 +42,7 @@ export function useReaderProfile(options: UseReaderProfileOptions) {
       });
       setProfile(res.data);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(toFeedback(err, { fallback: "Failed to save reader settings" }).title);
     } finally {
       setSaving(false);

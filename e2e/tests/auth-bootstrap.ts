@@ -146,7 +146,6 @@ async function completeMagicLinkInBrowser(
 ) {
   const verificationUrl = new URL(actionLink);
   const redirectTarget = new URL("/login", env.appBaseUrl);
-  redirectTarget.searchParams.set("next", "/libraries");
   verificationUrl.searchParams.set("redirect_to", redirectTarget.toString());
 
   await page.goto(verificationUrl.toString());

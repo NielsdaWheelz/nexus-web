@@ -12,13 +12,12 @@ import {
 import { flushSync } from "react-dom";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
   libraryResource as libraryResourceDescriptor,
 } from "@/lib/api/resource";
-import {
-  runSourceProcessingAction,
-} from "@/lib/media/sourceActions";
+import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import {
   FeedbackNotice,
@@ -355,6 +354,7 @@ export default function LibraryPaneBody() {
         }
         setLibraryPanelLibraries(libraries);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
@@ -393,6 +393,7 @@ export default function LibraryPaneBody() {
           );
         }
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setLibraryPanelError(
           toFeedback(err, { fallback: "Failed to add item to library" }).title,
         );
@@ -465,6 +466,7 @@ export default function LibraryPaneBody() {
           );
         }
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         if (removingCurrentEntry) {
           setEntries(previousEntries);
           removedEntryIds.remove(entry.id);
@@ -552,6 +554,7 @@ export default function LibraryPaneBody() {
         );
         feedback.show(sourceFeedback);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
           ...toFeedback(err, { fallback: args.errorFallback }),
         });
@@ -608,6 +611,7 @@ export default function LibraryPaneBody() {
           ),
         );
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
           ...toFeedback(err, {
             fallback: "Failed to delete document",
@@ -632,6 +636,7 @@ export default function LibraryPaneBody() {
       });
       router.push("/libraries");
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       if (isApiError(err)) {
         setError(
           toFeedback(err, {
@@ -652,6 +657,7 @@ export default function LibraryPaneBody() {
       setEditMembers(sharing.members);
       setEditInvites(sharing.invites);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       if (isApiError(err)) {
         setError(
           toFeedback(err, {
@@ -792,6 +798,7 @@ export default function LibraryPaneBody() {
         const route = `/conversations/${response.data.id}`;
         openInNewPane?.(route, media.title);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setError(
           toFeedback(err, {
             fallback: "Failed to open media chat",
@@ -816,6 +823,7 @@ export default function LibraryPaneBody() {
     })
       .catch((err: unknown) => {
         setEntries(previousEntries);
+        if (handleUnauthenticatedApiError(err)) return;
         if (isApiError(err)) {
           setError(
             toFeedback(err, {

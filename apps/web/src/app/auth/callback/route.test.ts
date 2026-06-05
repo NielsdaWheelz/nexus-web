@@ -279,7 +279,7 @@ describe("GET /auth/callback", () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?code=h-code-1&next=%2Flibraries"
+        "nexus://auth/handoff?code=h-code-1"
       );
       expect(response.headers.get("set-cookie")).toBeNull();
     });
@@ -309,7 +309,7 @@ describe("GET /auth/callback", () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+        "nexus://auth/handoff?error=handoff_mint_failed"
       );
     });
 
@@ -352,7 +352,7 @@ describe("GET /auth/callback", () => {
       const response = await responsePromise;
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+        "nexus://auth/handoff?error=handoff_mint_failed"
       );
     });
 
@@ -367,7 +367,7 @@ describe("GET /auth/callback", () => {
       expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=oauth_provider_error&next=%2Flibraries"
+        "nexus://auth/handoff?error=oauth_provider_error"
       );
     });
 
@@ -382,7 +382,7 @@ describe("GET /auth/callback", () => {
       expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=oauth_callback_missing_code&next=%2Flibraries"
+        "nexus://auth/handoff?error=oauth_callback_missing_code"
       );
     });
   });

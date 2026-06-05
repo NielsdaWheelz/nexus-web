@@ -199,6 +199,49 @@ describe("POST /auth/password", () => {
     );
   });
 
+  it("omits default next on sign-in errors", async () => {
+    signInError = { message: "Invalid login credentials" };
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      passwordRequest(
+        {
+          email: "ada@example.com",
+          password: "wrong-password",
+          next: "/libraries",
+        },
+        { origin: "http://localhost:3000" },
+      ),
+    );
+
+    const location = new URL(response.headers.get("location")!);
+    expect(response.status).toBe(303);
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.has("next")).toBe(false);
+    expect(location.searchParams.get("error_description")).toBe(
+      PASSWORD_SIGN_IN_FAILURE_MESSAGE,
+    );
+  });
+
+  it("falls back to the default route for post-parse unsafe sign-in next", async () => {
+    const { POST } = await import("./route");
+    const response = await POST(
+      passwordRequest(
+        {
+          email: "ada@example.com",
+          password: "long-enough-password",
+          next: "/..//evil.example",
+        },
+        { origin: "http://localhost:3000" },
+      ),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/libraries"
+    );
+  });
+
   it("creates accounts through same-origin form posts and commits auth cookies", async () => {
     signUpSession = { access_token: "new-session-access-token" };
     authCookiesToSet = [

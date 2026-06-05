@@ -9,6 +9,7 @@ import {
   type FormEvent,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -128,7 +129,8 @@ export default function SettingsAccountPaneBody() {
             severity: "success",
             title: DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
           });
-        } catch {
+        } catch (error) {
+          if (handleUnauthenticatedApiError(error)) return;
           setDisplayNameFeedback({
             severity: "error",
             title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,

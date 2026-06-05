@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import {
-  DEFAULT_AUTH_REDIRECT,
+  buildLoginUrl,
   getFirstSearchParamValue,
-  normalizeAuthRedirect,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 
 interface SignUpPageProps {
@@ -17,13 +17,10 @@ interface SignUpPageProps {
 // the address bar reflects the single auth surface.
 export default async function SignUpPage({ searchParams }: SignUpPageProps) {
   const params = await searchParams;
-  const nextPath = normalizeAuthRedirect(
-    getFirstSearchParamValue(params.next),
-    DEFAULT_AUTH_REDIRECT
+  const target = buildLoginUrl(
+    "http://localhost",
+    parseAuthReturnTarget(getFirstSearchParamValue(params.next)),
+    { mode: "create" }
   );
-  const target =
-    nextPath === DEFAULT_AUTH_REDIRECT
-      ? "/login?mode=create"
-      : `/login?mode=create&next=${encodeURIComponent(nextPath)}`;
-  redirect(target);
+  redirect(`${target.pathname}${target.search}`);
 }

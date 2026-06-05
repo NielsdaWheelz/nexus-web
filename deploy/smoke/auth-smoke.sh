@@ -20,7 +20,8 @@ first failed check. It makes only safe GET requests and never logs cookie or
 token values.
 
 Checks:
-  - Anonymous protected page redirects 307 to /login with a preserved next.
+  - Anonymous default protected page redirects 307 to /login without next.
+  - Anonymous non-default protected page redirects 307 to /login with preserved next.
   - A valid-shaped expired auth cookie on a protected page prompts a redirect
     with no timeout (the MIDDLEWARE_INVOCATION_TIMEOUT incident reproduction).
   - Public pages return 200.
@@ -81,6 +82,7 @@ API_URL="${API_URL%/}"
 
 # A protected page that exists in apps/web/src/app/(authenticated).
 PROTECTED_PATH="/browse"
+DEFAULT_PROTECTED_PATH="/libraries"
 # Routes that must stay reachable without an auth cookie.
 PUBLIC_PATHS="/login /terms /privacy /android"
 # A BFF route under /api/* that the middleware passes through to the proxy.
@@ -164,6 +166,24 @@ http_body() {
   fi
 }
 
+# Assert the redirect lands on /login without a redundant default `next`.
+assert_login_redirect_without_next() {
+  local label="$1"
+  local status="$2"
+  local location="$3"
+
+  if [ "$status" != "307" ]; then
+    fail "${label}: expected 307, got ${status}"
+    return
+  fi
+  if ! printf '%s' "$location" \
+    | python3 -c 'import sys, urllib.parse as u; parsed = u.urlparse(sys.stdin.read()); q = u.parse_qs(parsed.query); sys.exit(0 if parsed.path == "/login" and "next" not in q else 1)'; then
+    fail "${label}: redirect target is not /login without next (${location})"
+    return
+  fi
+  pass "$label"
+}
+
 # Assert the redirect lands on /login carrying the requested path as `next`.
 assert_login_redirect_with_next() {
   local label="$1"
@@ -217,10 +237,16 @@ echo
 
 expired_cookie="$(build_expired_cookie)"
 
-# Anonymous protected page: prompt 307 to /login with preserved next.
+# Anonymous default protected page: prompt 307 to /login without default next.
+IFS=$'\t' read -r status location < <(http_status_and_location "${APP_URL}${DEFAULT_PROTECTED_PATH}")
+assert_login_redirect_without_next \
+  "anonymous default protected page redirects to /login" \
+  "$status" "$location"
+
+# Anonymous non-default protected page: prompt 307 to /login with preserved next.
 IFS=$'\t' read -r status location < <(http_status_and_location "${APP_URL}${PROTECTED_PATH}")
 assert_login_redirect_with_next \
-  "anonymous protected page redirects to /login" \
+  "anonymous non-default protected page redirects to /login" \
   "$status" "$location" "$PROTECTED_PATH"
 
 # Valid-shaped expired cookie on a protected page: prompt redirect, no timeout.

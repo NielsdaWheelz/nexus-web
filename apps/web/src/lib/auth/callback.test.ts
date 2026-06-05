@@ -260,7 +260,7 @@ describe("handleAuthCallback", () => {
       });
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?code=handoff-code-1&next=%2Flibraries"
+        "nexus://auth/handoff?code=handoff-code-1"
       );
       expect(response.headers.get("set-cookie")).toBeNull();
     });
@@ -283,7 +283,7 @@ describe("handleAuthCallback", () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+        "nexus://auth/handoff?error=handoff_mint_failed"
       );
     });
 
@@ -303,7 +303,7 @@ describe("handleAuthCallback", () => {
       expect(mintHandoffCode).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=oauth_provider_error&next=%2Flibraries"
+        "nexus://auth/handoff?error=oauth_provider_error"
       );
     });
 
@@ -321,7 +321,7 @@ describe("handleAuthCallback", () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=oauth_user_cancelled&next=%2Flibraries"
+        "nexus://auth/handoff?error=oauth_user_cancelled"
       );
     });
 
@@ -341,7 +341,7 @@ describe("handleAuthCallback", () => {
       expect(mintHandoffCode).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=oauth_callback_missing_code&next=%2Flibraries"
+        "nexus://auth/handoff?error=oauth_callback_missing_code"
       );
     });
 
@@ -363,7 +363,7 @@ describe("handleAuthCallback", () => {
       expect(mintHandoffCode).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "nexus://auth/handoff?error=handoff_exchange_failed&next=%2Flibraries"
+        "nexus://auth/handoff?error=handoff_exchange_failed"
       );
     });
   });

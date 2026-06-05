@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
@@ -354,6 +355,7 @@ export default function PodcastDetailPaneBody() {
       setEpisodes((prev) => [...prev, ...response.data]);
       setHasMoreEpisodes(response.data.length === EPISODES_PAGE_SIZE);
     } catch (loadError) {
+      if (handleUnauthenticatedApiError(loadError)) return;
       setError(
         toFeedback(loadError, {
           fallback: "Failed to load more podcast episodes",
@@ -392,6 +394,7 @@ export default function PodcastDetailPaneBody() {
       setSelectedLibraryIds([]);
       reload();
     } catch (subscribeError) {
+      if (handleUnauthenticatedApiError(subscribeError)) return;
       setError(
         toFeedback(subscribeError, {
           fallback: "Failed to subscribe to podcast",
@@ -478,6 +481,7 @@ export default function PodcastDetailPaneBody() {
         const route = `/conversations/${response.data.id}`;
         openInNewPane?.(route, episode.title);
       } catch (chatError) {
+        if (handleUnauthenticatedApiError(chatError)) return;
         setError(
           toFeedback(chatError, { fallback: "Failed to open episode chat" }),
         );
@@ -518,6 +522,7 @@ export default function PodcastDetailPaneBody() {
         );
         setError(projection.feedback);
       } catch (retryError) {
+        if (handleUnauthenticatedApiError(retryError)) return;
         setError(
           toFeedback(retryError, {
             fallback: "Failed to retry episode processing",
@@ -562,6 +567,7 @@ export default function PodcastDetailPaneBody() {
         );
         setError(projection.feedback);
       } catch (refreshError) {
+        if (handleUnauthenticatedApiError(refreshError)) return;
         setError(
           toFeedback(refreshError, {
             fallback: "Failed to refresh episode source",
@@ -592,6 +598,7 @@ export default function PodcastDetailPaneBody() {
           prev.filter((candidate) => candidate.id !== episode.id),
         );
       } catch (deleteError) {
+        if (handleUnauthenticatedApiError(deleteError)) return;
         setError(
           toFeedback(deleteError, { fallback: "Failed to delete episode" }),
         );
@@ -672,6 +679,7 @@ export default function PodcastDetailPaneBody() {
         });
       } catch (markError) {
         setEpisodes(previousEpisodes);
+        if (handleUnauthenticatedApiError(markError)) return;
         setError(
           toFeedback(markError, {
             fallback: isCompleted
@@ -747,6 +755,7 @@ export default function PodcastDetailPaneBody() {
       });
     } catch (markError) {
       setEpisodes(previousEpisodes);
+      if (handleUnauthenticatedApiError(markError)) return;
       setError(
         toFeedback(markError, {
           fallback: "Failed to mark visible episodes as played",

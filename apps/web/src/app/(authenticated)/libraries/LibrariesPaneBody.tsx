@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api/client";
 import { librariesResource as librariesResourceDescriptor } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   FeedbackNotice,
@@ -91,6 +92,7 @@ export default function LibrariesPaneBody() {
       setNewLibraryName("");
       refreshLibraries();
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(
         toFeedback(err, {
           fallback: "Failed to create library",
@@ -113,6 +115,7 @@ export default function LibrariesPaneBody() {
       );
       refreshLibraries();
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(
         toFeedback(err, {
           fallback: "Failed to delete library",
@@ -141,6 +144,7 @@ export default function LibrariesPaneBody() {
       setEditMembers(sharing.members);
       setEditInvites(sharing.invites);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(
         toFeedback(err, {
           fallback: "Failed to load library sharing",

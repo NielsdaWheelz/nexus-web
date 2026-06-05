@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import ActionBar from "@/components/ui/ActionBar";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
@@ -77,6 +78,7 @@ function ExistingActionBar(props: ExistingProps) {
     try {
       await props.onSelectColor(color);
     } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Failed to change color" }));
       console.error("highlight_color_change_failed", error);
     } finally {
@@ -90,6 +92,7 @@ function ExistingActionBar(props: ExistingProps) {
     try {
       await props.onDelete();
     } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Failed to delete highlight" }));
       console.error("highlight_delete_failed", error);
     } finally {

@@ -1,9 +1,17 @@
 import { type OAuthProvider } from "@/lib/auth/identities";
+import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
-export const DEFAULT_AUTH_REDIRECT = "/libraries";
+export type AuthReturnTarget = string & {
+  readonly __authReturnTarget: unique symbol;
+};
+
+export const DEFAULT_AUTH_RETURN_TARGET =
+  APP_AUTHENTICATED_HOME_HREF as AuthReturnTarget;
 
 const LOGIN_PATH = "/login";
+const AUTH_PATH = "/auth";
 const AUTH_PATH_PREFIX = "/auth/";
+const AUTH_RETURN_TARGET_BASE = "http://localhost";
 
 type AuthSearchParam = string | string[] | undefined;
 
@@ -17,52 +25,101 @@ export function getFirstSearchParamValue(value: AuthSearchParam): string | null 
   return null;
 }
 
-export function normalizeAuthRedirect(
+function isLocalPathStart(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//");
+}
+
+function isBlockedAuthPath(pathname: string): boolean {
+  return (
+    pathname === LOGIN_PATH ||
+    pathname === AUTH_PATH ||
+    pathname.startsWith(AUTH_PATH_PREFIX)
+  );
+}
+
+export function parseAuthReturnTarget(
+  rawValue: string | null | undefined
+): AuthReturnTarget {
+  return parseAuthReturnTargetWithFallback(rawValue, DEFAULT_AUTH_RETURN_TARGET);
+}
+
+export function parseAuthReturnTargetWithFallback(
   rawValue: string | null | undefined,
-  fallback: string = DEFAULT_AUTH_REDIRECT
-): string {
+  fallback: AuthReturnTarget
+): AuthReturnTarget {
   if (!rawValue) {
     return fallback;
   }
 
   const trimmed = rawValue.trim();
-  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) {
+  if (!isLocalPathStart(trimmed)) {
     return fallback;
   }
 
   let parsed: URL;
   try {
-    parsed = new URL(trimmed, "http://localhost");
+    parsed = new URL(trimmed, AUTH_RETURN_TARGET_BASE);
   } catch {
+    return fallback;
+  }
+  if (parsed.origin !== AUTH_RETURN_TARGET_BASE) {
     return fallback;
   }
 
   const normalized = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  if (normalized === LOGIN_PATH || normalized.startsWith(AUTH_PATH_PREFIX)) {
+  if (!isLocalPathStart(normalized) || isBlockedAuthPath(parsed.pathname)) {
     return fallback;
   }
 
-  return normalized;
+  return normalized as AuthReturnTarget;
 }
 
-export function buildLoginRedirectUrl(requestUrl: URL): URL {
-  const loginUrl = new URL(LOGIN_PATH, requestUrl.origin);
-  const nextPath = normalizeAuthRedirect(
-    `${requestUrl.pathname}${requestUrl.search}`,
-    DEFAULT_AUTH_REDIRECT
-  );
+export function authReturnTargetToHref(target: AuthReturnTarget): string {
+  return target;
+}
 
-  loginUrl.searchParams.set("next", nextPath);
+export function isDefaultAuthReturnTarget(target: AuthReturnTarget): boolean {
+  return target === DEFAULT_AUTH_RETURN_TARGET;
+}
+
+function setNonDefaultNext(url: URL, target: AuthReturnTarget): void {
+  if (!isDefaultAuthReturnTarget(target)) {
+    url.searchParams.set("next", authReturnTargetToHref(target));
+  }
+}
+
+export function buildLoginUrl(
+  origin: string,
+  target: AuthReturnTarget,
+  options: { mode?: "create"; errorDescription?: string } = {}
+): URL {
+  const loginUrl = new URL(LOGIN_PATH, origin);
+  if (options.mode === "create") {
+    loginUrl.searchParams.set("mode", "create");
+  }
+  setNonDefaultNext(loginUrl, target);
+  if (options.errorDescription) {
+    loginUrl.searchParams.set("error_description", options.errorDescription);
+  }
   return loginUrl;
+}
+
+export function buildAuthRefreshUrl(
+  origin: string,
+  target: AuthReturnTarget
+): URL {
+  const refreshUrl = new URL("/auth/refresh", origin);
+  setNonDefaultNext(refreshUrl, target);
+  return refreshUrl;
 }
 
 export function buildAuthCallbackUrl(
   redirectOrigin: string,
-  nextPath: string,
+  target: AuthReturnTarget,
   options?: { flow?: "handoff"; challenge?: string }
 ): string {
   const callbackUrl = new URL("/auth/callback", redirectOrigin);
-  callbackUrl.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  setNonDefaultNext(callbackUrl, target);
   if (options?.flow === "handoff") {
     callbackUrl.searchParams.set("flow", "handoff");
   }
@@ -74,50 +131,48 @@ export function buildAuthCallbackUrl(
 
 export function buildAuthHandoffSuccessDeepLink(
   code: string,
-  nextPath: string
+  target: AuthReturnTarget
 ): string {
   const deepLink = new URL("nexus://auth/handoff");
   deepLink.searchParams.set("code", code);
-  deepLink.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  setNonDefaultNext(deepLink, target);
   return deepLink.toString();
 }
 
 export function buildAuthHandoffErrorDeepLink(
   errorCode: string,
-  nextPath: string
+  target: AuthReturnTarget
 ): string {
   const deepLink = new URL("nexus://auth/handoff");
   deepLink.searchParams.set("error", errorCode);
-  deepLink.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  setNonDefaultNext(deepLink, target);
   return deepLink.toString();
 }
 
 export function buildAuthStartDeepLink(
   provider: OAuthProvider,
   mode: "signin" | "link",
-  nextPath: string
+  target: AuthReturnTarget
 ): string {
   const deepLink = new URL("nexus://auth/start");
   deepLink.searchParams.set("provider", provider);
   deepLink.searchParams.set("mode", mode);
-  deepLink.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  setNonDefaultNext(deepLink, target);
   return deepLink.toString();
 }
 
-export function buildAuthNativeGoogleDeepLink(nextPath: string): string {
+export function buildAuthNativeGoogleDeepLink(
+  target: AuthReturnTarget
+): string {
   const deepLink = new URL("nexus://auth/native");
   deepLink.searchParams.set("provider", "google");
-  deepLink.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  setNonDefaultNext(deepLink, target);
   return deepLink.toString();
 }
 
-export function buildLoginUrlWithError(
+export function buildAuthReturnTargetUrl(
   origin: string,
-  nextPath: string,
-  errorMessage: string
+  target: AuthReturnTarget
 ): URL {
-  const loginUrl = new URL(LOGIN_PATH, origin);
-  loginUrl.searchParams.set("next", normalizeAuthRedirect(nextPath));
-  loginUrl.searchParams.set("error_description", errorMessage);
-  return loginUrl;
+  return new URL(authReturnTargetToHref(target), origin);
 }

@@ -88,8 +88,9 @@ test.describe("authentication", () => {
     });
     const page = await context.newPage();
 
-    await page.goto("/login?next=%2Flibraries");
+    await page.goto("/login?next=%2Fbrowse");
     await runGitHubProviderRoundTrip(page);
+    await expect(page).toHaveURL(/\/browse/);
     await expect(page.getByRole("link", { name: /libraries/i })).toBeVisible();
 
     const cookies = await context.cookies();

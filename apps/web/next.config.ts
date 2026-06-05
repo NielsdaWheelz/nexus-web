@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { getEnv } from "./src/lib/env";
+import { APP_AUTHENTICATED_HOME_HREF } from "./src/lib/routes/defaults";
 
 // Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
 // `next build`, so Vercel never promotes the bad artifact and the last-good deployment keeps
@@ -41,12 +42,12 @@ const nextConfig: NextConfig = {
     ];
   },
 
-  // Redirect root to /libraries
+  // Redirect root to the authenticated app home.
   async redirects() {
     return [
       {
         source: "/",
-        destination: "/libraries",
+        destination: APP_AUTHENTICATED_HOME_HREF,
         permanent: false,
       },
     ];

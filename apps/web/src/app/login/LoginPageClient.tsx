@@ -12,6 +12,8 @@ import { type OAuthProvider } from "@/lib/auth/identities";
 import {
   buildAuthNativeGoogleDeepLink,
   buildAuthStartDeepLink,
+  isDefaultAuthReturnTarget,
+  type AuthReturnTarget,
 } from "@/lib/auth/redirects";
 import styles from "./page.module.css";
 
@@ -20,7 +22,7 @@ type AuthMode = "signin" | "create";
 interface LoginPageClientProps {
   initialFeedback?: FeedbackContent | null;
   initialMode?: AuthMode;
-  nextPath: string;
+  nextPath: AuthReturnTarget;
   isShell: boolean;
 }
 
@@ -73,7 +75,7 @@ function ProviderForm({
   isShell,
 }: {
   provider: OAuthProvider;
-  nextPath: string;
+  nextPath: AuthReturnTarget;
   label: string;
   mark: React.ReactNode;
   isShell: boolean;
@@ -95,7 +97,9 @@ function ProviderForm({
   return (
     <form className={styles.providerForm} action="/auth/oauth" method="get">
       <input type="hidden" name="provider" value={provider} />
-      <input type="hidden" name="next" value={nextPath} />
+      {isDefaultAuthReturnTarget(nextPath) ? null : (
+        <input type="hidden" name="next" value={nextPath} />
+      )}
       <Button variant="secondary" size="lg" type="submit" leadingIcon={mark}>
         {label}
       </Button>
@@ -137,7 +141,9 @@ export default function LoginPageClient({
           action="/auth/password"
         >
           <input type="hidden" name="mode" value={isCreate ? "create" : "signin"} />
-          <input type="hidden" name="next" value={nextPath} />
+          {isDefaultAuthReturnTarget(nextPath) ? null : (
+            <input type="hidden" name="next" value={nextPath} />
+          )}
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Email</span>
             <input

@@ -1,14 +1,26 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
+import UnauthenticatedApiBoundary, {
+  __resetUnauthenticatedApiRedirectForTests,
+} from "@/lib/auth/UnauthenticatedApiBoundary";
 import { libraryResource } from "@/lib/api/resource";
 import { useResource } from "./useResource";
 import { BootstrapHydrationProvider } from "./hydrationCache";
+
+const redirectToLoginForCurrentLocation = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/auth/client-return-target", () => ({
+  redirectToLoginForCurrentLocation,
+}));
 
 describe("useResource", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    redirectToLoginForCurrentLocation.mockReset();
+    __resetUnauthenticatedApiRedirectForTests();
   });
 
   it("is idle when cacheKey is null and does not call load", () => {
@@ -129,6 +141,30 @@ describe("useResource", () => {
       expect(result.current.error.status).toBe(404);
       expect(result.current.error.code).toBe("E_NOT_FOUND");
     }
+  });
+
+  it("hands unauthenticated API errors to the auth boundary", async () => {
+    redirectToLoginForCurrentLocation.mockReturnValue(true);
+    const load = vi.fn(async () => {
+      throw new ApiError(
+        401,
+        "E_UNAUTHENTICATED",
+        "Authentication required"
+      );
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <UnauthenticatedApiBoundary>{children}</UnauthenticatedApiBoundary>
+    );
+
+    const { result } = renderHook(() => useResource({ cacheKey: "k1", load }), {
+      wrapper,
+    });
+
+    await waitFor(() =>
+      expect(redirectToLoginForCurrentLocation).toHaveBeenCalledTimes(1)
+    );
+    expect(result.current.status).toBe("loading");
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   it("retry() from error status restarts the load and recovers", async () => {

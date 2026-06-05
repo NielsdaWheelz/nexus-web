@@ -4,12 +4,20 @@ import userEvent from "@testing-library/user-event";
 import {
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
+import {
+  DEFAULT_AUTH_RETURN_TARGET,
+  parseAuthReturnTarget,
+} from "@/lib/auth/redirects";
 
 import LoginPageClient from "./LoginPageClient";
 
+const SEARCH_TARGET = parseAuthReturnTarget("/search");
+
 describe("LoginPageClient", () => {
   it("renders the Nexus wordmark", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     expect(
       screen.getByRole("heading", { level: 1, name: "Nexus" })
@@ -17,7 +25,9 @@ describe("LoginPageClient", () => {
   });
 
   it("offers a Google and a GitHub sign-in control", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     expect(
       screen.getByRole("button", { name: /continue with google/i })
@@ -28,7 +38,9 @@ describe("LoginPageClient", () => {
   });
 
   it("opens in sign-in mode with email + password, no display name, and a Continue submit", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     const emailInput = screen.getByLabelText(/email/i);
     const form = screen.getByRole("form", { name: /credential sign in/i });
@@ -48,7 +60,9 @@ describe("LoginPageClient", () => {
 
   it("toggles to create-account mode in place when the link is clicked", async () => {
     const user = userEvent.setup();
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     await user.click(
       screen.getByRole("button", { name: /create an account/i })
@@ -67,7 +81,7 @@ describe("LoginPageClient", () => {
   it("opens in create-account mode when initialMode is 'create'", () => {
     render(
       <LoginPageClient
-        nextPath="/libraries"
+        nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialMode="create"
       />
@@ -80,7 +94,7 @@ describe("LoginPageClient", () => {
   });
 
   it("posts sign-in credentials to the password route with the nextPath", () => {
-    render(<LoginPageClient nextPath="/search" isShell={false} />);
+    render(<LoginPageClient nextPath={SEARCH_TARGET} isShell={false} />);
 
     const form = screen.getByRole("form", { name: /credential sign in/i });
     expect(form).toHaveAttribute("method", "post");
@@ -91,10 +105,10 @@ describe("LoginPageClient", () => {
     expect(screen.getByLabelText(/password/i)).toHaveAttribute("name", "password");
   });
 
-  it("posts create-account credentials to the password route with display name", () => {
+  it("posts create-account credentials without default next noise", () => {
     render(
       <LoginPageClient
-        nextPath="/libraries"
+        nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialMode="create"
       />
@@ -106,7 +120,7 @@ describe("LoginPageClient", () => {
     expect(form).toHaveAttribute("method", "post");
     expect(form).toHaveAttribute("action", "/auth/password");
     expect(within(form).getByDisplayValue("create")).toHaveAttribute("name", "mode");
-    expect(within(form).getByDisplayValue("/libraries")).toHaveAttribute("name", "next");
+    expect(within(form).queryByDisplayValue("/libraries")).toBeNull();
     expect(screen.getByLabelText(/display name/i)).toHaveAttribute(
       "name",
       "display_name"
@@ -115,7 +129,9 @@ describe("LoginPageClient", () => {
 
   it("updates the posted mode when the user toggles modes", async () => {
     const user = userEvent.setup();
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     await user.click(
       screen.getByRole("button", { name: /create an account/i })
@@ -129,7 +145,7 @@ describe("LoginPageClient", () => {
   it("renders a calm 'you were signed out' notice for forced sign-out feedback", () => {
     render(
       <LoginPageClient
-        nextPath="/libraries"
+        nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialFeedback={{
           severity: "info",
@@ -148,7 +164,7 @@ describe("LoginPageClient", () => {
   it("renders an OAuth failure as an error alert", () => {
     render(
       <LoginPageClient
-        nextPath="/libraries"
+        nextPath={DEFAULT_AUTH_RETURN_TARGET}
         isShell={false}
         initialFeedback={{
           severity: "error",
@@ -163,14 +179,18 @@ describe("LoginPageClient", () => {
   });
 
   it("renders no feedback when none is given", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("shows public links for the privacy policy and terms of service", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={false} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={false} />
+    );
 
     expect(
       screen.getByRole("link", { name: /privacy policy/i })
@@ -181,24 +201,28 @@ describe("LoginPageClient", () => {
   });
 
   it("renders nexus://auth/start for github when isShell is true", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={true} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={true} />
+    );
 
     expect(
       screen.getByRole("link", { name: /continue with github/i })
     ).toHaveAttribute(
       "href",
-      "nexus://auth/start?provider=github&mode=signin&next=%2Flibraries"
+      "nexus://auth/start?provider=github&mode=signin"
     );
   });
 
   it("renders nexus://auth/native for google when isShell is true", () => {
-    render(<LoginPageClient nextPath="/libraries" isShell={true} />);
+    render(
+      <LoginPageClient nextPath={DEFAULT_AUTH_RETURN_TARGET} isShell={true} />
+    );
 
     expect(
       screen.getByRole("link", { name: /continue with google/i })
     ).toHaveAttribute(
       "href",
-      "nexus://auth/native?provider=google&next=%2Flibraries"
+      "nexus://auth/native?provider=google"
     );
   });
 });

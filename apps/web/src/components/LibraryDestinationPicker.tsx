@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, Plus, X } from "lucide-react";
 import Input from "@/components/ui/Input";
 import LibraryColorDot from "@/components/LibraryColorDot";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   cachedLibraryDestinations,
   createLibrary,
@@ -85,6 +86,7 @@ export default function LibraryDestinationPicker({
         })
         .catch((err) => {
           if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+          if (handleUnauthenticatedApiError(err)) return;
           setError(err instanceof Error ? err.message : "Could not load libraries");
           setResults([]);
         })
@@ -186,6 +188,7 @@ export default function LibraryDestinationPicker({
       setActiveId(destination.id);
       inputRef.current?.focus();
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(err instanceof Error ? err.message : "Could not create library");
     } finally {
       setCreating(false);

@@ -3,9 +3,8 @@ import { redirect } from "next/navigation";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import {
-  DEFAULT_AUTH_REDIRECT,
   getFirstSearchParamValue,
-  normalizeAuthRedirect,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import {
   AUTH_ENDED_FEEDBACK_COOKIE,
@@ -38,10 +37,7 @@ function toInitialFeedback(message: string | null): FeedbackContent | null {
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
-  const nextPath = normalizeAuthRedirect(
-    getFirstSearchParamValue(params.next),
-    DEFAULT_AUTH_REDIRECT
-  );
+  const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
 
   const cookieStore = await cookies();
   const requestCookies = cookieStore.getAll();

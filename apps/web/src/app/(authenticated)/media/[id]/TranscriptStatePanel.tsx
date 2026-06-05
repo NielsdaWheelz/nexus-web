@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { toFeedback } from "@/components/feedback/Feedback";
@@ -168,6 +169,7 @@ export default function TranscriptStatePanel({
         });
       } catch (error) {
         if (!controller.signal.aborted && !isAbortError(error)) {
+          if (handleUnauthenticatedApiError(error)) return;
           setTranscriptRequestForecast(null);
         }
       }
@@ -184,7 +186,8 @@ export default function TranscriptStatePanel({
   useIntervalPoll({
     enabled: shouldPollTranscriptProvisioning(transcriptState),
     onPoll: async () => {
-      await refreshTranscriptState().catch(() => {
+      await refreshTranscriptState().catch((error) => {
+        if (handleUnauthenticatedApiError(error)) return;
         // Keep the request UI responsive even if one poll cycle fails.
       });
     },
@@ -236,6 +239,7 @@ export default function TranscriptStatePanel({
         await refreshTranscriptState();
       }
     } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       setRequestError(toFeedback(error, { fallback: "Failed to request transcript." }).title);
     } finally {
       setTranscriptRequestInFlight(false);

@@ -173,7 +173,7 @@ class MainActivityTest {
 
             scenario.onActivity { activity ->
                 activity.startAuthFlow(
-                    Uri.parse("nexus://auth/start?provider=github&mode=signin&next=%2Flibraries")
+                    Uri.parse("nexus://auth/start?provider=github&mode=signin&next=%2Fbrowse")
                 )
             }
 
@@ -187,8 +187,42 @@ class MainActivityTest {
                                 "provider" to "github",
                                 "mode" to "signin",
                                 "flow" to "handoff",
-                                "next" to "/libraries"
+                                "next" to "/browse"
                             ),
+                            hexParam = "hc"
+                        )
+                    )
+                )
+            )
+        }
+    }
+
+    @Test
+    fun nexusAuthStartDefaultsMissingNextToLibraries() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
+
+            Intents.init()
+            Intents.intending(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
+            ).respondWith(ActivityResult(Activity.RESULT_OK, null))
+
+            scenario.onActivity { activity ->
+                activity.startAuthFlow(Uri.parse("nexus://auth/start?provider=github&mode=signin"))
+            }
+
+            Intents.intended(
+                allOf(
+                    hasAction(Intent.ACTION_VIEW),
+                    hasData(
+                        hasOauthHandoffUriParts(
+                            prefix = oauthPrefix,
+                            requiredParams = mapOf(
+                                "provider" to "github",
+                                "mode" to "signin",
+                                "flow" to "handoff"
+                            ),
+                            absentParams = setOf("next"),
                             hexParam = "hc"
                         )
                     )
@@ -484,6 +518,7 @@ class MainActivityTest {
     private fun hasOauthHandoffUriParts(
         prefix: String,
         requiredParams: Map<String, String>,
+        absentParams: Set<String> = emptySet(),
         hexParam: String
     ): Matcher<Uri> = object : TypeSafeMatcher<Uri>() {
         private val hexPattern = Regex("^[0-9a-f]{64}$")
@@ -493,6 +528,9 @@ class MainActivityTest {
             for ((name, value) in requiredParams) {
                 if (item.getQueryParameter(name) != value) return false
             }
+            for (name in absentParams) {
+                if (item.getQueryParameter(name) != null) return false
+            }
             val hex = item.getQueryParameter(hexParam) ?: return false
             return hexPattern.matches(hex)
         }
@@ -501,6 +539,7 @@ class MainActivityTest {
             description
                 .appendText("Uri starting with ").appendValue(prefix)
                 .appendText(", params ").appendValue(requiredParams)
+                .appendText(", absent params ").appendValue(absentParams)
                 .appendText(", and ").appendText(hexParam).appendText(" matching 64-char hex")
         }
     }

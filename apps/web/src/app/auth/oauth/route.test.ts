@@ -108,7 +108,7 @@ describe("GET /auth/oauth", () => {
     expect(signInWithOAuthSpy).toHaveBeenCalledWith({
       provider: "github",
       options: {
-        redirectTo: "http://localhost:3000/auth/callback?next=%2Flibraries",
+        redirectTo: "http://localhost:3000/auth/callback",
       },
     });
   });
@@ -144,7 +144,7 @@ describe("GET /auth/oauth", () => {
     expect(response.status).toBe(307);
     const location = new URL(response.headers.get("location")!);
     expect(location.pathname).toBe("/login");
-    expect(location.searchParams.get("next")).toBe("/libraries");
+    expect(location.searchParams.has("next")).toBe(false);
     expect(location.searchParams.get("error_description")).toBe(
       OAUTH_START_FAILURE_MESSAGE
     );
@@ -196,7 +196,7 @@ describe("GET /auth/oauth", () => {
     );
     expect(redirectTo.origin).toBe("http://localhost:3000");
     expect(redirectTo.pathname).toBe("/auth/callback");
-    expect(redirectTo.searchParams.get("next")).toBe("/libraries");
+    expect(redirectTo.searchParams.has("next")).toBe(false);
     expect(redirectTo.searchParams.get("flow")).toBe("handoff");
     expect(redirectTo.searchParams.get("hc")).toBe(challenge);
   });
@@ -210,7 +210,7 @@ describe("GET /auth/oauth", () => {
       signInWithOAuthSpy.mock.calls[0][0].options.redirectTo
     );
     expect(redirectTo.pathname).toBe("/auth/callback");
-    expect(redirectTo.searchParams.get("next")).toBe("/libraries");
+    expect(redirectTo.searchParams.has("next")).toBe(false);
     expect(redirectTo.searchParams.has("flow")).toBe(false);
     expect(redirectTo.searchParams.has("hc")).toBe(false);
   });

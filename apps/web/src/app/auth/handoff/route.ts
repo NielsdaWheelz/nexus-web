@@ -8,8 +8,9 @@ import {
   AUTH_CALLBACK_FAILURE_MESSAGE,
 } from "@/lib/auth/messages";
 import {
-  buildLoginUrlWithError,
-  normalizeAuthRedirect,
+  buildAuthReturnTargetUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
@@ -45,17 +46,15 @@ export async function GET(request: Request): Promise<NextResponse> {
     const code = requestUrl.searchParams.get("code");
     const hv = requestUrl.searchParams.get("hv");
     const errorCode = requestUrl.searchParams.get("error");
-    const nextPath = normalizeAuthRedirect(requestUrl.searchParams.get("next"));
+    const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
     const redirectOrigin = resolveCallbackRedirectOrigin(request, requestUrl);
 
     if (errorCode) {
       return noStore(
         NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            publicErrorMessage(errorCode)
-          ),
+          buildLoginUrl(redirectOrigin, target, {
+            errorDescription: publicErrorMessage(errorCode),
+          }),
           { status: TEMPORARY_REDIRECT }
         )
       );
@@ -64,11 +63,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (!code || !hv) {
       return noStore(
         NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            AUTH_CALLBACK_FAILURE_MESSAGE
-          ),
+          buildLoginUrl(redirectOrigin, target, {
+            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
+          }),
           { status: TEMPORARY_REDIRECT }
         )
       );
@@ -96,11 +93,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       // route doesn't leak which of expired/used/wrong-verifier occurred.
       return noStore(
         NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            AUTH_CALLBACK_FAILURE_MESSAGE
-          ),
+          buildLoginUrl(redirectOrigin, target, {
+            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
+          }),
           { status: TEMPORARY_REDIRECT }
         )
       );
@@ -109,11 +104,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (!consumeResponse.ok) {
       return noStore(
         NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            AUTH_CALLBACK_FAILURE_MESSAGE
-          ),
+          buildLoginUrl(redirectOrigin, target, {
+            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
+          }),
           { status: TEMPORARY_REDIRECT }
         )
       );
@@ -125,11 +118,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (typeof accessToken !== "string" || typeof refreshToken !== "string") {
       return noStore(
         NextResponse.redirect(
-          buildLoginUrlWithError(
-            redirectOrigin,
-            nextPath,
-            AUTH_CALLBACK_FAILURE_MESSAGE
-          ),
+          buildLoginUrl(redirectOrigin, target, {
+            errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
+          }),
           { status: TEMPORARY_REDIRECT }
         )
       );
@@ -146,7 +137,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     return applyCookies(
       noStore(
-        NextResponse.redirect(new URL(nextPath, redirectOrigin), {
+        NextResponse.redirect(buildAuthReturnTargetUrl(redirectOrigin, target), {
           status: TEMPORARY_REDIRECT,
         })
       )

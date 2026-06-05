@@ -15,6 +15,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
@@ -190,6 +191,7 @@ export default function BrowsePaneBody() {
       );
       openInNewPane?.(`/podcasts/${podcastId}`, titleHint);
     } catch (openError) {
+      if (handleUnauthenticatedApiError(openError)) return;
       setActionError(
         toFeedback(openError, { fallback: "Failed to open podcast" }),
       );
@@ -226,6 +228,7 @@ export default function BrowsePaneBody() {
         ),
       );
     } catch (followError) {
+      if (handleUnauthenticatedApiError(followError)) return;
       setActionError(
         toFeedback(followError, { fallback: "Failed to follow podcast" }),
       );
@@ -272,6 +275,7 @@ export default function BrowsePaneBody() {
       );
       openInNewPane?.(`/media/${added.mediaId}`, result.title);
     } catch (addError) {
+      if (handleUnauthenticatedApiError(addError)) return;
       setActionError(
         toFeedback(addError, { fallback: "Failed to add result" }),
       );
@@ -305,6 +309,7 @@ export default function BrowsePaneBody() {
         ),
       );
     } catch (loadMoreError) {
+      if (handleUnauthenticatedApiError(loadMoreError)) return;
       setActionError(
         toFeedback(loadMoreError, { fallback: "Failed to load more results" }),
       );

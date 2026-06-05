@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-
 import {
   KEEP_ONE_SIGN_IN_METHOD_MESSAGE,
   PASSWORD_CHANGE_FAILURE_MESSAGE,
@@ -15,42 +13,7 @@ import {
   mayUnlinkIdentity,
   normalizeLinkedIdentities,
 } from "@/lib/auth/identities";
-import {
-  signInWithPasswordFlow,
-  signUpWithPasswordFlow,
-} from "@/lib/auth/password-flow";
 import { createClient } from "@/lib/supabase/server";
-
-export async function signInWithPasswordAction(input: {
-  email: string;
-  password: string;
-  nextPath?: string;
-}): Promise<{ ok: false; error: string }> {
-  const supabase = await createClient();
-  const result = await signInWithPasswordFlow(supabase, input);
-  if (!result.ok) {
-    return result;
-  }
-  const nextPath = input.nextPath;
-  const safeNextPath =
-    nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//")
-      ? nextPath
-      : "/libraries";
-  redirect(safeNextPath);
-}
-
-export async function signUpWithPasswordAction(input: {
-  email: string;
-  password: string;
-  displayName: string;
-}): Promise<{ ok: false; error: string }> {
-  const supabase = await createClient();
-  const result = await signUpWithPasswordFlow(supabase, input);
-  if (!result.ok) {
-    return result;
-  }
-  redirect("/libraries");
-}
 
 export async function setPasswordAction(input: {
   password: string;

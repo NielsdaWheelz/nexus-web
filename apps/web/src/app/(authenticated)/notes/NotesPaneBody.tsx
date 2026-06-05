@@ -7,6 +7,7 @@ import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
 import { useResource } from "@/lib/api/useResource";
@@ -55,6 +56,7 @@ export default function NotesPaneBody() {
       setTitle("");
       router.push(`/pages/${page.id}`);
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     }
   }, [router, title]);

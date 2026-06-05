@@ -20,6 +20,7 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { useResource } from "@/lib/api/useResource";
@@ -353,6 +354,7 @@ export default function PagePaneBody({
         }
         setInitialDoc(doc);
       } catch (error: unknown) {
+        if (handleUnauthenticatedApiError(error)) return;
         setFeedback(toFeedback(error, { fallback: "Note could not be loaded." }));
       }
     },
@@ -391,6 +393,7 @@ export default function PagePaneBody({
         setPage(updated);
         setTitleDraft(updated.title);
       } catch (error: unknown) {
+        if (handleUnauthenticatedApiError(error)) return;
         setFeedback(toFeedback(error, { fallback: "Title could not be saved." }));
       }
     },
@@ -407,6 +410,7 @@ export default function PagePaneBody({
       setInitialDoc(doc);
       setEditorResetVersion((version) => version + 1);
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Latest note could not be loaded." }));
     } finally {
       setConflictAction(null);
@@ -420,6 +424,7 @@ export default function PagePaneBody({
       await loadServerDocument();
       flushSession();
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Latest note revisions could not be loaded." }));
     } finally {
       setConflictAction(null);
@@ -444,6 +449,7 @@ export default function PagePaneBody({
         const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
         href = resolved?.route ?? null;
       } catch (error: unknown) {
+        if (handleUnauthenticatedApiError(error)) return;
         setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
         return;
       }
@@ -464,6 +470,7 @@ export default function PagePaneBody({
       await pinObjectToNavbar("page", pinPageId);
       toast.show({ severity: "success", title: "Page pinned to navbar." });
     } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
       toast.show(
         toFeedback(error, {
           fallback: focusBlockId ? "Note could not be pinned." : "Page could not be pinned.",

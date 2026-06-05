@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   addPodcastToLibrary,
@@ -37,6 +38,7 @@ export function usePodcastSubscriptionActions(
       try {
         return await fetchPodcastLibraries(podcastId);
       } catch (loadError) {
+        if (handleUnauthenticatedApiError(loadError)) return null;
         onError(
           toFeedback(loadError, { fallback: "Failed to load podcast libraries" }),
         );
@@ -58,6 +60,7 @@ export function usePodcastSubscriptionActions(
         await addPodcastToLibrary(podcastId, libraryId);
         onSuccess();
       } catch (mutationError) {
+        if (handleUnauthenticatedApiError(mutationError)) return;
         onError(
           toFeedback(mutationError, {
             fallback: "Failed to add podcast to library",
@@ -82,6 +85,7 @@ export function usePodcastSubscriptionActions(
         await removePodcastFromLibrary(podcastId, libraryId);
         onSuccess();
       } catch (mutationError) {
+        if (handleUnauthenticatedApiError(mutationError)) return;
         onError(
           toFeedback(mutationError, {
             fallback: "Failed to remove podcast from library",
@@ -107,6 +111,7 @@ export function usePodcastSubscriptionActions(
         const result = await refreshPodcastSubscriptionSync(podcastId);
         onSuccess(getPodcastSubscriptionSyncPatch(result), result);
       } catch (refreshError) {
+        if (handleUnauthenticatedApiError(refreshError)) return;
         onError(
           toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }),
         );
@@ -142,6 +147,7 @@ export function usePodcastSubscriptionActions(
         onSuccess(libraries);
         return true;
       } catch (unsubscribeError) {
+        if (handleUnauthenticatedApiError(unsubscribeError)) return false;
         onError(
           toFeedback(unsubscribeError, {
             fallback: "Failed to unsubscribe from podcast",

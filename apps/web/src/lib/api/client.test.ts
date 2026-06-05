@@ -152,7 +152,7 @@ describe("apiFetch", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("redirects browser callers to login on unauthenticated API responses", async () => {
+  it("throws unauthenticated API errors without navigating", async () => {
     const assign = vi.fn();
     vi.stubGlobal("window", {
       location: {
@@ -183,9 +183,7 @@ describe("apiFetch", () => {
         "request-1"
       )
     );
-    expect(assign).toHaveBeenCalledWith(
-      "http://localhost:3000/login?next=%2Flibraries%3Fview%3Dmine"
-    );
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("posts form data without overriding multipart headers", async () => {

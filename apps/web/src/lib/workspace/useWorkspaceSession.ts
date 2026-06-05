@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { getInstallationId } from "@/lib/workspace/deviceId";
 import {
@@ -75,7 +76,8 @@ export function useWorkspaceSession(
         if (restored && workspaceStatesEqual(stateRef.current, baseline)) {
           lastSavedRef.current = applyRestoredStateRef.current(restored, baseline);
         }
-      } catch {
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
         // Network or parse failure — proceed without restoring.
       }
       if (!cancelled) {
@@ -104,7 +106,9 @@ export function useWorkspaceSession(
       debounceRef.current = null;
       const snapshot = stateRef.current;
       lastSavedRef.current = snapshot;
-      void putWorkspaceSession(getInstallationId(), snapshot).catch(() => {});
+      void putWorkspaceSession(getInstallationId(), snapshot).catch((error) => {
+        handleUnauthenticatedApiError(error);
+      });
     }, WORKSPACE_SESSION_SYNC_DEBOUNCE_MS);
   }, [captureArmed, state]);
 

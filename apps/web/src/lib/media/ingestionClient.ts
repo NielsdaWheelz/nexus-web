@@ -1,6 +1,6 @@
 "use client";
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isUnauthenticatedApiError } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 
 type FileKind = "pdf" | "epub";
@@ -168,7 +168,8 @@ export async function uploadIngestFile({
     try {
       const failedIngest = await confirmUploadedMedia(init.data.media_id, libraryIds);
       return mapIngestResponse(failedIngest);
-    } catch {
+    } catch (error) {
+      if (isUnauthenticatedApiError(error)) throw error;
       return failedUploadResult(init);
     }
   }
@@ -176,7 +177,8 @@ export async function uploadIngestFile({
   let ingest: IngestResponse;
   try {
     ingest = await confirmUploadedMedia(init.data.media_id, libraryIds);
-  } catch {
+  } catch (error) {
+    if (isUnauthenticatedApiError(error)) throw error;
     return failedUploadResult(init);
   }
 

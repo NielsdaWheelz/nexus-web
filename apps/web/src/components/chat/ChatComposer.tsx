@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Quote, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
 import type {
@@ -166,6 +167,7 @@ export default function ChatComposer({
       onChatRunCreated?.(runResponse.data);
       sent = true;
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
     } finally {
       setSending(false);

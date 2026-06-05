@@ -5,6 +5,7 @@ import MediaImage from "@/components/ui/MediaImage";
 import { formatPlaybackSpeedLabel } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { pluralize } from "@/lib/text/pluralize";
@@ -183,6 +184,7 @@ export default function PodcastsPaneBody() {
         if (!cancelled) setLibraries(data);
       })
       .catch((err) => {
+        if (handleUnauthenticatedApiError(err)) return;
         if (!cancelled) {
           setError(toFeedback(err, { fallback: "Failed to load libraries" }));
         }
@@ -236,6 +238,7 @@ export default function PodcastsPaneBody() {
         if (controller.signal.aborted || subscriptionRequestIdRef.current !== requestId) {
           return;
         }
+        if (handleUnauthenticatedApiError(loadError)) return;
         setError(toFeedback(loadError, { fallback: "Failed to load followed podcasts" }));
       } finally {
         if (subscriptionRequestIdRef.current !== requestId) {

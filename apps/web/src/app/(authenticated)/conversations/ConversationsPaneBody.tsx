@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   conversationsInitialResource,
   type NoResourceParams,
@@ -67,6 +68,7 @@ export default function ConversationsPaneBody() {
       setNextCursor(response.page.next_cursor);
       setError(null);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       setError(toFeedback(err, { fallback: "Failed to load conversations" }));
     } finally {
       setLoadingMore(false);
@@ -80,6 +82,7 @@ export default function ConversationsPaneBody() {
         await apiFetch(`/api/conversations/${convId}`, { method: "DELETE" });
         setConversations((prev) => prev.filter((c) => c.id !== convId));
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to delete conversation" }));
       }
     },

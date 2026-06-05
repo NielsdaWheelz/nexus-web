@@ -31,6 +31,7 @@ import {
 import type { RefObject } from "react";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
@@ -300,6 +301,7 @@ export function useConversation(
           void tailChatRunRef.current(runData);
         }
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to load active chat runs:", err);
       }
     },
@@ -351,6 +353,7 @@ export function useConversation(
         if (conversationIdRef.current !== id) return;
         applyConversationTree(response.data);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         if (reportError) {
           setError(toFeedback(err, { fallback: "Failed to refresh forks" }));
         } else {
@@ -382,6 +385,7 @@ export function useConversation(
           );
         } catch (err) {
           if (isAbortError(err) || signal.aborted) throw err;
+          if (handleUnauthenticatedApiError(err)) throw err;
           console.error("Failed to load active chat runs:", err);
         }
         return {
@@ -574,6 +578,7 @@ export function useConversation(
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
       console.error("Failed to load older messages:", err);
     }
   }, [branching, conversationId, olderCursor]);
@@ -674,6 +679,7 @@ export function useConversation(
         );
         onChatRunCreated(response.data);
       } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to retry response" }));
       } finally {
         retryingAssistantMessageIds.remove(assistantMessageId);
@@ -755,6 +761,7 @@ export function useConversation(
         );
       } catch (err) {
         if (activePathSwitchSeqRef.current !== switchSeq) return;
+        if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
         scrollRef.current?.captureAnchor(anchorMessageId);
         setMessages(previous.messages);

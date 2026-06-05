@@ -5,8 +5,11 @@ import {
 } from "@/lib/auth/messages";
 import { noStore } from "@/lib/auth/no-store";
 import {
-  DEFAULT_AUTH_REDIRECT,
-  normalizeAuthRedirect,
+  DEFAULT_AUTH_RETURN_TARGET,
+  type AuthReturnTarget,
+  buildAuthReturnTargetUrl,
+  buildLoginUrl,
+  parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import {
   signInWithPasswordFlow,
@@ -35,22 +38,18 @@ function redirectToLogin(
   requestUrl: URL,
   {
     mode,
-    nextPath,
+    target,
     error,
   }: {
     mode: "signin" | "create";
-    nextPath: string;
+    target: AuthReturnTarget;
     error: string;
   },
 ): NextResponse {
-  const loginUrl = new URL("/login", requestUrl.origin);
-  if (mode === "create") {
-    loginUrl.searchParams.set("mode", "create");
-  }
-  if (nextPath !== DEFAULT_AUTH_REDIRECT) {
-    loginUrl.searchParams.set("next", nextPath);
-  }
-  loginUrl.searchParams.set("error_description", error);
+  const loginUrl = buildLoginUrl(requestUrl.origin, target, {
+    mode: mode === "create" ? "create" : undefined,
+    errorDescription: error,
+  });
   return noStore(NextResponse.redirect(loginUrl, { status: SEE_OTHER }));
 }
 
@@ -62,10 +61,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const formData = await request.formData();
   const mode = formString(formData, "mode") === "create" ? "create" : "signin";
-  const nextPath = normalizeAuthRedirect(
-    formString(formData, "next"),
-    DEFAULT_AUTH_REDIRECT,
-  );
+  const target = parseAuthReturnTarget(formString(formData, "next"));
   const email = formString(formData, "email");
   const password = formString(formData, "password");
   const displayName = formString(formData, "display_name");
@@ -79,15 +75,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!result.ok) {
       return redirectToLogin(requestUrl, {
         mode,
-        nextPath,
+        target,
         error: result.error || PASSWORD_SIGN_IN_FAILURE_MESSAGE,
       });
     }
 
     await auth.settlePendingCookieWrites();
-    const response = NextResponse.redirect(new URL(nextPath, requestUrl.origin), {
-      status: SEE_OTHER,
-    });
+    const response = NextResponse.redirect(
+      buildAuthReturnTargetUrl(requestUrl.origin, target),
+      { status: SEE_OTHER },
+    );
     return auth.applyCookies(noStore(response));
   }
 
@@ -99,14 +96,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!result.ok) {
     return redirectToLogin(requestUrl, {
       mode,
-      nextPath,
+      target,
       error: result.error || PASSWORD_SIGN_UP_FAILURE_MESSAGE,
     });
   }
 
   await auth.settlePendingCookieWrites();
-  const response = NextResponse.redirect(new URL(DEFAULT_AUTH_REDIRECT, requestUrl.origin), {
-    status: SEE_OTHER,
-  });
+  const response = NextResponse.redirect(
+    buildAuthReturnTargetUrl(requestUrl.origin, DEFAULT_AUTH_RETURN_TARGET),
+    { status: SEE_OTHER },
+  );
   return auth.applyCookies(noStore(response));
 }

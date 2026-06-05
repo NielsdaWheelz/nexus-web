@@ -156,7 +156,7 @@ describe("/auth/refresh route", () => {
       expect(response.status).toBe(307);
       const location = new URL(response.headers.get("location")!);
       expect(location.pathname).toBe("/login");
-      expect(location.searchParams.get("next")).toBe("/libraries");
+      expect(location.searchParams.has("next")).toBe(false);
       expect(location.searchParams.get("error_description")).toBe(
         SESSION_ENDED_MESSAGE
       );
