@@ -50,7 +50,7 @@ from tests.factories import (
     get_user_default_library,
 )
 from tests.helpers import create_test_user_id
-from tests.test_resource_resolver import _add_fragment, _make_highlight_with_anchor, _make_pdf
+from tests.test_resource_resolver import _make_highlight_with_anchor, _make_pdf
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -490,10 +490,15 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
         conversation_id = create_test_conversation(session, user_id)
         library_id = get_user_default_library(session, user_id)
         assert library_id is not None
-        media_id = create_test_media_in_library(
-            session, user_id, library_id, title="Readable Article"
+        media_id = create_searchable_media(session, user_id, title="Readable Article")
+        fragment = (
+            session.query(Fragment)
+            .filter(Fragment.media_id == media_id)
+            .order_by(Fragment.idx.asc(), Fragment.id.asc())
+            .first()
         )
-        fragment_id = _add_fragment(session, media_id, idx=0, text="A readable section body.")
+        assert fragment is not None, "create_searchable_media should produce a fragment"
+        fragment_id = fragment.id
         pdf_media_id = _make_pdf(session, library_id, pages=["PDF page one. "])
         _attach(session, conversation_id, f"media:{media_id}")
         _attach(session, conversation_id, f"media:{pdf_media_id}")
