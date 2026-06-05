@@ -20,9 +20,9 @@ from tests.real_media.conftest import (
     capture_nasa_water_article,
     ensure_real_media_prerequisites,
     grant_ai_plus,
-    ingest_web_article_fixture_with_dedupe_resolution,
     register_background_job_cleanup,
     register_media_cleanup,
+    run_web_article_source_fixture_with_dedupe_resolution,
     write_trace,
 )
 from tests.utils.db import DirectSessionManager
@@ -59,7 +59,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     media_id = UUID(create_response.json()["data"]["media_id"])
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    media_id, first_ingest_result = ingest_web_article_fixture_with_dedupe_resolution(
+    media_id, first_ingest_result = run_web_article_source_fixture_with_dedupe_resolution(
         direct_db,
         media_id,
         user_id,
@@ -73,7 +73,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     refresh_response = auth_client.post(f"/media/{media_id}/refresh", headers=headers)
     assert refresh_response.status_code == 202, refresh_response.text
     assert refresh_response.json()["data"]["ingest_enqueued"] is True, refresh_response.json()
-    media_id, result = ingest_web_article_fixture_with_dedupe_resolution(
+    media_id, result = run_web_article_source_fixture_with_dedupe_resolution(
         direct_db,
         media_id,
         user_id,

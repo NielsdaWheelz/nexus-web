@@ -126,12 +126,12 @@ def capture_nasa_water_article(
     media_id = UUID(data["media_id"])
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    result = _run_source_attempt_for_media(direct_db, media_id)
+    result = run_source_attempt_for_media(direct_db, media_id)
     assert result["status"] == "success", result
     return media_id
 
 
-def ingest_web_article_fixture_with_dedupe_resolution(
+def run_web_article_source_fixture_with_dedupe_resolution(
     direct_db: DirectSessionManager,
     media_id: UUID,
     user_id: UUID,
@@ -145,7 +145,7 @@ def ingest_web_article_fixture_with_dedupe_resolution(
     loser. The real-media tests should exercise that contract instead of
     assuming a pristine database.
     """
-    result = _run_source_attempt_for_media(direct_db, media_id)
+    result = run_source_attempt_for_media(direct_db, media_id)
     status = result.get("status")
     if status == "success":
         return media_id, result
@@ -197,7 +197,7 @@ def ingest_web_article_fixture_with_dedupe_resolution(
     }
 
 
-def _run_source_attempt_for_media(
+def run_source_attempt_for_media(
     direct_db: DirectSessionManager,
     media_id: UUID,
 ) -> dict[str, object]:
@@ -256,7 +256,7 @@ def create_nasa_captioned_video(
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
 
-    result = _run_source_attempt_for_media(direct_db, media_id)
+    result = run_source_attempt_for_media(direct_db, media_id)
     if result["status"] == "skipped":
         assert result.get("reason") == "already_ready", result
         with direct_db.session() as session:

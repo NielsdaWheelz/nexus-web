@@ -772,6 +772,9 @@ a silent non-enqueued success.
   `python/tests/test_reconcile_stale_ingest_media.py`, and focused media tests
   - owner-level behavior tests for source acceptance, post-acceptance failures,
     retry/refresh, stale recovery, and upload/capture boundaries.
+- `python/scripts/seed_real_media_e2e.py` and `python/tests/real_media/*`
+  - real-media upload/capture seed and trace coverage run the durable source
+    attempt owner instead of bypassing it through direct PDF/EPUB task calls.
 - `python/tests/test_media_source_attempts_migration.py` or migration tests in
   `test_migrations.py`.
 - `apps/web/src/lib/media/sourceIngestClient.ts`
@@ -1087,7 +1090,8 @@ Grep gates:
 
 ```sh
 rg -n "ingest_web_article|ingest_youtube_video|ingest_pdf|ingest_epub" \
-  python/nexus/jobs python/nexus/config.py deploy/env .env.example
+  python/nexus/jobs python/nexus/config.py python/scripts/seed_real_media_e2e.py \
+  python/tests/real_media deploy/env .env.example
 rg -n "thread:|provider_id = '[0-9]+'" python/nexus python/tests
 rg -n "retryClient" apps/web/src
 ```

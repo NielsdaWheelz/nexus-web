@@ -23,9 +23,10 @@ from tests.real_media.conftest import (
     create_nasa_captioned_video,
     create_nasa_podcast_episode,
     ensure_real_media_prerequisites,
-    ingest_web_article_fixture_with_dedupe_resolution,
     register_background_job_cleanup,
     register_media_cleanup,
+    run_source_attempt_for_media,
+    run_web_article_source_fixture_with_dedupe_resolution,
     upload_file_media,
     write_trace,
 )
@@ -68,9 +69,7 @@ def test_real_pdf_upload_ingest_indexes_searches_and_resolves_evidence(
     )
 
     try:
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        result = ingest_pdf(str(media_id), request_id="real-media-pdf")
+        result = run_source_attempt_for_media(direct_db, media_id)
         assert result["status"] == "success", result
         assert result["has_text"] is True, result
 
@@ -128,9 +127,7 @@ def test_real_scanned_pdf_upload_ingest_marks_ocr_required_without_index_fallbac
     )
 
     try:
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        result = ingest_pdf(str(media_id), request_id="real-media-scanned-pdf")
+        result = run_source_attempt_for_media(direct_db, media_id)
         assert result["status"] == "success", result
         assert result["has_text"] is False, result
 
@@ -189,9 +186,7 @@ def test_real_epub_upload_ingest_indexes_searches_and_resolves_evidence(
     )
 
     try:
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        result = ingest_epub(str(media_id), request_id="real-media-epub")
+        result = run_source_attempt_for_media(direct_db, media_id)
         assert result["status"] == "success", result
         assert result["chapter_count"] > 0, result
 
@@ -274,7 +269,7 @@ def test_real_url_web_article_indexes_through_provider_boundary(
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
 
-    media_id, result = ingest_web_article_fixture_with_dedupe_resolution(
+    media_id, result = run_web_article_source_fixture_with_dedupe_resolution(
         direct_db,
         media_id,
         user_id,

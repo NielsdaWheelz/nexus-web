@@ -1,8 +1,9 @@
 """Seed the strict Playwright real-media corpus.
 
-The seed uses the same upload, capture, URL, ingest task, transcript indexing,
-storage, and embedding paths exercised by the backend real-media tests. It
-writes only ids, hashes, and short expected needles to e2e/.seed/real-media.json.
+The seed uses the same upload, capture, URL, durable source-attempt worker,
+transcript indexing, storage, and embedding paths exercised by the backend
+real-media tests. It writes only ids, hashes, and short expected needles to
+e2e/.seed/real-media.json.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from tests.real_media.conftest import (
     create_nasa_captioned_video,
     create_nasa_podcast_episode,
     grant_ai_plus,
+    run_source_attempt_for_media,
 )
 from tests.utils.db import DirectSessionManager
 
@@ -180,10 +182,8 @@ def main() -> None:
                 content_type="application/pdf",
                 payload=pdf_bytes,
             )
-            from nexus.tasks.ingest_pdf import ingest_pdf
-
             if not _media_has_index_status(engine, pdf_media_id, "ready"):
-                pdf_result = ingest_pdf(str(pdf_media_id), request_id="real-media-e2e-pdf")
+                pdf_result = run_source_attempt_for_media(direct_db, pdf_media_id)
                 if pdf_result.get("status") != "success" or pdf_result.get("has_text") is not True:
                     raise RuntimeError(f"PDF seed ingest failed: {pdf_result}")
 
@@ -205,10 +205,7 @@ def main() -> None:
                 payload=scanned_pdf_bytes,
             )
             if not _media_has_index_status(engine, scanned_pdf_media_id, "ocr_required"):
-                scanned_pdf_result = ingest_pdf(
-                    str(scanned_pdf_media_id),
-                    request_id="real-media-e2e-scanned-pdf",
-                )
+                scanned_pdf_result = run_source_attempt_for_media(direct_db, scanned_pdf_media_id)
                 if (
                     scanned_pdf_result.get("status") != "success"
                     or scanned_pdf_result.get("has_text") is not False
@@ -227,10 +224,8 @@ def main() -> None:
                 content_type="application/epub+zip",
                 payload=epub_bytes,
             )
-            from nexus.tasks.ingest_epub import ingest_epub
-
             if not _media_has_index_status(engine, epub_media_id, "ready"):
-                epub_result = ingest_epub(str(epub_media_id), request_id="real-media-e2e-epub")
+                epub_result = run_source_attempt_for_media(direct_db, epub_media_id)
                 if (
                     epub_result.get("status") != "success"
                     or int(epub_result.get("chapter_count") or 0) == 0
@@ -253,7 +248,7 @@ def main() -> None:
                 raise RuntimeError(f"URL article seed create failed: {web_url_response.text}")
             web_url_media_id = UUID(web_url_response.json()["data"]["media_id"])
 
-            web_url_result = _run_source_attempt_for_media(direct_db, web_url_media_id)
+            web_url_result = run_source_attempt_for_media(direct_db, web_url_media_id)
             if web_url_result.get("status") == "deduped":
                 canonical_url = web_url_result.get("canonical_url")
                 if not isinstance(canonical_url, str) or not canonical_url:
@@ -771,41 +766,6 @@ def _upload_seed_file_media(
     if confirm_response.status_code != 200:
         raise RuntimeError(f"Upload confirm failed for {filename}: {confirm_response.text}")
     return UUID(confirm_response.json()["data"]["media_id"])
-
-
-def _run_source_attempt_for_media(
-    direct_db: DirectSessionManager,
-    media_id: UUID,
-) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
-
-    with direct_db.session() as session:
-        row = (
-            session.execute(
-                text(
-                    """
-                    SELECT payload
-                    FROM background_jobs
-                    WHERE kind = 'ingest_media_source'
-                      AND payload->>'media_id' = :media_id
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": str(media_id)},
-            )
-            .mappings()
-            .one()
-        )
-    payload = row["payload"]
-    with direct_db.session() as session:
-        return run_source_attempt(
-            db=session,
-            media_id=UUID(payload["media_id"]),
-            attempt_id=UUID(payload["attempt_id"]),
-            actor_user_id=UUID(payload["actor_user_id"]),
-            request_id=payload.get("request_id"),
-        )
 
 
 def _real_auth_headers(supabase_url: str, supabase_auth_admin_key: str) -> dict[str, str]:

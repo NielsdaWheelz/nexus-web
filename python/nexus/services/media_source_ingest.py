@@ -2212,7 +2212,7 @@ def _run_remote_file(
         media_file.size_bytes = fetched.size_bytes
     db.commit()
 
-    return _materialize_existing_file_source(db, media_id, kind)
+    return _materialize_existing_file_source(db, media_id, kind, request_id)
 
 
 def _run_existing_file(
@@ -2231,18 +2231,19 @@ def _run_existing_file(
     begin_extraction(db, media)
     db.commit()
 
-    return _materialize_existing_file_source(db, media_id, str(media.kind))
+    return _materialize_existing_file_source(db, media_id, str(media.kind), request_id)
 
 
 def _materialize_existing_file_source(
     db: Session,
     media_id: UUID,
     kind: str,
+    request_id: str | None,
 ) -> dict[str, object]:
     if kind == MediaKind.pdf.value:
         from nexus.services.pdf_lifecycle import materialize_pdf_source
 
-        return materialize_pdf_source(db, media_id=media_id)
+        return materialize_pdf_source(db, media_id=media_id, request_id=request_id)
     if kind == MediaKind.epub.value:
         from nexus.services.epub_lifecycle import materialize_epub_source
 

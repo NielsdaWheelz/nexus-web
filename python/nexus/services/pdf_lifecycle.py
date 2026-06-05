@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
     PdfExtractionResult,
@@ -62,6 +63,7 @@ def materialize_pdf_source(
     db: Session,
     *,
     media_id: UUID,
+    request_id: str | None = None,
 ) -> dict[str, object]:
     """Persist PDF extraction artifacts without owning source lifecycle state."""
     media = db.get(Media, media_id)
@@ -87,11 +89,11 @@ def materialize_pdf_source(
     assert isinstance(result, PdfExtractionResult)
     persist_pdf_metadata(db, media, result)
     db.flush()
+    index_pdf_evidence(db, media_id, request_id, result)
     response: dict[str, object] = {
         "status": "success",
         "page_count": result.page_count,
         "has_text": result.has_text,
-        "post_success_index": "pdf",
         "metadata_enrichment": True,
     }
     if not result.has_text:
