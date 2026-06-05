@@ -1634,6 +1634,226 @@ class TestFromUrlXPost:
             source_attempt_id,
         )
 
+    def test_readding_failed_x_post_reuses_saved_failed_item(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        root_route, search_route = _expect_x_author_thread(remote_http, "9999991111", status=404)
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/9999991111"},
+            headers=auth_headers(user_id),
+        )
+        assert first_response.status_code == 202
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+        first_attempt_id = UUID(first_data["source_attempt_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", first_attempt_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "failed"
+        assert result["error_code"] == ApiErrorCode.E_X_POST_UNAVAILABLE.value
+        _register_x_provider_event_cleanup(direct_db, "9999991111")
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://twitter.com/ada/statuses/9999991111?ref=copy"},
+            headers=auth_headers(user_id),
+        )
+        assert second_response.status_code == 202
+        second_data = second_response.json()["data"]
+        second_attempt_id = UUID(second_data["source_attempt_id"])
+        direct_db.register_cleanup("media_source_attempts", "id", second_attempt_id)
+
+        assert UUID(second_data["media_id"]) == media_id
+        assert second_data["idempotency_outcome"] == "reused"
+        assert second_data["source_attempt_status"] == "failed"
+        assert second_data["processing_status"] == "failed"
+        assert second_data["ingest_enqueued"] is False
+        assert root_route.call_count == 1
+        assert search_route.call_count == 0
+
+        with direct_db.session() as session:
+            media_count = session.execute(
+                text("""
+                    SELECT COUNT(DISTINCT m.id)
+                    FROM media m
+                    JOIN media_source_attempts msa ON msa.media_id = m.id
+                    WHERE msa.source_type = 'x_author_thread'
+                      AND msa.provider_target_ref = '9999991111'
+                """)
+            ).scalar_one()
+            latest_attempt = session.execute(
+                text("""
+                    SELECT status, error_code
+                    FROM media_source_attempts
+                    WHERE id = :source_attempt_id
+                """),
+                {"source_attempt_id": second_attempt_id},
+            ).one()
+
+        assert media_count == 1
+        assert tuple(latest_attempt) == (
+            "failed",
+            ApiErrorCode.E_X_POST_UNAVAILABLE.value,
+        )
+
+    def test_readding_pending_x_post_reuses_in_flight_item_without_new_job(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        root_route, search_route = _expect_x_author_thread(remote_http, "9999992222")
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/9999992222"},
+            headers=auth_headers(user_id),
+        )
+        assert first_response.status_code == 202
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+        first_attempt_id = UUID(first_data["source_attempt_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", first_attempt_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://mobile.twitter.com/ada/status/9999992222"},
+            headers=auth_headers(user_id),
+        )
+        assert second_response.status_code == 202
+        second_data = second_response.json()["data"]
+        second_attempt_id = UUID(second_data["source_attempt_id"])
+        direct_db.register_cleanup("media_source_attempts", "id", second_attempt_id)
+
+        assert UUID(second_data["media_id"]) == media_id
+        assert second_data["idempotency_outcome"] == "reused"
+        assert second_data["processing_status"] == "pending"
+        assert second_data["ingest_enqueued"] is False
+        assert root_route.call_count == 0
+        assert search_route.call_count == 0
+
+        with direct_db.session() as session:
+            job_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar_one()
+            media_count = session.execute(
+                text("""
+                    SELECT COUNT(DISTINCT m.id)
+                    FROM media m
+                    JOIN media_source_attempts msa ON msa.media_id = m.id
+                    WHERE msa.source_type = 'x_author_thread'
+                      AND msa.provider_target_ref = '9999992222'
+                """)
+            ).scalar_one()
+
+        assert job_count == 1
+        assert media_count == 1
+
+    def test_x_source_retry_can_materialize_after_saved_failure(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        root_route = remote_http.get("https://api.x.com/2/tweets/9999993333").mock(
+            side_effect=[
+                httpx.Response(404, json={}),
+                httpx.Response(200, json=_x_root_payload("9999993333", quoted_id="4444444444")),
+            ]
+        )
+        search_route = remote_http.get("https://api.x.com/2/tweets/search/all").mock(
+            return_value=httpx.Response(200, json=_x_search_payload("9999993333"))
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/9999993333"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        source_attempt_id = UUID(data["source_attempt_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+
+        first_result = _run_source_attempt_for_media(direct_db, media_id)
+        assert first_result["status"] == "failed"
+        assert first_result["error_code"] == ApiErrorCode.E_X_POST_UNAVAILABLE.value
+
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=auth_headers(user_id),
+        )
+        assert retry_response.status_code == 202
+        retry_data = retry_response.json()["data"]
+        retry_attempt_id = UUID(retry_data["source_attempt_id"])
+        direct_db.register_cleanup("media_source_attempts", "id", retry_attempt_id)
+        assert retry_data["source_attempt_status"] == "queued"
+        assert retry_data["processing_status"] == "extracting"
+        assert retry_data["ingest_enqueued"] is True
+
+        retry_result = _run_source_attempt_for_media(direct_db, media_id)
+        assert retry_result["media_id"] == str(media_id)
+        assert retry_result["processing_status"] == "ready_for_reading"
+        assert root_route.call_count == 2
+        assert search_route.call_count == 1
+        _register_x_provider_event_cleanup(
+            direct_db,
+            "9999993333",
+            "author-thread:10:9999993333",
+        )
+
+        with direct_db.session() as session:
+            media = session.execute(
+                text("""
+                    SELECT processing_status, provider, provider_id
+                    FROM media
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            ).one()
+            quoted_media = session.execute(
+                text("""
+                    SELECT id
+                    FROM media
+                    WHERE provider = 'x'
+                      AND provider_id = 'post:4444444444'
+                """)
+            ).fetchone()
+            if quoted_media is not None:
+                direct_db.register_cleanup(
+                    "default_library_intrinsics", "media_id", quoted_media[0]
+                )
+                direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
+                direct_db.register_cleanup("media", "id", quoted_media[0])
+
+        assert tuple(media) == (
+            "ready_for_reading",
+            "x",
+            "author-thread:10:9999993333",
+        )
+
     def test_x_provider_call_starts_after_media_is_extracting(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):

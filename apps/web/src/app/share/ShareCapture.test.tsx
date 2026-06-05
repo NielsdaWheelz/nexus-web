@@ -342,7 +342,7 @@ describe("ShareCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByRole("heading", { name: "Saved to Nexus" });
-    expect(screen.getByText("Saved, ingestion failed")).toBeInTheDocument();
+    expect(screen.getByText("Saved, but ingestion failed")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open in Nexus" })).toHaveAttribute(
       "href",
       "/media/media-failed",

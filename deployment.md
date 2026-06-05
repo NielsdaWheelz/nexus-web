@@ -329,6 +329,50 @@ ref names the auth cookie the boundary parser reads, so the crafted expired
 cookie is one the deployed app interprets. The script makes only safe `GET`
 requests and never prints cookie or token values.
 
+Durable source ingest has a separate production check because the important
+contract lives in Postgres, worker logs, and provider events. After a backend or
+worker deploy, SSH to the host and run read-only checks from `/opt/nexus-web`:
+
+```bash
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml ps
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs worker \
+  | grep -E "ingest_media_source|source_attempt|x_provider|provider_event" \
+  | tail -100
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT status, source_type, COUNT(*)
+FROM media_source_attempts
+WHERE created_at > now() - interval '24 hours'
+GROUP BY status, source_type
+ORDER BY source_type, status;
+SQL
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT kind, status, COUNT(*)
+FROM background_jobs
+WHERE kind = 'ingest_media_source'
+  AND created_at > now() - interval '24 hours'
+GROUP BY kind, status
+ORDER BY status;
+SQL
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT provider, capability, status, api_error_code, COUNT(*)
+FROM external_provider_events
+WHERE created_at > now() - interval '24 hours'
+GROUP BY provider, capability, status, api_error_code
+ORDER BY provider, capability, status, api_error_code;
+SQL
+```
+
+These checks prove the deployed worker is using the single
+`ingest_media_source` job kind, source attempts are durable and queryable, and X
+provider failures are recorded in the provider ledger. Mutating production
+canaries for forced X failures or forced remote-file failures are allowed only
+with an isolated canary account, dedicated canary library, known disposable
+URLs, and available X API credits. When those prerequisites are absent, record
+the read-only evidence above and do not fake the canary with lab-only fixtures.
+
 Redirect construction has a separate explicit smoke entrypoint. Production
 defaults to read-only verification: it checks hosted Supabase Auth redirect
 configuration, verifies the smoke URLs match the same env files, then runs the

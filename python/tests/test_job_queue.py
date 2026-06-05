@@ -48,16 +48,16 @@ def _job_status(db: Session, job_id: UUID) -> str:
 def test_enqueue_unique_job_returns_existing_row_for_duplicate_dedupe_key(db_session: Session):
     first, first_inserted = enqueue_unique_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_unique_fixture",
         payload={"media_id": "m1"},
-        dedupe_key="dup:ingest_pdf:m1",
+        dedupe_key="dup:job_unique_fixture:m1",
         max_attempts=3,
     )
     second, second_inserted = enqueue_unique_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_unique_fixture",
         payload={"media_id": "m1"},
-        dedupe_key="dup:ingest_pdf:m1",
+        dedupe_key="dup:job_unique_fixture:m1",
         max_attempts=3,
     )
     db_session.commit()
@@ -70,11 +70,11 @@ def test_enqueue_unique_job_returns_existing_row_for_duplicate_dedupe_key(db_ses
     )
     row_count = db_session.execute(
         text("SELECT COUNT(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-        {"dedupe_key": "dup:ingest_pdf:m1"},
+        {"dedupe_key": "dup:job_unique_fixture:m1"},
     ).scalar_one()
     assert row_count == 1, (
         "Expected exactly one row for duplicate dedupe_key insertion. "
-        f"Found {row_count} rows for dedupe_key dup:ingest_pdf:m1."
+        f"Found {row_count} rows for dedupe_key dup:job_unique_fixture:m1."
     )
 
 
@@ -200,7 +200,7 @@ def test_claim_next_job_orders_by_priority_then_available_time(db_session: Sessi
 def test_claim_next_job_reclaims_stale_running_lease(db_session: Session):
     stale = enqueue_job(
         db_session,
-        kind="ingest_epub",
+        kind="job_stale_reclaim_fixture",
         payload={"media_id": "m-stale"},
         max_attempts=3,
     )
@@ -240,7 +240,7 @@ def test_dead_letter_expired_job_marks_stale_running_job_at_max_attempts(
 ):
     job = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_dead_letter_fixture",
         payload={"media_id": "m-dead-stale"},
         max_attempts=1,
     )
@@ -288,13 +288,13 @@ def test_dead_letter_expired_job_marks_one_stale_max_attempt_job_per_call(
 ):
     first = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_fail_fixture",
         payload={"media_id": "m-dead-stale-a"},
         max_attempts=1,
     )
     second = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_fail_fixture",
         payload={"media_id": "m-dead-stale-b"},
         max_attempts=1,
     )
@@ -381,7 +381,7 @@ def test_dead_letter_expired_job_marks_only_allowed_stale_max_attempt_job(
 def test_claim_next_job_reclaims_lease_at_exact_expiry_boundary(db_session: Session):
     job = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_complete_fixture",
         payload={"media_id": "m-boundary"},
         max_attempts=3,
     )
@@ -463,7 +463,7 @@ def test_claim_next_job_empty_allowed_kinds_claims_nothing(db_session: Session):
 def test_worker_owner_transitions_reject_expired_lease(db_session: Session):
     job = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_heartbeat_fixture",
         payload={"media_id": "m-expired-owner"},
         max_attempts=3,
     )
@@ -742,7 +742,7 @@ def test_fail_job_parks_retry_then_transitions_to_dead(db_session: Session):
 def test_complete_job_rejects_stale_worker_after_reclaim(db_session: Session):
     job = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_prune_fixture",
         payload={"media_id": "m-reclaim-complete"},
         max_attempts=3,
     )
@@ -798,7 +798,7 @@ def test_complete_job_rejects_stale_worker_after_reclaim(db_session: Session):
 def test_fail_job_rejects_stale_worker_after_reclaim(db_session: Session):
     job = enqueue_job(
         db_session,
-        kind="ingest_pdf",
+        kind="job_terminal_prune_fixture",
         payload={"media_id": "m-reclaim-fail"},
         max_attempts=3,
     )

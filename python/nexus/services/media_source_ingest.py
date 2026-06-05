@@ -178,6 +178,7 @@ def accept_url_source(
     library_entries.assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media.id, library_ids
     )
+    attempt_status = _ATTEMPT_ACCEPTED if created else _reused_url_attempt_status(media)
     attempt = _create_attempt(
         db,
         media=media,
@@ -196,8 +197,13 @@ def accept_url_source(
         },
         request_id=request_id,
         idempotency_key=clean_idempotency_key,
-        status=_ATTEMPT_ACCEPTED if created else _ATTEMPT_SUCCEEDED,
+        status=attempt_status,
     )
+    if not created and attempt.status in {_ATTEMPT_FAILED, _ATTEMPT_SUCCEEDED}:
+        attempt.finished_at = func.now()
+        if attempt.status == _ATTEMPT_FAILED:
+            attempt.error_code = media.last_error_code
+            attempt.error_message = media.last_error_message
 
     db.commit()
     ingest_enqueued = False
@@ -1235,7 +1241,6 @@ def _find_reusable_url_media(
                     MediaSourceAttempt.source_type == source_types.X_AUTHOR_THREAD,
                     MediaSourceAttempt.provider_target_ref == target_ref,
                     Media.provider == "x",
-                    Media.provider_id.is_not(None),
                 )
                 .order_by(MediaSourceAttempt.created_at.asc(), MediaSourceAttempt.id.asc())
                 .limit(1)
@@ -1264,6 +1269,12 @@ def _find_reusable_url_media(
             media.canonical_source_url = str(spec["canonical_source_url"])
         media.updated_at = datetime.now(UTC)
     return media
+
+
+def _reused_url_attempt_status(media: Media) -> str:
+    if media.processing_status == ProcessingStatus.failed:
+        return _ATTEMPT_FAILED
+    return _ATTEMPT_SUCCEEDED
 
 
 def _find_reusable_file_media(

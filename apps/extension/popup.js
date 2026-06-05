@@ -4,6 +4,14 @@ const connectButton = document.getElementById("connect");
 const captureButton = document.getElementById("capture");
 const forgetButton = document.getElementById("forget");
 const statusEl = document.getElementById("status");
+const SAVED_INGEST_FAILED_STATUS = "Saved, but ingestion failed";
+
+class CaptureApiError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "CaptureApiError";
+  }
+}
 
 function setStatus(message) {
   statusEl.textContent = message;
@@ -173,9 +181,25 @@ async function postCapture(baseUrl, extensionToken, path, init) {
 
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(body?.error?.message || "Capture failed");
+    const requestId = body?.error?.request_id;
+    const message = body?.error?.message || "Capture failed";
+    throw new CaptureApiError(
+      requestId ? `${message} Nexus request ID: ${requestId}` : message
+    );
   }
-  return body?.data?.media_id || null;
+  return body?.data || null;
+}
+
+function sourceFailed(data) {
+  return (
+    data?.source_attempt_status === "failed" || data?.processing_status === "failed"
+  );
+}
+
+function captureStatusMessage(baseUrl, data) {
+  const mediaId = data?.media_id || null;
+  const prefix = sourceFailed(data) ? SAVED_INGEST_FAILED_STATUS : "Saved";
+  return mediaId ? `${prefix}. Open ${baseUrl}/media/${mediaId}` : `${prefix}.`;
 }
 
 async function captureUrl(baseUrl, extensionToken, tab) {
@@ -261,25 +285,28 @@ async function captureCurrentTab() {
   const tab = await activeTab();
   setStatus("Capturing...");
 
-  let mediaId;
+  let captureData;
   if (isYouTubeUrl(tab.url)) {
-    mediaId = await captureUrl(baseUrl, extensionToken, tab);
+    captureData = await captureUrl(baseUrl, extensionToken, tab);
   } else if (isDocumentUrl(tab.url)) {
-    mediaId = await captureFile(baseUrl, extensionToken, tab);
+    captureData = await captureFile(baseUrl, extensionToken, tab);
   } else {
     try {
-      mediaId = await captureArticle(baseUrl, extensionToken, tab);
-    } catch {
+      captureData = await captureArticle(baseUrl, extensionToken, tab);
+    } catch (error) {
+      if (error instanceof CaptureApiError) {
+        throw error;
+      }
       const documentKind = await tabLooksLikeDocument(tab);
       if (documentKind !== null) {
-        mediaId = await captureFile(baseUrl, extensionToken, tab, documentKind);
+        captureData = await captureFile(baseUrl, extensionToken, tab, documentKind);
       } else {
-        mediaId = await captureUrl(baseUrl, extensionToken, tab);
+        captureData = await captureUrl(baseUrl, extensionToken, tab);
       }
     }
   }
 
-  setStatus(mediaId ? `Saved. Open ${baseUrl}/media/${mediaId}` : "Saved.");
+  setStatus(captureStatusMessage(baseUrl, captureData));
 }
 
 connectButton.addEventListener("click", async () => {

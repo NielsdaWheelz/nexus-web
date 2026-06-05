@@ -229,7 +229,7 @@ def test_author_thread_fetch_paginates_and_fetches_missing_quotes(monkeypatch):
             XProviderErrorCode.CREDITS_DEPLETED,
         ),
         (401, {"title": "Unauthorized"}, XProviderErrorCode.AUTH_REJECTED),
-        (403, {"title": "Forbidden"}, XProviderErrorCode.AUTH_REJECTED),
+        (403, {"title": "Forbidden"}, XProviderErrorCode.POST_UNAVAILABLE),
         (429, {"title": "Too Many Requests"}, XProviderErrorCode.RATE_LIMITED),
         (404, {"title": "Not Found"}, XProviderErrorCode.POST_UNAVAILABLE),
         (500, {"title": "Server Error"}, XProviderErrorCode.UNAVAILABLE),

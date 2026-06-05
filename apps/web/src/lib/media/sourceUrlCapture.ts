@@ -50,9 +50,7 @@ export async function captureSourceUrl({
     return {
       label: url,
       ok: true,
-      status: sourceFailed
-        ? "Saved, ingestion failed"
-        : mediaCaptureStatus(result.duplicate),
+      status: mediaCaptureStatus(result.duplicate, sourceFailed),
       path: `/media/${result.mediaId}`,
       mediaId: result.mediaId,
       sourceAttemptId: result.sourceAttemptId,

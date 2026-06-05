@@ -1092,7 +1092,7 @@ Grep gates:
 rg -n "ingest_web_article|ingest_youtube_video|ingest_pdf|ingest_epub" \
   python/nexus/jobs python/nexus/config.py python/scripts/seed_real_media_e2e.py \
   python/tests/real_media deploy/env .env.example
-rg -n "thread:|provider_id = '[0-9]+'" python/nexus python/tests
+rg -n "(^|[^[:alnum:]_-])thread:[0-9]|provider_id = '[0-9]+'" python/nexus python/tests
 rg -n "retryClient" apps/web/src
 ```
 

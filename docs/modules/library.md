@@ -95,12 +95,14 @@ library the viewer can read.
 
 ## Composition Rules
 
-- URL ingest validates requested writable destination IDs at the dispatch
-  boundary; source owners assign default plus selected destinations through
-  `library_entries` inside their creation transactions.
-- Source owners (`x_ingest.py`, `media_source_ingest.py`,
-  `remote_file_ingest.py`, current YouTube materialization internals, and
-  web-article creation) attach resulting media through library services.
+- URL ingest validates requested writable destination IDs at the durable
+  acceptance boundary. `media_source_ingest.py` owns source-attempt creation and
+  assigns default plus selected destinations through `library_entries` inside
+  the media creation transaction.
+- Source-specific materializers such as X, remote file, YouTube, and web-article
+  adapters do not own durable acceptance, retry, dispatch, or destination
+  policy. They may attach deduped canonical media only by calling
+  `library_entries` from the shared source-ingest transaction.
 - Library entries never make a private media file public.
 - Public owned Oracle plates are not library resources; readings may reference
   them, but the plate asset route is owned by `oracle_plates.py`.

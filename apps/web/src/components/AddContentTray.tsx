@@ -33,7 +33,10 @@ import {
   uploadIngestFile,
   type SourceIngestResult,
 } from "@/lib/media/ingestionClient";
-import { toMediaCaptureFeedback } from "@/lib/media/captureFeedback";
+import {
+  SAVED_INGEST_FAILED_STATUS,
+  toMediaCaptureFeedback,
+} from "@/lib/media/captureFeedback";
 import {
   SOURCE_INGEST_CONCURRENCY,
   captureSourceUrl,
@@ -203,7 +206,7 @@ export default function AddContentTray() {
                   error: sourceFailed
                     ? {
                         severity: "warning",
-                        title: "Saved, but ingestion failed",
+                        title: SAVED_INGEST_FAILED_STATUS,
                       }
                     : undefined,
                   mediaId: result.mediaId,
@@ -581,7 +584,7 @@ export default function AddContentTray() {
                                 : "Added"
                               : null}
                             {item.status === "saved_failure"
-                              ? item.error?.title ?? "Saved, ingestion failed"
+                              ? item.error?.title ?? SAVED_INGEST_FAILED_STATUS
                               : null}
                             {item.status === "error" ? item.error?.title ?? "Failed" : null}
                           </small>

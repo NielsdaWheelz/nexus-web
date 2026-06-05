@@ -119,6 +119,30 @@ def test_hetzner_sync_accepts_x_api_bearer_token(tmp_path: Path):
     assert "missing or empty" not in result.stderr
 
 
+def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    worker = dict(_WORKER_ENV)
+    worker["WORKER_ALLOWED_JOB_KINDS"] = (
+        "ingest_media_source,ingest_pdf,enrich_metadata,chat_run"
+    )
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, _BACKEND_ENV)
+    _write_env(worker_env, worker)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert "WORKER_ALLOWED_JOB_KINDS is not the safe production allowlist" in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
 def test_hetzner_sync_rejects_removed_x_expansion_knob(tmp_path: Path):
     fake_bin_dir = tmp_path / "bin"
     fake_bin_dir.mkdir()

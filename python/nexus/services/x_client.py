@@ -278,6 +278,8 @@ def _provider_http_error(response: httpx.Response, operation: str) -> XProviderE
         title == "CreditsDepleted" or (error_type or "").endswith("CreditsDepleted")
     ):
         code = XProviderErrorCode.CREDITS_DEPLETED
+    elif response.status_code == 403 and operation == "lookup_post":
+        code = XProviderErrorCode.POST_UNAVAILABLE
     elif response.status_code in {401, 403}:
         code = XProviderErrorCode.AUTH_REJECTED
     elif response.status_code == 429:
