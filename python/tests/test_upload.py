@@ -1389,10 +1389,10 @@ class TestMediaWithCapabilities:
         assert response.status_code == 200
         data = response.json()["data"]
 
-        # Pending PDF with file can be read (pdf.js can render)
+        # Pending PDF with file can be viewed, but annotations wait for extraction.
         caps = data["capabilities"]
         assert caps["can_read"] is True
-        assert caps["can_highlight"] is True
+        assert caps["can_highlight"] is False
         assert caps["can_download_file"] is True
         # But can't quote until text extraction has completed.
         assert caps["can_quote"] is False
