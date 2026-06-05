@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   canRunGitHubProviderRoundTrip,
   gitHubProviderRoundTripSkipReason,
@@ -6,6 +6,18 @@ import {
 } from "./provider-roundtrip";
 import { bootstrapMagicLinkSession } from "./auth-bootstrap";
 import { signOutViaAccountMenu } from "./app-nav";
+
+async function expectLoginControls(page: Page) {
+  await expect(
+    page.getByRole("button", { name: /continue with google/i })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /continue with github/i })
+  ).toBeVisible();
+  await expect(page.getByLabel(/email/i)).toBeVisible();
+  await expect(page.getByLabel(/password/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^continue$/i })).toBeVisible();
+}
 
 test.describe("authentication", () => {
   test("authenticated user lands in the app", async ({ page }) => {
@@ -49,30 +61,42 @@ test.describe("authentication", () => {
     }
   });
 
-  test("unauthenticated users are redirected to login with password and OAuth controls plus a preserved return path", async ({
+  test("unauthenticated users are redirected to clean login with password and OAuth controls for the default return path", async ({
     browser,
   }) => {
     const context = await browser.newContext({
       storageState: { cookies: [], origins: [] },
     });
     const page = await context.newPage();
-    await page.goto("/libraries");
-    await expect(page).toHaveURL(/\/login/);
-    const redirectedLoginUrl = new URL(page.url());
-    expect(redirectedLoginUrl.pathname).toBe("/login");
-    expect(redirectedLoginUrl.searchParams.get("next")).toBe("/libraries");
-    await expect(
-      page.getByRole("button", { name: /continue with google/i })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /continue with github/i })
-    ).toBeVisible();
-    await expect(page.getByLabel(/email/i)).toBeVisible();
-    await expect(page.getByLabel(/password/i)).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /^continue$/i })
-    ).toBeVisible();
-    await context.close();
+    try {
+      await page.goto("/libraries");
+      await expect(page).toHaveURL(/\/login/);
+      const redirectedLoginUrl = new URL(page.url());
+      expect(redirectedLoginUrl.pathname).toBe("/login");
+      expect(redirectedLoginUrl.searchParams.has("next")).toBe(false);
+      await expectLoginControls(page);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("unauthenticated users preserve a non-default return path on the login redirect", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto("/browse");
+      await expect(page).toHaveURL(/\/login/);
+      const redirectedLoginUrl = new URL(page.url());
+      expect(redirectedLoginUrl.pathname).toBe("/login");
+      expect(redirectedLoginUrl.searchParams.get("next")).toBe("/browse");
+      await expectLoginControls(page);
+    } finally {
+      await context.close();
+    }
   });
 
   test("github provider performs a full callback round-trip and establishes a real app session", async ({
