@@ -129,9 +129,7 @@ def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
     backend_env = tmp_path / "env-prod-backend"
     worker_env = tmp_path / "env-prod-worker"
     worker = dict(_WORKER_ENV)
-    worker["WORKER_ALLOWED_JOB_KINDS"] = (
-        "ingest_media_source,ingest_pdf,enrich_metadata,chat_run"
-    )
+    worker["WORKER_ALLOWED_JOB_KINDS"] = "ingest_media_source,ingest_pdf,enrich_metadata,chat_run"
     _write_env(shared_env, _SHARED_ENV)
     _write_env(backend_env, _BACKEND_ENV)
     _write_env(worker_env, worker)
