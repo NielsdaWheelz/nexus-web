@@ -877,9 +877,7 @@ class Media(Base):
             "processing_started_at",
             "id",
             postgresql_where=text(
-                "processing_status = 'pending' "
-                "AND kind IN ('pdf', 'epub') "
-                "AND file_sha256 IS NULL"
+                "processing_status = 'pending' AND kind IN ('pdf', 'epub') AND file_sha256 IS NULL"
             ),
         ),
     )
