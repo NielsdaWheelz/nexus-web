@@ -1,5 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
+  expectNoDocumentHorizontalOverflow,
+  expectPaneShellContainedByViewport,
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
@@ -16,7 +18,7 @@ function paneWrap(page: Page, paneId: string): Locator {
 }
 
 function edgeFade(page: Page, side: "start" | "end"): Locator {
-  return page.locator(`[data-side="${side}"]`);
+  return page.getByTestId(`workspace-edge-fade-${side}`);
 }
 
 async function paneBoxX(pane: Locator): Promise<number> {
@@ -149,4 +151,69 @@ test.describe("workspace canvas", () => {
 
     await expect(edgeFade(page, "start")).toBeVisible();
   });
+
+  test("mobile mode removes desktop canvas affordances after resize", async ({
+    page,
+  }) => {
+    await expect(edgeFade(page, "end")).toBeVisible();
+    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    await page.mouse.move(
+      headerBox!.x + headerBox!.width / 2,
+      headerBox!.y + headerBox!.height / 2,
+    );
+    await page.mouse.wheel(0, 600);
+    await expect(edgeFade(page, "start")).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await expect(paneWrap(page, "pane-libraries")).toHaveAttribute(
+      "data-mobile",
+      "true",
+    );
+    await expect(workspacePaneStrip(page)).toHaveCount(0);
+    await expect(
+      page.locator('section[aria-label="Workspace host"] [data-pane-id]'),
+    ).toHaveCount(1);
+    await expect(edgeFade(page, "start")).toHaveCount(0);
+    await expect(edgeFade(page, "end")).toHaveCount(0);
+    await expectPaneShellContainedByViewport(paneWrap(page, "pane-libraries"));
+    await expect(page.getByTestId("pane-fixed-chrome")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
+    await expect(
+      page.getByRole("separator", { name: /^Resize pane / }),
+    ).toHaveCount(0);
+    await expectNoDocumentHorizontalOverflow(page);
+  });
+});
+
+test("mobile-first restored multi-pane workspaces mount only mobile workspace chrome", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoWithWorkspaceSession(
+    page,
+    workspaceE2eDeviceId(testInfo, "e2e-workspace-canvas-mobile-first"),
+    OVERFLOWING_WORKSPACE_STATE,
+    "/libraries",
+  );
+
+  await expect(paneWrap(page, "pane-libraries")).toHaveAttribute(
+    "data-mobile",
+    "true",
+  );
+  await expect(
+    page.locator('section[aria-label="Workspace host"] [data-pane-id]'),
+  ).toHaveCount(1);
+  await expect(workspacePaneStrip(page)).toHaveCount(0);
+  await expect(edgeFade(page, "start")).toHaveCount(0);
+  await expect(edgeFade(page, "end")).toHaveCount(0);
+  await expectPaneShellContainedByViewport(paneWrap(page, "pane-libraries"));
+  await expect(page.getByTestId("pane-fixed-chrome")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
+  await expect(page.getByRole("separator", { name: /^Resize pane / })).toHaveCount(
+    0,
+  );
+  await expectNoDocumentHorizontalOverflow(page);
 });

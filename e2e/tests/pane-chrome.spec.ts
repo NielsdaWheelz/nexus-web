@@ -8,6 +8,7 @@ import {
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  expectActivePaneShellContainedByViewport,
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
@@ -95,6 +96,20 @@ function paneShell(page: Page) {
   return activeWorkspacePane(page).locator('[data-pane-shell="true"]').first();
 }
 
+async function expectMobilePaneShellInvariants(page: Page): Promise<void> {
+  const shell = paneShell(page);
+  await expect(shell).toHaveAttribute("data-mobile", "true");
+  await expect(page.getByRole("separator", { name: /^Resize pane / })).toHaveCount(0);
+  await expect(page.getByTestId("pane-fixed-chrome")).toHaveCount(0);
+  expect(await shell.evaluate((element) => getComputedStyle(element).boxShadow)).toBe(
+    "none",
+  );
+  expect(await shell.evaluate((element) => getComputedStyle(element).borderRightWidth)).toBe(
+    "0px",
+  );
+  await expectActivePaneShellContainedByViewport(page);
+}
+
 async function expectPaneChromeHidden(page: Page, hidden: boolean): Promise<void> {
   await expect(paneShell(page)).toHaveAttribute(
     "data-mobile-chrome-hidden",
@@ -135,6 +150,7 @@ test.describe("pane chrome", () => {
 
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
     const activePane = await gotoPaneChromePath(page, testInfo, `/media/${nonPdfSeed.media_id}`);
+    await expectMobilePaneShellInvariants(page);
     const documentViewport = activePane.getByTestId("document-viewport");
     await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
@@ -177,6 +193,7 @@ test.describe("pane chrome", () => {
 
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
     const activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    await expectMobilePaneShellInvariants(page);
     const pdfViewport = activePane.getByLabel("PDF document");
     await expect(pdfViewport).toBeVisible();
     await expect(activePane.getByRole("button", { name: "Next page" })).toBeVisible();
@@ -212,6 +229,7 @@ test.describe("pane chrome", () => {
 
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
     let activePane = await gotoPaneChromePath(page, testInfo, `/media/${nonPdfSeed.media_id}`);
+    await expectMobilePaneShellInvariants(page);
     const documentViewport = activePane.getByTestId("document-viewport");
     await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
@@ -226,6 +244,7 @@ test.describe("pane chrome", () => {
 
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
     activePane = await gotoPaneChromePath(page, testInfo, `/media/${pdfSeed.media_id}`);
+    await expectMobilePaneShellInvariants(page);
     const pdfViewport = activePane.getByLabel("PDF document");
     await expect(pdfViewport).toBeVisible();
     await expect(activePane.getByRole("button", { name: "Next page" })).toBeVisible();

@@ -21,7 +21,7 @@
   background: var(--surface-canvas);
 }
 
-.paneShell[data-active="true"] {
+.paneShell[data-active="true"][data-mobile="false"] {
   box-shadow: inset 0 0 0 1px var(--ring);
 }
 
@@ -81,10 +81,6 @@
 .paneShell[data-mobile="true"] {
   border-right: none;
   --mobile-pane-chrome-height: 0px;
-}
-
-.paneShell[data-mobile="true"] .resizeHandle {
-  display: none;
 }
 
 .paneShell[data-mobile="true"] .toolbar {

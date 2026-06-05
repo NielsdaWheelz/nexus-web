@@ -6,6 +6,8 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
 const PANE_CANVAS_DRAG_THRESHOLD_PX = 4;
+const EMPTY_EDGES = { atStart: false, atEnd: false };
+const EMPTY_IN_VIEW_PANE_IDS = new Set<string>();
 
 function wheelTargetElement(target: EventTarget | null): HTMLElement | null {
   if (target instanceof HTMLElement) {
@@ -18,18 +20,23 @@ function wheelTargetElement(target: EventTarget | null): HTMLElement | null {
 }
 
 export function usePaneCanvas({
-  enabled,
+  mode,
   paneIds,
 }: {
-  enabled: boolean;
-  paneIds: string[];
+  mode: "desktop" | "disabled";
+  paneIds: readonly string[];
 }) {
+  const enabled = mode === "desktop";
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
-  const [edges, setEdges] = useState({ atStart: false, atEnd: false });
+  const [edges, setEdges] = useState(EMPTY_EDGES);
   const inViewPaneIds = useStringIdSet();
-  const { add: markPaneInView, remove: markPaneOutOfView } = inViewPaneIds;
+  const {
+    add: markPaneInView,
+    remove: markPaneOutOfView,
+    clear: clearPanesInView,
+  } = inViewPaneIds;
 
   const paneIdsKey = paneIds.join(",");
 
@@ -127,6 +134,10 @@ export function usePaneCanvas({
   );
 
   const measureEdges = useCallback(() => {
+    if (!enabled) {
+      setEdges(EMPTY_EDGES);
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -135,7 +146,20 @@ export function usePaneCanvas({
       atStart: canvas.scrollLeft > 0,
       atEnd: canvas.scrollLeft + canvas.clientWidth < canvas.scrollWidth - 1,
     });
-  }, []);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (enabled) {
+      return;
+    }
+    cleanupRef.current?.();
+    if (scrollFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+    setEdges(EMPTY_EDGES);
+    clearPanesInView();
+  }, [enabled, clearPanesInView]);
 
   useEffect(() => {
     if (!enabled) {
@@ -201,6 +225,9 @@ export function usePaneCanvas({
   }, [enabled, paneIdsKey, markPaneInView, markPaneOutOfView]);
 
   const scrollPaneIntoView = useCallback((paneId: string) => {
+    if (!enabled) {
+      return;
+    }
     canvasRef.current
       ?.querySelector('[data-pane-id="' + CSS.escape(paneId) + '"]')
       ?.scrollIntoView({
@@ -208,13 +235,13 @@ export function usePaneCanvas({
         block: "nearest",
         behavior: preferredScrollBehavior(),
       });
-  }, []);
+  }, [enabled]);
 
   return {
     canvasRef,
     onWheel,
-    edges,
-    inViewPaneIds: inViewPaneIds.ids,
+    edges: enabled ? edges : EMPTY_EDGES,
+    inViewPaneIds: enabled ? inViewPaneIds.ids : EMPTY_IN_VIEW_PANE_IDS,
     handleChromeMouseDown,
     scrollPaneIntoView,
   };

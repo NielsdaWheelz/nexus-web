@@ -657,6 +657,7 @@ function WorkspaceHost() {
 
   // --- Mobile viewport and pane chrome focus state ---
   const isMobile = useIsMobileViewport();
+  const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
   const pendingSecondarySurfaceByResourceKeyRef = useRef<
@@ -848,7 +849,10 @@ function WorkspaceHost() {
   panesRef.current = panes;
 
   const { canvasRef, onWheel, edges, inViewPaneIds, handleChromeMouseDown, scrollPaneIntoView } =
-    usePaneCanvas({ enabled: !isMobile, paneIds: panes.map((pane) => pane.paneId) });
+    usePaneCanvas({
+      mode: layoutMode === "desktop" ? "desktop" : "disabled",
+      paneIds: panes.map((pane) => pane.paneId),
+    });
 
   useEffect(() => {
     const pending = pendingSecondarySurfaceByResourceKeyRef.current;
@@ -1186,8 +1190,20 @@ function WorkspaceHost() {
             </div>
           ))}
         </div>
-        {edges.atStart && <div className={styles.edgeFade} data-side="start" />}
-        {edges.atEnd && <div className={styles.edgeFade} data-side="end" />}
+        {layoutMode === "desktop" && edges.atStart ? (
+          <div
+            className={styles.edgeFade}
+            data-side="start"
+            data-testid="workspace-edge-fade-start"
+          />
+        ) : null}
+        {layoutMode === "desktop" && edges.atEnd ? (
+          <div
+            className={styles.edgeFade}
+            data-side="end"
+            data-testid="workspace-edge-fade-end"
+          />
+        ) : null}
       </div>
     </section>
   );

@@ -406,19 +406,21 @@ export default function PaneShell({
             </div>
           ) : null}
         </div>
-        <div
-          className={styles.resizeHandle}
-          role="separator"
-          aria-label={`Resize pane ${title}`}
-          aria-controls={bodyId}
-          aria-orientation="vertical"
-          aria-valuemin={sizing.primaryMinWidthPx}
-          aria-valuemax={sizing.primaryMaxWidthPx}
-          aria-valuenow={sizing.primaryWidthPx}
-          tabIndex={0}
-          onMouseDown={handleResizeMouseDown}
-          onKeyDown={handleResizeKeyDown}
-        />
+        {!isMobile ? (
+          <div
+            className={styles.resizeHandle}
+            role="separator"
+            aria-label={`Resize pane ${title}`}
+            aria-controls={bodyId}
+            aria-orientation="vertical"
+            aria-valuemin={sizing.primaryMinWidthPx}
+            aria-valuemax={sizing.primaryMaxWidthPx}
+            aria-valuenow={sizing.primaryWidthPx}
+            tabIndex={0}
+            onMouseDown={handleResizeMouseDown}
+            onKeyDown={handleResizeKeyDown}
+          />
+        ) : null}
       </div>
       {visibleSecondary ? (
         <SecondaryPaneShell

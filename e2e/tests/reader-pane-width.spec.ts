@@ -4,6 +4,7 @@ import path from "node:path";
 import { openReaderSecondary } from "./reader";
 import {
   activeWorkspacePane,
+  expectNoDocumentHorizontalOverflow,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
 } from "./workspace";
@@ -170,5 +171,9 @@ test.describe("reader pane width floor", () => {
         ),
       )
       .toBeLessThanOrEqual(390);
+    await expect(resizeHandle(activePane)).toHaveCount(0);
+    await expect(activePane.getByTestId("reader-overview-ruler")).toHaveCount(0);
+    await expect(activePane.getByTestId("pane-fixed-chrome")).toHaveCount(0);
+    await expectNoDocumentHorizontalOverflow(page);
   });
 });

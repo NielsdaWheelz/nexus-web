@@ -309,6 +309,75 @@ describe("PaneShell", () => {
     ).toBeNull();
     expect(screen.getByText("Reader toolbar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
+    expect(
+      screen.queryByRole("separator", { name: "Resize pane Libraries" })
+    ).toBeNull();
+  });
+
+  it("does not mount desktop secondary or fixed chrome on mobile", () => {
+    render(
+      <PaneShell
+        paneId="pane-a"
+        title="Reader"
+        navigation={disabledNavigation}
+        sizing={paneSizing({
+          widthPx: 700,
+          minWidthPx: 684,
+          maxWidthPx: 2400,
+          fixedChromeWidthPx: 48,
+        })}
+        bodyMode="document"
+        onResizePrimaryPane={() => {}}
+        isMobile
+        fixedChromePublication={{
+          id: "reader-overview-ruler",
+          widthPx: 48,
+          body: <div>Fixed chrome</div>,
+        }}
+        secondaryPane={{
+          id: "secondary-a",
+          parentPrimaryPaneId: "pane-a",
+          groupId: "reader-tools",
+          activeSurfaceId: "reader-highlights",
+          widthPx: 360,
+          visibility: "visible",
+        }}
+        secondarySizing={{
+          widthPx: 360,
+          minWidthPx: 280,
+          maxWidthPx: 720,
+          storedWidthCorrectionPx: null,
+        }}
+        secondaryPublication={{
+          groupId: "reader-tools",
+          defaultSurfaceId: "reader-highlights",
+          surfaces: [
+            {
+              id: "reader-highlights",
+              body: <div>Highlights secondary</div>,
+            },
+          ],
+        }}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
+      "style",
+      expect.stringContaining("width: 100%"),
+    );
+    expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
+      "style",
+      expect.stringContaining("min-width: 100%"),
+    );
+    expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
+      "style",
+      expect.stringContaining("max-width: 100%"),
+    );
+    expect(screen.queryByTestId("pane-fixed-chrome")).toBeNull();
+    expect(screen.queryByTestId("workspace-secondary-pane")).toBeNull();
+    expect(screen.queryByRole("separator", { name: "Resize pane Reader" })).toBeNull();
   });
 
   it("composes visible secondary width without changing primary resize values", async () => {

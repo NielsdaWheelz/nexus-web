@@ -25,6 +25,9 @@ const hostMocks = vi.hoisted(() => ({
     fixedChromeWidthPx: number;
     secondarySurfaces: string;
   }[],
+  isMobile: false,
+  canvasEdges: { atStart: false, atEnd: false },
+  paneCanvasInputs: [] as { mode: string; paneIds: string[] }[],
   runtimeLayout: null as PaneRuntimeLayout | null,
   fixedChromeWidthPx: null as number | null,
   secondaryPublication: null as PaneSecondaryPublication | null,
@@ -187,6 +190,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
     secondaryPublication,
     fixedChromePublication,
     navigation,
+    isMobile,
   }: {
     children: ReactNode;
     sizing: { primaryMinWidthPx: number };
@@ -200,6 +204,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
       onBack: () => void;
       onForward: () => void;
     };
+    isMobile: boolean;
   }) => {
     const secondarySurfaces = secondaryPublication
       ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
@@ -216,6 +221,7 @@ vi.mock("@/components/workspace/PaneShell", () => ({
         data-secondary-width-px={secondarySizing?.widthPx ?? 0}
         data-secondary-pane-id={secondaryPane?.id ?? "none"}
         data-secondary-surfaces={secondarySurfaces}
+        data-mobile={isMobile ? "true" : "false"}
       >
         <nav aria-label="Mock pane chrome">
           <button
@@ -244,22 +250,52 @@ vi.mock("@/components/workspace/PaneShell", () => ({
 }));
 
 vi.mock("@/components/workspace/WorkspacePaneStrip", () => ({
-  default: () => null,
+  default: () => <div data-testid="workspace-pane-strip" />,
+}));
+
+vi.mock("@/components/workspace/MobileSecondaryPaneHost", () => ({
+  default: ({
+    secondary,
+    publication,
+  }: {
+    secondary: {
+      groupId: WorkspaceSecondaryGroupId;
+      activeSurfaceId: WorkspaceSecondarySurfaceId;
+      visibility: "visible" | "collapsed";
+    } | null;
+    publication: {
+      groupId: WorkspaceSecondaryGroupId;
+      surfaces: readonly { id: WorkspaceSecondarySurfaceId }[];
+    } | null;
+  }) => {
+    if (
+      secondary?.visibility !== "visible" ||
+      !publication ||
+      secondary.groupId !== publication.groupId ||
+      !publication.surfaces.some((surface) => surface.id === secondary.activeSurfaceId)
+    ) {
+      return null;
+    }
+    return <div data-testid="mobile-secondary-host" />;
+  },
 }));
 
 vi.mock("@/components/workspace/usePaneCanvas", () => ({
-  usePaneCanvas: () => ({
-    canvasRef: { current: null },
-    onWheel: vi.fn(),
-    edges: { atStart: false, atEnd: false },
-    inViewPaneIds: new Set(["pane-1"]),
-    handleChromeMouseDown: vi.fn(),
-    scrollPaneIntoView: vi.fn(),
-  }),
+  usePaneCanvas: (input: { mode: string; paneIds: string[] }) => {
+    hostMocks.paneCanvasInputs.push(input);
+    return {
+      canvasRef: { current: null },
+      onWheel: vi.fn(),
+      edges: hostMocks.canvasEdges,
+      inViewPaneIds: new Set(["pane-1"]),
+      handleChromeMouseDown: vi.fn(),
+      scrollPaneIntoView: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => false,
+  useIsMobileViewport: () => hostMocks.isMobile,
 }));
 
 vi.mock("@/lib/keybindings", () => ({
@@ -321,6 +357,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.paneShellSnapshots = [];
+    hostMocks.isMobile = false;
+    hostMocks.canvasEdges = { atStart: false, atEnd: false };
+    hostMocks.paneCanvasInputs = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
@@ -353,6 +392,20 @@ describe("WorkspaceHost pane route lifecycle", () => {
     );
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toHaveLength(0);
+  });
+
+  it("uses desktop canvas mode and renders desktop edge fades", () => {
+    hostMocks.canvasEdges = { atStart: true, atEnd: true };
+
+    render(<WorkspaceHost />);
+
+    expect(hostMocks.paneCanvasInputs[0]).toEqual({
+      mode: "desktop",
+      paneIds: ["pane-1"],
+    });
+    expect(screen.getByTestId("workspace-pane-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-edge-fade-start")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-edge-fade-end")).toBeInTheDocument();
   });
 
   it("remounts the route body when the resource changes", () => {
@@ -526,6 +579,9 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.paneShellSnapshots = [];
+    hostMocks.isMobile = false;
+    hostMocks.canvasEdges = { atStart: false, atEnd: false };
+    hostMocks.paneCanvasInputs = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
@@ -690,5 +746,36 @@ describe("WorkspaceHost secondary publication validation", () => {
       );
     });
     expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
+  });
+
+  it("uses mobile canvas mode and mobile secondary sheet without desktop edge chrome", () => {
+    hostMocks.isMobile = true;
+    hostMocks.canvasEdges = { atStart: true, atEnd: true };
+    hostMocks.fixedChromeWidthPx = 48;
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-highlights",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+
+    render(<WorkspaceHost />);
+
+    expect(hostMocks.paneCanvasInputs[0]).toEqual({
+      mode: "disabled",
+      paneIds: ["pane-1"],
+    });
+    expect(screen.queryByTestId("workspace-pane-strip")).toBeNull();
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute("data-mobile", "true");
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-fixed-chrome-width-px",
+      "0",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-width-px",
+      "0",
+    );
+    expect(screen.getByTestId("mobile-secondary-host")).toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-edge-fade-start")).toBeNull();
+    expect(screen.queryByTestId("workspace-edge-fade-end")).toBeNull();
   });
 });

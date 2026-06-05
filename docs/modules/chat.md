@@ -28,6 +28,15 @@ surfaces, open-resource routing, and the full-chat composer target.
 `ReaderChatDetail` is the reader document-chat adapter. It binds a reader context to the
 same composer/send path without becoming a branch-anchor owner.
 
+## Scrollport Contract
+
+`ChatSurface` owns the transcript scrollport. Desktop may reserve a stable
+scrollbar gutter to keep transcript layout stable. Mobile must use platform
+scrollbar gutter behavior and must not reserve a stable inline-end gutter.
+
+Workspace layout must not compensate for chat transcript gutter policy; chat
+keeps that policy local to its scrollport.
+
 ## Send Path
 
 `ChatComposer` owns user input, model controls, key-mode selection, and send action wiring.

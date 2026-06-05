@@ -228,6 +228,45 @@ export function activeWorkspacePane(page: Page): Locator {
   return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR).first();
 }
 
+export async function expectPaneShellContainedByViewport(
+  pane: Locator,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      pane.getByTestId("pane-shell-root").evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.left >= -1 &&
+          rect.right <= window.innerWidth + 1 &&
+          rect.width <= window.innerWidth + 1
+        );
+      }),
+    )
+    .toBe(true);
+}
+
+export async function expectActivePaneShellContainedByViewport(
+  page: Page,
+): Promise<void> {
+  await expectPaneShellContainedByViewport(activeWorkspacePane(page));
+}
+
+export async function expectNoDocumentHorizontalOverflow(
+  page: Page,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Math.max(
+            document.body.scrollWidth,
+            document.documentElement.scrollWidth,
+          ) - window.innerWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+}
+
 export function activePaneSelector(selector: string): string {
   return `${ACTIVE_WORKSPACE_PANE_SELECTOR} ${selector}`;
 }

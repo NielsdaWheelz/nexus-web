@@ -84,7 +84,9 @@ width without changing stored primary pane width. Reader highlights and
 document chat are target secondary surfaces under
 `docs/workspace-pane-system.md`; their width is independent from the
 primary reader width. Mobile panes ignore desktop runtime pane sizing and render
-at viewport width.
+at viewport width. Mobile workspace mode also suppresses fixed primary chrome,
+desktop-attached secondary columns, and pane resize handles; reader tools reach
+mobile through the workspace secondary sheet.
 
 ### overview ruler positioning
 
@@ -318,12 +320,17 @@ this keeps resume robust when typography changes.
 
 ### browser extension ingestion
 
-- extension-captured web articles enter `ready_for_reading` immediately
-- the server still sanitizes captured article HTML and generates canonical text before persist
+- extension-captured web articles are accepted as pending media with a durable
+  `media_source_attempts` row and a private raw-HTML source artifact
+- `ingest_media_source` sanitizes captured article HTML, generates canonical
+  text, and transitions the media to `ready_for_reading`
 - captured private article pages keep `canonical_url: null`
 - captured private article pages do not use global canonical-url dedupe
-- browser-fetched PDF/EPUB files reuse the existing upload confirm, dedupe, and extraction lifecycle
-- pasted public X/Twitter post URLs use the official X API full-archive search endpoint and enter `ready_for_reading` immediately as same-author thread web articles
+- browser-fetched PDF/EPUB files are accepted as durable source attempts before
+  extraction starts
+- pasted public X/Twitter post URLs use the official X API full-archive search
+  endpoint and materialize as same-author thread web articles through
+  `ingest_media_source`
 - extension URL capture reuses existing URL classification, including supported video ingestion
 - extension auth is scoped, revocable, and only covers capture
 

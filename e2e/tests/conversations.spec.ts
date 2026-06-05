@@ -7,6 +7,8 @@ import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import { selectExactVisibleText } from "./selection";
 import {
+  expectNoDocumentHorizontalOverflow,
+  expectPaneShellContainedByViewport,
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
@@ -349,6 +351,47 @@ test.describe("conversations", () => {
     }
   });
 
+  test("mobile chat scrollport uses platform gutter without page overflow", async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const seed = await seedScrollConversation(page, 50);
+    const conversationId = seed.conversation_id;
+    try {
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-conversations-mobile-scroll"),
+        `/conversations/${conversationId}`,
+      );
+
+      const activePane = activeWorkspacePane(page);
+      const scrollport = activePane.getByRole("region", {
+        name: "Chat conversation",
+      });
+
+      await expect(scrollport).toBeVisible();
+      await expect(
+        activePane.getByRole("log", { name: "Chat messages" }),
+      ).toContainText("Scroll fixture message 50", { timeout: 10_000 });
+      await expect
+        .poll(() =>
+          scrollport.evaluate(
+            (node) => node.scrollHeight > node.clientHeight,
+          ),
+        )
+        .toBe(true);
+      await expectPaneShellContainedByViewport(activePane);
+      expect(
+        await scrollport.evaluate((node) =>
+          getComputedStyle(node).getPropertyValue("scrollbar-gutter"),
+        ),
+      ).not.toContain("stable");
+      await expectNoDocumentHorizontalOverflow(page);
+    } finally {
+      await deleteConversationViaApi(page, conversationId);
+    }
+  });
+
   test("desktop branching covers fork preview, switching, graph, rename, and delete states", async ({
     page,
   }, testInfo) => {
@@ -552,6 +595,8 @@ test.describe("conversations", () => {
 
       const secondary = page.getByRole("dialog", { name: "Forks" });
       await expect(secondary).toBeVisible();
+      await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
+      await expect(page.getByTestId("pane-fixed-chrome")).toHaveCount(0);
       await expect(
         secondary.getByRole("tree", { name: "Conversation forks" }),
       ).toBeVisible();

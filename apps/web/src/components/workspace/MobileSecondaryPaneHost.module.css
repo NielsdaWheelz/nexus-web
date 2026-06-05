@@ -17,7 +17,7 @@
   border-top: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--surface-canvas);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-4);
   overflow: hidden;
 }
 
