@@ -26,7 +26,7 @@ def upgrade() -> None:
         CREATE TABLE media_source_attempts (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             media_id uuid NOT NULL REFERENCES media(id),
-            created_by_user_id uuid REFERENCES users(id),
+            created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
             source_type text NOT NULL,
             attempt_no integer NOT NULL,
             run_count integer NOT NULL DEFAULT 0,

@@ -975,7 +975,7 @@ class MediaSourceAttempt(Base):
     )
     created_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     source_type: Mapped[str] = mapped_column(Text, nullable=False)

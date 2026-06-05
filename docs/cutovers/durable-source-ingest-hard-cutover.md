@@ -354,7 +354,7 @@ Required columns:
 ```sql
 id uuid primary key default gen_random_uuid(),
 media_id uuid not null references media(id),
-created_by_user_id uuid null references users(id),
+created_by_user_id uuid null references users(id) on delete set null,
 source_type text not null,
 attempt_no integer not null,
 status text not null,
@@ -387,6 +387,8 @@ Constraints:
   limits,
 - `(media_id, attempt_no)` is unique,
 - `(created_by_user_id, idempotency_key)` is unique where `idempotency_key IS NOT NULL`,
+- source attempts are durable ingest history and outlive user deletion by
+  clearing nullable `created_by_user_id` with `ON DELETE SET NULL`,
 - `retry_after_seconds IS NULL OR retry_after_seconds >= 0`.
 
 Indexes:
@@ -762,6 +764,10 @@ a silent non-enqueued success.
 - `migrations/alembic/versions/0134_media_source_attempts_job_delete_contract.py`
   - makes `media_source_attempts.job_id` `ON DELETE SET NULL` so durable source
     attempts can outlive operational background-job pruning.
+- `migrations/alembic/versions/0135_media_source_attempts_user_delete_contract.py`
+  - makes `media_source_attempts.created_by_user_id` `ON DELETE SET NULL` so
+    durable source attempts retain ingest history without blocking account
+    cleanup.
 - `python/tests/test_from_url.py`, `python/tests/test_upload.py`,
   `python/tests/test_reconcile_stale_ingest_media.py`, and focused media tests
   - owner-level behavior tests for source acceptance, post-acceptance failures,

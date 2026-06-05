@@ -120,10 +120,14 @@ def capture_nasa_water_article(
             "content_html": html,
         },
     )
-    assert capture_response.status_code == 201, capture_response.text
-    media_id = UUID(capture_response.json()["data"]["media_id"])
+    assert capture_response.status_code == 202, capture_response.text
+    data = capture_response.json()["data"]
+    assert data["ingest_enqueued"] is True, data
+    media_id = UUID(data["media_id"])
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
+    result = _run_source_attempt_for_media(direct_db, media_id)
+    assert result["status"] == "success", result
     return media_id
 
 

@@ -480,15 +480,22 @@ def assert_reingest_replacement_trace(
                     """
                     SELECT
                         mcis.active_run_id AS new_run_id,
-                        old_run.state AS old_run_state,
-                        old_run.deactivated_at AS old_run_deactivated_at,
-                        old_run.superseded_by_run_id AS old_run_superseded_by_run_id,
-                        old_chunk.index_run_id AS old_chunk_run_id,
-                        old_span.index_run_id AS old_span_run_id
+                        (
+                            SELECT count(*)
+                            FROM content_index_runs
+                            WHERE id = :old_run_id
+                        ) AS old_run_count,
+                        (
+                            SELECT count(*)
+                            FROM content_chunks
+                            WHERE id = :old_chunk_id
+                        ) AS old_chunk_count,
+                        (
+                            SELECT count(*)
+                            FROM evidence_spans
+                            WHERE id = :old_evidence_span_id
+                        ) AS old_span_count
                     FROM media_content_index_states mcis
-                    JOIN content_index_runs old_run ON old_run.id = :old_run_id
-                    JOIN content_chunks old_chunk ON old_chunk.id = :old_chunk_id
-                    JOIN evidence_spans old_span ON old_span.id = :old_evidence_span_id
                     WHERE mcis.media_id = :media_id
                     """
                 ),
@@ -503,11 +510,9 @@ def assert_reingest_replacement_trace(
             .one()
         )
         assert row["new_run_id"] != old_run_id, row
-        assert row["old_run_state"] == "ready", row
-        assert row["old_run_deactivated_at"] is not None, row
-        assert row["old_run_superseded_by_run_id"] == row["new_run_id"], row
-        assert row["old_chunk_run_id"] == old_run_id, row
-        assert row["old_span_run_id"] == old_run_id, row
+        assert row["old_run_count"] == 0, row
+        assert row["old_chunk_count"] == 0, row
+        assert row["old_span_count"] == 0, row
 
     return {
         "media_id": str(media_id),
@@ -515,7 +520,7 @@ def assert_reingest_replacement_trace(
         "new_run_id": str(row["new_run_id"]),
         "old_chunk_id": str(old_chunk_id),
         "old_evidence_span_id": str(old_evidence_span_id),
-        "old_run_deactivated_at": row["old_run_deactivated_at"].isoformat(),
+        "old_artifacts_removed": True,
     }
 
 
