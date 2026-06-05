@@ -71,6 +71,31 @@ def _count_jobs_for_media(direct_db: DirectSessionManager, *, kind: str, media_i
         )
 
 
+def _assert_failed_upload_source_attempt(
+    direct_db: DirectSessionManager,
+    *,
+    media_id: str,
+    source_attempt_id: str,
+    error_code: str,
+) -> None:
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT m.processing_status, m.failure_stage, m.last_error_code,
+                       msa.status, msa.error_code
+                FROM media m
+                JOIN media_source_attempts msa ON msa.media_id = m.id
+                WHERE m.id = :media_id
+                  AND msa.id = :source_attempt_id
+                """
+            ),
+            {"media_id": media_id, "source_attempt_id": source_attempt_id},
+        ).one()
+
+    assert tuple(row) == ("failed", "upload", error_code, "failed", error_code)
+
+
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
     with direct_db.session() as session:
         session.execute(
@@ -243,6 +268,11 @@ class HeadFailureStorageClient(FakeStorageClient):
         raise StorageError(f"head failed for {path}")
 
 
+class SignFailureStorageClient(FakeStorageClient):
+    def sign_upload(self, *args, **kwargs):
+        raise StorageError("sign failed", code=ApiErrorCode.E_SIGN_UPLOAD_FAILED.value)
+
+
 class BlockingCopyStorageClient(FakeStorageClient):
     def __init__(self):
         super().__init__()
@@ -283,6 +313,7 @@ def upload_client(engine, fake_storage, monkeypatch):
 
     # Patch storage to use fake client
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+    monkeypatch.setattr("nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage)
     monkeypatch.setattr("nexus.services.media_file_access.get_storage_client", lambda: fake_storage)
 
     verifier = MockJwtVerifier()
@@ -349,6 +380,84 @@ class TestUploadInit:
         assert response.status_code == 200
         data = response.json()["data"]
         assert "storage_path" not in data
+
+    def test_upload_init_replays_idempotency_key(
+        self, upload_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        headers = {**auth_headers(user_id), "Idempotency-Key": f"upload-init-{uuid4()}"}
+        body = {
+            "kind": "pdf",
+            "filename": "idempotent.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(PDF_CONTENT),
+        }
+
+        first = upload_client.post("/media/upload/init", json=body, headers=headers)
+        second = upload_client.post("/media/upload/init", json=body, headers=headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        first_data = first.json()["data"]
+        second_data = second.json()["data"]
+        media_id = first_data["media_id"]
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", first_data["source_attempt_id"])
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+
+        assert second_data["media_id"] == media_id
+        assert second_data["source_attempt_id"] == first_data["source_attempt_id"]
+        assert second_data["idempotency_outcome"] == "reused"
+        assert second_data["source_attempt_status"] == "accepted"
+        assert second_data["upload_url"]
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*), COUNT(DISTINCT media_id)
+                    FROM media_source_attempts
+                    WHERE idempotency_key = :idempotency_key
+                    """
+                ),
+                {"idempotency_key": headers["Idempotency-Key"]},
+            ).one()
+        assert row == (1, 1)
+
+    def test_upload_init_idempotency_key_rejects_parameter_mismatch(
+        self, upload_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        headers = {**auth_headers(user_id), "Idempotency-Key": f"upload-init-{uuid4()}"}
+        body = {
+            "kind": "pdf",
+            "filename": "idempotent.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(PDF_CONTENT),
+        }
+
+        first = upload_client.post("/media/upload/init", json=body, headers=headers)
+        mismatch = upload_client.post(
+            "/media/upload/init",
+            json={**body, "filename": "different.pdf"},
+            headers=headers,
+        )
+
+        assert first.status_code == 200
+        first_data = first.json()["data"]
+        media_id = first_data["media_id"]
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", first_data["source_attempt_id"])
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+
+        assert mismatch.status_code == 409
+        assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
 
     def test_upload_init_invalid_kind(self, upload_client):
         """Upload init rejects invalid kind."""
@@ -421,6 +530,91 @@ class TestUploadInit:
         )
 
         assert response.status_code == 401
+
+    def test_upload_init_sign_failure_saves_failed_source_item(
+        self, upload_client, monkeypatch, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        failing_storage = SignFailureStorageClient()
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: failing_storage)
+        monkeypatch.setattr(
+            "nexus.services.media_source_ingest.get_storage_client",
+            lambda: failing_storage,
+        )
+
+        response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "sign-failure.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        media_id = data["media_id"]
+        source_attempt_id = data["source_attempt_id"]
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+
+        assert data["upload_url"] is None
+        assert data["source_attempt_status"] == "failed"
+        assert data["processing_status"] == "failed"
+        assert data["ingest_enqueued"] is False
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.processing_status, m.failure_stage, m.last_error_code,
+                           mf.storage_path, msa.status, msa.error_code
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    JOIN media_source_attempts msa ON msa.media_id = m.id
+                    WHERE m.id = :media_id
+                      AND msa.id = :source_attempt_id
+                """),
+                {"media_id": media_id, "source_attempt_id": source_attempt_id},
+            ).one()
+
+        assert row[0] == "failed"
+        assert row[1] == "upload"
+        assert row[2] == ApiErrorCode.E_SIGN_UPLOAD_FAILED.value
+        assert row[3] == _upload_storage_path(data, "pdf")
+        assert row[4] == "failed"
+        assert row[5] == ApiErrorCode.E_SIGN_UPLOAD_FAILED.value
+
+        media_response = upload_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200
+        capabilities = media_response.json()["data"]["capabilities"]
+        assert capabilities["can_retry"] is False
+        assert capabilities["can_refresh_source"] is False
+
+        retry_response = upload_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=auth_headers(user_id),
+        )
+        assert retry_response.status_code == 409
+        assert retry_response.json()["error"]["code"] == ApiErrorCode.E_RETRY_NOT_ALLOWED.value
+        refresh_response = upload_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+        assert refresh_response.status_code == 409
+        assert refresh_response.json()["error"]["code"] == ApiErrorCode.E_RETRY_NOT_ALLOWED.value
+        with direct_db.session() as session:
+            attempt_count = session.execute(
+                text("SELECT count(*) FROM media_source_attempts WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+        assert attempt_count == 1
 
 
 class TestConfirmIngest:
@@ -506,6 +700,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
+        source_attempt_id = init_data["source_attempt_id"]
         storage_path = _upload_storage_path(init_data, "pdf")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -535,6 +730,12 @@ class TestConfirmIngest:
             assert row is not None
             assert row[0] == "failed"
             assert row[1] == "upload"
+        _assert_failed_upload_source_attempt(
+            direct_db,
+            media_id=media_id,
+            source_attempt_id=source_attempt_id,
+            error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
+        )
 
     def test_ingest_storage_missing(self, upload_client, fake_storage, direct_db):
         """Ingest fails if file not in storage."""
@@ -554,6 +755,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
+        source_attempt_id = init_data["source_attempt_id"]
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -569,6 +771,12 @@ class TestConfirmIngest:
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_STORAGE_MISSING"
+        _assert_failed_upload_source_attempt(
+            direct_db,
+            media_id=media_id,
+            source_attempt_id=source_attempt_id,
+            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
+        )
 
     def test_ingest_rejects_non_staged_storage_path(self, upload_client, fake_storage, direct_db):
         user_id = create_test_user_id()
@@ -674,7 +882,7 @@ class TestConfirmIngest:
         assert storage.get_object(storage_path) is None
         assert storage.get_object(final_storage_path) == PDF_CONTENT
 
-    def test_ingest_head_failure_is_storage_error_without_failed_media(
+    def test_ingest_head_failure_marks_accepted_media_failed(
         self, upload_client, monkeypatch, direct_db
     ):
         storage = HeadFailureStorageClient()
@@ -694,6 +902,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
+        source_attempt_id = init_data["source_attempt_id"]
         storage_path = _upload_storage_path(init_data, "pdf")
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -717,9 +926,15 @@ class TestConfirmIngest:
                 {"id": media_id},
             ).fetchone()
         assert row is not None
-        assert row[0] == "pending"
-        assert row[1] is None
+        assert row[0] == "failed"
+        assert row[1] == "upload"
         assert row[2] is None
+        _assert_failed_upload_source_attempt(
+            direct_db,
+            media_id=media_id,
+            source_attempt_id=source_attempt_id,
+            error_code=ApiErrorCode.E_STORAGE_ERROR.value,
+        )
 
     def test_ingest_empty_object_rejected(self, upload_client, fake_storage, direct_db):
         user_id = create_test_user_id()
@@ -737,6 +952,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
+        source_attempt_id = init_data["source_attempt_id"]
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -751,6 +967,12 @@ class TestConfirmIngest:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
         assert fake_storage.get_object(storage_path) is None
+        _assert_failed_upload_source_attempt(
+            direct_db,
+            media_id=media_id,
+            source_attempt_id=source_attempt_id,
+            error_code=ApiErrorCode.E_INVALID_REQUEST.value,
+        )
 
     def test_ingest_short_object_rejected(self, upload_client, fake_storage, direct_db):
         user_id = create_test_user_id()
@@ -768,6 +990,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
+        source_attempt_id = init_data["source_attempt_id"]
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -782,6 +1005,12 @@ class TestConfirmIngest:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
         assert fake_storage.get_object(storage_path) is None
+        _assert_failed_upload_source_attempt(
+            direct_db,
+            media_id=media_id,
+            source_attempt_id=source_attempt_id,
+            error_code=ApiErrorCode.E_INVALID_REQUEST.value,
+        )
 
     def test_ingest_non_creator_forbidden(self, upload_client, fake_storage, direct_db):
         """Non-creator cannot confirm ingest."""
@@ -1424,7 +1653,7 @@ class TestEpubIngestLifecycle:
         fake_storage.put_object(storage_path, content, "application/epub+zip")
         return mid, storage_path
 
-    def test_ingest_epub_archive_unsafe_fails_preflight_without_dispatch(
+    def test_ingest_epub_confirm_dispatches_source_ingest(
         self,
         upload_client,
         fake_storage,
@@ -1434,28 +1663,15 @@ class TestEpubIngestLifecycle:
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-
-        from nexus.services.epub_ingest import EpubExtractionError
-
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.check_archive_safety",
-            lambda data: EpubExtractionError(
-                error_code="E_ARCHIVE_UNSAFE",
-                error_message="forced unsafe",
-                terminal=True,
-            ),
-        )
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
         )
         resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "E_ARCHIVE_UNSAFE"
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 0
+        assert resp.status_code == 200
+        assert resp.json()["data"]["ingest_enqueued"] is True
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
         with direct_db.session() as session:
             row = session.execute(
@@ -1463,8 +1679,8 @@ class TestEpubIngestLifecycle:
                 {"id": mid},
             ).fetchone()
             assert row is not None
-            assert row[0] == "failed"
-            assert row[1] == "E_ARCHIVE_UNSAFE"
+            assert row[0] == "extracting"
+            assert row[1] is None
 
     def test_ingest_epub_non_creator_forbidden(
         self,
@@ -1496,10 +1712,7 @@ class TestEpubIngestLifecycle:
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
@@ -1507,7 +1720,7 @@ class TestEpubIngestLifecycle:
 
         resp1 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp1.status_code == 200
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
         with direct_db.session() as session:
             attempts_after_first = session.execute(
@@ -1520,7 +1733,7 @@ class TestEpubIngestLifecycle:
         data2 = resp2.json()["data"]
         assert data2["ingest_enqueued"] is False
 
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
         with direct_db.session() as session:
             attempts_after_second = session.execute(
@@ -1546,7 +1759,7 @@ class TestEpubIngestLifecycle:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_FILE_TYPE"
 
-    def test_ingest_epub_dispatch_failure_rolls_back_state(
+    def test_ingest_epub_dispatch_failure_marks_source_failed(
         self,
         upload_client,
         fake_storage,
@@ -1556,10 +1769,7 @@ class TestEpubIngestLifecycle:
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
@@ -1569,15 +1779,17 @@ class TestEpubIngestLifecycle:
             resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         finally:
             _remove_background_job_insert_failure(direct_db)
-        assert resp.status_code == 500
+        assert resp.status_code == 200
+        assert resp.json()["data"]["ingest_enqueued"] is False
 
         with direct_db.session() as session:
             row = session.execute(
-                text("SELECT processing_status FROM media WHERE id = :id"),
+                text("SELECT processing_status, last_error_code FROM media WHERE id = :id"),
                 {"id": mid},
             ).fetchone()
             assert row is not None
-            assert row[0] != "extracting"
+            assert row[0] == "failed"
+            assert row[1] == "E_INTERNAL"
 
 
 class TestPdfIngestLifecycle:
@@ -1608,7 +1820,7 @@ class TestPdfIngestLifecycle:
         fake_storage.put_object(storage_path, content, "application/pdf")
         return mid, storage_path
 
-    def test_ingest_pdf_confirm_dispatches_pdf_extraction(
+    def test_ingest_pdf_confirm_dispatches_source_ingest(
         self,
         upload_client,
         fake_storage,
@@ -1618,7 +1830,7 @@ class TestPdfIngestLifecycle:
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
-        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
@@ -1630,7 +1842,7 @@ class TestPdfIngestLifecycle:
 
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
-        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
     def test_ingest_pdf_confirm_non_creator_forbidden(
         self,
@@ -1644,7 +1856,7 @@ class TestPdfIngestLifecycle:
         upload_client.get("/me", headers=auth_headers(user_a))
         upload_client.get("/me", headers=auth_headers(user_b))
 
-        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_a, PDF_CONTENT
@@ -1663,7 +1875,7 @@ class TestPdfIngestLifecycle:
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
-        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
@@ -1672,13 +1884,13 @@ class TestPdfIngestLifecycle:
         resp1 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp1.status_code == 200
         assert resp1.json()["data"]["ingest_enqueued"] is True
-        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
         resp2 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp2.status_code == 200
         data2 = resp2.json()["data"]
         assert data2["ingest_enqueued"] is False
-        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=str(mid)) == 1
 
 
 class TestValidateSourceIntegrity:

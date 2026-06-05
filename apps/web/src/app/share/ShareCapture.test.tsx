@@ -95,7 +95,12 @@ function installShareFetch({
       return jsonResponse({
         data: {
           media_id: "media-1",
+          source_attempt_id: "attempt-1",
+          source_type: "generic_web_url",
+          source_attempt_status: "queued",
           idempotency_outcome: "created",
+          processing_status: "pending",
+          ingest_enqueued: true,
         },
       });
     }
@@ -222,7 +227,14 @@ describe("ShareCapture", () => {
         jsonResponse({
           data: {
             media_id: String(body.url).includes("one") ? "media-one" : "media-two",
+            source_attempt_id: String(body.url).includes("one")
+              ? "attempt-one"
+              : "attempt-two",
+            source_type: "generic_web_url",
+            source_attempt_status: "queued",
             idempotency_outcome: "created",
+            processing_status: "pending",
+            ingest_enqueued: true,
           },
         }),
     });
@@ -258,7 +270,12 @@ describe("ShareCapture", () => {
         return jsonResponse({
           data: {
             media_id: "media-1",
+            source_attempt_id: "attempt-1",
+            source_type: "generic_web_url",
+            source_attempt_status: "queued",
             idempotency_outcome: "created",
+            processing_status: "pending",
+            ingest_enqueued: true,
           },
         });
       },
@@ -280,6 +297,92 @@ describe("ShareCapture", () => {
       url: "https://example.com/article",
       library_ids: ["lib-research"],
     });
+  });
+
+  it("shows X provider failures with the backend request id", async () => {
+    installShareFetch({
+      fromUrl: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "E_X_PROVIDER_CREDITS_DEPLETED",
+              message: "X imports are temporarily unavailable.",
+              request_id: "req-x-1",
+            },
+          },
+          503,
+        ),
+    });
+
+    renderShareCapture("https://x.com/ada/status/1234567890");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("heading", { name: "Couldn’t save" });
+    expect(screen.getByText("X imports are temporarily unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Nexus request ID: req-x-1")).toBeInTheDocument();
+  });
+
+  it("treats accepted failed source ingestion as a saved item", async () => {
+    installShareFetch({
+      fromUrl: () =>
+        jsonResponse({
+          data: {
+            media_id: "media-failed",
+            source_attempt_id: "attempt-failed",
+            source_type: "x_author_thread",
+            source_attempt_status: "failed",
+            idempotency_outcome: "created",
+            processing_status: "failed",
+            ingest_enqueued: false,
+          },
+        }),
+    });
+
+    renderShareCapture("https://x.com/ada/status/1234567890");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("heading", { name: "Saved to Nexus" });
+    expect(screen.getByText("Saved, ingestion failed")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open in Nexus" })).toHaveAttribute(
+      "href",
+      "/media/media-failed",
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("bounds URL save concurrency", async () => {
+    const releases: Array<() => void> = [];
+    const fetchMock = installShareFetch({
+      fromUrl: () =>
+        new Promise<Response>((resolve) => {
+          releases.push(() =>
+            resolve(
+              jsonResponse({
+                data: {
+                  media_id: `media-${releases.length}`,
+                  source_attempt_id: `attempt-${releases.length}`,
+                  source_type: "generic_web_url",
+                  source_attempt_status: "queued",
+                  idempotency_outcome: "created",
+                  processing_status: "pending",
+                  ingest_enqueued: true,
+                },
+              }),
+            ),
+          );
+        }),
+    });
+
+    renderShareCapture(
+      "https://example.com/one https://example.com/two https://example.com/three",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fromUrlBodies(fetchMock)).toHaveLength(2));
+    releases.shift()?.();
+    await waitFor(() => expect(fromUrlBodies(fetchMock)).toHaveLength(3));
+    releases.shift()?.();
+    releases.shift()?.();
   });
 
   it("quick-captures non-URL text without showing a destination picker", async () => {

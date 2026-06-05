@@ -1331,7 +1331,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
 
         with (
             patch(
-                "nexus.services.epub_lifecycle.get_storage_client",
+                "nexus.services.upload.get_storage_client",
                 return_value=fake_storage,
             ),
         ):
@@ -1344,8 +1344,10 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
-        assert data["retry_enqueued"] is True
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
+        assert data["ingest_enqueued"] is True
+        assert data["capabilities"]["can_retry"] is False
+        assert data["capabilities"]["can_refresh_source"] is False
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
         assert fake_storage.get_object(stale_asset_path) is None
 
         # Artifacts must be gone after retry reset
@@ -1364,7 +1366,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.extracting
-            assert media_row.processing_attempts == 2
+            assert media_row.processing_attempts == 1
             assert media_row.last_error_code is None
 
     def test_retry_epub_enqueue_failure_preserves_artifact_storage_and_db_rows(
@@ -1423,7 +1425,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         _install_background_job_insert_failure(direct_db)
         try:
             with patch(
-                "nexus.services.epub_lifecycle.get_storage_client",
+                "nexus.services.upload.get_storage_client",
                 return_value=fake_storage,
             ):
                 resp = auth_client.post(
@@ -2189,7 +2191,7 @@ class TestRetryEpubEndpoint:
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
-            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
+            patch("nexus.services.upload.get_storage_client", return_value=fake_storage),
         ):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -2200,15 +2202,15 @@ class TestRetryEpubEndpoint:
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
-        assert data["retry_enqueued"] is True
+        assert data["ingest_enqueued"] is True
 
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.extracting
-            assert media_row.processing_attempts == 2
+            assert media_row.processing_attempts == 1
             assert media_row.last_error_code is None
 
     def test_retry_invalid_state_returns_409(
@@ -2408,7 +2410,7 @@ class TestRetryEpubEndpoint:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
+        with patch("nexus.services.upload.get_storage_client", return_value=fake_storage):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
                 json={"from_stage": "source"},
@@ -2475,7 +2477,7 @@ class TestRetryEpubEndpoint:
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
-            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
+            patch("nexus.services.upload.get_storage_client", return_value=fake_storage),
         ):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -2494,7 +2496,7 @@ class TestRetryEpubEndpoint:
             assert mf is not None
             assert mf.storage_path == storage_path
 
-    def test_retry_dispatch_failure_rolls_back_state(
+    def test_retry_dispatch_failure_marks_source_failed(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -2537,7 +2539,7 @@ class TestRetryEpubEndpoint:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
+        with patch("nexus.services.upload.get_storage_client", return_value=fake_storage):
             _install_background_job_insert_failure(direct_db)
             try:
                 resp = auth_client.post(
@@ -2548,12 +2550,16 @@ class TestRetryEpubEndpoint:
             finally:
                 _remove_background_job_insert_failure(direct_db)
 
-        assert resp.status_code == 500
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["ingest_enqueued"] is False
+        assert data["processing_status"] == "failed"
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
             assert media_row is not None
-            assert media_row.processing_status != ProcessingStatus.extracting
+            assert media_row.processing_status == ProcessingStatus.failed
+            assert media_row.last_error_code == "E_INTERNAL"
 
 
 class TestRetryWebArticleEndpoint:
@@ -2585,6 +2591,25 @@ class TestRetryWebArticleEndpoint:
                     )
                 """),
                 {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_source_attempts (
+                        media_id, created_by_user_id, source_type, attempt_no, status,
+                        intent_key, requested_url, source_payload, error_code,
+                        error_message, finished_at
+                    )
+                    VALUES (
+                        :media_id, :user_id, 'generic_web_url', 1, 'failed',
+                        :intent_key, 'https://example.com/article', '{}'::jsonb,
+                        'E_INGEST_FAILED', 'test failure', now()
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "user_id": user_id,
+                    "intent_key": f"test:generic_web_url:{media_id}",
+                },
             )
             session.execute(
                 text("""
@@ -2634,13 +2659,13 @@ class TestRetryWebArticleEndpoint:
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
-        assert data["retry_enqueued"] is True
-        assert _count_jobs_for_media(direct_db, kind="ingest_web_article", media_id=media_id) == 1
+        assert data["ingest_enqueued"] is True
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
         with direct_db.session() as session:
             job_id = session.execute(
                 text("""
                     SELECT id FROM background_jobs
-                    WHERE kind = 'ingest_web_article'
+                    WHERE kind = 'ingest_media_source'
                       AND payload->>'media_id' = :media_id
                 """),
                 {"media_id": str(media_id)},
@@ -2651,7 +2676,7 @@ class TestRetryWebArticleEndpoint:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.extracting
-            assert media_row.processing_attempts == 2
+            assert media_row.processing_attempts == 1
             assert media_row.last_error_code is None
 
             artifact_counts = session.execute(
@@ -2670,6 +2695,96 @@ class TestRetryWebArticleEndpoint:
                 {"media_id": media_id, "fragment_id": fragment_id},
             ).one()
             assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    def test_retry_failed_web_article_reuses_idempotency_key(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, failure_stage,
+                        last_error_code, requested_url, created_by_user_id,
+                        processing_attempts
+                    )
+                    VALUES (
+                        :id, 'web_article', 'Failed article', 'failed', 'extract',
+                        'E_INGEST_FAILED', 'https://example.com/article', :user_id, 1
+                    )
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_source_attempts (
+                        media_id, created_by_user_id, source_type, attempt_no, status,
+                        intent_key, requested_url, source_payload, error_code,
+                        error_message, finished_at
+                    )
+                    VALUES (
+                        :media_id, :user_id, 'generic_web_url', 1, 'failed',
+                        :intent_key, 'https://example.com/article', '{}'::jsonb,
+                        'E_INGEST_FAILED', 'test failure', now()
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "user_id": user_id,
+                    "intent_key": f"test:generic_web_url:{media_id}",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+        headers = {**auth_headers(user_id), "Idempotency-Key": "retry-source-key-1"}
+
+        first = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=headers,
+        )
+        assert first.status_code == 202, first.text
+        first_data = first.json()["data"]
+        assert first_data["idempotency_outcome"] == "retrying"
+        assert first_data["processing_status"] == "extracting"
+
+        second = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=headers,
+        )
+        assert second.status_code == 202, second.text
+        second_data = second.json()["data"]
+        assert second_data["source_attempt_id"] == first_data["source_attempt_id"]
+        assert second_data["idempotency_outcome"] == "reused"
+        assert second_data["processing_status"] == "extracting"
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
+
+        mismatch = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=headers,
+        )
+        assert mismatch.status_code == 409
+        assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+
+        with direct_db.session() as session:
+            job_id = session.execute(
+                text("""
+                    SELECT id FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar_one()
+            direct_db.register_cleanup("background_jobs", "id", job_id)
 
     def test_retry_web_article_without_original_url_is_not_allowed(
         self,
@@ -3090,6 +3205,45 @@ def _create_podcast_media_for_refresh(
             "fallback_identity": f"fallback-{media_id}",
         },
     )
+    source_attempt_status = "failed" if processing_status == "failed" else "succeeded"
+    session.execute(
+        text(
+            """
+            INSERT INTO media_source_attempts (
+                media_id,
+                created_by_user_id,
+                source_type,
+                attempt_no,
+                status,
+                intent_key,
+                source_payload,
+                error_code,
+                error_message,
+                finished_at
+            )
+            VALUES (
+                :media_id,
+                :user_id,
+                'podcast_episode_transcript',
+                1,
+                :status,
+                :intent_key,
+                '{"media_kind":"podcast_episode","request_reason":"episode_open"}'::jsonb,
+                :error_code,
+                :error_message,
+                CASE WHEN :status IN ('failed', 'succeeded') THEN now() ELSE NULL END
+            )
+            """
+        ),
+        {
+            "media_id": media_id,
+            "user_id": user_id,
+            "status": source_attempt_status,
+            "intent_key": f"test:podcast_episode_transcript:{media_id}",
+            "error_code": last_error_code if source_attempt_status == "failed" else None,
+            "error_message": "test failure" if source_attempt_status == "failed" else None,
+        },
+    )
     session.commit()
     return media_id, podcast_id
 
@@ -3107,6 +3261,7 @@ def _register_podcast_refresh_cleanup(
     direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
     direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcription_jobs", "media_id", media_id)
+    direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
 
 
@@ -3133,12 +3288,12 @@ class TestRefreshSourceForPodcastMedia:
 
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
-        assert data["refresh_enqueued"] is True
+        assert data["ingest_enqueued"] is True
         assert data["processing_status"] == "extracting"
         assert (
             _count_jobs_for_media(
                 direct_db,
-                kind="podcast_transcribe_episode_job",
+                kind="ingest_media_source",
                 media_id=media_id,
             )
             == 1
@@ -3331,7 +3486,7 @@ class TestRefreshSourceForPodcastMedia:
             None,
         )
 
-    def test_refresh_podcast_without_audio_source_does_not_create_transcription_rows(
+    def test_refresh_podcast_without_audio_source_saves_source_attempt(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -3352,26 +3507,43 @@ class TestRefreshSourceForPodcastMedia:
             headers=auth_headers(user_id),
         )
 
-        assert resp.status_code == 409, resp.text
-        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["source_type"] == "podcast_episode_transcript"
+        assert data["source_attempt_status"] == "queued"
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
         with direct_db.session() as session:
-            counts = session.execute(
+            row = session.execute(
                 text(
                     """
                     SELECT
                         (SELECT COUNT(*) FROM podcast_transcription_jobs WHERE media_id = :media_id),
-                        (SELECT COUNT(*) FROM media_transcript_states WHERE media_id = :media_id)
+                        (SELECT COUNT(*) FROM media_transcript_states WHERE media_id = :media_id),
+                        (
+                            SELECT status
+                            FROM media_source_attempts
+                            WHERE media_id = :media_id
+                            ORDER BY attempt_no DESC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT COUNT(*)
+                            FROM background_jobs
+                            WHERE kind = 'ingest_media_source'
+                              AND payload->>'media_id' = :media_id_text
+                        )
                     """
                 ),
-                {"media_id": media_id},
+                {"media_id": media_id, "media_id_text": str(media_id)},
             ).one()
-        assert counts == (0, 0)
+        assert row == (1, 1, "queued", 1)
 
 
 class TestRefreshSourceForFileBackedMedia:
     """POST /media/{id}/refresh now accepts pdf and epub kinds."""
 
-    def test_refresh_pdf_when_ready_enqueues_ingest_pdf(
+    def test_refresh_pdf_when_ready_enqueues_source_ingest(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -3401,10 +3573,10 @@ class TestRefreshSourceForFileBackedMedia:
 
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
-        assert data["refresh_enqueued"] is True
+        assert data["ingest_enqueued"] is True
         assert data["processing_status"] == "extracting"
 
-        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=media_id) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
@@ -3449,7 +3621,7 @@ class TestRefreshSourceForFileBackedMedia:
         assert resp.status_code == 409, resp.text
         assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
 
-    def test_refresh_epub_when_ready_enqueues_ingest_epub(
+    def test_refresh_epub_when_ready_enqueues_source_ingest(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -3477,6 +3649,23 @@ class TestRefreshSourceForFileBackedMedia:
                     size_bytes=1000,
                 )
             )
+            session.execute(
+                text("""
+                    INSERT INTO media_source_attempts (
+                        media_id, created_by_user_id, source_type, attempt_no, status,
+                        intent_key, source_payload, finished_at
+                    )
+                    VALUES (
+                        :media_id, :user_id, 'uploaded_epub_file', 1, 'succeeded',
+                        :intent_key, '{}'::jsonb, now()
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "user_id": user_id,
+                    "intent_key": f"test:uploaded_epub_file:{media_id}",
+                },
+            )
             session.commit()
 
         direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
@@ -3494,10 +3683,10 @@ class TestRefreshSourceForFileBackedMedia:
 
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
-        assert data["refresh_enqueued"] is True
+        assert data["ingest_enqueued"] is True
         assert data["processing_status"] == "extracting"
 
-        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
@@ -4112,6 +4301,28 @@ def _create_pdf_media_with_state(
         """),
         {"mid": media_id, "sp": f"media/{media_id}/original.pdf"},
     )
+    source_attempt_status = "failed" if processing_status == "failed" else "succeeded"
+    session.execute(
+        text("""
+            INSERT INTO media_source_attempts (
+                media_id, created_by_user_id, source_type, attempt_no, status,
+                intent_key, source_payload, error_code, error_message, finished_at
+            )
+            VALUES (
+                :mid, :uid, 'uploaded_pdf_file', 1, :status,
+                :intent_key, '{}'::jsonb, :error_code, :error_message,
+                CASE WHEN :status IN ('failed', 'succeeded') THEN now() ELSE NULL END
+            )
+        """),
+        {
+            "mid": media_id,
+            "uid": user_id,
+            "status": source_attempt_status,
+            "intent_key": f"test:uploaded_pdf_file:{media_id}",
+            "error_code": last_error_code if source_attempt_status == "failed" else None,
+            "error_message": "test failure" if source_attempt_status == "failed" else None,
+        },
+    )
 
     if with_page_spans and page_count and plain_text:
         page_len = len(plain_text) // page_count
@@ -4367,7 +4578,7 @@ class TestPdfRetry:
 
         from unittest.mock import patch
 
-        with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
+        with patch("nexus.services.upload.get_storage_client") as mock_storage:
             mock_storage.return_value.head_object.return_value = True
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -4378,7 +4589,7 @@ class TestPdfRetry:
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
-        assert data["retry_enqueued"] is True
+        assert data["ingest_enqueued"] is True
 
         from sqlalchemy import text
 
@@ -4386,9 +4597,9 @@ class TestPdfRetry:
             job_row = session.execute(
                 text(
                     """
-                    SELECT id, kind, payload->>'embedding_only'
+                    SELECT id, kind, payload->>'attempt_id'
                     FROM background_jobs
-                    WHERE kind = 'ingest_pdf'
+                    WHERE kind = 'ingest_media_source'
                       AND payload->>'media_id' = :media_id
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -4398,8 +4609,8 @@ class TestPdfRetry:
             ).fetchone()
             assert job_row is not None
             direct_db.register_cleanup("background_jobs", "id", job_row[0])
-            assert job_row[1] == "ingest_pdf"
-            assert job_row[2] == "false"
+            assert job_row[1] == "ingest_media_source"
+            assert job_row[2]
 
     def test_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
         self, auth_client, direct_db: DirectSessionManager
@@ -4431,7 +4642,7 @@ class TestPdfRetry:
 
         assert resp.status_code == 202
         data = resp.json()["data"]
-        assert data["retry_enqueued"] is True
+        assert data["ingest_enqueued"] is True
 
         from sqlalchemy import text
 
@@ -4439,9 +4650,9 @@ class TestPdfRetry:
             job_row = session.execute(
                 text(
                     """
-                    SELECT id, kind, payload->>'embedding_only'
+                    SELECT id, kind, payload->>'attempt_id'
                     FROM background_jobs
-                    WHERE kind = 'ingest_pdf'
+                    WHERE kind = 'ingest_media_source'
                       AND payload->>'media_id' = :media_id
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -4451,8 +4662,8 @@ class TestPdfRetry:
             ).fetchone()
             assert job_row is not None
             direct_db.register_cleanup("background_jobs", "id", job_row[0])
-            assert job_row[1] == "ingest_pdf"
-            assert job_row[2] == "true"
+            assert job_row[1] == "ingest_media_source"
+            assert job_row[2]
 
         with direct_db.session() as session:
             from sqlalchemy import text
@@ -5155,12 +5366,7 @@ class TestUploadInitLibraryIds:
         from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
         monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
 
         # ---- PDF path
         user_id = create_test_user_id()

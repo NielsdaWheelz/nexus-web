@@ -28,10 +28,16 @@ import OpmlImportPanel from "@/components/OpmlImportPanel";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
 import {
-  addMediaFromUrl,
   getFileUploadError,
+  isFailedSourceIngest,
   uploadIngestFile,
+  type SourceIngestResult,
 } from "@/lib/media/ingestionClient";
+import { toMediaCaptureFeedback } from "@/lib/media/captureFeedback";
+import {
+  SOURCE_INGEST_CONCURRENCY,
+  captureSourceUrl,
+} from "@/lib/media/sourceUrlCapture";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
@@ -43,6 +49,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { createRandomId } from "@/lib/createRandomId";
 import styles from "./AddContentTray.module.css";
 
 type QueueItem = {
@@ -52,14 +59,16 @@ type QueueItem = {
   libraryIds: string[];
   file?: File;
   url?: string;
-  status: "queued" | "working" | "success" | "error";
-  error?: string;
+  status: "queued" | "working" | "success" | "saved_failure" | "error";
+  error?: FeedbackContent;
   mediaId?: string;
+  sourceAttemptId?: string;
   duplicate?: boolean;
+  idempotencyKey?: string;
   autoOpen: boolean;
 };
 
-const MAX_ACTIVE_UPLOADS = 2;
+const MAX_ACTIVE_UPLOADS = SOURCE_INGEST_CONCURRENCY;
 
 function dragHasSupportedData(event: DragEvent): boolean {
   const types = Array.from(event.dataTransfer?.types ?? []);
@@ -99,8 +108,9 @@ export default function AddContentTray() {
             label: file.name,
             libraryIds: [...batchLibraryIds],
             file,
+            idempotencyKey: createRandomId("media-upload"),
             status: error ? ("error" as const) : ("queued" as const),
-            error: error ?? undefined,
+            error: error ? { severity: "error" as const, title: error } : undefined,
             autoOpen: autoOpenSingle && files.length === 1,
           };
         }),
@@ -124,6 +134,7 @@ export default function AddContentTray() {
           label: url,
           libraryIds: [...batchLibraryIds],
           url,
+          idempotencyKey: createRandomId("media-url"),
           status: "queued" as const,
           autoOpen: autoOpenSingle && urls.length === 1,
         })),
@@ -145,7 +156,7 @@ export default function AddContentTray() {
 
     void (async () => {
       try {
-        let result: { mediaId: string; duplicate: boolean };
+        let result: SourceIngestResult;
         if (item.source === "file") {
           if (!item.file) {
             throw new Error("Missing file.");
@@ -153,24 +164,50 @@ export default function AddContentTray() {
           result = await uploadIngestFile({
             file: item.file,
             libraryIds: item.libraryIds,
+            idempotencyKey: item.idempotencyKey,
           });
         } else {
           if (!item.url) {
             throw new Error("Missing URL.");
           }
-          result = await addMediaFromUrl({
+          const capture = await captureSourceUrl({
             url: item.url,
             libraryIds: item.libraryIds,
+            idempotencyKey: item.idempotencyKey,
+            fallback: "Failed to add item.",
           });
+          if (!capture.ok) {
+            setQueue((current) =>
+              current.map((row) =>
+                row.id === item.id
+                  ? {
+                      ...row,
+                      status: "error",
+                      error: capture.feedback,
+                    }
+                  : row
+              )
+            );
+            return;
+          }
+          result = capture.result;
         }
 
+        const sourceFailed = isFailedSourceIngest(result);
         setQueue((current) =>
           current.map((row) =>
             row.id === item.id
               ? {
                   ...row,
-                  status: "success",
+                  status: sourceFailed ? "saved_failure" : "success",
+                  error: sourceFailed
+                    ? {
+                        severity: "warning",
+                        title: "Saved, but ingestion failed",
+                      }
+                    : undefined,
                   mediaId: result.mediaId,
+                  sourceAttemptId: result.sourceAttemptId,
                   duplicate: result.duplicate,
                 }
               : row
@@ -183,11 +220,15 @@ export default function AddContentTray() {
           );
         }
       } catch (error) {
-        const message =
-          error instanceof Error && error.message ? error.message : "Failed to add item.";
         setQueue((current) =>
           current.map((row) =>
-            row.id === item.id ? { ...row, status: "error", error: message } : row
+            row.id === item.id
+              ? {
+                  ...row,
+                  status: "error",
+                  error: toMediaCaptureFeedback(error, "Failed to add item."),
+                }
+              : row
           )
         );
       } finally {
@@ -323,8 +364,9 @@ export default function AddContentTray() {
           ? {
               ...row,
               status: error ? "error" : "queued",
-              error: error ?? undefined,
+              error: error ? { severity: "error", title: error } : undefined,
               mediaId: undefined,
+              sourceAttemptId: undefined,
               duplicate: undefined,
             }
           : row
@@ -538,8 +580,15 @@ export default function AddContentTray() {
                                 ? "Already in your library"
                                 : "Added"
                               : null}
-                            {item.status === "error" ? item.error ?? "Failed" : null}
+                            {item.status === "saved_failure"
+                              ? item.error?.title ?? "Saved, ingestion failed"
+                              : null}
+                            {item.status === "error" ? item.error?.title ?? "Failed" : null}
                           </small>
+                          {(item.status === "error" || item.status === "saved_failure") &&
+                          item.error?.requestId ? (
+                            <small>Nexus request ID: {item.error.requestId}</small>
+                          ) : null}
                         </div>
                         <div className={styles.itemActions}>
                           {allowRowPicker ? (
@@ -557,7 +606,10 @@ export default function AddContentTray() {
                               label="Libraries"
                             />
                           ) : null}
-                          {item.status === "success" && href ? (
+                          {(item.status === "success" ||
+                            item.status === "saved_failure" ||
+                            item.status === "error") &&
+                          href ? (
                             <Button
                               variant="secondary"
                               size="sm"
@@ -584,7 +636,7 @@ export default function AddContentTray() {
                               aria-label="Success"
                             />
                           ) : null}
-                          {item.status === "error" ? (
+                          {item.status === "error" || item.status === "saved_failure" ? (
                             <CircleX
                               className={styles.errorIcon}
                               size={16}

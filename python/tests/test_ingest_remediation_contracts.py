@@ -10,15 +10,11 @@ def test_registry_job_kinds_match_task_catalog_contract():
     from nexus.jobs.registry import get_default_registry
 
     expected_kinds = {
-        "ingest_web_article",
-        "ingest_epub",
-        "ingest_pdf",
-        "ingest_youtube_video",
+        "ingest_media_source",
         "enrich_metadata",
         "chat_run",
         "library_intelligence_build_job",
         "podcast_sync_subscription_job",
-        "podcast_transcribe_episode_job",
         "podcast_reindex_semantic_job",
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",

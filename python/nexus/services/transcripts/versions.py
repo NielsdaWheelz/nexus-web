@@ -62,9 +62,10 @@ def write_transcript_version(
     transcript_coverage: Literal["partial", "full"],
     transcript_segments: Sequence[TranscriptSegmentInput],
     fragment_strategy: Literal["preserve_anchors", "replace"] = "preserve_anchors",
+    mark_media_ready: bool = True,
     now: datetime,
 ) -> TranscriptWriteResult:
-    """Create the next transcript version and make the media readable.
+    """Create the next transcript version and optionally make the media readable.
 
     Runs in the CALLER's transaction (transaction() is non-reentrant). Holds
     `pg_advisory_xact_lock('transcript-version:{media_id}')` across the whole
@@ -74,6 +75,8 @@ def write_transcript_version(
     transcript state. `fragment_strategy="preserve_anchors"` bumps prior fragments
     aside so existing highlight anchors survive; `"replace"` deletes the media's
     highlights and fragments first (destructive; YouTube re-ingest only).
+    Source-attempt materializers pass `mark_media_ready=False`; the source owner
+    records terminal media success after the adapter returns.
     """
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
@@ -227,22 +230,23 @@ def write_transcript_version(
             failure_message=str(exc),
         )
 
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET processing_status = 'ready_for_reading',
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_completed_at = :now,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {"media_id": media_id, "now": now},
-    )
+    if mark_media_ready:
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET processing_status = 'ready_for_reading',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_completed_at = :now,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {"media_id": media_id, "now": now},
+        )
     set_media_transcript_state(
         db,
         media_id=media_id,

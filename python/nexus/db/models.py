@@ -122,6 +122,17 @@ class TranscriptCoverage(str, PyEnum):
     full = "full"
 
 
+class MediaSourceAttemptStatus(str, PyEnum):
+    """Durable source-acquisition attempt state."""
+
+    accepted = "accepted"
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    superseded = "superseded"
+
+
 class SemanticStatus(str, PyEnum):
     """Semantic index readiness state for transcript chunks."""
 
@@ -877,6 +888,9 @@ class Media(Base):
     media_file: Mapped["MediaFile | None"] = relationship(
         "MediaFile", back_populates="media", cascade="all, delete-orphan", uselist=False
     )
+    source_attempts: Mapped[list["MediaSourceAttempt"]] = relationship(
+        "MediaSourceAttempt", back_populates="media"
+    )
     pdf_page_text_spans: Mapped[list["PdfPageTextSpan"]] = relationship(
         "PdfPageTextSpan", back_populates="media", cascade="all, delete-orphan"
     )
@@ -944,6 +958,148 @@ class Media(Base):
         order_by=lambda: ContributorCredit.ordinal,
     )
 
+
+class MediaSourceAttempt(Base):
+    """Durable record of one accepted source-ingest intent or retry."""
+
+    __tablename__ = "media_source_attempts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    intent_key: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_target_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="source_attempts")
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            source_type IN (
+                'generic_web_url',
+                'x_author_thread',
+                'youtube_video',
+                'remote_pdf_url',
+                'remote_epub_url',
+                'uploaded_pdf_file',
+                'uploaded_epub_file',
+                'browser_article_capture',
+                'browser_pdf_capture',
+                'browser_epub_capture',
+                'podcast_episode_transcript',
+                'video_transcript'
+            )
+            """,
+            name="ck_media_source_attempts_source_type",
+        ),
+        CheckConstraint(
+            "status IN ('accepted', 'queued', 'running', 'succeeded', 'failed', 'superseded')",
+            name="ck_media_source_attempts_status",
+        ),
+        CheckConstraint("attempt_no >= 1", name="ck_media_source_attempts_attempt_no"),
+        CheckConstraint("run_count >= 0", name="ck_media_source_attempts_run_count"),
+        CheckConstraint(
+            "jsonb_typeof(source_payload) = 'object'",
+            name="ck_media_source_attempts_source_payload",
+        ),
+        CheckConstraint(
+            "idempotency_key IS NULL OR created_by_user_id IS NOT NULL",
+            name="ck_media_source_attempts_idempotency_user",
+        ),
+        CheckConstraint(
+            "requested_url IS NULL OR char_length(requested_url) <= 2048",
+            name="ck_media_source_attempts_requested_url_length",
+        ),
+        CheckConstraint(
+            "canonical_source_url IS NULL OR char_length(canonical_source_url) <= 2048",
+            name="ck_media_source_attempts_canonical_source_url_length",
+        ),
+        CheckConstraint(
+            "retry_after_seconds IS NULL OR retry_after_seconds >= 0",
+            name="ck_media_source_attempts_retry_after",
+        ),
+        UniqueConstraint("media_id", "attempt_no", name="uq_media_source_attempts_media_attempt"),
+        Index(
+            "idx_media_source_attempts_media_created",
+            "media_id",
+            text("created_at DESC"),
+            text("id DESC"),
+        ),
+        Index(
+            "idx_media_source_attempts_status_updated",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "idx_media_source_attempts_request_id",
+            "request_id",
+            postgresql_where=text("request_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_media_source_attempts_source_type_status_updated",
+            "source_type",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "idx_media_source_attempts_provider_target",
+            "provider",
+            "provider_target_ref",
+            "created_at",
+            "id",
+            postgresql_where=text("provider IS NOT NULL AND provider_target_ref IS NOT NULL"),
+        ),
+        Index(
+            "uq_media_source_attempts_idempotency",
+            "created_by_user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
 
 class ProjectGutenbergCatalogEntry(Base):
     """Local mirror of the Project Gutenberg catalog metadata feed."""

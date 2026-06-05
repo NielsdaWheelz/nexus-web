@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
-import { retryMediaSource } from "@/lib/media/retryClient";
+import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import {
   usePaneParam,
@@ -491,14 +491,32 @@ export default function PodcastDetailPaneBody() {
       busyMediaIds.add(mediaId);
       setError(null);
       try {
-        const response = await retryMediaSource<{ data: PodcastEpisodeMedia }>(
+        const projection = await runSourceProcessingAction({
           mediaId,
-        );
+          action: "retry",
+          successTitle: "Processing retry started.",
+        });
         setEpisodes((prev) =>
           prev.map((episode) =>
-            episode.id === mediaId ? { ...episode, ...response.data } : episode,
+            episode.id === mediaId
+              ? {
+                  ...episode,
+                  processing_status: projection.processingStatus,
+                  transcript_state: projection.sourceFailed
+                    ? episode.transcript_state
+                    : "queued",
+                  transcript_coverage: projection.sourceFailed
+                    ? episode.transcript_coverage
+                    : "none",
+                  capabilities: {
+                    ...episode.capabilities,
+                    ...projection.capabilityPatch,
+                  },
+                }
+              : episode,
           ),
         );
+        setError(projection.feedback);
       } catch (retryError) {
         setError(
           toFeedback(retryError, {
@@ -517,28 +535,32 @@ export default function PodcastDetailPaneBody() {
       busyMediaIds.add(mediaId);
       setError(null);
       try {
-        await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
+        const projection = await runSourceProcessingAction({
+          mediaId,
+          action: "refresh",
+          successTitle: "Source refresh started.",
+        });
         setEpisodes((prev) =>
           prev.map((episode) =>
             episode.id === mediaId
               ? {
                   ...episode,
-                  processing_status: "extracting",
-                  transcript_state: "queued",
-                  transcript_coverage: "none",
+                  processing_status: projection.processingStatus,
+                  transcript_state: projection.sourceFailed
+                    ? episode.transcript_state
+                    : "queued",
+                  transcript_coverage: projection.sourceFailed
+                    ? episode.transcript_coverage
+                    : "none",
                   capabilities: {
                     ...episode.capabilities,
-                    can_read: false,
-                    can_highlight: false,
-                    can_quote: false,
-                    can_search: false,
-                    can_retry: false,
-                    can_refresh_source: false,
+                    ...projection.capabilityPatch,
                   },
                 }
               : episode,
           ),
         );
+        setError(projection.feedback);
       } catch (refreshError) {
         setError(
           toFeedback(refreshError, {

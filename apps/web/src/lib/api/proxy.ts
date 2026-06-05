@@ -626,6 +626,10 @@ export async function proxyExtensionToFastAPI(
   if (accept) {
     headers.set("Accept", accept);
   }
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) {
+    headers.set("Idempotency-Key", idempotencyKey);
+  }
   for (const headerName of options.forwardHeaders ?? []) {
     const value = request.headers.get(headerName);
     if (value) {

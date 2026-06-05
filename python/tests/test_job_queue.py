@@ -702,7 +702,7 @@ def test_prune_background_jobs_task_forwards_settings_and_commits(
 def test_fail_job_parks_retry_then_transitions_to_dead(db_session: Session):
     enqueue_job(
         db_session,
-        kind="podcast_transcribe_episode_job",
+        kind="podcast_reindex_semantic_job",
         payload={"media_id": "m-retry"},
         max_attempts=2,
     )

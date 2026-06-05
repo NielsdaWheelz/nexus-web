@@ -72,17 +72,13 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
 
     refresh_response = auth_client.post(f"/media/{media_id}/refresh", headers=headers)
     assert refresh_response.status_code == 202, refresh_response.text
-    assert refresh_response.json()["data"]["refresh_enqueued"] is True, refresh_response.json()
-    from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
-
-    with direct_db.session() as session:
-        result = run_web_article_ingest_sync(
-            session,
-            media_id,
-            user_id,
-            "real-media-web-refresh-fixture",
-        )
-        session.commit()
+    assert refresh_response.json()["data"]["ingest_enqueued"] is True, refresh_response.json()
+    media_id, result = ingest_web_article_fixture_with_dedupe_resolution(
+        direct_db,
+        media_id,
+        user_id,
+        "real-media-web-refresh-fixture",
+    )
     assert result["status"] == "success", result
 
     replacement_trace = assert_reingest_replacement_trace(

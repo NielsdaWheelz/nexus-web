@@ -53,6 +53,8 @@ Fill in the real values:
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` for the VPS Postgres.
 - Cloudflare R2 bucket, shared S3 API origin, backend access keys, and browser
   upload CORS policy.
+- Backend provider credentials required by startup validation, including
+  `YOUTUBE_DATA_API_KEY` and `X_API_BEARER_TOKEN`.
 
 Then upload the merged backend runtime env:
 

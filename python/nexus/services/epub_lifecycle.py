@@ -1,15 +1,8 @@
-"""EPUB ingest + retry lifecycle orchestration.
+"""EPUB source lifecycle boundary and extraction artifact cleanup."""
 
-Owns lifecycle policy: dispatch, state transitions, retry guards, and
-artifact cleanup for EPUB media.  Routes call exactly one function here.
-Non-EPUB kinds delegate to upload-confirm behavior.
-"""
-
-import logging
 from uuid import UUID
 
 from sqlalchemy import delete, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -22,28 +15,18 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     Media,
-    MediaFile,
     ProcessingStatus,
 )
-from nexus.errors import (
-    ApiError,
-    ApiErrorCode,
-    ConflictError,
-    ForbiddenError,
-    InvalidRequestError,
-    NotFoundError,
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.epub_ingest import (
+    EpubExtractionError,
+    EpubExtractionResult,
+    extract_epub_artifacts,
 )
-from nexus.jobs.queue import enqueue_job
-from nexus.services import library_entries, library_governance
-from nexus.services.epub_ingest import check_archive_safety
-from nexus.services.file_ingest_validation import validate_file_source_integrity
-from nexus.services.media_processing_state import begin_extraction, mark_failed
-from nexus.services.upload import (
-    confirm_ingest as _base_confirm_ingest,
-)
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.services.epub_metadata import persist_epub_metadata
+from nexus.storage.client import get_storage_client
 
-logger = logging.getLogger(__name__)
+_MAX_ERROR_MSG_LEN = 1000
 
 
 def confirm_ingest_for_viewer(
@@ -54,213 +37,15 @@ def confirm_ingest_for_viewer(
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Unified ingest-confirm entry point called by the route.
+    from nexus.services.media_source_ingest import confirm_uploaded_source
 
-    For EPUB: validates, hashes, deduplicates via base confirm_ingest, then
-    runs preflight archive safety and dispatches extraction.
-    For PDF: delegates to the PDF lifecycle module.
-    For non-EPUB/non-PDF: delegates to base confirm_ingest.
-
-    Library destination IDs are validated before file-confirm work starts, then
-    applied to the actual confirmed media row after dedupe resolution. New
-    PDF/EPUB rows attach destinations in the same transaction that enqueues
-    extraction.
-    """
-    media = db.execute(select(Media).where(Media.id == media_id)).scalar()
-
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.created_by_user_id is None or media.created_by_user_id != viewer_id:
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Only the creator can confirm upload",
-        )
-
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-
-    if media.kind == "pdf":
-        from nexus.services.pdf_lifecycle import confirm_pdf_ingest
-
-        return confirm_pdf_ingest(
-            db, viewer_id, media_id, library_ids=library_ids, request_id=request_id
-        )
-
-    if media.kind != "epub":
-        result = _base_confirm_ingest(db, viewer_id, media_id)
-        library_entries.assign_libraries_for_media(
-            db, viewer_id, UUID(result["media_id"]), library_ids
-        )
-        return {
-            "media_id": result["media_id"],
-            "duplicate": result["duplicate"],
-            "processing_status": "pending",
-            "ingest_enqueued": False,
-        }
-
-    return _confirm_epub_ingest(
-        db, viewer_id, media_id, library_ids=library_ids, request_id=request_id
+    return confirm_uploaded_source(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_ids=library_ids,
+        request_id=request_id,
     )
-
-
-def _confirm_epub_ingest(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    library_ids: list[UUID],
-    request_id: str | None = None,
-) -> dict:
-    """EPUB-specific ingest confirm with preflight and dispatch."""
-    base_result = _base_confirm_ingest(db, viewer_id, media_id)
-
-    actual_media_id = UUID(base_result["media_id"])
-
-    if base_result["duplicate"]:
-        library_entries.assign_libraries_for_media(db, viewer_id, actual_media_id, library_ids)
-        winner = db.get(Media, actual_media_id)
-        return {
-            "media_id": base_result["media_id"],
-            "duplicate": True,
-            "processing_status": winner.processing_status.value if winner else "pending",
-            "ingest_enqueued": False,
-        }
-
-    media = db.execute(select(Media).where(Media.id == actual_media_id).with_for_update()).scalar()
-
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.processing_status != ProcessingStatus.pending:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        db.commit()
-        return {
-            "media_id": str(media.id),
-            "duplicate": False,
-            "processing_status": media.processing_status.value,
-            "ingest_enqueued": False,
-        }
-
-    media_file = media.media_file
-    if not media_file:
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Upload not found. Please try again.",
-        )
-
-    storage_path = media_file.storage_path
-    file_sha256 = media.file_sha256
-    db.commit()
-
-    storage_client = get_storage_client()
-    try:
-        epub_bytes = b"".join(storage_client.stream_object(storage_path))
-    except StorageError as exc:
-        if exc.code != ApiErrorCode.E_STORAGE_MISSING.value:
-            raise ApiError(
-                ApiErrorCode.E_STORAGE_ERROR,
-                "Failed to read uploaded file.",
-            ) from exc
-        media = db.execute(
-            select(Media).where(Media.id == actual_media_id).with_for_update()
-        ).scalar()
-        if media is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="Stored EPUB object is missing",
-        )
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Upload not found. Please try again.",
-        ) from exc
-
-    safety_err = check_archive_safety(epub_bytes)
-
-    media = db.execute(select(Media).where(Media.id == actual_media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.processing_status != ProcessingStatus.pending:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        db.commit()
-        return {
-            "media_id": str(media.id),
-            "duplicate": False,
-            "processing_status": media.processing_status.value,
-            "ingest_enqueued": False,
-        }
-
-    media_file = media.media_file
-    if (
-        not media_file
-        or media_file.storage_path != storage_path
-        or media.file_sha256 != file_sha256
-    ):
-        db.rollback()
-        raise ConflictError(
-            ApiErrorCode.E_UPLOAD_CONFLICT,
-            "EPUB upload state changed while it was being confirmed.",
-        )
-
-    if safety_err is not None:
-        mark_failed(
-            db,
-            media,
-            stage="extract",
-            error_code=safety_err.error_code,
-            error_message=safety_err.error_message,
-        )
-        raise InvalidRequestError(ApiErrorCode.E_ARCHIVE_UNSAFE, safety_err.error_message)
-
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
-    begin_extraction(db, media)
-
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_epub",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-            },
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error(
-            "epub_dispatch_failed media_id=%s error=%s",
-            media.id,
-            exc,
-        )
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue extraction job.",
-        ) from exc
-
-    db.commit()
-
-    return {
-        "media_id": str(media.id),
-        "duplicate": False,
-        "processing_status": "extracting",
-        "ingest_enqueued": True,
-    }
 
 
 def retry_epub_ingest_for_viewer(
@@ -270,106 +55,57 @@ def retry_epub_ingest_for_viewer(
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Retry endpoint orchestration for failed EPUB media."""
-    from nexus.auth.permissions import can_read_media
+    from nexus.services.media_source_ingest import retry_source_for_viewer
 
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.kind != "epub":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Retry is only supported for EPUB media.",
-        )
-
-    if media.created_by_user_id != viewer_id:
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Only the creator can retry extraction.",
-        )
-
-    if media.processing_status != ProcessingStatus.failed:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Media must be in failed state to retry.",
-        )
-
-    if media.last_error_code == ApiErrorCode.E_ARCHIVE_UNSAFE.value:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Retry not allowed for terminal archive failure. Upload a new file.",
-        )
-
-    media_file = db.execute(select(MediaFile).where(MediaFile.media_id == media_id)).scalar()
-    if media_file is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Source file metadata missing.",
-        )
-
-    storage_client = get_storage_client()
-    validate_file_source_integrity(
-        storage_client,
-        media_file,
-        media.kind,
-        expected_sha256=media.file_sha256,
+    return retry_source_for_viewer(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        request_id=request_id,
     )
 
-    storage_paths_to_delete = delete_extraction_artifacts(db, media_id)
 
-    begin_extraction(db, media)
+def materialize_epub_source(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> dict[str, object]:
+    """Persist EPUB extraction artifacts without owning source lifecycle state."""
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != "epub":
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be EPUB.")
+    if media.processing_status != ProcessingStatus.extracting:
+        return {"status": "skipped", "reason": "not_extracting"}
 
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_epub",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-            },
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error(
-            "epub_retry_dispatch_failed media_id=%s error=%s",
-            media.id,
-            exc,
-        )
+    result = extract_epub_artifacts(db, media_id, get_storage_client())
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.processing_status != ProcessingStatus.extracting:
+        return {"status": "skipped", "reason": "state_changed"}
+    if isinstance(result, EpubExtractionError):
         raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue extraction job.",
-        ) from exc
+            _source_api_error_code(result.error_code),
+            (result.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN],
+        )
 
-    db.commit()
-    storage_client = get_storage_client()
-    for path in storage_paths_to_delete:
-        try:
-            storage_client.delete_object(path)
-        except StorageError as exc:
-            # justify-ignore-error: retry committed the DB artifact reset first,
-            # so stale extraction objects are now unreachable and can be removed
-            # by operational cleanup without corrupting DB/storage references.
-            logger.warning(
-                "epub_artifact_storage_delete_failed media_id=%s storage_path=%s error=%s",
-                media_id,
-                path,
-                exc.message,
-            )
-
+    assert isinstance(result, EpubExtractionResult)
+    persist_epub_metadata(db, media, result)
+    db.flush()
     return {
-        "media_id": str(media.id),
-        "processing_status": "extracting",
-        "retry_enqueued": True,
+        "status": "success",
+        "chapter_count": result.chapter_count,
+        "toc_node_count": result.toc_node_count,
+        "asset_count": result.asset_count,
+        "title": result.title,
+        "metadata_enrichment": True,
     }
 
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
-    """Delete all extraction and chunk/embedding artifacts for a media row."""
+    """Delete all EPUB extraction and chunk/embedding artifacts for a media row."""
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
         .scalars()
@@ -398,6 +134,12 @@ def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-
     db.flush()
     return list(storage_paths)
+
+
+def _source_api_error_code(error_code: str | None) -> ApiErrorCode:
+    try:
+        return ApiErrorCode(str(error_code or ""))
+    except ValueError:
+        return ApiErrorCode.E_INGEST_FAILED

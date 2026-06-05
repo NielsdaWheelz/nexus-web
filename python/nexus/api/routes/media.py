@@ -17,7 +17,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaLibrariesRequest
-from nexus.services import library_entries
+from nexus.services import library_entries, media_source_ingest
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 
@@ -125,10 +125,11 @@ def refresh_media_source(
     request: Request,
 ) -> dict:
     """Refresh source-backed media by requeueing source acquisition."""
-    result = media_service.refresh_source_for_viewer(
+    result = media_source_ingest.refresh_source_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
         request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return success_response(result)

@@ -14,7 +14,61 @@ pytestmark = pytest.mark.integration
 
 
 def _youtube_ingest_module():
-    return importlib.import_module("nexus.tasks.ingest_youtube_video")
+    return importlib.import_module("nexus.services.youtube_video_ingest")
+
+
+def _register_youtube_media_cleanup(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+) -> None:
+    with direct_db.session() as session:
+        job_ids = [
+            row[0]
+            for row in session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                    """
+                ),
+                {"media_id": str(media_id)},
+            ).fetchall()
+        ]
+    for job_id in job_ids:
+        direct_db.register_cleanup("background_jobs", "id", job_id)
+    direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
+    direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+    direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
+    direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+
+def _run_latest_source_attempt(direct_db: DirectSessionManager, media_id: UUID) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT id, created_by_user_id
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no DESC, created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+        return run_source_attempt(
+            db=session,
+            media_id=media_id,
+            attempt_id=row[0],
+            actor_user_id=row[1],
+            request_id="test-youtube-source-attempt",
+        )
 
 
 class TestIngestYoutubeVideo:
@@ -32,9 +86,7 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
@@ -58,10 +110,10 @@ class TestIngestYoutubeVideo:
             },
         )
 
-        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
 
         with direct_db.session() as session:
-            result = run_ingest_sync(session, media_id, user_id)
+            result = run_youtube_video_ingest(session, media_id, user_id)
 
         assert result["status"] == "success"
 
@@ -123,9 +175,7 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
@@ -137,12 +187,10 @@ class TestIngestYoutubeVideo:
             },
         )
 
-        from nexus.tasks.ingest_youtube_video import run_ingest_sync
-
-        with direct_db.session() as session:
-            result = run_ingest_sync(session, media_id, user_id)
+        result = _run_latest_source_attempt(direct_db, media_id)
 
         assert result["status"] == "failed"
+        assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE"
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200
@@ -170,13 +218,11 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
-            "_fetch_youtube_metadata",
+            "fetch_youtube_metadata",
             lambda _provider_id: {
                 "title": "Systems Thinking Video",
                 "description": "A concise systems lecture.",
@@ -201,10 +247,10 @@ class TestIngestYoutubeVideo:
             },
         )
 
-        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
 
         with direct_db.session() as session:
-            result = run_ingest_sync(session, media_id, user_id)
+            result = run_youtube_video_ingest(session, media_id, user_id)
 
         assert result["status"] == "success"
 
@@ -258,9 +304,7 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         calls = {"count": 0}
 
@@ -284,11 +328,11 @@ class TestIngestYoutubeVideo:
             _fake_transcript,
         )
 
-        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
 
         with direct_db.session() as session:
-            first = run_ingest_sync(session, media_id, user_id)
-            second = run_ingest_sync(session, media_id, user_id)
+            first = run_youtube_video_ingest(session, media_id, user_id)
+            second = run_youtube_video_ingest(session, media_id, user_id)
 
         assert first["status"] == "success"
         assert second["status"] == "skipped"
@@ -316,9 +360,7 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         first_segments = [
             {
@@ -340,10 +382,10 @@ class TestIngestYoutubeVideo:
             lambda _provider_id: {"status": "completed", "segments": first_segments},
         )
 
-        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
 
         with direct_db.session() as session:
-            first = run_ingest_sync(session, media_id, user_id)
+            first = run_youtube_video_ingest(session, media_id, user_id)
         assert first["status"] == "success"
 
         # Seed a highlight anchored to one of the first transcript's fragments. The
@@ -369,9 +411,9 @@ class TestIngestYoutubeVideo:
         highlight_id = UUID(highlight_response.json()["data"]["id"])
         direct_db.register_cleanup("highlights", "fragment_anchor_fragment_id", first_fragment_id)
 
-        # A YouTube re-ingest is enqueued by resetting the media back to `pending`
-        # (see nexus/services/youtube_ingest.py), which defeats the already_ready skip
-        # guard so the second run re-transcribes through write_transcript_version.
+        # A YouTube source refresh resets the media back to active processing,
+        # which defeats the already_ready skip guard so the second run
+        # re-transcribes through write_transcript_version.
         with direct_db.session() as session:
             session.execute(
                 text(
@@ -406,7 +448,7 @@ class TestIngestYoutubeVideo:
         )
 
         with direct_db.session() as session:
-            second = run_ingest_sync(session, media_id, user_id)
+            second = run_youtube_video_ingest(session, media_id, user_id)
         assert second["status"] == "success"
 
         # The pre-existing highlight anchored to a now-deleted fragment is GONE.

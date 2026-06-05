@@ -27,11 +27,9 @@ from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
-    "ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,"
-    "enrich_metadata,chat_run,library_intelligence_build_job,"
-    "podcast_sync_subscription_job,podcast_transcribe_episode_job,"
-    "podcast_reindex_semantic_job,backfill_default_library_closure_job,"
-    "oracle_reading_generate"
+    "ingest_media_source,enrich_metadata,chat_run,library_intelligence_build_job,"
+    "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
+    "backfill_default_library_closure_job,oracle_reading_generate"
 )
 
 
@@ -180,10 +178,6 @@ class Settings(BaseSettings):
     x_api_author_thread_max_posts: int = Field(
         default=1000,
         alias="X_API_AUTHOR_THREAD_MAX_POSTS",
-    )
-    x_api_include_user_expansions: bool = Field(
-        default=False,
-        alias="X_API_INCLUDE_USER_EXPANSIONS",
     )
     youtube_transcript_timeout_seconds: float = Field(
         default=30.0,

@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
-import { addMediaFromUrl } from "@/lib/media/ingestionClient";
+import {
+  captureSourceUrl,
+  runBoundedSourceUrlCaptures,
+} from "@/lib/media/sourceUrlCapture";
 import { quickCaptureDailyNote } from "@/lib/notes/api";
 import styles from "./share.module.css";
 
@@ -17,7 +22,7 @@ type CaptureResult =
       path: string;
       mediaId?: string;
     }
-  | { label: string; ok: false };
+  | { label: string; ok: false; feedback: FeedbackContent };
 
 export default function ShareCapture({
   text,
@@ -36,6 +41,7 @@ export default function ShareCapture({
   // double-invoke, which would otherwise post a second daily-note bullet
   // (quickCaptureDailyNote is not idempotent, unlike from-url).
   const capturedAttempt = useRef<number | null>(null);
+  const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -57,7 +63,13 @@ export default function ShareCapture({
           },
         ]);
       } catch {
-        setResults([{ label: trimmed, ok: false }]);
+        setResults([
+          {
+            label: trimmed,
+            ok: false,
+            feedback: { severity: "error", title: "Couldn’t save" },
+          },
+        ]);
       }
     })();
   }, [trimmed, urls.length, attempt]);
@@ -68,31 +80,26 @@ export default function ShareCapture({
   async function saveUrls(targetUrls: string[]) {
     if (saving || pickerBusy) return;
     setSaving(true);
-    const settled = await Promise.all(
-      targetUrls.map(async (url): Promise<CaptureResult> => {
-        try {
-          const { mediaId, duplicate } = await addMediaFromUrl({
-            url,
-            libraryIds: selectedLibraryIds,
-          });
-          return {
-            label: url,
-            ok: true,
-            status: duplicate ? "Already in your library" : "Saved",
-            path: `/media/${mediaId}`,
-            mediaId,
-          };
-        } catch {
-          return { label: url, ok: false };
-        }
-      }),
-    );
+    const settled = await runBoundedSourceUrlCaptures(targetUrls, saveUrl);
     setResults((current) => {
       if (!current) return settled;
       const replacements = new Map(settled.map((result) => [result.label, result]));
       return current.map((result) => replacements.get(result.label) ?? result);
     });
     setSaving(false);
+  }
+
+  async function saveUrl(url: string): Promise<CaptureResult> {
+    let idempotencyKey = urlIdempotencyKeys.current.get(url);
+    if (!idempotencyKey) {
+      idempotencyKey = createRandomId("share-url");
+      urlIdempotencyKeys.current.set(url, idempotencyKey);
+    }
+    return captureSourceUrl({
+      url,
+      libraryIds: selectedLibraryIds,
+      idempotencyKey,
+    });
   }
 
   if (!trimmed) {
@@ -190,7 +197,14 @@ export default function ShareCapture({
                 </div>
               </>
             ) : (
-              <span className={styles.error}>Couldn’t save</span>
+              <>
+                <span className={styles.error}>{result.feedback.title}</span>
+                {result.feedback.requestId ? (
+                  <span className={styles.resultStatus}>
+                    Nexus request ID: {result.feedback.requestId}
+                  </span>
+                ) : null}
+              </>
             )}
           </div>
         ))}

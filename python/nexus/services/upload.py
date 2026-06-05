@@ -12,8 +12,8 @@ Key invariants:
 
 import hashlib
 import logging
-from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -22,8 +22,6 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import (
     Media,
-    MediaFile,
-    ProcessingStatus,
 )
 from nexus.errors import (
     ApiError,
@@ -33,13 +31,9 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.services import library_entries, library_governance
-from nexus.services.file_ingest_validation import (
-    has_valid_file_signature,
-    validate_file_ingest_request,
-)
+from nexus.services import library_entries
+from nexus.services.file_ingest_validation import has_valid_file_signature
 from nexus.services.media_deletion import delete_duplicate_document_media
-from nexus.services.media_processing_state import mark_failed
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import (
     build_storage_path,
@@ -58,104 +52,23 @@ def init_upload(
     content_type: str,
     size_bytes: int,
     library_ids: list[UUID],
+    request_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
-    """Initialize a file upload.
+    """Initialize a file upload through the durable source owner."""
+    from nexus.services.media_source_ingest import accept_uploaded_file_source
 
-    Creates media stub and returns signed upload URL.
-    Ordering: Mint signed URL before persisting rows to avoid orphans on signing failure.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer (will be created_by_user_id).
-        kind: Media kind (pdf, epub).
-        filename: Original filename.
-        content_type: MIME content type.
-        size_bytes: File size in bytes.
-        library_ids: Additional libraries to attach the new media to. The viewer's
-            default library is always implicit; this list adds non-default libraries
-            on top. Empty list means default-only.
-
-    Returns:
-        Dict with media_id, upload_url, and expires_at.
-
-    Raises:
-        InvalidRequestError: If validation fails.
-        ForbiddenError: If any id in library_ids is not writable by the viewer.
-        ApiError: If signing fails.
-    """
-    settings = get_settings()
-
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-
-    # Validate request
-    validate_file_ingest_request(kind, content_type, size_bytes)
-
-    # Get file extension
-    ext = get_file_extension(kind)
-
-    # Generate media_id before persisting
-    media_id = uuid4()
-    storage_path = build_upload_staging_storage_path(media_id, ext)
-
-    # Mint signed upload URL FIRST (before DB writes)
-    storage_client = get_storage_client()
-    try:
-        signed_upload = storage_client.sign_upload(
-            storage_path,
-            content_type=content_type,
-            size_bytes=size_bytes,
-            expires_in=settings.signed_url_expiry_s,
-        )
-    except StorageError as e:
-        logger.error(
-            "Failed to sign upload: media_id=%s, path=%s, error=%s",
-            media_id,
-            storage_path,
-            e.message,
-        )
-        raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload") from e
-
-    # Now persist to DB in a single transaction
-    now = datetime.now(UTC)
-    expires_at = now + timedelta(seconds=settings.signed_url_expiry_s)
-
-    # Create media row
-    media = Media(
-        id=media_id,
+    return accept_uploaded_file_source(
+        db=db,
+        viewer_id=viewer_id,
         kind=kind,
-        title=filename,  # Use filename as initial title
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(media)
-
-    # Create media_file row
-    media_file = MediaFile(
-        media_id=media_id,
-        storage_path=storage_path,
+        filename=filename,
         content_type=content_type,
         size_bytes=size_bytes,
+        library_ids=library_ids,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
     )
-    db.add(media_file)
-
-    # Flush media + media_file first so FK on closure tables is satisfied
-    db.flush()
-
-    # Attach to viewer's default library + every additional library in library_ids.
-    # Raises before DB commit if any destination id is not writable.
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media_id, library_ids
-    )
-
-    db.commit()
-
-    return {
-        "media_id": str(media_id),
-        "upload_url": signed_upload.upload_url,
-        "expires_at": expires_at.isoformat(),
-    }
 
 
 def _find_existing_by_hash(db: Session, user_id: UUID, kind: str, sha256: str) -> Media | None:
@@ -217,13 +130,6 @@ def confirm_ingest(
 
     media_file = media.media_file
     if not media_file:
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
@@ -260,15 +166,12 @@ def confirm_ingest(
             declared_size,
             max_size=settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes,
         )
-    except InvalidRequestError as exc:
-        _mark_failed_and_delete_upload_by_id(
+    except InvalidRequestError:
+        _clear_upload_confirmation_claim_and_delete_upload(
             db,
             media_id,
             storage_client,
             storage_path,
-            "upload",
-            exc.code.value,
-            exc.message,
         )
         raise
     except StorageError as exc:
@@ -300,16 +203,9 @@ def confirm_ingest(
             "duplicate": False,
         }
 
-    media_file = media.media_file
+        media_file = media.media_file
     if not media_file:
         _delete_upload_object(storage_client, storage_path, media_id, "missing_media_file")
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
@@ -347,18 +243,15 @@ def confirm_ingest(
             ApiErrorCode.E_STORAGE_ERROR,
             "Failed to finalize uploaded file.",
         ) from exc
-    except InvalidRequestError as exc:
+    except InvalidRequestError:
         _delete_upload_object(
             storage_client, final_storage_path, media_id, "final_validation_failed"
         )
-        _mark_failed_and_delete_upload_by_id(
+        _clear_upload_confirmation_claim_and_delete_upload(
             db,
             media_id,
             storage_client,
             storage_path,
-            "upload",
-            exc.code.value,
-            exc.message,
         )
         raise
 
@@ -366,14 +259,11 @@ def confirm_ingest(
         _delete_upload_object(
             storage_client, final_storage_path, media_id, "final_integrity_mismatch"
         )
-        _mark_failed_and_delete_upload_by_id(
+        _clear_upload_confirmation_claim_and_delete_upload(
             db,
             media_id,
             storage_client,
             storage_path,
-            "upload",
-            ApiErrorCode.E_INVALID_REQUEST.value,
-            "Uploaded object changed while it was being finalized",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -414,13 +304,6 @@ def confirm_ingest(
         _delete_upload_object(
             storage_client, final_storage_path, media_id, "missing_file_after_copy"
         )
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
@@ -441,6 +324,14 @@ def confirm_ingest(
 
     if existing and existing.id != media.id:
         library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
+        from nexus.services.media_source_ingest import transfer_source_attempts_to_media
+
+        transfer_source_attempts_to_media(
+            db,
+            loser_media_id=media_id,
+            winner_media_id=existing.id,
+            terminal_status="succeeded",
+        )
         _delete_duplicate_upload_loser(
             db,
             storage_client,
@@ -465,6 +356,14 @@ def confirm_ingest(
         winner = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
         if winner:
             library_entries.ensure_media_in_default_library(db, viewer_id, winner.id)
+            from nexus.services.media_source_ingest import transfer_source_attempts_to_media
+
+            transfer_source_attempts_to_media(
+                db,
+                loser_media_id=media_id,
+                winner_media_id=winner.id,
+                terminal_status="succeeded",
+            )
             _delete_duplicate_upload_loser(
                 db,
                 storage_client,
@@ -533,20 +432,13 @@ def _delete_duplicate_upload_loser(
         _delete_upload_object(storage_client, storage_path, media_id, reason)
 
 
-def _mark_failed_and_delete_upload_by_id(
+def _clear_upload_confirmation_claim_and_delete_upload(
     db: Session,
     media_id: UUID,
     storage_client,
     storage_path: str,
-    stage: str,
-    error_code: str,
-    error_message: str,
 ) -> None:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is not None and media.file_sha256 is None:
-        mark_failed(db, media, stage=stage, error_code=error_code, error_message=error_message)
-    else:
-        db.commit()
+    _clear_upload_confirmation_claim(db, media_id)
     _delete_upload_object(storage_client, storage_path, media_id, "failed_upload")
 
 

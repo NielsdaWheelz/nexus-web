@@ -56,7 +56,8 @@ Ignored local files to fill with real values:
 
 - `deploy/env/env-prod`: shared production values.
 - `deploy/env/env-prod-frontend`: Vercel-only values.
-- `deploy/env/env-prod-backend`: FastAPI/Caddy values.
+- `deploy/env/env-prod-backend`: FastAPI/Caddy values and backend-only provider
+  secrets, including `X_API_BEARER_TOKEN`.
 - `deploy/env/env-prod-worker`: worker-only values.
 
 Create them from examples:
@@ -81,6 +82,14 @@ and one-off commands.
 The backend DB pool is bounded by `DATABASE_POOL_SIZE`,
 `DATABASE_MAX_OVERFLOW`, and `DATABASE_POOL_TIMEOUT_SECONDS`. Keep the default
 `5/5/30` unless VPS Postgres metrics show sustained saturation.
+
+X/Twitter thread ingestion uses the official X API from the backend only.
+`X_API_BEARER_TOKEN`, `X_API_TIMEOUT_SECONDS`, and
+`X_API_AUTHOR_THREAD_MAX_POSTS` are VPS runtime settings, not Vercel settings.
+Provider credits are not env; if X capture fails with
+`E_X_PROVIDER_CREDITS_DEPLETED`, add credits in the X developer account and then
+run a direct provider probe or the gated live-provider test with
+`X_LIVE_TEST_POST_URL` and `X_LIVE_TEST_EXPECTED_TEXT`.
 
 ## Hetzner Provisioning
 
@@ -260,6 +269,14 @@ Health check:
 
 ```bash
 curl https://api.nexus.nielseriknandal.com/health
+```
+
+Check recent X provider failures by request ID after an ingest failure:
+
+```bash
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec postgres \
+  sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "select created_at, request_id, status, api_error_code, provider_status_code, provider_error_title from external_provider_events where provider = '\''x'\'' order by created_at desc limit 20"'
 ```
 
 ## Cutover

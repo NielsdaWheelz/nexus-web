@@ -120,6 +120,14 @@ function isYouTubeUrl(url) {
   return host === "youtu.be" || host.endsWith(".youtube.com") || host === "youtube.com";
 }
 
+function createCaptureIdempotencyKey() {
+  const randomId =
+    globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `extension-capture-${randomId}`;
+}
+
 async function connect() {
   const baseUrl = cleanBaseUrl();
   new URL(baseUrl);
@@ -158,6 +166,7 @@ async function postCapture(baseUrl, extensionToken, path, init) {
     ...init,
     headers: {
       Authorization: `Bearer ${extensionToken}`,
+      "Idempotency-Key": createCaptureIdempotencyKey(),
       ...init.headers,
     },
   });

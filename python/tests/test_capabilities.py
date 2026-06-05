@@ -426,7 +426,7 @@ class TestProcessingStatusProgression:
 
         assert caps.can_read is expected_read
 
-    def test_failed_web_article_can_retry_when_creator_and_original_url_exists(self):
+    def test_failed_web_article_cannot_retry_without_failed_source_attempt(self):
         caps = derive_capabilities(
             kind="web_article",
             processing_status="failed",
@@ -437,7 +437,7 @@ class TestProcessingStatusProgression:
             requested_url_exists=True,
         )
 
-        assert caps.can_retry is True
+        assert caps.can_retry is False
 
     def test_failed_pdf_password_error_cannot_retry(self):
         caps = derive_capabilities(
@@ -447,9 +447,25 @@ class TestProcessingStatusProgression:
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
+            source_refresh_available=True,
         )
 
         assert caps.can_retry is False
+
+    def test_failed_remote_pdf_source_attempt_can_retry_without_file(self):
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code="E_INGEST_FAILED",
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+            source_retry_available=True,
+            source_refresh_available=True,
+        )
+
+        assert caps.can_retry is True
+        assert caps.can_refresh_source is True
 
     def test_failed_epub_archive_error_cannot_retry(self):
         caps = derive_capabilities(
@@ -459,6 +475,7 @@ class TestProcessingStatusProgression:
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
+            source_refresh_available=True,
         )
 
         assert caps.can_retry is False
@@ -477,6 +494,7 @@ class TestSourceRefreshUploadedFiles:
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
+            source_refresh_available=True,
         )
 
         assert caps.can_refresh_source is True, (
@@ -492,6 +510,7 @@ class TestSourceRefreshUploadedFiles:
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
+            source_refresh_available=True,
         )
 
         assert caps.can_refresh_source is True
@@ -531,6 +550,7 @@ class TestSourceRefreshUploadedFiles:
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
+            source_refresh_available=True,
         )
 
         assert caps.can_refresh_source is True

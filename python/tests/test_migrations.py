@@ -3582,7 +3582,7 @@ class TestWorkerRuntime:
             SELECT available_at
             FROM background_jobs
             WHERE status IN ('pending', 'failed')
-              AND kind = ANY(ARRAY['ingest_pdf'])
+              AND kind = ANY(ARRAY['ingest_media_source'])
               AND available_at > now()
             ORDER BY available_at ASC, id ASC
             LIMIT 1
@@ -3596,7 +3596,7 @@ class TestWorkerRuntime:
             FROM background_jobs
             WHERE status = 'running'
               AND lease_expires_at IS NOT NULL
-              AND kind = ANY(ARRAY['ingest_pdf'])
+              AND kind = ANY(ARRAY['ingest_media_source'])
               AND lease_expires_at > now()
             ORDER BY lease_expires_at ASC, id ASC
             LIMIT 1
@@ -7837,3 +7837,275 @@ class TestConversationReferencesCutoverMigration0121:
             "or 'not reversible' marker; "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
+
+
+class TestDurableSourceIngestMigrations:
+    """Schema assertions for 0132/0133 durable source ingest cutover."""
+
+    def test_0133_backfills_existing_source_media_attempts(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0132")
+            assert result.returncode == 0, f"upgrade 0132 failed: {result.stderr}"
+
+            user_id = uuid4()
+            x_media_id = uuid4()
+            remote_pdf_id = uuid4()
+            uploaded_epub_id = uuid4()
+            youtube_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, requested_url, canonical_url,
+                            canonical_source_url, provider, provider_id,
+                            processing_status, created_by_user_id,
+                            processing_attempts, last_error_code,
+                            last_error_message, processing_started_at, failed_at
+                        )
+                        VALUES (
+                            :id, 'web_article', 'Legacy X failure',
+                            'https://x.com/ada/status/1234567890',
+                            'https://x.com/i/status/1234567890',
+                            'https://x.com/i/status/1234567890',
+                            'x', 'post:1234567890', 'failed', :user_id,
+                            2, 'E_X_PROVIDER_TIMEOUT', 'provider timed out',
+                            now(), now()
+                        )
+                        """
+                    ),
+                    {"id": x_media_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, requested_url, canonical_source_url,
+                            processing_status, created_by_user_id,
+                            processing_attempts, last_error_code, last_error_message,
+                            processing_started_at, failed_at
+                        )
+                        VALUES (
+                            :id, 'pdf', 'Legacy remote PDF failure',
+                            'https://example.com/missing.pdf',
+                            'https://example.com/missing.pdf',
+                            'failed', :user_id, 1, 'E_UPSTREAM_NOT_FOUND',
+                            'not found', now(), now()
+                        )
+                        """
+                    ),
+                    {"id": remote_pdf_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id,
+                            file_sha256, processing_completed_at
+                        )
+                        VALUES (
+                            :id, 'epub', 'Legacy uploaded EPUB',
+                            'ready_for_reading', :user_id, :sha, now()
+                        )
+                        """
+                    ),
+                    {
+                        "id": uploaded_epub_id,
+                        "user_id": user_id,
+                        "sha": "a" * 64,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media_file (
+                            media_id, storage_path, content_type, size_bytes
+                        )
+                        VALUES (
+                            :id, :storage_path, 'application/epub+zip', 1024
+                        )
+                        """
+                    ),
+                    {
+                        "id": uploaded_epub_id,
+                        "storage_path": f"media/{uploaded_epub_id}/original.epub",
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, requested_url, canonical_url,
+                            canonical_source_url, provider, provider_id,
+                            processing_status, created_by_user_id,
+                            processing_attempts, processing_started_at
+                        )
+                        VALUES (
+                            :id, 'video', 'Legacy YouTube pending',
+                            'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                            'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                            'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                            'youtube', 'dQw4w9WgXcQ', 'pending', :user_id,
+                            0, now()
+                        )
+                        """
+                    ),
+                    {"id": youtube_id, "user_id": user_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0133")
+            assert result.returncode == 0, f"upgrade 0133 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row.media_id: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT
+                                media_id,
+                                source_type,
+                                status,
+                                run_count,
+                                provider_target_ref,
+                                error_code,
+                                source_payload
+                            FROM media_source_attempts
+                            WHERE media_id = ANY(:media_ids)
+                            """
+                        ),
+                        {
+                            "media_ids": [
+                                x_media_id,
+                                remote_pdf_id,
+                                uploaded_epub_id,
+                                youtube_id,
+                            ]
+                        },
+                    )
+                }
+
+            assert rows[x_media_id].source_type == "x_author_thread"
+            assert rows[x_media_id].status == "failed"
+            assert rows[x_media_id].run_count == 2
+            assert rows[x_media_id].provider_target_ref == "1234567890"
+            assert rows[x_media_id].error_code == "E_X_PROVIDER_TIMEOUT"
+            assert rows[x_media_id].source_payload["backfilled"] is True
+
+            assert rows[remote_pdf_id].source_type == "remote_pdf_url"
+            assert rows[remote_pdf_id].status == "failed"
+            assert rows[remote_pdf_id].error_code == "E_UPSTREAM_NOT_FOUND"
+            assert rows[remote_pdf_id].source_payload["backfilled"] is True
+
+            assert rows[uploaded_epub_id].source_type == "uploaded_epub_file"
+            assert rows[uploaded_epub_id].status == "succeeded"
+            assert rows[uploaded_epub_id].source_payload["storage_path"] == (
+                f"media/{uploaded_epub_id}/original.epub"
+            )
+
+            assert rows[youtube_id].source_type == "youtube_video"
+            assert rows[youtube_id].status == "queued"
+            assert rows[youtube_id].provider_target_ref == "dQw4w9WgXcQ"
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"restore head failed: {result.stderr}"
+
+    def test_media_source_attempts_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            constraints = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname, pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'media_source_attempts'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+            indexes = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef
+                        FROM pg_indexes
+                        WHERE tablename = 'media_source_attempts'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        assert "ck_media_source_attempts_source_type" in constraints
+        assert "ck_media_source_attempts_status" in constraints
+        assert "uq_media_source_attempts_media_attempt" in constraints
+        assert "FOREIGN KEY (media_id) REFERENCES media(id)" in set(constraints.values())
+        assert "FOREIGN KEY (created_by_user_id) REFERENCES users(id)" in set(
+            constraints.values()
+        )
+        assert "FOREIGN KEY (job_id) REFERENCES background_jobs(id)" in set(
+            constraints.values()
+        )
+
+        assert "idx_media_source_attempts_media_created" in indexes
+        assert "created_at DESC" in indexes["idx_media_source_attempts_media_created"]
+        assert "id DESC" in indexes["idx_media_source_attempts_media_created"]
+        assert "idx_media_source_attempts_request_id" in indexes
+        assert "WHERE (request_id IS NOT NULL)" in indexes[
+            "idx_media_source_attempts_request_id"
+        ]
+        assert "idx_media_source_attempts_source_type_status_updated" in indexes
+        assert "source_type" in indexes["idx_media_source_attempts_source_type_status_updated"]
+        assert "status" in indexes["idx_media_source_attempts_source_type_status_updated"]
+        assert "idx_media_source_attempts_provider_target" in indexes
+        assert "provider_target_ref" in indexes["idx_media_source_attempts_provider_target"]
+        assert "WHERE ((provider IS NOT NULL) AND (provider_target_ref IS NOT NULL))" in indexes[
+            "idx_media_source_attempts_provider_target"
+        ]
+        assert "uq_media_source_attempts_idempotency" in indexes
+        assert "WHERE (idempotency_key IS NOT NULL)" in indexes[
+            "uq_media_source_attempts_idempotency"
+        ]
+
+    def test_external_provider_events_correlation_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            constraints = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname, pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'external_provider_events'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+            indexes = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef
+                        FROM pg_indexes
+                        WHERE tablename = 'external_provider_events'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        constraint_defs = set(constraints.values())
+        assert "ck_external_provider_events_status" in constraints
+        assert "FOREIGN KEY (viewer_id) REFERENCES users(id)" in constraint_defs
+        assert "FOREIGN KEY (media_id) REFERENCES media(id)" in constraint_defs
+        assert "FOREIGN KEY (source_attempt_id) REFERENCES media_source_attempts(id)" in constraint_defs
+        assert "ix_external_provider_events_request_id" in indexes
+        assert "ix_external_provider_events_source_attempt_id" in indexes
+        assert "ix_external_provider_events_provider_status_created" in indexes

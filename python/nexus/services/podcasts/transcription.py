@@ -19,8 +19,6 @@ from nexus.db.session import create_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
-    ConflictError,
-    ForbiddenError,
     InvalidRequestError,
     NotFoundError,
 )
@@ -41,6 +39,7 @@ from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
+from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -72,15 +71,6 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
     "operator_requeue",
     "rss_feed",
 }
-
-
-@dataclass(frozen=True)
-class RetryTranscriptResult:
-    """Result of a viewer-initiated transcript/video retry admission."""
-
-    media_id: str
-    processing_status: str
-    retry_enqueued: bool
 
 
 @dataclass(frozen=True)
@@ -510,28 +500,6 @@ def request_podcast_transcript_for_viewer(
             },
         )
 
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'extracting',
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :now,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "now": now,
-        },
-    )
-
     set_media_transcript_state(
         db,
         media_id=media_id,
@@ -543,10 +511,11 @@ def request_podcast_transcript_for_viewer(
         now=now,
     )
 
-    enqueued = _enqueue_podcast_transcription_job(
+    enqueued = _enqueue_podcast_transcript_source_attempt(
         db,
         media_id=media_id,
         requested_by_user_id=viewer_id,
+        request_reason=normalized_reason,
         request_id=request_id,
     )
     if not enqueued:
@@ -753,201 +722,68 @@ def forecast_podcast_transcripts_for_viewer(
     return results
 
 
-def retry_transcript_media_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    request_id: str | None = None,
-) -> RetryTranscriptResult:
-    from nexus.auth.permissions import can_read_media
-
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media_row = db.execute(
-        text(
-            """
-            SELECT kind, created_by_user_id, processing_status, failure_stage
-            FROM media
-            WHERE id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchone()
-    if media_row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    kind = str(media_row[0] or "")
-    created_by_user_id = media_row[1]
-    processing_status = str(media_row[2] or "")
-    failure_stage = str(media_row[3] or "").strip() or None
-
-    if kind not in {"podcast_episode", "video"}:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Retry is only supported for PDF/EPUB/podcast/video media.",
-        )
-    if created_by_user_id != viewer_id:
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Only the creator can retry transcription.",
-        )
-
-    if processing_status == "extracting":
-        return RetryTranscriptResult(
-            media_id=str(media_id),
-            processing_status="extracting",
-            retry_enqueued=False,
-        )
-
-    if processing_status != "failed":
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Media must be in failed state to retry.",
-        )
-    if failure_stage not in {None, "transcribe"}:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Retry not allowed for this failure stage.",
-        )
-
-    if kind == "podcast_episode":
-        admission = request_podcast_transcript_for_viewer(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            reason="operator_requeue",
-            dry_run=False,
-        )
-        return RetryTranscriptResult(
-            media_id=admission.media_id,
-            processing_status=admission.processing_status,
-            retry_enqueued=admission.request_enqueued,
-        )
-
-    now = datetime.now(UTC)
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'extracting',
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :now,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "now": now,
-        },
-    )
-
-    enqueued = _enqueue_video_transcription_retry(
-        db,
-        media_id=media_id,
-        requested_by_user_id=viewer_id,
-        request_id=request_id,
-    )
-    if not enqueued:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'failed',
-                    failure_stage = 'transcribe',
-                    last_error_code = :error_code,
-                    last_error_message = :error_message,
-                    failed_at = :now,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "error_code": ApiErrorCode.E_INTERNAL.value,
-                "error_message": "Failed to enqueue video transcription job",
-                "now": now,
-            },
-        )
-        db.commit()
-        return RetryTranscriptResult(
-            media_id=str(media_id),
-            processing_status="failed",
-            retry_enqueued=False,
-        )
-
-    db.commit()
-    return RetryTranscriptResult(
-        media_id=str(media_id),
-        processing_status="extracting",
-        retry_enqueued=True,
-    )
-
-
-def requeue_podcast_transcription_for_source_refresh(
+def prepare_podcast_transcription_for_source_attempt(
     db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
-    request_id: str | None = None,
+    request_reason: str,
 ) -> None:
-    """Reset podcast transcript state for a source refresh.
+    """Reset podcast transcript-domain rows for a durable source attempt.
 
-    Caller owns authorization, media kind validation, and the surrounding commit.
+    Caller owns authorization, media kind validation, media source status, and commit.
     """
     now = datetime.now(UTC)
-    _reset_podcast_transcription_job_for_operator_requeue(
+    _reset_podcast_transcription_job_for_source_attempt(
         db,
         media_id=media_id,
         requested_by_user_id=requested_by_user_id,
+        request_reason=request_reason,
         now=now,
     )
-    _mark_media_transcription_extracting(db, media_id=media_id, now=now)
-    _reset_media_transcript_state_for_operator_requeue(db, media_id=media_id, now=now)
-    enqueue_job(
+    _reset_media_transcript_state_for_source_attempt(
         db,
-        kind="podcast_transcribe_episode_job",
-        payload={
-            "media_id": str(media_id),
-            "requested_by_user_id": str(requested_by_user_id),
-            "request_id": request_id,
-        },
+        media_id=media_id,
+        request_reason=request_reason,
+        now=now,
     )
 
 
-def _enqueue_podcast_transcription_job(
+def _enqueue_podcast_transcript_source_attempt(
     db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID | None,
+    request_reason: str,
     request_id: str | None = None,
 ) -> bool:
-    try:
-        enqueue_job(
-            db,
-            kind="podcast_transcribe_episode_job",
-            payload={
-                "media_id": str(media_id),
-                "requested_by_user_id": (
-                    str(requested_by_user_id) if requested_by_user_id is not None else None
-                ),
-                "request_id": request_id,
-            },
+    if requested_by_user_id is None:
+        logger.warning(
+            "podcast_transcript_source_attempt_missing_requested_by_user_id",
+            media_id=str(media_id),
+            request_reason=request_reason,
+            request_id=request_id,
         )
-        return True
+        return False
+
+    from nexus.services.media_source_ingest import (
+        enqueue_podcast_episode_transcript_source_attempt,
+    )
+
+    try:
+        return enqueue_podcast_episode_transcript_source_attempt(
+            db=db,
+            media_id=media_id,
+            viewer_id=requested_by_user_id,
+            request_reason=request_reason,
+            request_id=request_id,
+        )
     except SQLAlchemyError as exc:
         logger.warning(
-            "podcast_transcription_enqueue_failed",
+            "podcast_transcript_source_attempt_enqueue_failed",
             media_id=str(media_id),
-            requested_by_user_id=(str(requested_by_user_id) if requested_by_user_id else None),
+            requested_by_user_id=str(requested_by_user_id),
+            request_reason=request_reason,
             error=str(exc),
         )
         return False
@@ -986,59 +822,6 @@ def _enqueue_podcast_semantic_repair_job(
         return False
 
 
-def _try_enqueue_metadata_enrichment(
-    db: Session,
-    *,
-    media_id: UUID,
-    request_id: str | None = None,
-) -> bool:
-    try:
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload={"media_id": str(media_id), "request_id": request_id},
-            max_attempts=1,
-        )
-        return True
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "metadata_enrichment_enqueue_failed",
-            media_id=str(media_id),
-            request_id=request_id,
-            error=str(exc),
-        )
-        return False
-
-
-def _enqueue_video_transcription_retry(
-    db: Session,
-    *,
-    media_id: UUID,
-    requested_by_user_id: UUID,
-    request_id: str | None,
-) -> bool:
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_youtube_video",
-            payload={
-                "media_id": str(media_id),
-                "actor_user_id": str(requested_by_user_id),
-                "request_id": request_id,
-            },
-        )
-        return True
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "video_transcription_retry_enqueue_failed",
-            media_id=str(media_id),
-            requested_by_user_id=str(requested_by_user_id),
-            request_id=request_id,
-            error=str(exc),
-        )
-        return False
-
-
 def mark_podcast_transcription_failure(
     db: Session,
     *,
@@ -1046,6 +829,7 @@ def mark_podcast_transcription_failure(
     error_code: str,
     error_message: str,
     now: datetime,
+    mark_media_failed: bool = True,
 ) -> None:
     """Fail-close podcast transcription with full job/quota/transcript-state repair.
 
@@ -1059,28 +843,29 @@ def mark_podcast_transcription_failure(
     else:
         transcript_state = "failed_provider"
 
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'failed',
-                failure_stage = 'transcribe',
-                last_error_code = :error_code,
-                last_error_message = :error_message,
-                processing_completed_at = NULL,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "error_code": error_code,
-            "error_message": error_message[:1000],
-            "now": now,
-        },
-    )
+    if mark_media_failed:
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'failed',
+                    failure_stage = 'transcribe',
+                    last_error_code = :error_code,
+                    last_error_message = :error_message,
+                    processing_completed_at = NULL,
+                    failed_at = :now,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": error_code,
+                "error_message": error_message[:1000],
+                "now": now,
+            },
+        )
     db.execute(
         text(
             """
@@ -1200,6 +985,9 @@ def run_podcast_transcription_now(
     media_id: UUID,
     requested_by_user_id: UUID | None,
     request_id: str | None = None,
+    mark_media_ready: bool = True,
+    mark_media_failed: bool = True,
+    dispatch_metadata_enrichment: bool = True,
 ) -> TranscriptionRunResult:
     stale_extracting_seconds = get_settings().ingest_stale_extracting_seconds
     claimed = db.execute(
@@ -1306,31 +1094,33 @@ def run_podcast_transcription_now(
             error_code=ApiErrorCode.E_INVALID_KIND.value,
             error_message="Invalid media kind for podcast transcription",
             now=claim_now,
+            mark_media_failed=mark_media_failed,
         )
         db.commit()
         return TranscriptionRunResult(status="failed", error_code=ApiErrorCode.E_INVALID_KIND.value)
 
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'extracting',
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :now,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "now": claim_now,
-        },
-    )
+    if mark_media_ready or mark_media_failed:
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'extracting',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_started_at = :now,
+                    processing_completed_at = NULL,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "now": claim_now,
+            },
+        )
     set_media_transcript_state(
         db,
         media_id=media_id,
@@ -1373,6 +1163,7 @@ def run_podcast_transcription_now(
             error_code=ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
             error_message="Transcription failed",
             now=now,
+            mark_media_failed=mark_media_failed,
         )
         db.commit()
         return TranscriptionRunResult(
@@ -1401,6 +1192,7 @@ def run_podcast_transcription_now(
             request_reason=cast(TranscriptRequestReason, request_reason),
             transcript_coverage="full",
             transcript_segments=transcript_segments,
+            mark_media_ready=mark_media_ready,
             now=now,
         )
         transcript_version_id = result.transcript_version_id
@@ -1424,7 +1216,9 @@ def run_podcast_transcription_now(
         )
         _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
         db.commit()
-        _try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
+        if dispatch_metadata_enrichment:
+            if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
+                db.commit()
         return TranscriptionRunResult(
             status="completed",
             segment_count=len(transcript_segments),
@@ -1440,9 +1234,12 @@ def run_podcast_transcription_now(
         error_code=terminal_error_code,
         error_message=terminal_error_message,
         now=now,
+        mark_media_failed=mark_media_failed,
     )
     db.commit()
-    _try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
+    if dispatch_metadata_enrichment:
+        if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
+            db.commit()
     return TranscriptionRunResult(status="failed", error_code=terminal_error_code)
 
 
@@ -1639,11 +1436,12 @@ def repair_podcast_transcript_semantic_index_now(
         return SemanticRepairResult(status="failed", error_code=error_code)
 
 
-def _reset_podcast_transcription_job_for_operator_requeue(
+def _reset_podcast_transcription_job_for_source_attempt(
     db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
+    request_reason: str,
     now: datetime,
 ) -> None:
     existing_media_id = db.scalar(
@@ -1653,6 +1451,7 @@ def _reset_podcast_transcription_job_for_operator_requeue(
     params = {
         "media_id": media_id,
         "requested_by_user_id": requested_by_user_id,
+        "request_reason": request_reason,
         "updated_at": now,
     }
     if existing_media_id is None:
@@ -1676,7 +1475,7 @@ def _reset_podcast_transcription_job_for_operator_requeue(
                 VALUES (
                     :media_id,
                     :requested_by_user_id,
-                    'operator_requeue',
+                    :request_reason,
                     0,
                     NULL,
                     'pending',
@@ -1698,7 +1497,7 @@ def _reset_podcast_transcription_job_for_operator_requeue(
                 UPDATE podcast_transcription_jobs
                 SET
                     requested_by_user_id = :requested_by_user_id,
-                    request_reason = 'operator_requeue',
+                    request_reason = :request_reason,
                     reserved_minutes = 0,
                     reservation_usage_date = NULL,
                     status = 'pending',
@@ -1714,37 +1513,11 @@ def _reset_podcast_transcription_job_for_operator_requeue(
     _assert_one_mutated_row(result, "podcast_transcription_jobs")
 
 
-def _mark_media_transcription_extracting(
+def _reset_media_transcript_state_for_source_attempt(
     db: Session,
     *,
     media_id: UUID,
-    now: datetime,
-) -> None:
-    result = db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'extracting',
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :updated_at,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :updated_at
-            WHERE id = :media_id
-            """
-        ),
-        {"media_id": media_id, "updated_at": now},
-    )
-    _assert_one_mutated_row(result, "media")
-
-
-def _reset_media_transcript_state_for_operator_requeue(
-    db: Session,
-    *,
-    media_id: UUID,
+    request_reason: str,
     now: datetime,
 ) -> None:
     # Clear the active transcript so readers (which resolve the active version by
@@ -1765,7 +1538,7 @@ def _reset_media_transcript_state_for_operator_requeue(
         transcript_state="queued",
         transcript_coverage="none",
         semantic_status="none",
-        last_request_reason="operator_requeue",
+        last_request_reason=request_reason,
         last_error_code=None,
         now=now,
     )

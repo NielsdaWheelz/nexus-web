@@ -24,6 +24,7 @@ def mark_failed(
     media.failure_stage = FailureStage(stage)
     media.last_error_code = error_code
     media.last_error_message = error_message
+    media.processing_completed_at = None
     media.failed_at = func.now()
     media.updated_at = func.now()
     db.commit()
@@ -37,6 +38,7 @@ def begin_extraction(db: Session, media: Media) -> None:
     media.processing_status = ProcessingStatus.extracting
     media.processing_attempts = (media.processing_attempts or 0) + 1
     media.processing_started_at = func.now()
+    media.processing_completed_at = None
     media.failure_stage = None
     media.last_error_code = None
     media.last_error_message = None
@@ -59,6 +61,23 @@ def reset_for_reingest(db: Session, media: Media) -> None:
     db.flush()
 
 
+def mark_source_queued(db: Session, media: Media) -> None:
+    """Clear failure metadata and expose queued source work as active processing.
+
+    This does not bump ``processing_attempts``. The source worker/materializer
+    counts the actual processing run when it starts.
+    """
+    media.processing_status = ProcessingStatus.extracting
+    media.processing_started_at = func.now()
+    media.processing_completed_at = None
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = func.now()
+    db.flush()
+
+
 def mark_ready_for_reading(db: Session, media: Media) -> None:
     """Clear failure metadata and mark readable extraction complete."""
     media.processing_status = ProcessingStatus.ready_for_reading
@@ -67,5 +86,22 @@ def mark_ready_for_reading(db: Session, media: Media) -> None:
     media.last_error_code = None
     media.last_error_message = None
     media.failed_at = None
+    media.updated_at = func.now()
+    db.flush()
+
+
+def mark_stage_warning(
+    db: Session,
+    media: Media,
+    *,
+    stage: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    """Record non-terminal failure metadata without changing readability."""
+    media.failure_stage = FailureStage(stage)
+    media.last_error_code = error_code
+    media.last_error_message = error_message
+    media.failed_at = func.now()
     media.updated_at = func.now()
     db.flush()

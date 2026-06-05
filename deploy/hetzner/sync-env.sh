@@ -13,7 +13,7 @@ SSH_TARGET="${NEXUS_SSH_TARGET:-${DEPLOY_USER}@${HOST}}"
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
-SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,enrich_metadata,chat_run,library_intelligence_build_job,podcast_sync_subscription_job,podcast_transcribe_episode_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate"
+SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_media_source,enrich_metadata,chat_run,library_intelligence_build_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate"
 
 REQUIRED_HETZNER_ENV_KEYS="
 NEXUS_ENV
@@ -39,6 +39,7 @@ STREAM_BASE_URL
 BILLING_ENABLED
 PODCASTS_ENABLED
 YOUTUBE_DATA_API_KEY
+X_API_BEARER_TOKEN
 "
 
 die() {
@@ -217,6 +218,15 @@ reject_legacy_runtime_keys() {
   done
 }
 
+reject_removed_x_env_keys() {
+  local file="$1"
+  local value
+
+  if value="$(env_value "X_API_INCLUDE_USER_EXPANSIONS" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+    die "X_API_INCLUDE_USER_EXPANSIONS was removed; X ingest always requests provider author expansions"
+  fi
+}
+
 require_safe_worker_defaults() {
   local file="$1"
   local key value
@@ -273,6 +283,7 @@ require_prod_env "$tmp_file"
 require_local_database_url "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
+reject_removed_x_env_keys "$tmp_file"
 require_safe_worker_defaults "$tmp_file"
 
 scp "$tmp_file" "${SSH_TARGET}:${remote_tmp}"

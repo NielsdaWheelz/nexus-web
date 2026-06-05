@@ -51,7 +51,12 @@ describe("AddContentTray", () => {
         return jsonResponse({
           data: {
             media_id: body.url.includes("one.pdf") ? "media-one" : "media-two",
+            source_attempt_id: body.url.includes("one.pdf") ? "attempt-one" : "attempt-two",
+            source_type: body.url.includes("one.pdf") ? "remote_pdf_url" : "remote_epub_url",
+            source_attempt_status: "queued",
             idempotency_outcome: "created",
+            processing_status: "pending",
+            ingest_enqueued: true,
           },
         });
       }
@@ -146,6 +151,70 @@ describe("AddContentTray", () => {
     expect(screen.getByText("https://example.com/two.epub")).toBeInTheDocument();
   });
 
+  it("shows URL capture provider failures with the backend request id", async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
+        return jsonResponse(
+          {
+            error: {
+              code: "E_X_PROVIDER_CREDITS_DEPLETED",
+              message: "X imports are temporarily unavailable.",
+              request_id: "req-x-2",
+            },
+          },
+          503,
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<AddContentTray />);
+
+    dispatchPaste(window, "https://x.com/ada/status/1234567890");
+
+    expect(await screen.findByText("X imports are temporarily unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Nexus request ID: req-x-2")).toBeInTheDocument();
+  });
+
+  it("keeps accepted source failures saved and does not show local retry", async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            media_id: "media-failed",
+            source_attempt_id: "attempt-failed",
+            source_type: "x_author_thread",
+            source_attempt_status: "failed",
+            idempotency_outcome: "created",
+            processing_status: "failed",
+            ingest_enqueued: false,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<AddContentTray />);
+
+    dispatchPaste(window, "https://x.com/ada/status/1234567890");
+
+    expect(await screen.findByText("Saved, but ingestion failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry https://x.com/ada/status/1234567890" })
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the OPML import summary", async () => {
     render(<AddContentTray />);
 
@@ -208,7 +277,12 @@ describe("AddContentTray", () => {
           return jsonResponse({
             data: {
               media_id: `media-${calls.length}`,
+              source_attempt_id: `attempt-${calls.length}`,
+              source_type: "generic_web_url",
+              source_attempt_status: "queued",
               idempotency_outcome: "created",
+              processing_status: "pending",
+              ingest_enqueued: true,
             },
           });
         }
@@ -291,7 +365,12 @@ describe("AddContentTray", () => {
                 jsonResponse({
                   data: {
                     media_id: `media-${calls.length}`,
+                    source_attempt_id: `attempt-${calls.length}`,
+                    source_type: "generic_web_url",
+                    source_attempt_status: "queued",
                     idempotency_outcome: "created",
+                    processing_status: "pending",
+                    ingest_enqueued: true,
                   },
                 })
               )

@@ -302,6 +302,12 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
             SELECT storage_path
             FROM epub_resources
             WHERE media_id = :media_id
+            UNION
+            SELECT source_payload->>'storage_path' AS storage_path
+            FROM media_source_attempts
+            WHERE media_id = :media_id
+              AND source_payload ? 'storage_path'
+              AND source_payload->>'storage_path' IS NOT NULL
             ORDER BY storage_path
         """),
         {"media_id": media_id},
@@ -440,6 +446,26 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     )
     db.execute(
         text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            UPDATE external_provider_events
+            SET source_attempt_id = NULL
+            WHERE source_attempt_id IN (
+                SELECT id
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+            )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("UPDATE external_provider_events SET media_id = NULL WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media_source_attempts WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
     db.execute(text("DELETE FROM media_file WHERE media_id = :media_id"), {"media_id": media_id})

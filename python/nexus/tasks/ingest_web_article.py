@@ -1,41 +1,14 @@
-"""Worker job handler for web article ingestion.
+"""Thin worker wrapper for web article ingestion."""
 
-This task:
-1. Fetches page via Node subprocess (fetch + jsdom + Readability)
-2. Resolves canonical URL from final redirect URL
-3. Performs atomic deduplication by canonical URL
-4. Sanitizes HTML and generates canonical text
-5. Persists fragment and transitions to ready_for_reading
-
-Current web-article ingest contract:
-- Task is idempotent - exits early if already ready_for_reading with fragment
-- Uses actor_user_id for dedup library attachment
-- max_retries=0 (manual retry only via API)
-- All failures use failure_stage='extract'
-"""
-
-import re
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
-from nexus.db.models import FailureStage, Fragment, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.content_indexing import (
-    mark_content_index_failed,
-    rebuild_fragment_content_index,
+from nexus.services.web_article_ingest import (
+    mark_web_article_failed,
+    run_ingest_sync,
 )
-from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
-from nexus.services.url_normalize import normalize_url_for_display
-from nexus.services.web_article_structure import prepare_web_article_fragment
-from nexus.tasks.enrich_metadata import dispatch_enrich_metadata
 
 logger = get_logger(__name__)
 
@@ -44,22 +17,8 @@ def ingest_web_article(
     media_id: str,
     actor_user_id: str,
     request_id: str | None = None,
-) -> dict:
-    """Ingest a web article asynchronously.
-
-    Args:
-        media_id: UUID of the media row to ingest.
-        actor_user_id: UUID of the user who triggered ingestion (for dedup library attach).
-        request_id: Optional request ID for log correlation.
-
-    Returns:
-        Dict with result status and any relevant info.
-
-    Note:
-        This task is idempotent. If the media is already ready_for_reading
-        with a fragment, the task exits successfully without changes.
-    """
-    # Convert string UUIDs to UUID objects
+) -> dict[str, object]:
+    """Execute web article ingestion using the service owner."""
     media_uuid = UUID(media_id)
     actor_uuid = UUID(actor_user_id)
 
@@ -70,12 +29,10 @@ def ingest_web_article(
         request_id=request_id,
     )
 
-    # Get session factory (worker doesn't use FastAPI DI)
     session_factory = get_session_factory()
     db = session_factory()
-
     try:
-        result = _do_ingest(db, media_uuid, actor_uuid, request_id)
+        result = run_ingest_sync(db, media_uuid, actor_uuid, request_id)
         logger.info(
             "ingest_web_article_completed",
             media_id=media_id,
@@ -83,479 +40,22 @@ def ingest_web_article(
             request_id=request_id,
         )
         return result
-    except Exception as e:
+    except Exception as exc:
         logger.error(
             "ingest_web_article_failed",
             media_id=media_id,
-            error=str(e),
+            error=str(exc),
             request_id=request_id,
         )
-        # Mark as failed if we haven't already
         try:
-            _mark_failed(
+            mark_web_article_failed(
                 db,
                 media_uuid,
                 ApiErrorCode.E_INGEST_FAILED,
-                f"Unexpected error: {e}",
+                f"Unexpected error: {exc}",
             )
         except Exception:
-            pass
+            logger.exception("ingest_web_article_failed_to_mark_failed", media_id=media_id)
         raise
     finally:
         db.close()
-
-
-def _do_ingest(
-    db: Session,
-    media_id: UUID,
-    actor_user_id: UUID,
-    request_id: str | None,
-) -> dict:
-    """Core ingestion logic.
-
-    Returns:
-        Dict with status and details.
-    """
-    # Step 1: Load media and check idempotency
-    media = db.get(Media, media_id)
-    if not media:
-        return {"status": "skipped", "reason": "media_not_found"}
-
-    # Idempotency check: if already ready with fragments, repair the evidence index if needed.
-    if media.processing_status == ProcessingStatus.ready_for_reading:
-        fragments = (
-            db.query(Fragment)
-            .filter(Fragment.media_id == media_id)
-            .order_by(Fragment.idx.asc())
-            .all()
-        )
-        content_index_ready = db.execute(
-            text(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM media_content_index_states mcis
-                    JOIN content_index_runs cir ON cir.id = mcis.active_run_id
-                    JOIN source_snapshots ss ON ss.index_run_id = cir.id
-                    JOIN content_chunks cc ON cc.index_run_id = cir.id
-                    WHERE mcis.media_id = :id
-                      AND mcis.status = 'ready'
-                      AND cir.state = 'ready'
-                      AND cir.deactivated_at IS NULL
-                      AND ss.source_kind = 'web_article'
-                      AND cc.source_kind = 'web_article'
-                )
-                """
-            ),
-            {"id": media_id},
-        ).scalar()
-        if fragments and content_index_ready:
-            return {"status": "skipped", "reason": "already_ready"}
-        if fragments:
-            try:
-                rebuild_fragment_content_index(
-                    db,
-                    media_id=media_id,
-                    source_kind="web_article",
-                    artifact_ref=f"fragments:{fragments[0].id}",
-                    fragments=fragments,
-                    reason="web_article_repair",
-                    language=media.language,
-                )
-                db.commit()
-                return {"status": "success", "reason": "rebuilt_content_index"}
-            except Exception as exc:
-                db.rollback()
-                logger.exception(
-                    "web_article_repair_index_failed",
-                    media_id=str(media_id),
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                error_code = (
-                    exc.code.value
-                    if isinstance(exc, ApiError)
-                    else ApiErrorCode.E_INGEST_FAILED.value
-                )
-                media = db.get(Media, media_id)
-                if media is not None:
-                    now = datetime.now(UTC)
-                    failure_message = f"Web article evidence index failed: {exc}"[:1000]
-                    media.failure_stage = FailureStage.embed
-                    media.last_error_code = error_code
-                    media.last_error_message = failure_message
-                    media.failed_at = now
-                    media.updated_at = now
-                    mark_content_index_failed(
-                        db,
-                        media_id=media_id,
-                        failure_code=error_code,
-                        failure_message=failure_message,
-                    )
-                    db.commit()
-                return {"status": "success", "reason": "content_index_failed"}
-
-    # Step 2: Increment processing_attempts and mark extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_started_at = datetime.now(UTC)
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.updated_at = datetime.now(UTC)
-    db.commit()
-
-    # Step 3: Run node ingest
-    url = media.requested_url
-    if not url:
-        _mark_failed(db, media_id, ApiErrorCode.E_INGEST_FAILED, "No requested_url on media")
-        return {"status": "failed", "reason": "no_url"}
-
-    ingest_result = run_node_ingest(url)
-
-    if isinstance(ingest_result, IngestError):
-        logger.warning(
-            "node_ingest_failed",
-            media_id=str(media_id),
-            error_code=ingest_result.error_code.value,
-            detail=ingest_result.message,
-        )
-        _mark_failed(db, media_id, ingest_result.error_code, ingest_result.message)
-        return {"status": "failed", "reason": str(ingest_result.error_code.value)}
-
-    # Step 4: Compute canonical URL from final URL
-    assert isinstance(ingest_result, IngestResult)
-    canonical_url = normalize_url_for_display(ingest_result.final_url)
-
-    # Step 5: Atomic dedup by canonical URL
-    dedup_result = _try_set_canonical_url(db, media_id, canonical_url)
-
-    if dedup_result == "duplicate":
-        # Find winner and attach to actor's library, then delete loser
-        _handle_duplicate(db, media_id, canonical_url, actor_user_id)
-        return {"status": "deduped", "canonical_url": canonical_url}
-
-    if dedup_result == "media_gone":
-        return {"status": "skipped", "reason": "media_deleted"}
-
-    # Step 6: Prepare readable article content
-    try:
-        prepared = prepare_web_article_fragment(
-            html=ingest_result.content_html,
-            base_url=ingest_result.base_url,
-            fragment_idx=0,
-            media_title=ingest_result.title,
-        )
-    except Exception as e:
-        _mark_failed(db, media_id, ApiErrorCode.E_SANITIZATION_FAILED, f"Article prep failed: {e}")
-        return {"status": "failed", "reason": "sanitization_failed"}
-
-    canonical_text = prepared.canonical_text
-
-    # Step 8: Persist fragment and update media
-    now = datetime.now(UTC)
-    db.execute(
-        text(
-            """
-            DELETE FROM highlights AS h
-            USING highlight_fragment_anchors AS hfa
-            JOIN fragments AS f ON f.id = hfa.fragment_id
-            WHERE h.id = hfa.highlight_id
-              AND f.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM fragment_blocks
-            WHERE fragment_id IN (
-                SELECT id
-                FROM fragments
-                WHERE media_id = :media_id
-            )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
-    db.execute(
-        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-
-    # Create fragment
-    fragment = Fragment(
-        media_id=media_id,
-        idx=0,
-        html_sanitized=prepared.html_sanitized,
-        canonical_text=canonical_text,
-        created_at=now,
-    )
-    db.add(fragment)
-    db.flush()  # Flush to get fragment.id for block insertion
-
-    insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-    # Update media
-    media = db.get(Media, media_id)
-    if not media:
-        return {"status": "failed", "reason": "media_deleted_during_ingest"}
-
-    # Update title if we got one from extraction
-    if ingest_result.title:
-        media.title = ingest_result.title[:255]  # Truncate to max length
-
-    _persist_web_metadata(db, media, ingest_result)
-
-    media.processing_status = ProcessingStatus.ready_for_reading
-    media.processing_completed_at = now
-    media.updated_at = now
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-
-    fragment_id = fragment.id
-    media_language = media.language
-    db.commit()
-
-    try:
-        rebuild_fragment_content_index(
-            db,
-            media_id=media_id,
-            source_kind="web_article",
-            artifact_ref=f"fragments:{fragment_id}",
-            fragments=[fragment],
-            reason="web_article_ingest",
-            language=media_language,
-        )
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.exception(
-            "web_article_content_index_failed",
-            media_id=str(media_id),
-            request_id=request_id,
-            error=str(exc),
-        )
-        error_code = (
-            exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
-        )
-        media = db.get(Media, media_id)
-        if media is not None:
-            now = datetime.now(UTC)
-            failure_message = f"Web article evidence index failed: {exc}"[:1000]
-            media.failure_stage = FailureStage.embed
-            media.last_error_code = error_code
-            media.last_error_message = failure_message
-            media.failed_at = now
-            media.updated_at = now
-            mark_content_index_failed(
-                db,
-                media_id=media_id,
-                failure_code=error_code,
-                failure_message=failure_message,
-            )
-            db.commit()
-
-    dispatch_enrich_metadata(str(media_id), request_id)
-
-    return {
-        "status": "success",
-        "canonical_url": canonical_url,
-        "title": ingest_result.title,
-        "provider_fixture": ingest_result.provider_fixture,
-    }
-
-
-def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
-    """Persist web article metadata from Readability extraction."""
-    # Parse byline into author names
-    byline = ingest_result.byline.strip() if ingest_result.byline else ""
-    byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
-    names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE) if byline else []
-    replace_media_contributor_credits(
-        db,
-        media_id=media.id,
-        source="web_article_byline",
-        credits=[
-            {
-                "name": name.strip()[:255],
-                "role": "author",
-                "ordinal": i,
-                "source": "web_article_byline",
-            }
-            for i, name in enumerate(names)
-            if name.strip()
-        ],
-    )
-
-    if ingest_result.excerpt and not media.description:
-        media.description = ingest_result.excerpt[:2000]
-
-    if ingest_result.site_name and not media.publisher:
-        media.publisher = ingest_result.site_name[:255]
-
-    if ingest_result.published_time and not media.published_date:
-        media.published_date = ingest_result.published_time[:64]
-
-
-def _try_set_canonical_url(
-    db: Session,
-    media_id: UUID,
-    canonical_url: str,
-) -> str:
-    """Atomically try to set canonical_url on media.
-
-    Uses SELECT FOR UPDATE to lock the row, then UPDATE with flush
-    to trigger unique constraint check.
-
-    Returns:
-        "success" - canonical_url set successfully
-        "duplicate" - another media has this canonical_url
-        "media_gone" - media row was deleted
-    """
-    # Lock the media row
-    result = db.execute(
-        text("SELECT id FROM media WHERE id = :id FOR UPDATE"),
-        {"id": media_id},
-    )
-    row = result.fetchone()
-    if not row:
-        return "media_gone"
-
-    # Try to set canonical_url
-    try:
-        db.execute(
-            text("UPDATE media SET canonical_url = :url WHERE id = :id"),
-            {"url": canonical_url, "id": media_id},
-        )
-        db.flush()
-        db.commit()
-        return "success"
-    except IntegrityError:
-        db.rollback()
-        return "duplicate"
-
-
-def _handle_duplicate(
-    db: Session,
-    loser_id: UUID,
-    canonical_url: str,
-    actor_user_id: UUID,
-) -> None:
-    """Handle deduplication when canonical_url collision detected.
-
-    Per spec:
-    1. Find winner media by canonical_url
-    2. Get actor's default library
-    3. Attach winner to actor's library (if not already)
-    4. Delete loser media
-
-    Critical: Attach winner BEFORE deleting loser to ensure actor doesn't lose access.
-    """
-    from nexus.services.media_deletion import (
-        clear_user_media_deletion,
-        delete_document_storage_objects,
-        delete_duplicate_document_media,
-    )
-
-    # Find winner
-    result = db.execute(
-        text("""
-            SELECT id FROM media
-            WHERE kind = :kind AND canonical_url = :url AND id != :loser_id
-            LIMIT 1
-        """),
-        {"kind": MediaKind.web_article.value, "url": canonical_url, "loser_id": loser_id},
-    )
-    winner_row = result.fetchone()
-
-    if not winner_row:
-        storage_paths = delete_duplicate_document_media(db, loser_id)
-        db.commit()
-        delete_document_storage_objects(storage_paths)
-        return
-
-    winner_id = winner_row[0]
-
-    # Get actor's default library
-    result = db.execute(
-        text("""
-            SELECT id FROM libraries
-            WHERE owner_user_id = :user_id AND is_default = true
-        """),
-        {"user_id": actor_user_id},
-    )
-    library_row = result.fetchone()
-
-    if library_row:
-        library_id = library_row[0]
-
-        # Use shared helper for intrinsic provenance (attach winner to default library)
-        from nexus.services.default_library_closure import ensure_default_intrinsic
-
-        ensure_default_intrinsic(db, library_id, winner_id)
-        clear_user_media_deletion(db, actor_user_id, winner_id)
-
-    storage_paths = delete_duplicate_document_media(db, loser_id)
-    db.commit()
-    delete_document_storage_objects(storage_paths)
-
-
-def _mark_failed(
-    db: Session,
-    media_id: UUID,
-    error_code: ApiErrorCode,
-    message: str,
-) -> None:
-    """Mark media as failed with error details."""
-    now = datetime.now(UTC)
-    db.execute(
-        text("""
-            UPDATE media SET
-                processing_status = :status,
-                failure_stage = :stage,
-                last_error_code = :code,
-                last_error_message = :message,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :id
-        """),
-        {
-            "status": ProcessingStatus.failed.value,
-            "stage": FailureStage.extract.value,
-            "code": error_code.value,
-            "message": message[:1000],  # Truncate long messages
-            "now": now,
-            "id": media_id,
-        },
-    )
-    db.commit()
-
-
-# =============================================================================
-# Synchronous execution helper (for tests and dev mode)
-# =============================================================================
-
-
-def run_ingest_sync(
-    db: Session,
-    media_id: UUID,
-    actor_user_id: UUID,
-    request_id: str | None = None,
-) -> dict:
-    """Run ingestion synchronously (for tests and dev mode).
-
-    Same logic as the worker job handler but uses the provided session.
-
-    Args:
-        db: Database session to use.
-        media_id: UUID of the media to ingest.
-        actor_user_id: UUID of the user who triggered ingestion.
-        request_id: Optional request ID for logging.
-
-    Returns:
-        Dict with result status.
-    """
-    return _do_ingest(db, media_id, actor_user_id, request_id)

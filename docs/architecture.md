@@ -463,12 +463,12 @@ handler + policy. Claim is atomic, so the worker scales horizontally even though
 single instance is single-concurrency.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
-`ingest_web_article`, `ingest_epub`, `ingest_pdf`, `ingest_youtube_video`,
-`enrich_metadata`, `chat_run`, `oracle_reading_generate`,
-`library_intelligence_build_job`, `podcast_sync_subscription_job`,
-`podcast_transcribe_episode_job`, `podcast_reindex_semantic_job`,
-`podcast_active_subscription_poll_job` (periodic), `reconcile_stale_ingest_media`
-(periodic), `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
+`ingest_media_source`, `enrich_metadata`, `chat_run`,
+`oracle_reading_generate`, `library_intelligence_build_job`,
+`podcast_sync_subscription_job`,
+`podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
+(periodic), `reconcile_stale_ingest_media_job` (periodic),
+`sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic),
 `backfill_default_library_closure_job`.
 
@@ -569,18 +569,28 @@ surface → key flows.
 ### 8.1 Media ingestion
 
 The pipeline turns heterogeneous sources into one `media` row plus per-format
-artifacts, but there is no single god-service owner. `services/media.py` is the
-catalog/hydration service: visible-media queries, response shaping, fragment
-listing, browser article/file capture, and source refresh orchestration. Source
-creation and asset reads are capability-owned:
+artifacts. `services/media.py` is the catalog/hydration service: visible-media
+queries, response shaping, and fragment listing. `media_source_ingest.py` is the
+source lifecycle owner for accepted URL/upload/browser-capture source attempts;
+it creates `media_source_attempts`, persists durable source artifacts where
+needed, and enqueues `ingest_media_source`. Source creation and asset reads are
+capability-owned:
 
-- `media_ingest.py`: URL classification and dispatch only.
-- `x_ingest.py`: same-author X thread snapshots, quote-post media, X refresh, no
-  oEmbed fallback.
-- `youtube_ingest.py`: YouTube row creation and ingest job enqueueing.
-- `remote_file_ingest.py` + `remote_file_client.py`: PDF/EPUB URL downloads,
-  SSRF-safe outbound policy, streaming to storage, hashing, dedupe, extraction
-  enqueueing.
+- `media_ingest.py`: URL transport adapter into `media_source_ingest.py`.
+- `media_source_ingest.py`: accepted source-attempt state machine for generic
+  web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
+  PDF/EPUB files, and browser article/file captures.
+- `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
+  X/Twitter same-author thread capture. Identity comes from provider author ID
+  plus conversation ID; quote posts are separate `post:<post_id>` media; provider
+  billing/auth/rate-limit/timeout failures are typed and recorded in
+  `external_provider_events`. There is no scraping, oEmbed, or generic article
+  fallback for X URLs.
+- `youtube_video_ingest.py`: YouTube metadata/transcript materialization for
+  queued source attempts; it is called by `media_source_ingest.py`, not
+  registered as a separate source-acquisition job lane.
+- `remote_file_client.py`: PDF/EPUB URL outbound policy, SSRF-safe streaming to
+  storage, hashing, and validation for queued source attempts.
 - `epub_assets.py`: private EPUB resource asset authorization and integrity
   reads.
 - `listening_state.py`: podcast listening-state CRUD and batch updates.
@@ -606,6 +616,12 @@ serving, `reader.py` reader read-model, `listening_state.py`, and
 Ingest `library_ids` are writable non-default destinations; media services
 validate them through library governance and assign default plus selected
 destinations through `library_entries`.
+
+Every accepted source returns `media_id`, `source_attempt_id`, `source_type`,
+`source_attempt_status`, `idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
+network, sanitization, extraction, and post-acceptance storage failures update
+the existing media row and latest source attempt; the user retries by creating a
+new source attempt through `POST /media/{id}/retry`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
@@ -933,7 +949,7 @@ Tiers:
 | Migrations | Alembic up/down | dedicated DB | `make test-migrations` |
 | E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
 | Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
-| Live-providers | real OpenAI/Podcast Index/Deepgram | live external | `make test-live-providers` |
+| Live-providers | real OpenAI/Podcast Index/Deepgram/X | live external | `make test-live-providers` |
 
 The **real-media vs live-providers** split is the determinism boundary:
 real-media runs real product code but swaps the *external provider edge* for
@@ -997,7 +1013,7 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`) |
 | The schema | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`) |
 | Background jobs / worker | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/` |
-| Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `x_ingest.py`, `youtube_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_plates.py` |

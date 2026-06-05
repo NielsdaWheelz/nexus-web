@@ -6,6 +6,7 @@ import os
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 
 from nexus.config import get_settings
 from tests.helpers import auth_headers, create_test_user_id
@@ -26,6 +27,38 @@ pytestmark = [
     pytest.mark.network,
     pytest.mark.live_provider,
 ]
+
+
+def _run_source_attempt_for_media(direct_db, media_id: UUID) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            )
+            .mappings()
+            .one()
+        )
+    payload = row["payload"]
+    with direct_db.session() as session:
+        return run_source_attempt(
+            db=session,
+            media_id=UUID(payload["media_id"]),
+            attempt_id=UUID(payload["attempt_id"]),
+            actor_user_id=UUID(payload["actor_user_id"]),
+            request_id=payload.get("request_id"),
+        )
 
 
 def test_live_youtube_transcript_ingest_indexes_real_video_evidence(
@@ -50,16 +83,12 @@ def test_live_youtube_transcript_ingest_indexes_real_video_evidence(
     assert create_response.status_code == 202, create_response.text
     media_id = UUID(create_response.json()["data"]["media_id"])
     register_media_cleanup(direct_db, media_id)
+    register_background_job_cleanup(direct_db, media_id)
 
-    from nexus.tasks.ingest_youtube_video import run_ingest_sync
-
-    with direct_db.session() as session:
-        result = run_ingest_sync(session, media_id, user_id, request_id="live-provider-youtube")
-        session.commit()
+    result = _run_source_attempt_for_media(direct_db, media_id)
 
     assert result["status"] == "success", result
     assert result["segment_count"] >= 10, result
-    register_background_job_cleanup(direct_db, media_id)
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
     search_trace = assert_search_and_resolver(

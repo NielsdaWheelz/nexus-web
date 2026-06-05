@@ -120,6 +120,54 @@ class DirectSessionManager:
                     session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
                     continue
 
+                if table == "background_jobs" and column == "id":
+                    session.execute(
+                        text("UPDATE media_source_attempts SET job_id = NULL WHERE job_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "media_source_attempts" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            UPDATE external_provider_events
+                            SET source_attempt_id = NULL
+                            WHERE source_attempt_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "media" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            UPDATE external_provider_events
+                            SET source_attempt_id = NULL
+                            WHERE source_attempt_id IN (
+                                SELECT id
+                                FROM media_source_attempts
+                                WHERE media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            UPDATE external_provider_events
+                            SET media_id = NULL
+                            WHERE media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM media_source_attempts WHERE media_id = :value"),
+                        {"value": value},
+                    )
+
                 if table == "users" and column == "id":
                     session.execute(
                         text(

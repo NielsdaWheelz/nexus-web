@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Fragment, Media
+from nexus.db.models import Fragment, Media
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_fragment_content_index,
 )
+from nexus.services.media_processing_state import mark_stage_warning
 
 logger = get_logger(__name__)
 
 
-def rebuild_web_article_index_or_mark_failed(
+def index_web_article_evidence(
     db: Session,
     *,
     media_id: UUID,
@@ -27,7 +26,8 @@ def rebuild_web_article_index_or_mark_failed(
     fragments: list[Fragment],
     reason: str,
     language: str | None,
-    log_event: str,
+    request_id: str | None,
+    log_event: str = "web_article_content_index_failed",
 ) -> None:
     try:
         rebuild_fragment_content_index(
@@ -40,22 +40,28 @@ def rebuild_web_article_index_or_mark_failed(
             language=language,
         )
         db.commit()
-    except (SQLAlchemyError, ApiError) as exc:
+    except Exception as exc:
         db.rollback()
-        logger.exception(log_event, media_id=str(media_id), error=str(exc))
+        logger.exception(
+            log_event,
+            media_id=str(media_id),
+            request_id=request_id,
+            error=str(exc),
+        )
         media = db.get(Media, media_id)
         if media is None:
             return
         error_code = (
             exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
         )
-        failed_at = datetime.now(UTC)
         failure_message = f"Web article evidence index failed: {exc}"[:1000]
-        media.failure_stage = FailureStage.embed
-        media.last_error_code = error_code
-        media.last_error_message = failure_message
-        media.failed_at = failed_at
-        media.updated_at = failed_at
+        mark_stage_warning(
+            db,
+            media,
+            stage="embed",
+            error_code=error_code,
+            error_message=failure_message,
+        )
         mark_content_index_failed(
             db,
             media_id=media_id,

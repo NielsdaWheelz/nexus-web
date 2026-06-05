@@ -6,6 +6,7 @@ import os
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 
 from nexus.config import get_settings
 from tests.factories import create_test_model
@@ -29,6 +30,38 @@ pytestmark = [
     pytest.mark.network,
     pytest.mark.live_provider,
 ]
+
+
+def _run_source_attempt_for_media(direct_db, media_id: UUID) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            )
+            .mappings()
+            .one()
+        )
+    payload = row["payload"]
+    with direct_db.session() as session:
+        return run_source_attempt(
+            db=session,
+            media_id=UUID(payload["media_id"]),
+            attempt_id=UUID(payload["attempt_id"]),
+            actor_user_id=UUID(payload["actor_user_id"]),
+            request_id=payload.get("request_id"),
+        )
 
 
 def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_db, tmp_path):
@@ -55,11 +88,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     media_id = UUID(create_response.json()["data"]["media_id"])
     register_media_cleanup(direct_db, media_id)
 
-    from nexus.tasks.ingest_web_article import run_ingest_sync
-
-    with direct_db.session() as session:
-        initial_result = run_ingest_sync(session, media_id, user_id, "live-provider-web-initial")
-        session.commit()
+    initial_result = _run_source_attempt_for_media(direct_db, media_id)
 
     assert initial_result["status"] == "success", initial_result
     register_background_job_cleanup(direct_db, media_id)
@@ -74,10 +103,8 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     refresh_response = auth_client.post(f"/media/{media_id}/refresh", headers=headers)
     assert refresh_response.status_code == 202, refresh_response.text
     refresh_trace = refresh_response.json()["data"]
-    assert refresh_trace["refresh_enqueued"] is True, refresh_trace
-    with direct_db.session() as session:
-        refresh_result = run_ingest_sync(session, media_id, user_id, "live-provider-web-refresh")
-        session.commit()
+    assert refresh_trace["ingest_enqueued"] is True, refresh_trace
+    refresh_result = _run_source_attempt_for_media(direct_db, media_id)
     assert refresh_result["status"] == "success", refresh_result
 
     replacement_trace = assert_reingest_replacement_trace(

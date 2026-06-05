@@ -4,78 +4,37 @@ from __future__ import annotations
 
 import base64
 import json
-import posixpath
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import unquote, urlparse
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.db.models import Fragment, Media, MediaFile, MediaKind, ProcessingStatus
-from nexus.db.session import get_session_factory
+from nexus.db.models import MediaKind
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
-    ApiError,
     ApiErrorCode,
-    ConflictError,
-    ForbiddenError,
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.media import (
-    ArticleCaptureResponse,
     FragmentOut,
-    FromUrlResponse,
     ListeningStateOut,
     MediaOut,
     PodcastEpisodeChapterOut,
 )
-from nexus.services import (
-    library_entries,
-    library_governance,
-    web_article_indexing,
-    x_ingest,
-    youtube_ingest,
-)
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
-    replace_media_contributor_credits,
-)
-from nexus.services.epub_lifecycle import delete_extraction_artifacts
-from nexus.services.file_ingest_validation import (
-    has_valid_file_signature,
-    validate_file_ingest_request,
-)
-from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.media_processing_state import reset_for_reingest
-from nexus.services.pdf_ingest import (
-    delete_pdf_text_artifacts,
-    invalidate_pdf_quote_match_metadata,
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.podcasts.transcription import requeue_podcast_transcription_for_source_refresh
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.services.web_article_structure import (
-    WEB_ARTICLE_HTML_MAX_BYTES,
-    prepare_web_article_fragment,
-)
-from nexus.storage.client import StorageError, get_storage_client
-from nexus.storage.paths import (
-    build_upload_staging_storage_path,
-    get_file_extension,
-)
 
 logger = get_logger(__name__)
 
@@ -95,6 +54,89 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
     "m.requested_url IS NOT NULL AS has_requested_url",
+    """EXISTS(
+        SELECT 1
+        FROM media_source_attempts msa
+        WHERE msa.media_id = m.id
+          AND msa.status = 'failed'
+          AND msa.source_type IN (
+              'generic_web_url',
+              'x_author_thread',
+              'youtube_video',
+              'remote_pdf_url',
+              'remote_epub_url',
+              'uploaded_pdf_file',
+              'uploaded_epub_file',
+              'browser_article_capture',
+              'browser_pdf_capture',
+              'browser_epub_capture',
+              'podcast_episode_transcript',
+              'video_transcript'
+          )
+          AND NOT (
+              msa.source_type IN (
+                  'uploaded_pdf_file',
+                  'uploaded_epub_file',
+                  'browser_article_capture',
+                  'browser_pdf_capture',
+                  'browser_epub_capture'
+              )
+              AND m.last_error_code IN (
+                  'E_SIGN_UPLOAD_FAILED',
+                  'E_STORAGE_MISSING',
+                  'E_STORAGE_ERROR',
+                  'E_INVALID_FILE_TYPE'
+              )
+          )
+          AND msa.id = (
+              SELECT latest.id
+              FROM media_source_attempts latest
+              WHERE latest.media_id = m.id
+              ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+              LIMIT 1
+          )
+    ) AS source_retry_available""",
+    """EXISTS(
+        SELECT 1
+        FROM media_source_attempts msa
+        WHERE msa.media_id = m.id
+          AND msa.source_type IN (
+              'generic_web_url',
+              'x_author_thread',
+              'youtube_video',
+              'remote_pdf_url',
+              'remote_epub_url',
+              'uploaded_pdf_file',
+              'uploaded_epub_file',
+              'browser_article_capture',
+              'browser_pdf_capture',
+              'browser_epub_capture',
+              'podcast_episode_transcript',
+              'video_transcript'
+          )
+          AND NOT (
+              msa.source_type IN (
+                  'uploaded_pdf_file',
+                  'uploaded_epub_file',
+                  'browser_article_capture',
+                  'browser_pdf_capture',
+                  'browser_epub_capture'
+              )
+              AND m.last_error_code IN (
+                  'E_SIGN_UPLOAD_FAILED',
+                  'E_STORAGE_MISSING',
+                  'E_STORAGE_ERROR',
+                  'E_INVALID_FILE_TYPE'
+              )
+          )
+          AND msa.id = (
+              SELECT latest.id
+              FROM media_source_attempts latest
+              WHERE latest.media_id = m.id
+              ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+              LIMIT 1
+          )
+    ) AS source_refresh_available""",
     "m.published_date",
     "m.publisher",
     "m.language",
@@ -360,6 +402,8 @@ def _media_out_from_row(
         and not (
             row["kind"] == MediaKind.web_article.value and row.get("provider") == "browser_capture"
         ),
+        source_retry_available=bool(row.get("source_retry_available")),
+        source_refresh_available=bool(row.get("source_refresh_available")),
     )
     playback_source = derive_playback_source(
         kind=row["kind"],
@@ -410,132 +454,15 @@ def refresh_source_for_viewer(
     *,
     request_id: str | None = None,
 ) -> dict[str, object]:
-    """Requeue source acquisition for URL-backed media."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    """Refresh source content through the durable source lifecycle."""
+    from nexus.services.media_source_ingest import refresh_source_for_viewer as refresh_source
 
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.created_by_user_id != viewer_id:
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Only the creator can refresh source content.",
-        )
-
-    if media.processing_status not in {
-        ProcessingStatus.ready_for_reading,
-        ProcessingStatus.embedding,
-        ProcessingStatus.ready,
-        ProcessingStatus.failed,
-    }:
-        raise ConflictError(
-            ApiErrorCode.E_MEDIA_NOT_READY,
-            "Media source refresh is not available in the current processing state.",
-        )
-
-    if media.kind == MediaKind.web_article.value and (
-        not media.requested_url or media.provider == "browser_capture"
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Source refresh is not available because the original URL is missing.",
-        )
-
-    if media.kind == MediaKind.video.value and not (
-        media.requested_url or media.canonical_source_url or media.external_playback_url
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Source refresh is not available because the video source is missing.",
-        )
-
-    if media.kind == MediaKind.podcast_episode.value and not media.external_playback_url:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Source refresh is not available because the episode audio source is missing.",
-        )
-
-    if media.kind in {MediaKind.pdf.value, MediaKind.epub.value} and media.media_file is None:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Source file is missing.",
-        )
-
-    epub_storage_paths_to_delete: list[str] = []
-
-    if media.kind == MediaKind.web_article.value:
-        x_refresh = x_ingest.maybe_refresh_x_author_thread_media_for_viewer(
-            db,
-            viewer_id,
-            media=media,
-            request_id=request_id,
-        )
-        if x_refresh is not None:
-            return x_refresh
-
-    if media.kind == MediaKind.web_article.value:
-        reset_for_reingest(db, media)
-        _enqueue_ingest_task(db, media.id, viewer_id, request_id)
-    elif media.kind == MediaKind.video.value:
-        reset_for_reingest(db, media)
-        youtube_ingest.enqueue_youtube_ingest_task(db, media.id, viewer_id, request_id)
-    elif media.kind == MediaKind.pdf.value:
-        invalidate_pdf_quote_match_metadata(db, media.id)
-        delete_pdf_text_artifacts(db, media.id)
-        reset_for_reingest(db, media)
-        enqueue_job(
-            db,
-            kind="ingest_pdf",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-                "embedding_only": False,
-            },
-        )
-    elif media.kind == MediaKind.epub.value:
-        epub_storage_paths_to_delete = delete_extraction_artifacts(db, media.id)
-        reset_for_reingest(db, media)
-        enqueue_job(
-            db,
-            kind="ingest_epub",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-            },
-        )
-    else:
-        requeue_podcast_transcription_for_source_refresh(
-            db,
-            media_id=media.id,
-            requested_by_user_id=viewer_id,
-            request_id=request_id,
-        )
-
-    db.commit()
-
-    if epub_storage_paths_to_delete:
-        storage_client = get_storage_client()
-        for path in epub_storage_paths_to_delete:
-            try:
-                storage_client.delete_object(path)
-            except StorageError as exc:
-                # justify-ignore-error: refresh committed the DB artifact reset first,
-                # so stale extraction objects are now unreachable and can be removed
-                # by operational cleanup without corrupting DB/storage references.
-                logger.warning(
-                    "epub_refresh_artifact_storage_delete_failed media_id=%s storage_path=%s error=%s",
-                    media.id,
-                    path,
-                    exc.message,
-                )
-
-    return {
-        "media_id": str(media.id),
-        "processing_status": "extracting",
-        "refresh_enqueued": True,
-    }
+    return refresh_source(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        request_id=request_id,
+    )
 
 
 def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
@@ -682,394 +609,6 @@ def list_visible_media(
         next_cursor = _encode_media_cursor(last.updated_at, last.id)
 
     return media_list, next_cursor
-
-
-def create_captured_web_article(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    url: str,
-    content_html: str,
-    library_ids: list[UUID],
-    title: str | None = None,
-    byline: str | None = None,
-    excerpt: str | None = None,
-    site_name: str | None = None,
-    published_time: str | None = None,
-) -> ArticleCaptureResponse:
-    """Persist a browser-rendered article capture as readable media."""
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    validate_requested_url(url)
-
-    if len(content_html.encode("utf-8")) > WEB_ARTICLE_HTML_MAX_BYTES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_CAPTURE_TOO_LARGE,
-            "Captured article HTML is too large",
-        )
-
-    try:
-        prepared = prepare_web_article_fragment(
-            html=content_html,
-            base_url=url,
-            fragment_idx=0,
-            media_title=title,
-        )
-    except ValueError as exc:
-        raise ApiError(
-            ApiErrorCode.E_SANITIZATION_FAILED,
-            "Captured article could not be sanitized",
-        ) from exc
-
-    canonical_text = prepared.canonical_text
-    if not canonical_text.strip():
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Captured article has no readable text",
-        )
-
-    now = datetime.now(UTC)
-    media = Media(
-        kind=MediaKind.web_article.value,
-        title=(title or url).strip()[:255] or "Untitled",
-        requested_url=url,
-        canonical_url=None,
-        canonical_source_url=normalize_url_for_display(url),
-        provider="browser_capture",
-        processing_status=ProcessingStatus.ready_for_reading,
-        processing_completed_at=now,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-        description=excerpt.strip()[:2000] if excerpt and excerpt.strip() else None,
-        publisher=site_name.strip()[:255] if site_name and site_name.strip() else None,
-        published_date=published_time.strip()[:64]
-        if published_time and published_time.strip()
-        else None,
-    )
-
-    try:
-        db.add(media)
-        db.flush()
-        fragment = Fragment(
-            media_id=media.id,
-            idx=0,
-            html_sanitized=prepared.html_sanitized,
-            canonical_text=canonical_text,
-        )
-        db.add(fragment)
-        db.flush()
-        insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-
-        if byline and byline.strip():
-            clean_byline = re.sub(r"^by\s+", "", byline.strip(), flags=re.IGNORECASE)
-            credits: list[dict[str, object]] = []
-            for ordinal, name in enumerate(
-                re.split(r"\s*[,;]\s*|\s+and\s+", clean_byline, flags=re.IGNORECASE)
-            ):
-                if name.strip():
-                    credits.append(
-                        {
-                            "name": name.strip(),
-                            "role": "author",
-                            "ordinal": ordinal,
-                            "source": "web_article_capture",
-                            "source_ref": {"media_id": str(media.id)},
-                        }
-                    )
-            replace_media_contributor_credits(db, media_id=media.id, credits=credits)
-
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        fragment_id = fragment.id
-        media_id = media.id
-        media_language = media.language
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-
-    web_article_indexing.rebuild_web_article_index_or_mark_failed(
-        db,
-        media_id=media_id,
-        fragment_id=fragment_id,
-        fragments=[fragment],
-        reason="web_article_capture",
-        language=media_language,
-        log_event="captured_web_article_content_index_failed",
-    )
-
-    _try_enrich_dispatch(str(media.id), None)
-
-    return ArticleCaptureResponse(
-        media_id=media.id,
-        processing_status=ProcessingStatus.ready_for_reading.value,
-    )
-
-
-def create_captured_file(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    payload: bytes,
-    filename: str,
-    content_type: str,
-    library_ids: list[UUID],
-    source_url: str | None = None,
-    request_id: str | None = None,
-) -> FromUrlResponse:
-    """Persist a browser-fetched PDF/EPUB and run the existing file ingest lifecycle."""
-    from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
-
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
-    normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
-    lower_filename = cleaned_filename.lower()
-
-    if normalized_content_type == "application/pdf":
-        kind = MediaKind.pdf.value
-    elif normalized_content_type == "application/epub+zip":
-        kind = MediaKind.epub.value
-    elif lower_filename.endswith(".pdf"):
-        kind = MediaKind.pdf.value
-        normalized_content_type = "application/pdf"
-    elif lower_filename.endswith(".epub"):
-        kind = MediaKind.epub.value
-        normalized_content_type = "application/epub+zip"
-    else:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_CONTENT_TYPE,
-            "Captured files must be PDF or EPUB.",
-        )
-
-    if not payload:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Captured file is empty.")
-
-    validate_file_ingest_request(kind, normalized_content_type, len(payload))
-    if not has_valid_file_signature(payload, kind):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_FILE_TYPE,
-            f"Captured file is not a valid {kind.upper()}.",
-        )
-
-    clean_source_url = source_url.strip() if source_url and source_url.strip() else None
-    if clean_source_url is not None:
-        validate_requested_url(clean_source_url)
-
-    media_id = uuid4()
-    storage_path = build_upload_staging_storage_path(media_id, get_file_extension(kind))
-    storage_client = get_storage_client()
-    try:
-        storage_client.put_object(storage_path, payload, normalized_content_type)
-    except StorageError as exc:
-        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store captured file.") from exc
-
-    title = cleaned_filename
-    if not title and clean_source_url is not None:
-        title = unquote(posixpath.basename(urlparse(clean_source_url).path)).strip()
-        if not title:
-            title = f"download.{get_file_extension(kind)}"
-    if not title:
-        title = f"capture.{get_file_extension(kind)}"
-
-    now = datetime.now(UTC)
-    media = Media(
-        id=media_id,
-        kind=kind,
-        title=title[:255],
-        requested_url=clean_source_url,
-        canonical_source_url=(
-            normalize_url_for_display(clean_source_url) if clean_source_url is not None else None
-        ),
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-    )
-    media_file = MediaFile(
-        media_id=media_id,
-        storage_path=storage_path,
-        content_type=normalized_content_type,
-        size_bytes=len(payload),
-    )
-
-    try:
-        db.add(media)
-        db.add(media_file)
-        db.flush()
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media_id, library_ids
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        try:
-            storage_client.delete_object(storage_path)
-        except StorageError as cleanup_error:
-            # justify-ignore-error: captured upload cleanup is best-effort;
-            # preserving the original DB failure gives the caller the actionable error.
-            logger.warning(
-                "captured_file_cleanup_failed media_id=%s storage_path=%s error=%s",
-                media_id,
-                storage_path,
-                cleanup_error,
-            )
-        raise
-
-    result = confirm_ingest_for_viewer(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        library_ids=[],
-        request_id=request_id,
-    )
-    resolved_media_id = UUID(result["media_id"])
-    library_entries.assign_libraries_for_media(db, viewer_id, resolved_media_id, library_ids)
-    return FromUrlResponse(
-        media_id=resolved_media_id,
-        idempotency_outcome="reused" if result["duplicate"] else "created",
-        processing_status=str(result["processing_status"]),
-        ingest_enqueued=bool(result["ingest_enqueued"]),
-    )
-
-
-def create_provisional_web_article(
-    db: Session,
-    viewer_id: UUID,
-    url: str,
-    *,
-    library_ids: list[UUID],
-    enqueue_task: bool = False,
-    request_id: str | None = None,
-) -> FromUrlResponse:
-    """Create a provisional web_article media row from a URL.
-
-    This creates a media row with:
-    - kind = 'web_article'
-    - processing_status = 'pending'
-    - requested_url = exactly as provided
-    - canonical_url = NULL (set after redirect resolution during ingestion)
-    - canonical_source_url = normalize_url_for_display(url)
-    - title = truncated URL or 'Untitled'
-
-    The media is immediately attached to the viewer's default library and
-    selected writable destinations.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer creating the media.
-        url: The URL to create a provisional media row for.
-        enqueue_task: If True, enqueue ingestion task after creating media.
-        request_id: Optional request ID for task correlation.
-
-    Returns:
-        FromUrlResponse with media_id, processing_status='pending', and
-        ingest_enqueued reflecting whether task was enqueued.
-
-    Raises:
-        InvalidRequestError: If URL validation fails.
-        NotFoundError: If user's default library doesn't exist.
-    """
-    # Validate URL (raises InvalidRequestError on failure)
-    validate_requested_url(url)
-
-    # Normalize for display/storage
-    canonical_source = normalize_url_for_display(url)
-
-    # Generate placeholder title from URL (truncate to 255 chars)
-    title = url[:255] if url else "Untitled"
-
-    now = datetime.now(UTC)
-
-    # Create media row
-    media = Media(
-        kind=MediaKind.web_article.value,
-        title=title,
-        requested_url=url,
-        canonical_url=None,  # Not set until ingestion resolves redirects
-        canonical_source_url=canonical_source,
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(media)
-    db.flush()  # Get the generated ID
-
-    ingest_enqueued = False
-    try:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        if enqueue_task:
-            ingest_enqueued = _enqueue_ingest_task(db, media.id, viewer_id, request_id)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-
-    return FromUrlResponse(
-        media_id=media.id,
-        idempotency_outcome="created",
-        processing_status=ProcessingStatus.pending.value,
-        ingest_enqueued=ingest_enqueued,
-    )
-
-
-def _enqueue_ingest_task(
-    db: Session,
-    media_id: UUID,
-    actor_user_id: UUID,
-    request_id: str | None,
-) -> bool:
-    """Enqueue ingest_web_article in the Postgres queue service."""
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_web_article",
-            payload={
-                "media_id": str(media_id),
-                "actor_user_id": str(actor_user_id),
-                "request_id": request_id,
-            },
-        )
-        logger.info(
-            "ingest_task_enqueued",
-            media_id=str(media_id),
-            actor_user_id=str(actor_user_id),
-            request_id=request_id,
-        )
-        return True
-    except SQLAlchemyError as exc:
-        logger.error(
-            "ingest_task_enqueue_failed",
-            media_id=str(media_id),
-            actor_user_id=str(actor_user_id),
-            request_id=request_id,
-            error=str(exc),
-        )
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue ingest_web_article job.",
-        ) from exc
-
-
-def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
-    session_factory = get_session_factory()
-    db = session_factory()
-    try:
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload={"media_id": media_id, "request_id": request_id},
-            max_attempts=1,
-        )
-        db.commit()
-    except SQLAlchemyError:
-        db.rollback()
-        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
-    finally:
-        db.close()
 
 
 def list_fragments_for_viewer(

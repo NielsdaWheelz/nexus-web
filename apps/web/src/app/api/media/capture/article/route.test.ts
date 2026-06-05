@@ -35,11 +35,16 @@ describe("POST /api/media/capture/article", () => {
         JSON.stringify({
           data: {
             media_id: "media-123",
-            processing_status: "ready_for_reading",
+            source_attempt_id: "attempt-123",
+            source_type: "browser_article_capture",
+            source_attempt_status: "queued",
+            idempotency_outcome: "created",
+            processing_status: "pending",
+            ingest_enqueued: true,
           },
         }),
         {
-          status: 200,
+          status: 202,
           headers: {
             "content-type": "application/json",
             "x-request-id": "req-123",
@@ -65,6 +70,7 @@ describe("POST /api/media/capture/article", () => {
         headers: {
           authorization: "Bearer extension-token",
           "content-type": "application/json",
+          "idempotency-key": "idem-article",
           "x-request-id": "req-client",
         },
         body,
@@ -78,16 +84,22 @@ describe("POST /api/media/capture/article", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer extension-token");
     expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("idempotency-key")).toBe("idem-article");
     expect(headers.get("x-request-id")).toBe("req-client");
     expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe(body);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(response.headers.get("content-type")).toBe("application/json");
     expect(response.headers.get("x-request-id")).toBe("req-123");
     expect(await response.json()).toEqual({
       data: {
         media_id: "media-123",
-        processing_status: "ready_for_reading",
+        source_attempt_id: "attempt-123",
+        source_type: "browser_article_capture",
+        source_attempt_status: "queued",
+        idempotency_outcome: "created",
+        processing_status: "pending",
+        ingest_enqueued: true,
       },
     });
   });

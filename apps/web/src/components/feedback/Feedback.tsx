@@ -91,6 +91,13 @@ function apiErrorTitle(error: ApiError, fallback: string) {
   if (error.code === "E_INVALID_FILE_TYPE") return "That file type is not supported";
   if (error.code === "E_INGEST_FAILED") return "We couldn't process this item";
   if (error.code === "E_INGEST_TIMEOUT") return "Processing timed out";
+  if (error.code === "E_UPSTREAM_TIMEOUT") return "Backend service timed out";
+  if (error.code === "E_X_PROVIDER_CREDITS_DEPLETED") return "X imports are temporarily unavailable";
+  if (error.code === "E_X_PROVIDER_AUTH_REJECTED") return "X imports are temporarily unavailable";
+  if (error.code === "E_X_PROVIDER_RATE_LIMITED") return "X is rate limiting imports";
+  if (error.code === "E_X_PROVIDER_TIMEOUT") return "X import timed out";
+  if (error.code === "E_X_PROVIDER_UNAVAILABLE") return "X imports are temporarily unavailable";
+  if (error.code === "E_X_POST_UNAVAILABLE") return "That X post is not available";
   if (error.code === "E_TRANSCRIPT_UNAVAILABLE") return "Transcript unavailable";
   if (error.code === "E_TRANSCRIPTION_FAILED") return "Transcription failed";
   if (error.code === "E_TRANSCRIPTION_TIMEOUT") return "Transcription timed out";

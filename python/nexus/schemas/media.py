@@ -172,7 +172,12 @@ class ArticleCaptureResponse(BaseModel):
     """Response schema for browser-captured web articles."""
 
     media_id: UUID
+    source_attempt_id: UUID
+    source_type: str
+    source_attempt_status: str
+    idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: str
+    ingest_enqueued: bool
 
 
 class RetryRequest(BaseModel):
@@ -317,13 +322,16 @@ class FromUrlRequest(BaseModel):
 
 
 class FromUrlResponse(BaseModel):
-    """Response schema for POST /media/from_url.
+    """Response schema for accepted source-ingest commands.
 
     `idempotency_outcome` is the source-of-truth contract for create-vs-reuse.
     """
 
     media_id: UUID
-    idempotency_outcome: Literal["created", "reused"]
+    source_attempt_id: UUID
+    source_type: str
+    source_attempt_status: str
+    idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: str
     ingest_enqueued: bool
 

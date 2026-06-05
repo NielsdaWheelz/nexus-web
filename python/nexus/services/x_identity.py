@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from nexus.services.url_identity import parse_identity_url
+from nexus.services.x_types import canonical_x_post_url
 
 _X_PROVIDER = "x"
 _X_HOSTS = {
@@ -47,9 +48,14 @@ def classify_x_url(url: str) -> XIdentity | None:
     return XIdentity(
         provider=_X_PROVIDER,
         provider_id=provider_id,
-        canonical_url=f"https://x.com/i/status/{provider_id}",
+        canonical_url=canonical_x_post_url(provider_id),
         username=_extract_username(parsed.path_segments),
     )
+
+
+def normalize_x_username(value: str | None) -> str | None:
+    username = (value or "").strip().removeprefix("@")
+    return username if _USERNAME_RE.fullmatch(username) else None
 
 
 def _extract_post_id(segments: tuple[str, ...]) -> str | None:
@@ -66,5 +72,5 @@ def _extract_username(segments: tuple[str, ...]) -> str | None:
             username = segments[idx - 1].strip("@")
             if username.lower() == "i":
                 return None
-            return username if _USERNAME_RE.fullmatch(username) else None
+            return normalize_x_username(username)
     return None

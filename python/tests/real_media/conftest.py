@@ -141,16 +141,7 @@ def ingest_web_article_fixture_with_dedupe_resolution(
     loser. The real-media tests should exercise that contract instead of
     assuming a pristine database.
     """
-    from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
-
-    with direct_db.session() as session:
-        result = run_web_article_ingest_sync(
-            session,
-            media_id,
-            user_id,
-            request_id,
-        )
-        session.commit()
+    result = _run_source_attempt_for_media(direct_db, media_id)
     status = result.get("status")
     if status == "success":
         return media_id, result
@@ -202,6 +193,41 @@ def ingest_web_article_fixture_with_dedupe_resolution(
     }
 
 
+def _run_source_attempt_for_media(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            )
+            .mappings()
+            .one()
+        )
+    payload = row["payload"]
+    with direct_db.session() as session:
+        return run_source_attempt(
+            db=session,
+            media_id=UUID(payload["media_id"]),
+            attempt_id=UUID(payload["attempt_id"]),
+            actor_user_id=UUID(payload["actor_user_id"]),
+            request_id=payload.get("request_id"),
+        )
+
+
 def create_nasa_captioned_video(
     auth_client,
     direct_db: DirectSessionManager,
@@ -226,16 +252,7 @@ def create_nasa_captioned_video(
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
 
-    from nexus.tasks.ingest_youtube_video import run_ingest_sync
-
-    with direct_db.session() as session:
-        result = run_ingest_sync(
-            session,
-            media_id,
-            user_id,
-            request_id="real-media-youtube-caption-fixture",
-        )
-        session.commit()
+    result = _run_source_attempt_for_media(direct_db, media_id)
     if result["status"] == "skipped":
         assert result.get("reason") == "already_ready", result
         with direct_db.session() as session:
@@ -420,6 +437,7 @@ def upload_file_media(
 
 def register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> None:
     direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
     direct_db.register_cleanup("reader_media_state", "media_id", media_id)
     direct_db.register_cleanup("playback_queue_items", "media_id", media_id)

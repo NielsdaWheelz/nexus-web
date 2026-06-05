@@ -6,6 +6,7 @@ canonical object key construction.
 
 Path Invariants:
     - Media original: media/{media_id}/original.{ext}
+    - Media source artifact: media/{media_id}/source/{attempt_id}.{ext}
     - Upload staging: uploads/media/{media_id}/original.{ext}
     - EPUB asset: media/{media_id}/assets/{asset_key}
     - Oracle plate: oracle/plates/{sha256}.{ext}
@@ -58,6 +59,17 @@ def build_storage_path(media_id: UUID | str, ext: str) -> str:
         'media/abc123.../original.pdf'
     """
     return f"media/{media_id}/original.{ext}"
+
+
+def build_source_artifact_storage_path(
+    media_id: UUID | str,
+    attempt_id: UUID | str,
+    ext: str,
+) -> str:
+    """Build the private path for a durable source artifact captured at accept time."""
+    if not ext or ext.startswith(".") or "/" in ext:
+        raise ValueError("Source artifact extension must be a bare file extension.")
+    return f"media/{media_id}/source/{attempt_id}.{ext}"
 
 
 def build_upload_staging_storage_path(media_id: UUID | str, ext: str) -> str:

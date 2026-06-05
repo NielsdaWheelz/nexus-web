@@ -40,7 +40,6 @@ from nexus.config import get_settings
 from nexus.services.semantic_chunks import current_transcript_embedding_provider
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
-from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.real_media.conftest import (
     FIXTURES_DIR,
     REAL_MEDIA_FIXTURES_DIR,
@@ -254,14 +253,7 @@ def main() -> None:
                 raise RuntimeError(f"URL article seed create failed: {web_url_response.text}")
             web_url_media_id = UUID(web_url_response.json()["data"]["media_id"])
 
-            with direct_db.session() as session:
-                web_url_result = run_web_article_ingest_sync(
-                    session,
-                    web_url_media_id,
-                    user_id,
-                    "real-media-e2e-web-url",
-                )
-                session.commit()
+            web_url_result = _run_source_attempt_for_media(direct_db, web_url_media_id)
             if web_url_result.get("status") == "deduped":
                 canonical_url = web_url_result.get("canonical_url")
                 if not isinstance(canonical_url, str) or not canonical_url:
@@ -779,6 +771,41 @@ def _upload_seed_file_media(
     if confirm_response.status_code != 200:
         raise RuntimeError(f"Upload confirm failed for {filename}: {confirm_response.text}")
     return UUID(confirm_response.json()["data"]["media_id"])
+
+
+def _run_source_attempt_for_media(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM background_jobs
+                    WHERE kind = 'ingest_media_source'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            )
+            .mappings()
+            .one()
+        )
+    payload = row["payload"]
+    with direct_db.session() as session:
+        return run_source_attempt(
+            db=session,
+            media_id=UUID(payload["media_id"]),
+            attempt_id=UUID(payload["attempt_id"]),
+            actor_user_id=UUID(payload["actor_user_id"]),
+            request_id=payload.get("request_id"),
+        )
 
 
 def _real_auth_headers(supabase_url: str, supabase_auth_admin_key: str) -> dict[str, str]:

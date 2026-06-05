@@ -4,7 +4,11 @@ import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
-import { retryMediaMetadata, retryMediaSource } from "@/lib/media/retryClient";
+import {
+  type MediaActionCapabilities,
+  retryMediaMetadata,
+} from "@/lib/media/ingestionClient";
+import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 
 interface DocumentDeleteResponse {
   data: {
@@ -40,7 +44,12 @@ interface DocumentActions {
 interface UseDocumentActionsOptions {
   media: DocumentActionTarget | null;
   /** Called after a retry/refresh API call succeeds; component resets its local content state. */
-  onProcessingRestarted: (options: { resetRefreshSource: boolean }) => void;
+  onProcessingRestarted: (options: {
+    resetRefreshSource: boolean;
+    processingStatus: string;
+    sourceFailed: boolean;
+    capabilityPatch: MediaActionCapabilities;
+  }) => void;
   onMetadataRetryEnqueued?: () => void;
 }
 
@@ -88,12 +97,19 @@ export function useDocumentActions({
     }
     setRetryBusy(true);
     try {
-      await retryMediaSource(media.id);
-      onProcessingRestarted({ resetRefreshSource: false });
-      feedback.show({
-        severity: "success",
-        title: "Processing retry started.",
+      const projection = await runSourceProcessingAction({
+        mediaId: media.id,
+        action: "retry",
+        successTitle: "Processing retry started.",
+        failedTitle: "Retry request failed after it was saved.",
       });
+      onProcessingRestarted({
+        resetRefreshSource: projection.resetRefreshSource,
+        processingStatus: projection.processingStatus,
+        sourceFailed: projection.sourceFailed,
+        capabilityPatch: projection.capabilityPatch,
+      });
+      feedback.show(projection.feedback);
     } catch (err) {
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to retry processing" }),
@@ -109,9 +125,19 @@ export function useDocumentActions({
     }
     setRefreshBusy(true);
     try {
-      await apiFetch(`/api/media/${media.id}/refresh`, { method: "POST" });
-      onProcessingRestarted({ resetRefreshSource: true });
-      feedback.show({ severity: "success", title: "Source refresh started." });
+      const projection = await runSourceProcessingAction({
+        mediaId: media.id,
+        action: "refresh",
+        successTitle: "Source refresh started.",
+        failedTitle: "Refresh request failed after it was saved.",
+      });
+      onProcessingRestarted({
+        resetRefreshSource: projection.resetRefreshSource,
+        processingStatus: projection.processingStatus,
+        sourceFailed: projection.sourceFailed,
+        capabilityPatch: projection.capabilityPatch,
+      });
+      feedback.show(projection.feedback);
     } catch (err) {
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to refresh source" }),

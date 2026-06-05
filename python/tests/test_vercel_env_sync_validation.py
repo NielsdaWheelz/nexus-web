@@ -355,10 +355,12 @@ def test_sync_env_rejects_removed_storage_origin_keys(tmp_path: Path, removed_ke
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SERVICE_ROLE_KEY",
+        "X_API_BEARER_TOKEN",
+        "X_API_INCLUDE_USER_EXPANSIONS",
     ],
 )
-def test_sync_env_rejects_supabase_admin_runtime_keys(tmp_path: Path, forbidden_key: str):
-    """Supabase admin/database env cannot be synced into Vercel production."""
+def test_sync_env_rejects_backend_runtime_keys(tmp_path: Path, forbidden_key: str):
+    """Backend runtime env cannot be synced into Vercel production."""
     fake_bin_dir = tmp_path / "bin"
     fake_bin_dir.mkdir()
     _fake_vercel_cli(fake_bin_dir)

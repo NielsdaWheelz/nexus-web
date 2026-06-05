@@ -183,11 +183,9 @@ class TestWorkerMaintenanceConfiguration:
         assert settings.sync_gutenberg_catalog_schedule_seconds == 0
         assert settings.background_job_prune_schedule_seconds == 0
         assert settings.worker_allowed_job_kinds == (
-            "ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,"
-            "enrich_metadata,chat_run,library_intelligence_build_job,"
-            "podcast_sync_subscription_job,podcast_transcribe_episode_job,"
-            "podcast_reindex_semantic_job,backfill_default_library_closure_job,"
-            "oracle_reading_generate"
+            "ingest_media_source,enrich_metadata,chat_run,library_intelligence_build_job,"
+            "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
+            "backfill_default_library_closure_job,oracle_reading_generate"
         )
 
     def test_zero_schedule_values_are_valid_disabled_state(self):
@@ -250,9 +248,23 @@ class TestBrowseProviderConfiguration:
                 YOUTUBE_DATA_API_KEY="",
             )
 
+    def test_staging_requires_x_api_bearer_token(self):
+        with pytest.raises(ValidationError, match="X_API_BEARER_TOKEN"):
+            _make_deploy_settings(
+                X_API_BEARER_TOKEN="",
+            )
+
     def test_youtube_transcript_timeout_must_be_positive(self):
         with pytest.raises(ValidationError, match="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS"):
             _make_settings(YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=0)
+
+    def test_x_api_timeout_must_be_positive(self):
+        with pytest.raises(ValidationError, match="X_API_TIMEOUT_SECONDS"):
+            _make_settings(X_API_TIMEOUT_SECONDS=0)
+
+    def test_x_author_thread_max_posts_must_be_positive(self):
+        with pytest.raises(ValidationError, match="X_API_AUTHOR_THREAD_MAX_POSTS"):
+            _make_settings(X_API_AUTHOR_THREAD_MAX_POSTS=0)
 
 
 class TestTranscriptEmbeddingConfiguration:

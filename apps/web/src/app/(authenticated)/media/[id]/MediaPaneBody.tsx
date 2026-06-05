@@ -128,6 +128,7 @@ import {
   type ReaderNavigationSection,
 } from "@/lib/media/readerNavigation";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
+import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
@@ -3485,7 +3486,16 @@ export default function MediaPaneBody() {
   } = useLibraryMembership(media?.id);
 
   const handleProcessingRestarted = useCallback(
-    ({ resetRefreshSource }: { resetRefreshSource: boolean }) => {
+    ({
+      processingStatus,
+      sourceFailed,
+      capabilityPatch,
+    }: {
+      resetRefreshSource: boolean;
+      processingStatus: string;
+      sourceFailed: boolean;
+      capabilityPatch: MediaActionCapabilities;
+    }) => {
       setFragments([]);
       setActiveSectionId(null);
       setActiveWebSectionId(null);
@@ -3496,18 +3506,13 @@ export default function MediaPaneBody() {
         prev && prev.id === targetId
           ? {
               ...prev,
-              processing_status: "extracting",
-              failure_stage: null,
-              last_error_code: null,
+              processing_status: processingStatus,
+              failure_stage: sourceFailed ? prev.failure_stage : null,
+              last_error_code: sourceFailed ? prev.last_error_code : null,
               capabilities: prev.capabilities
                 ? {
                     ...prev.capabilities,
-                    can_read: false,
-                    can_highlight: false,
-                    can_quote: false,
-                    can_search: false,
-                    can_retry: false,
-                    ...(resetRefreshSource ? { can_refresh_source: false } : {}),
+                    ...capabilityPatch,
                   }
                 : prev.capabilities,
             }

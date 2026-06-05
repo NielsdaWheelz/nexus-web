@@ -98,7 +98,8 @@ library the viewer can read.
 - URL ingest validates requested writable destination IDs at the dispatch
   boundary; source owners assign default plus selected destinations through
   `library_entries` inside their creation transactions.
-- Source owners (`x_ingest.py`, `youtube_ingest.py`, `remote_file_ingest.py`,
+- Source owners (`x_ingest.py`, `media_source_ingest.py`,
+  `remote_file_ingest.py`, current YouTube materialization internals, and
   web-article creation) attach resulting media through library services.
 - Library entries never make a private media file public.
 - Public owned Oracle plates are not library resources; readings may reference

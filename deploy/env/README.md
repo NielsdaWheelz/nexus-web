@@ -8,7 +8,8 @@ to them hold real values:
   `R2_S3_API_ORIGIN`
 - `env-prod-frontend`: Vercel-only values, including app-side auth redirect
   origins and Server Action admission patterns
-- `env-prod-backend`: FastAPI/Caddy values
+- `env-prod-backend`: FastAPI/Caddy values and backend-only provider secrets
+  such as `X_API_BEARER_TOKEN`
 - `env-prod-worker`: worker-only values
 
 Create the editable local files:
@@ -46,6 +47,10 @@ Production is a hard cutover:
   browser-extension callback origin allowlist and uses full HTTPS origins.
 - `SUPABASE_MANAGEMENT_ACCESS_TOKEN` is operator/CI-only for read-only Auth
   config verification. Never put it in Vercel, VPS, or worker runtime env.
+- `X_API_BEARER_TOKEN` is backend-only. It belongs in
+  `env-prod-backend`/the VPS runtime, never in Vercel or browser-visible env.
+  X API credits are provider account state, not env; validate depleted credits
+  with a provider probe or the gated live-provider test after adding credits.
 
 Worker production defaults are intentionally conservative: the allowlist contains
 only explicit user/domain job kinds, schedule values use `0` as disabled, and
@@ -59,6 +64,8 @@ Cutover checks before syncing env:
 - `POSTGRES_PASSWORD` is set and backed up in the password manager.
 - R2 bucket, backend access key, shared S3 API origin, and browser upload CORS
   policy are created.
+- X API credits are available for the official API token if X thread capture is
+  expected to work in production.
 - `deploy/supabase/verify-auth-redirects.sh` passes: hosted Supabase Auth
   `site_url` equals `APP_PUBLIC_URL`, every `AUTH_ALLOWED_REDIRECT_ORIGINS`
   entry has an exact `/auth/callback` redirect URL, and production redirect URLs

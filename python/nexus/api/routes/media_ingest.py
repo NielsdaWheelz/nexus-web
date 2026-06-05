@@ -26,8 +26,7 @@ from nexus.schemas.media import (
     RetryRequest,
     UploadInitRequest,
 )
-from nexus.services import epub_lifecycle, media_ingest, media_retry
-from nexus.services import media as media_service
+from nexus.services import media_ingest, media_retry, media_source_ingest
 from nexus.services import upload as upload_service
 
 router = APIRouter(tags=["media"])
@@ -51,17 +50,19 @@ def create_from_url(
         url=request_body.url,
         library_ids=request_body.library_ids,
         request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return ok(result)
 
 
-@router.post("/media/capture/article", status_code=201)
+@router.post("/media/capture/article", status_code=202)
 def create_captured_article(
     request_body: ArticleCaptureRequest,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    request: Request,
 ) -> dict:
-    result = media_service.create_captured_web_article(
+    result = media_source_ingest.accept_browser_article_capture(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
@@ -72,6 +73,8 @@ def create_captured_article(
         published_time=request_body.published_time,
         content_html=request_body.content_html,
         library_ids=request_body.library_ids,
+        request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return ok(result)
 
@@ -91,7 +94,7 @@ async def create_captured_file(
         ) from exc
     body = await request.body()
     result = await run_in_threadpool(
-        media_service.create_captured_file,
+        media_source_ingest.accept_browser_file_capture,
         db=db,
         viewer_id=viewer.user_id,
         payload=body,
@@ -100,6 +103,7 @@ async def create_captured_file(
         library_ids=library_ids,
         source_url=request.headers.get("x-nexus-source-url"),
         request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return ok(result)
 
@@ -117,6 +121,7 @@ def create_captured_url(
         url=request_body.url,
         library_ids=request_body.library_ids,
         request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return ok(result)
 
@@ -126,6 +131,7 @@ def upload_init(
     request: UploadInitRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    http_request: Request,
 ) -> dict:
     """Initialize a file upload: create the media stub and return a signed PUT URL.
 
@@ -140,6 +146,8 @@ def upload_init(
         content_type=request.content_type,
         size_bytes=request.size_bytes,
         library_ids=request.library_ids,
+        request_id=getattr(http_request.state, "request_id", None),
+        idempotency_key=http_request.headers.get("Idempotency-Key"),
     )
     return success_response(result)
 
@@ -159,7 +167,7 @@ def confirm_ingest(
     Returns media_id, duplicate, processing_status, ingest_enqueued.
     """
     ingest_request = body if body is not None else MediaIngestRequest()
-    result = epub_lifecycle.confirm_ingest_for_viewer(
+    result = media_source_ingest.confirm_uploaded_source(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
@@ -184,5 +192,6 @@ def retry_ingest(
         media_id=media_id,
         from_stage=body.from_stage,
         request_id=getattr(request.state, "request_id", None),
+        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return success_response(result)

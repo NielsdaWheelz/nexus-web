@@ -16,7 +16,8 @@ libraries.
 - **Web share surface** (`apps/web/src/app/share/*`) owns the compact capture
   card. It renders outside the authenticated app shell, shows an empty-state card
   for browser empty shares, blocks URL ingest until the user taps Save, and sends
-  selected destination IDs in the first ingest request.
+  selected destination IDs plus a stable per-URL `Idempotency-Key` in the first
+  ingest request.
 - **Library destination UI** (`LibraryDestinationPicker`) searches
   `GET /libraries/writable-destinations` and creates libraries through the shared
   `lib/libraries/client.ts` client. It is a multi-select combobox/listbox and
@@ -36,9 +37,10 @@ Native Android finishes immediately for empty shared text. Browser
 
 For URL shares, `/share` renders a destination picker before ingest. The user can
 search existing writable libraries or create a new one inline. Save calls
-`addMediaFromUrl({ url, libraryIds })`; Cancel performs no ingest. Multi-URL
-shares use the same selected destination set for each URL and retry failed URLs
-only.
+`addMediaFromUrl({ url, libraryIds, idempotencyKey })`; Cancel performs no
+ingest. Multi-URL shares use the same selected destination set for each URL and
+retry failed URLs only. Retrying a URL reuses its original idempotency key so an
+already accepted source attempt is not duplicated.
 
 For non-URL text, `/share` quick-captures the text to today's daily note and does
 not show a library picker because libraries are media/podcast containers.
@@ -58,6 +60,9 @@ The selected destination set is additive and idempotent:
   winner media ID,
 - failed confirm-time upload validation does not attach confirm-time
   destinations.
+- failed post-acceptance source acquisition or extraction remains attached to
+  the accepted media/source-attempt row and is retried through the media retry
+  API.
 
 ## Non-Goals
 

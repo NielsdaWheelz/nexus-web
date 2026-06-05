@@ -56,6 +56,33 @@ def _insert_extracting_media(
             "uid": user_id,
         },
     )
+    source_type_by_kind = {
+        "pdf": "uploaded_pdf_file",
+        "epub": "uploaded_epub_file",
+        "web_article": "generic_web_url",
+        "podcast_episode": "podcast_episode_transcript",
+    }
+    source_type = source_type_by_kind.get(kind)
+    if source_type is not None:
+        db.execute(
+            text("""
+                INSERT INTO media_source_attempts (
+                    media_id, created_by_user_id, source_type, attempt_no, status,
+                    intent_key, source_payload, started_at
+                )
+                VALUES (
+                    :media_id, :user_id, :source_type, 1, 'running',
+                    :intent_key, '{}'::jsonb, :started_at
+                )
+            """),
+            {
+                "media_id": media_id,
+                "user_id": user_id,
+                "source_type": source_type,
+                "intent_key": f"test:{source_type}:{media_id}",
+                "started_at": started_at,
+            },
+        )
     db.flush()
     return media_id
 
@@ -679,16 +706,31 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
             """
             SELECT COUNT(*)
             FROM background_jobs
-            WHERE kind = 'ingest_pdf'
+            WHERE kind = 'ingest_media_source'
               AND payload->>'media_id' = :media_id
             """
         ),
         {"media_id": str(media_id)},
     ).scalar_one()
     assert queued_count >= 1, (
-        "expected stale pdf requeue to persist an ingest_pdf queue row "
+        "expected stale pdf requeue to persist an ingest_media_source queue row "
         f"for media_id={media_id}, got {queued_count}"
     )
+    attempt_row = db_session.execute(
+        text(
+            """
+            SELECT msa.status, msa.job_id
+            FROM media_source_attempts msa
+            WHERE msa.media_id = :media_id
+            ORDER BY msa.attempt_no DESC, msa.created_at DESC, msa.id DESC
+            LIMIT 1
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    assert attempt_row is not None
+    assert attempt_row.status == "queued"
+    assert attempt_row.job_id is not None
 
 
 def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: Session):
@@ -799,14 +841,14 @@ def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
             """
             SELECT COUNT(*)
             FROM background_jobs
-            WHERE kind = 'podcast_transcribe_episode_job'
+            WHERE kind = 'ingest_media_source'
               AND payload->>'media_id' = :media_id
             """
         ),
         {"media_id": str(media_id)},
     ).scalar_one()
     assert queued_count >= 1, (
-        "expected stale podcast requeue to persist one transcription queue row "
+        "expected stale podcast requeue to persist one source queue row "
         f"for media_id={media_id}, got {queued_count}"
     )
 

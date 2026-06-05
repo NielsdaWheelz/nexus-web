@@ -56,19 +56,20 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.crypto import CryptoError, encrypt_api_key
 from nexus.services.epub_ingest import EpubExtractionError
+from nexus.services.epub_metadata import persist_epub_metadata
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
-from nexus.services.media import create_provisional_web_article
+from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.notes import set_highlight_note_body
+from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.versions import write_transcript_version
 from nexus.services.upload import confirm_ingest, init_upload
-from nexus.services.youtube_ingest import create_or_reuse_youtube_video
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
-from nexus.tasks.ingest_epub import persist_epub_metadata, run_epub_ingest_sync
-from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
+from nexus.tasks.ingest_epub import run_epub_ingest_sync
+from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 
 PDF_PAGE_COUNT = 80
 SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
@@ -650,6 +651,58 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     )
 
 
+def _accept_seed_url_source(
+    db,
+    *,
+    user_id: UUID,
+    url: str,
+    terminal_status: str = "succeeded",
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> UUID:
+    """Accept URL media through the source owner, then make the seed deterministic."""
+    response = accept_url_source(
+        db=db,
+        viewer_id=user_id,
+        url=url,
+        library_ids=[],
+        request_id="e2e-seed",
+        idempotency_key=f"e2e-seed:{url}",
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM background_jobs
+            WHERE kind = 'ingest_media_source'
+              AND payload->>'attempt_id' = :source_attempt_id
+            """
+        ),
+        {"source_attempt_id": str(response.source_attempt_id)},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE media_source_attempts
+            SET status = :terminal_status,
+                job_id = NULL,
+                error_code = :error_code,
+                error_message = :error_message,
+                finished_at = now(),
+                updated_at = now()
+            WHERE id = :source_attempt_id
+            """
+        ),
+        {
+            "source_attempt_id": str(response.source_attempt_id),
+            "terminal_status": terminal_status,
+            "error_code": error_code,
+            "error_message": error_message,
+        },
+    )
+    db.commit()
+    return response.media_id
+
+
 def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
     """Keep the E2E user on internal AI Plus access."""
     grant_entitlement_override(
@@ -782,14 +835,11 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
-        provisional = create_provisional_web_article(
-            db=db,
-            viewer_id=user_id,
+        media_id = _accept_seed_url_source(
+            db,
+            user_id=user_id,
             url=NON_PDF_SOURCE_URL,
-            library_ids=[],
-            enqueue_task=False,
         )
-        media_id = provisional.media_id
 
     with session_factory() as db:
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
@@ -881,14 +931,11 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
     """Seed transcript-ready + transcript-unavailable YouTube media for E2E."""
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
-        transcript_resp = create_or_reuse_youtube_video(
-            db=db,
-            viewer_id=user_id,
+        transcript_media_id = _accept_seed_url_source(
+            db,
+            user_id=user_id,
             url=YOUTUBE_WATCH_URL,
-            library_ids=[],
-            enqueue_task=False,
         )
-        transcript_media_id = transcript_resp.media_id
 
     with session_factory() as db:
         media = db.execute(
@@ -945,14 +992,14 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
-        playback_only_resp = create_or_reuse_youtube_video(
-            db=db,
-            viewer_id=user_id,
+        playback_only_media_id = _accept_seed_url_source(
+            db,
+            user_id=user_id,
             url=YOUTUBE_PLAYBACK_ONLY_WATCH_URL,
-            library_ids=[],
-            enqueue_task=False,
+            terminal_status="failed",
+            error_code="E_TRANSCRIPT_UNAVAILABLE",
+            error_message="Transcript unavailable in seed fixture",
         )
-        playback_only_media_id = playback_only_resp.media_id
 
     with session_factory() as db:
         playback_only_media = db.execute(
@@ -1087,14 +1134,11 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
-        provisional = create_provisional_web_article(
-            db=db,
-            viewer_id=user_id,
+        web_media_id = _accept_seed_url_source(
+            db,
+            user_id=user_id,
             url=READER_RESUME_WEB_SOURCE_URL,
-            library_ids=[],
-            enqueue_task=False,
         )
-        web_media_id = provisional.media_id
 
     with session_factory() as db:
         media = db.execute(select(Media).where(Media.id == web_media_id)).scalar_one_or_none()
@@ -1240,7 +1284,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
-        _index_pdf_evidence(db, pdf_media_id, "e2e_seed", extraction_result)
+        index_pdf_evidence(db, pdf_media_id, "e2e_seed", extraction_result)
 
     _write_reader_resume_seed_file(
         web_media_id=str(web_media_id),
@@ -1289,14 +1333,11 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
-        provisional = create_provisional_web_article(
-            db=db,
-            viewer_id=user_id,
+        media_id = _accept_seed_url_source(
+            db,
+            user_id=user_id,
             url=READER_OVERVIEW_RULER_SOURCE_URL,
-            library_ids=[],
-            enqueue_task=False,
         )
-        media_id = provisional.media_id
 
     with session_factory() as db:
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
@@ -1479,7 +1520,7 @@ def main() -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
-        _index_pdf_evidence(db, media_id, "e2e_seed", extraction_result)
+        index_pdf_evidence(db, media_id, "e2e_seed", extraction_result)
 
     password_filename = f"e2e-password-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
     with session_factory() as db:

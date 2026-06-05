@@ -561,14 +561,12 @@ def _run_subscription_sync(
 ) -> dict:
     from dataclasses import asdict
 
+    from nexus.services.media_source_ingest import run_source_attempt
     from nexus.services.podcasts import transcription as podcast_transcript_service
     from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-    from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
-    # The transcript-request loop runs the REAL enqueue path: enqueue_job writes
-    # genuine background_jobs/podcast_transcription_jobs rows that this helper then
-    # SELECTs and drives via run_podcast_transcription_now. No private symbol is
-    # patched (testing_standards.md §7); the rows are inert (never claimed here).
+    # The transcript-request loop runs the real source enqueue path: source attempts
+    # and background_jobs rows are then driven through run_source_attempt.
     with direct_db.session() as session:
         result = run_podcast_subscription_sync_now(
             session,
@@ -599,24 +597,27 @@ def _run_subscription_sync(
                     dry_run=False,
                 )
 
-            pending_jobs = session.execute(
+            pending_source_attempts = session.execute(
                 text(
                     """
-                    SELECT j.media_id, j.requested_by_user_id
-                    FROM podcast_transcription_jobs j
-                    JOIN podcast_episodes pe ON pe.media_id = j.media_id
+                    SELECT msa.media_id, msa.id, msa.created_by_user_id
+                    FROM media_source_attempts msa
+                    JOIN podcast_episodes pe ON pe.media_id = msa.media_id
                     WHERE pe.podcast_id = :podcast_id
-                      AND j.status = 'pending'
-                    ORDER BY j.media_id ASC
+                      AND msa.source_type = 'podcast_episode_transcript'
+                      AND msa.status = 'queued'
+                    ORDER BY msa.media_id ASC
                     """
                 ),
                 {"podcast_id": podcast_id},
             ).fetchall()
-            for row in pending_jobs:
-                run_podcast_transcription_now(
+            for row in pending_source_attempts:
+                run_source_attempt(
                     session,
                     media_id=row[0],
-                    requested_by_user_id=row[1],
+                    attempt_id=row[1],
+                    actor_user_id=row[2],
+                    request_id="test-podcast-source-attempt",
                 )
         session.commit()
     return asdict(result)
@@ -7851,6 +7852,30 @@ class TestPodcastTranscriptionAsyncLifecycle:
             "media_id": media_id,
         }
 
+    def _run_source_attempt_for_media(self, direct_db, media_id: UUID) -> dict[str, object]:
+        from nexus.services.media_source_ingest import run_source_attempt
+
+        with direct_db.session() as session:
+            attempt_row = session.execute(
+                text(
+                    """
+                    SELECT id, created_by_user_id
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id
+                    ORDER BY attempt_no DESC, created_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+            return run_source_attempt(
+                db=session,
+                media_id=media_id,
+                attempt_id=attempt_row[0],
+                actor_user_id=attempt_row[1],
+                request_id="test-podcast-source-attempt",
+            )
+
     def test_sync_creates_pending_transcription_job_without_inline_transcription(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -8377,16 +8402,8 @@ class TestPodcastTranscriptionAsyncLifecycle:
             ),
         )
 
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            failed_result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-        assert failed_result.status == "failed"
+        failed_result = self._run_source_attempt_for_media(direct_db, media_id)
+        assert failed_result["status"] == "failed"
 
         with direct_db.session() as session:
             queue_rows_before_retry = int(
@@ -8395,7 +8412,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'podcast_transcribe_episode_job'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),
@@ -8415,7 +8432,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         )
         retry_data = retry_response.json()["data"]
         assert retry_data["processing_status"] == "extracting"
-        assert retry_data["retry_enqueued"] is True
+        assert retry_data["ingest_enqueued"] is True
         with direct_db.session() as session:
             queue_rows_after_retry = int(
                 session.execute(
@@ -8423,7 +8440,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'podcast_transcribe_episode_job'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),
@@ -8431,7 +8448,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
                 ).scalar_one()
             )
         assert queue_rows_after_retry == queue_rows_before_retry + 1, (
-            "first podcast retry must enqueue one additional transcription job row. "
+            "first podcast retry must enqueue one additional source job row. "
             f"before={queue_rows_before_retry} after={queue_rows_after_retry}"
         )
 
@@ -8475,7 +8492,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert second_retry.status_code == 202
         second_data = second_retry.json()["data"]
         assert second_data["processing_status"] == "extracting"
-        assert second_data["retry_enqueued"] is False
+        assert second_data["ingest_enqueued"] is False
         with direct_db.session() as session:
             queue_rows_after_second_retry = int(
                 session.execute(
@@ -8483,7 +8500,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'podcast_transcribe_episode_job'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),
@@ -9498,6 +9515,34 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                     "created_at": now,
                 },
             )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_source_attempts (
+                        media_id, created_by_user_id, source_type, attempt_no, status,
+                        intent_key, requested_url, canonical_source_url, provider,
+                        provider_target_ref, source_payload, error_code, error_message,
+                        finished_at
+                    )
+                    VALUES (
+                        :media_id, :created_by_user_id, 'youtube_video', 1, 'failed',
+                        :intent_key, :url, :url, 'youtube', :provider_id,
+                        CAST(:source_payload AS jsonb), 'E_TRANSCRIPTION_FAILED',
+                        'simulated failure',
+                        :finished_at
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "created_by_user_id": user_id,
+                    "intent_key": f"test:youtube_video:{media_id}",
+                    "url": playback_url,
+                    "provider_id": "dQw4w9WgXcQ",
+                    "source_payload": json.dumps({"video_id": "dQw4w9WgXcQ"}),
+                    "finished_at": now,
+                },
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -9507,7 +9552,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'ingest_youtube_video'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),
@@ -9527,7 +9572,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         )
         retry_data = retry_response.json()["data"]
         assert retry_data["processing_status"] == "extracting"
-        assert retry_data["retry_enqueued"] is True
+        assert retry_data["ingest_enqueued"] is True
         with direct_db.session() as session:
             queue_rows_after_retry = int(
                 session.execute(
@@ -9535,7 +9580,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'ingest_youtube_video'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),
@@ -9543,7 +9588,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 ).scalar_one()
             )
         assert queue_rows_after_retry == queue_rows_before_retry + 1, (
-            "first video retry must enqueue one additional ingest_youtube_video queue row. "
+            "first video retry must enqueue one additional ingest_media_source queue row. "
             f"before={queue_rows_before_retry} after={queue_rows_after_retry}"
         )
 
@@ -9571,7 +9616,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert second_retry.status_code == 202
         second_data = second_retry.json()["data"]
         assert second_data["processing_status"] == "extracting"
-        assert second_data["retry_enqueued"] is False
+        assert second_data["ingest_enqueued"] is False
         with direct_db.session() as session:
             queue_rows_after_second_retry = int(
                 session.execute(
@@ -9579,7 +9624,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         """
                         SELECT COUNT(*)
                         FROM background_jobs
-                        WHERE kind = 'ingest_youtube_video'
+                        WHERE kind = 'ingest_media_source'
                           AND payload->>'media_id' = :media_id
                         """
                     ),

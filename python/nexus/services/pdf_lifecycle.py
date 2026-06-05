@@ -1,77 +1,25 @@
-"""PDF ingest + retry lifecycle orchestration.
+"""PDF source lifecycle boundary.
 
-Owns lifecycle policy: dispatch, state transitions, retry guards, and
-artifact cleanup/invalidation for PDF media. Routes call exactly one
-function here. Mirrors the EPUB lifecycle split.
+PDF extraction/materialization is invoked by the durable source-ingest worker.
+Public confirm/retry calls route through ``media_source_ingest`` so source
+attempts remain the owner.
 """
 
-import logging
-from dataclasses import asdict
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    FailureStage,
-    Media,
-    MediaFile,
-    ProcessingStatus,
-)
-from nexus.errors import (
-    ApiError,
-    ApiErrorCode,
-    ConflictError,
-    ForbiddenError,
-    InvalidRequestError,
-    NotFoundError,
-)
-from nexus.jobs.queue import enqueue_job
-from nexus.services import library_entries
-from nexus.services.file_ingest_validation import validate_file_source_integrity
-from nexus.services.media_processing_state import begin_extraction, mark_failed
+from nexus.db.models import Media, ProcessingStatus
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.pdf_ingest import (
-    delete_pdf_text_artifacts,
-    invalidate_pdf_quote_match_metadata,
+    PdfExtractionError,
+    PdfExtractionResult,
+    extract_pdf_artifacts,
 )
-from nexus.services.upload import (
-    confirm_ingest as _base_confirm_ingest,
-)
+from nexus.services.pdf_metadata import persist_pdf_metadata
 from nexus.storage.client import get_storage_client
 
-logger = logging.getLogger(__name__)
-
-
-def retry_for_viewer_unified(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    request_id: str | None = None,
-) -> dict:
-    """Unified retry entry point across PDF/EPUB/transcript media kinds."""
-    media = db.execute(select(Media).where(Media.id == media_id)).scalar()
-    if media is not None and media.kind == "web_article":
-        from nexus.services.web_article_lifecycle import retry_web_article_for_viewer
-
-        return retry_web_article_for_viewer(db, viewer_id, media_id, request_id=request_id)
-    if media is not None and media.kind == "pdf":
-        return retry_pdf_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
-    if media is not None and media.kind in {"podcast_episode", "video"}:
-        from nexus.services.podcasts.transcription import retry_transcript_media_for_viewer
-
-        return asdict(
-            retry_transcript_media_for_viewer(
-                db,
-                viewer_id=viewer_id,
-                media_id=media_id,
-                request_id=request_id,
-            )
-        )
-    from nexus.services.epub_lifecycle import retry_epub_ingest_for_viewer
-
-    return retry_epub_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
+_MAX_ERROR_MSG_LEN = 1000
 
 
 def confirm_pdf_ingest(
@@ -82,90 +30,15 @@ def confirm_pdf_ingest(
     library_ids: list[UUID],
     request_id: str | None = None,
 ) -> dict:
-    """PDF-specific ingest confirm with dispatch.
+    from nexus.services.media_source_ingest import confirm_uploaded_source
 
-    Called by the unified confirm_ingest_for_viewer when kind='pdf'.
-    Validates via base confirm_ingest, then dispatches PDF extraction.
-    """
-    base_result = _base_confirm_ingest(db, viewer_id, media_id)
-    actual_media_id = UUID(base_result["media_id"])
-
-    if base_result["duplicate"]:
-        library_entries.assign_libraries_for_media(db, viewer_id, actual_media_id, library_ids)
-        winner = db.get(Media, actual_media_id)
-        return {
-            "media_id": base_result["media_id"],
-            "duplicate": True,
-            "processing_status": winner.processing_status.value if winner else "pending",
-            "ingest_enqueued": False,
-        }
-
-    media = db.execute(select(Media).where(Media.id == actual_media_id).with_for_update()).scalar()
-
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.processing_status != ProcessingStatus.pending:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        db.commit()
-        return {
-            "media_id": str(media.id),
-            "duplicate": False,
-            "processing_status": media.processing_status.value,
-            "ingest_enqueued": False,
-        }
-
-    media_file = media.media_file
-    if not media_file:
-        mark_failed(
-            db,
-            media,
-            stage="upload",
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Upload not found. Please try again.",
-        )
-
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
+    return confirm_uploaded_source(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_ids=library_ids,
+        request_id=request_id,
     )
-    begin_extraction(db, media)
-
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_pdf",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-                "embedding_only": False,
-            },
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error(
-            "pdf_dispatch_failed media_id=%s error=%s",
-            media.id,
-            exc,
-        )
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue extraction job.",
-        ) from exc
-
-    db.commit()
-
-    return {
-        "media_id": str(media.id),
-        "duplicate": False,
-        "processing_status": "extracting",
-        "ingest_enqueued": True,
-    }
 
 
 def retry_pdf_ingest_for_viewer(
@@ -175,151 +48,59 @@ def retry_pdf_ingest_for_viewer(
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Retry endpoint orchestration for failed PDF media.
+    from nexus.services.media_source_ingest import retry_source_for_viewer
 
-    Implements the precedence-ordered PDF retry inference matrix:
-    1. non-failed -> E_RETRY_INVALID_STATE
-    2. E_PDF_PASSWORD_REQUIRED -> terminal E_RETRY_NOT_ALLOWED
-    3. failure_stage='embed' -> embedding-only retry (no text rewrite)
-    4. failure_stage in {upload,extract,other} -> text-rebuild retry
-    5. failure_stage='transcribe' (impossible for PDF) -> fail closed
-    """
-    from nexus.auth.permissions import can_read_media
-
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.kind != "pdf":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Retry is only supported for PDF/EPUB media.",
-        )
-
-    if media.created_by_user_id != viewer_id:
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Only the creator can retry extraction.",
-        )
-
-    if media.processing_status != ProcessingStatus.failed:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Media must be in failed state to retry.",
-        )
-
-    if media.last_error_code == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Retry not allowed for password-protected PDF. Upload a new file.",
-        )
-
-    failure_stage = media.failure_stage
-
-    if failure_stage == FailureStage.transcribe:
-        logger.error(
-            "pdf_retry_impossible_failure_stage media_id=%s failure_stage=transcribe",
-            media_id,
-        )
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Internal integrity error: impossible failure stage for PDF.",
-        )
-
-    if failure_stage == FailureStage.embed:
-        return _retry_pdf_embedding_only(db, media, request_id=request_id)
-    else:
-        return _retry_pdf_text_rebuild(db, media, request_id=request_id)
-
-
-def _retry_pdf_embedding_only(
-    db: Session,
-    media: Media,
-    *,
-    request_id: str | None = None,
-) -> dict:
-    """Embedding/search-only retry. Does NOT rewrite text artifacts."""
-    begin_extraction(db, media)
-
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_pdf",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-                "embedding_only": True,
-            },
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error("pdf_embed_retry_dispatch_failed media_id=%s error=%s", media.id, exc)
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue retry job.",
-        ) from exc
-
-    db.commit()
-    return {
-        "media_id": str(media.id),
-        "processing_status": "extracting",
-        "retry_enqueued": True,
-    }
-
-
-def _retry_pdf_text_rebuild(
-    db: Session,
-    media: Media,
-    *,
-    request_id: str | None = None,
-) -> dict:
-    """Text-rebuild retry. Invalidates quote-match metadata, deletes text artifacts,
-    then re-dispatches full extraction."""
-    media_file = db.execute(select(MediaFile).where(MediaFile.media_id == media.id)).scalar()
-    if media_file is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Source file metadata missing.",
-        )
-
-    storage_client = get_storage_client()
-    validate_file_source_integrity(
-        storage_client,
-        media_file,
-        media.kind,
-        expected_sha256=media.file_sha256,
+    return retry_source_for_viewer(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        request_id=request_id,
     )
 
-    invalidate_pdf_quote_match_metadata(db, media.id)
-    delete_pdf_text_artifacts(db, media.id)
 
-    begin_extraction(db, media)
+def materialize_pdf_source(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> dict[str, object]:
+    """Persist PDF extraction artifacts without owning source lifecycle state."""
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != "pdf":
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF.")
+    if media.processing_status != ProcessingStatus.extracting:
+        return {"status": "skipped", "reason": "not_extracting"}
 
-    try:
-        enqueue_job(
-            db,
-            kind="ingest_pdf",
-            payload={
-                "media_id": str(media.id),
-                "request_id": request_id,
-                "embedding_only": False,
-            },
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error("pdf_text_rebuild_dispatch_failed media_id=%s error=%s", media.id, exc)
+    result = extract_pdf_artifacts(db, media_id, get_storage_client())
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.processing_status != ProcessingStatus.extracting:
+        return {"status": "skipped", "reason": "state_changed"}
+    if isinstance(result, PdfExtractionError):
         raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            "Failed to enqueue extraction job.",
-        ) from exc
+            _source_api_error_code(result.error_code),
+            (result.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN],
+        )
 
-    db.commit()
-    return {
-        "media_id": str(media.id),
-        "processing_status": "extracting",
-        "retry_enqueued": True,
+    assert isinstance(result, PdfExtractionResult)
+    persist_pdf_metadata(db, media, result)
+    db.flush()
+    response: dict[str, object] = {
+        "status": "success",
+        "page_count": result.page_count,
+        "has_text": result.has_text,
+        "post_success_index": "pdf",
+        "metadata_enrichment": True,
     }
+    if not result.has_text:
+        response["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
+    return response
+
+
+def _source_api_error_code(error_code: str | None) -> ApiErrorCode:
+    try:
+        return ApiErrorCode(str(error_code or ""))
+    except ValueError:
+        return ApiErrorCode.E_INGEST_FAILED

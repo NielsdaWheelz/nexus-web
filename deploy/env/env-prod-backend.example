@@ -34,6 +34,11 @@ PODCASTS_ENABLED=false
 YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
 YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=30
 
+# Official X API bearer token for archival public X/Twitter thread ingestion.
+X_API_BEARER_TOKEN=<x-api-bearer-token>
+X_API_TIMEOUT_SECONDS=10
+X_API_AUTHOR_THREAD_MAX_POSTS=1000
+
 # Optional platform provider keys. BYOK can still be used where supported.
 # OPENAI_API_KEY=
 # ANTHROPIC_API_KEY=

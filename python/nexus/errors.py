@@ -124,6 +124,11 @@ class ApiErrorCode(str, Enum):
     E_BROWSE_PROVIDER_UNAVAILABLE = "E_BROWSE_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_PODCAST_PROVIDER_UNAVAILABLE = "E_PODCAST_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_X_PROVIDER_UNAVAILABLE = "E_X_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
+    E_X_PROVIDER_CREDITS_DEPLETED = "E_X_PROVIDER_CREDITS_DEPLETED"  # 503 operator action
+    E_X_PROVIDER_AUTH_REJECTED = "E_X_PROVIDER_AUTH_REJECTED"  # 503 token/access unavailable
+    E_X_PROVIDER_RATE_LIMITED = "E_X_PROVIDER_RATE_LIMITED"  # 503 provider throttling
+    E_X_PROVIDER_TIMEOUT = "E_X_PROVIDER_TIMEOUT"  # 504 provider timeout
+    E_X_POST_UNAVAILABLE = "E_X_POST_UNAVAILABLE"  # 404 unavailable post
     E_TRANSCRIPTION_FAILED = "E_TRANSCRIPTION_FAILED"  # 502 provider returned error
     E_TRANSCRIPTION_TIMEOUT = "E_TRANSCRIPTION_TIMEOUT"  # 504 provider timed out
     E_DIARIZATION_FAILED = "E_DIARIZATION_FAILED"  # 502 diarized attempt failed (diagnostic)
@@ -261,6 +266,11 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_X_PROVIDER_UNAVAILABLE: 503,
+    ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED: 503,
+    ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED: 503,
+    ApiErrorCode.E_X_PROVIDER_RATE_LIMITED: 503,
+    ApiErrorCode.E_X_PROVIDER_TIMEOUT: 504,
+    ApiErrorCode.E_X_POST_UNAVAILABLE: 404,
     ApiErrorCode.E_TRANSCRIPTION_FAILED: 502,
     ApiErrorCode.E_TRANSCRIPTION_TIMEOUT: 504,
     ApiErrorCode.E_DIARIZATION_FAILED: 502,
@@ -310,9 +320,16 @@ class ApiError(Exception):
         status_code: HTTP status code (derived from code)
     """
 
-    def __init__(self, code: ApiErrorCode, message: str):
+    def __init__(
+        self,
+        code: ApiErrorCode,
+        message: str,
+        *,
+        retry_after_seconds: int | None = None,
+    ):
         self.code = code
         self.message = message
+        self.retry_after_seconds = retry_after_seconds
         self.status_code = ERROR_CODE_TO_STATUS.get(code, 500)
         super().__init__(message)
 

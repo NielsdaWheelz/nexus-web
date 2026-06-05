@@ -28,6 +28,8 @@ from nexus.db.models import (
     Media,
     MediaFile,
     MediaKind,
+    MediaSourceAttempt,
+    MediaSourceAttemptStatus,
     Membership,
     Message,
     Model,
@@ -861,6 +863,20 @@ def create_failed_epub_media(
         size_bytes=1000,
     )
     session.add(media_file)
+    session.add(
+        MediaSourceAttempt(
+            media_id=media.id,
+            created_by_user_id=user_id,
+            source_type="uploaded_epub_file",
+            attempt_no=1,
+            status=MediaSourceAttemptStatus.failed.value,
+            intent_key=f"test:uploaded_epub_file:{media.id}",
+            source_payload={},
+            error_code=last_error_code,
+            error_message="test failure",
+            finished_at=datetime.now(UTC),
+        )
+    )
     session.commit()
     return media.id
 

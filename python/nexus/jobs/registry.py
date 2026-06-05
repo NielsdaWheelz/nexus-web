@@ -78,30 +78,9 @@ def periodic_dedupe_key(*, kind: str, slot_start: datetime) -> str:
 def _build_default_registry() -> dict[str, JobDefinition]:
     settings = get_settings()
     return {
-        "ingest_web_article": JobDefinition(
-            kind="ingest_web_article",
-            handler=_run_ingest_web_article,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
-        ),
-        "ingest_epub": JobDefinition(
-            kind="ingest_epub",
-            handler=_run_ingest_epub,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
-        ),
-        "ingest_pdf": JobDefinition(
-            kind="ingest_pdf",
-            handler=_run_ingest_pdf,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
-        ),
-        "ingest_youtube_video": JobDefinition(
-            kind="ingest_youtube_video",
-            handler=_run_ingest_youtube_video,
+        "ingest_media_source": JobDefinition(
+            kind="ingest_media_source",
+            handler=_run_ingest_media_source,
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
@@ -132,13 +111,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
             handler=_run_podcast_sync_subscription,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=900,
-        ),
-        "podcast_transcribe_episode_job": JobDefinition(
-            kind="podcast_transcribe_episode_job",
-            handler=_run_podcast_transcribe_episode,
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
@@ -223,40 +195,12 @@ def _build_default_registry() -> dict[str, JobDefinition]:
     }
 
 
-def _run_ingest_web_article(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.ingest_web_article import ingest_web_article
+def _run_ingest_media_source(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.ingest_media_source import ingest_media_source
 
-    return ingest_web_article(
+    return ingest_media_source(
         media_id=str(payload["media_id"]),
-        actor_user_id=str(payload["actor_user_id"]),
-        request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _run_ingest_epub(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.ingest_epub import ingest_epub
-
-    return ingest_epub(
-        media_id=str(payload["media_id"]),
-        request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _run_ingest_pdf(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.ingest_pdf import ingest_pdf
-
-    return ingest_pdf(
-        media_id=str(payload["media_id"]),
-        request_id=_optional_str(payload.get("request_id")),
-        embedding_only=bool(payload.get("embedding_only", False)),
-    )
-
-
-def _run_ingest_youtube_video(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.ingest_youtube_video import ingest_youtube_video
-
-    return ingest_youtube_video(
-        media_id=str(payload["media_id"]),
+        attempt_id=str(payload["attempt_id"]),
         actor_user_id=str(payload["actor_user_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
@@ -305,16 +249,6 @@ def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str
     return podcast_sync_subscription_job(
         user_id=str(payload["user_id"]),
         podcast_id=str(payload["podcast_id"]),
-        request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _run_podcast_transcribe_episode(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
-
-    return podcast_transcribe_episode_job(
-        media_id=str(payload["media_id"]),
-        requested_by_user_id=_optional_str(payload.get("requested_by_user_id")),
         request_id=_optional_str(payload.get("request_id")),
     )
 

@@ -460,7 +460,7 @@ class TestIngestPdfTask:
                 return_value=task_session_factory(db_session),
             ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch("nexus.tasks.ingest_pdf._index_pdf_evidence") as mock_indexer,
+            patch("nexus.tasks.ingest_pdf.index_pdf_evidence") as mock_indexer,
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -497,7 +497,7 @@ class TestIngestPdfTask:
                 return_value=task_session_factory(db_session),
             ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch("nexus.tasks.ingest_pdf._index_pdf_evidence", side_effect=failing_handoff),
+            patch("nexus.tasks.ingest_pdf.index_pdf_evidence", side_effect=failing_handoff),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 

@@ -35,6 +35,9 @@ describe("POST /api/media/capture/url", () => {
         JSON.stringify({
           data: {
             media_id: "media-123",
+            source_attempt_id: "attempt-123",
+            source_type: "youtube_video",
+            source_attempt_status: "queued",
             idempotency_outcome: "created",
             processing_status: "pending",
             ingest_enqueued: true,
@@ -59,6 +62,7 @@ describe("POST /api/media/capture/url", () => {
         headers: {
           authorization: "Bearer extension-token",
           "content-type": "application/json",
+          "idempotency-key": "idem-url",
           "x-request-id": "req-client",
         },
         body,
@@ -72,6 +76,7 @@ describe("POST /api/media/capture/url", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer extension-token");
     expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("idempotency-key")).toBe("idem-url");
     expect(headers.get("x-request-id")).toBe("req-client");
     expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe(body);
 
@@ -81,6 +86,9 @@ describe("POST /api/media/capture/url", () => {
     expect(await response.json()).toEqual({
       data: {
         media_id: "media-123",
+        source_attempt_id: "attempt-123",
+        source_type: "youtube_video",
+        source_attempt_status: "queued",
         idempotency_outcome: "created",
         processing_status: "pending",
         ingest_enqueued: true,

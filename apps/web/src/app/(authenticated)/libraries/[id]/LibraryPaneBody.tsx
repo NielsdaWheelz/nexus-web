@@ -16,7 +16,10 @@ import {
   libraryEntriesResource,
   libraryResource as libraryResourceDescriptor,
 } from "@/lib/api/resource";
-import { retryMediaSource } from "@/lib/media/retryClient";
+import {
+  runSourceProcessingAction,
+} from "@/lib/media/sourceActions";
+import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import {
   FeedbackNotice,
   toFeedback,
@@ -104,11 +107,23 @@ interface LibraryMediaEntry {
     | "embedding"
     | "ready"
     | "failed";
-  capabilities?: {
-    can_delete?: boolean;
-    can_retry?: boolean;
-    can_refresh_source?: boolean;
-  };
+  capabilities?: Partial<MediaActionCapabilities>;
+}
+
+function normalizeMediaProcessingStatus(
+  value: string,
+): LibraryMediaEntry["processing_status"] {
+  if (
+    value === "pending" ||
+    value === "extracting" ||
+    value === "ready_for_reading" ||
+    value === "embedding" ||
+    value === "ready" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  return "failed";
 }
 
 interface LibraryPodcastEntry {
@@ -479,17 +494,40 @@ export default function LibraryPaneBody() {
       endpoint: string;
       successTitle: string;
       errorFallback: string;
-      capabilityPatch: Partial<{
-        can_delete: boolean;
-        can_retry: boolean;
-        can_refresh_source: boolean;
-      }>;
+      capabilityPatch: Partial<MediaActionCapabilities>;
     }) => {
       if (args.busySet.ids.has(args.mediaId)) return;
       args.busySet.add(args.mediaId);
       try {
+        let nextProcessingStatus: LibraryMediaEntry["processing_status"] =
+          "extracting";
+        let sourceFeedback: { severity: "success" | "warning"; title: string } = {
+          severity: "success" as const,
+          title: args.successTitle,
+        };
+        let capabilityPatch = args.capabilityPatch;
         if (args.endpoint === "/retry") {
-          await retryMediaSource(args.mediaId);
+          const projection = await runSourceProcessingAction({
+            mediaId: args.mediaId,
+            action: "retry",
+            successTitle: args.successTitle,
+          });
+          nextProcessingStatus = normalizeMediaProcessingStatus(
+            projection.processingStatus,
+          );
+          capabilityPatch = projection.capabilityPatch;
+          sourceFeedback = projection.feedback;
+        } else if (args.endpoint === "/refresh") {
+          const projection = await runSourceProcessingAction({
+            mediaId: args.mediaId,
+            action: "refresh",
+            successTitle: args.successTitle,
+          });
+          nextProcessingStatus = normalizeMediaProcessingStatus(
+            projection.processingStatus,
+          );
+          capabilityPatch = projection.capabilityPatch;
+          sourceFeedback = projection.feedback;
         } else {
           await apiFetch(`/api/media/${args.mediaId}${args.endpoint}`, {
             method: "POST",
@@ -502,17 +540,17 @@ export default function LibraryPaneBody() {
                   ...entry,
                   media: {
                     ...entry.media,
-                    processing_status: "extracting",
+                    processing_status: nextProcessingStatus,
                     capabilities: {
                       ...(entry.media.capabilities ?? {}),
-                      ...args.capabilityPatch,
+                      ...capabilityPatch,
                     },
                   },
                 }
               : entry,
           ),
         );
-        feedback.show({ severity: "success", title: args.successTitle });
+        feedback.show(sourceFeedback);
       } catch (err) {
         feedback.show({
           ...toFeedback(err, { fallback: args.errorFallback }),

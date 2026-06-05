@@ -12,10 +12,9 @@ from sqlalchemy import func, literal, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus
+from nexus.db.models import Media, MediaFile, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
     compute_embedding_config_hash,
@@ -23,6 +22,7 @@ from nexus.services.content_indexing import (
     repair_ready_media_content_index_now,
 )
 from nexus.services.media_deletion import delete_abandoned_document_media
+from nexus.services.media_processing_state import mark_failed
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -33,7 +33,7 @@ from nexus.storage.paths import build_storage_path, get_file_extension
 
 logger = get_logger(__name__)
 
-_RECOVERABLE_KINDS = frozenset({"web_article", "pdf", "epub", "podcast_episode"})
+_RECOVERABLE_KINDS = frozenset({"web_article", "pdf", "epub", "video", "podcast_episode"})
 _MAX_ERROR_MSG_LEN = 1000
 _BATCH_LIMIT = 100
 
@@ -46,6 +46,14 @@ def _mark_stale_media_failed(
     error_code: str,
     error_message: str,
 ) -> None:
+    from nexus.services.media_source_ingest import mark_latest_source_attempt_failed
+
+    mark_latest_source_attempt_failed(
+        db=db,
+        media_id=media.id,
+        error_code=error_code,
+        error_message=error_message,
+    )
     if media.kind == "podcast_episode":
         from nexus.services.podcasts.transcription import (
             mark_podcast_transcription_failure,
@@ -60,9 +68,10 @@ def _mark_stale_media_failed(
         )
         return
 
-    _mark_failed(
+    mark_failed(
+        db,
         media,
-        now=now,
+        stage="other",
         error_code=error_code,
         error_message=error_message,
     )
@@ -435,63 +444,18 @@ def reconcile_stale_ingest_media_job(
 
 
 def _dispatch_recovery_task(db: Session, media: Media, request_id: str | None) -> None:
-    media_id = str(media.id)
-    if media.kind == "pdf":
-        enqueue_job(
-            db,
-            kind="ingest_pdf",
-            payload={
-                "media_id": media_id,
-                "request_id": request_id,
-                "embedding_only": False,
-            },
-        )
-        return
+    if media.kind in {"pdf", "web_article", "epub", "video", "podcast_episode"}:
+        from nexus.services.media_source_ingest import requeue_latest_source_attempt_for_media
 
-    if media.kind == "web_article":
-        enqueue_job(
-            db,
-            kind="ingest_web_article",
-            payload={
-                "media_id": media_id,
-                "actor_user_id": str(media.created_by_user_id),
-                "request_id": request_id,
-            },
-        )
-        return
-
-    if media.kind == "epub":
-        enqueue_job(
-            db,
-            kind="ingest_epub",
-            payload={
-                "media_id": media_id,
-                "request_id": request_id,
-            },
-        )
-        return
-
-    if media.kind == "podcast_episode":
-        enqueue_job(
-            db,
-            kind="podcast_transcribe_episode_job",
-            payload={
-                "media_id": media_id,
-                "request_id": request_id,
-            },
+        requeue_latest_source_attempt_for_media(
+            db=db,
+            media=media,
+            request_id=request_id,
         )
         return
 
     raise ValueError(f"Unsupported recovery kind: {media.kind}")
 
-
-def _mark_failed(media: Media, *, now: datetime, error_code: str, error_message: str) -> None:
-    media.processing_status = ProcessingStatus.failed
-    media.failure_stage = FailureStage.other
-    media.last_error_code = error_code
-    media.last_error_message = error_message[:_MAX_ERROR_MSG_LEN]
-    media.failed_at = now
-    media.updated_at = now
 
 
 def _mark_content_index_state_failed(db: Session, media_id, message: str) -> None:

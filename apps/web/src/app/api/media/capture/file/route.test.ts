@@ -35,8 +35,11 @@ describe("POST /api/media/capture/file", () => {
         JSON.stringify({
           data: {
             media_id: "media-123",
+            source_attempt_id: "attempt-123",
+            source_type: "browser_pdf_capture",
+            source_attempt_status: "queued",
             idempotency_outcome: "created",
-            processing_status: "extracting",
+            processing_status: "pending",
             ingest_enqueued: true,
           },
         }),
@@ -59,9 +62,11 @@ describe("POST /api/media/capture/file", () => {
         headers: {
           authorization: "Bearer extension-token",
           "content-type": "application/pdf",
+          "idempotency-key": "idem-file",
           "x-request-id": "req-client",
           "x-nexus-filename": "private.pdf",
           "x-nexus-source-url": "https://example.com/private.pdf",
+          "x-nexus-library-ids": "lib-a,lib-b",
         },
         body,
       })
@@ -74,9 +79,11 @@ describe("POST /api/media/capture/file", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer extension-token");
     expect(headers.get("content-type")).toBe("application/pdf");
+    expect(headers.get("idempotency-key")).toBe("idem-file");
     expect(headers.get("x-request-id")).toBe("req-client");
     expect(headers.get("x-nexus-filename")).toBe("private.pdf");
     expect(headers.get("x-nexus-source-url")).toBe("https://example.com/private.pdf");
+    expect(headers.get("x-nexus-library-ids")).toBe("lib-a,lib-b");
     expect(Array.from(new Uint8Array(init?.body as ArrayBuffer))).toEqual([37, 80, 68, 70, 45]);
 
     expect(response.status).toBe(202);
@@ -85,8 +92,11 @@ describe("POST /api/media/capture/file", () => {
     expect(await response.json()).toEqual({
       data: {
         media_id: "media-123",
+        source_attempt_id: "attempt-123",
+        source_type: "browser_pdf_capture",
+        source_attempt_status: "queued",
         idempotency_outcome: "created",
-        processing_status: "extracting",
+        processing_status: "pending",
         ingest_enqueued: true,
       },
     });

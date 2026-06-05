@@ -5,20 +5,18 @@ extracting -> ready_for_reading (success) or extracting -> failed (error).
 Service routes own entry transitions and dispatch.
 """
 
-from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy.orm import Session
-
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
     extract_epub_artifacts,
 )
+from nexus.services.epub_metadata import persist_epub_metadata
+from nexus.services.media_processing_state import mark_failed, mark_ready_for_reading
 from nexus.storage.client import get_storage_client
 from nexus.tasks.enrich_metadata import dispatch_enrich_metadata
 
@@ -62,16 +60,14 @@ def ingest_epub(
             db.commit()
             return {"status": "skipped", "reason": "state_changed"}
 
-        now = datetime.now(UTC)
-
         if isinstance(result, EpubExtractionError):
-            media.processing_status = ProcessingStatus.failed
-            media.failure_stage = FailureStage.extract
-            media.last_error_code = result.error_code
-            media.last_error_message = (result.error_message or "")[:_MAX_ERROR_MSG_LEN]
-            media.failed_at = now
-            media.updated_at = now
-            db.commit()
+            mark_failed(
+                db,
+                media,
+                stage="extract",
+                error_code=result.error_code,
+                error_message=(result.error_message or "")[:_MAX_ERROR_MSG_LEN],
+            )
 
             logger.warning(
                 "ingest_epub_extraction_failed",
@@ -91,13 +87,7 @@ def ingest_epub(
 
         persist_epub_metadata(db, media, result)
 
-        media.processing_status = ProcessingStatus.ready_for_reading
-        media.processing_completed_at = now
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.updated_at = now
+        mark_ready_for_reading(db, media)
         db.commit()
 
         dispatch_enrich_metadata(media_id, request_id)
@@ -129,40 +119,6 @@ def ingest_epub(
         raise
     finally:
         db.close()
-
-
-def persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
-    """Persist EPUB OPF metadata to media and contributor credits."""
-    if result.title:
-        media.title = result.title
-
-    replace_media_contributor_credits(
-        db,
-        media_id=media.id,
-        source="epub_opf",
-        credits=[
-            {
-                "name": name.strip()[:255],
-                "role": "author",
-                "ordinal": i,
-                "source": "epub_opf",
-            }
-            for i, name in enumerate(result.creators or [])
-            if name and name.strip()
-        ],
-    )
-
-    if result.publisher and not media.publisher:
-        media.publisher = result.publisher[:255]
-
-    if result.language and not media.language:
-        media.language = result.language[:32]
-
-    if result.description and not media.description:
-        media.description = result.description[:2000]
-
-    if result.published_date and not media.published_date:
-        media.published_date = result.published_date[:64]
 
 
 def run_epub_ingest_sync(

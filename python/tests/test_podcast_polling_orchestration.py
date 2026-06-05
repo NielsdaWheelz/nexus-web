@@ -129,21 +129,24 @@ def test_worker_default_allowlist_does_not_auto_allow_scheduled_maintenance(
 
 
 def test_worker_allows_only_explicit_maintenance_job_kinds(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("WORKER_ALLOWED_JOB_KINDS", "ingest_pdf")
+    monkeypatch.setenv("WORKER_ALLOWED_JOB_KINDS", "ingest_media_source")
     _clear_registry_cache()
 
     from apps.worker.main import create_worker
 
     worker = create_worker()
     allowed_kinds = set(worker.allowed_kinds or ())
-    assert allowed_kinds == {"ingest_pdf"}
+    assert allowed_kinds == {"ingest_media_source"}
 
-    monkeypatch.setenv("WORKER_ALLOWED_JOB_KINDS", "ingest_pdf,reconcile_stale_ingest_media_job")
+    monkeypatch.setenv(
+        "WORKER_ALLOWED_JOB_KINDS",
+        "ingest_media_source,reconcile_stale_ingest_media_job",
+    )
     _clear_registry_cache()
 
     worker = create_worker()
     allowed_kinds = set(worker.allowed_kinds or ())
-    assert allowed_kinds == {"ingest_pdf", "reconcile_stale_ingest_media_job"}
+    assert allowed_kinds == {"ingest_media_source", "reconcile_stale_ingest_media_job"}
 
 
 def test_prune_background_jobs_handler_wiring(monkeypatch: pytest.MonkeyPatch):

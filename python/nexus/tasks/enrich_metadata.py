@@ -19,8 +19,8 @@ from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiErrorCode
-from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
+from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import (
     build_enrichment_prompt,
     get_content_sample,
@@ -355,12 +355,7 @@ def dispatch_enrich_metadata(media_id: str, request_id: str | None) -> None:
     """
     db = get_session_factory()()
     try:
-        enqueue_job(
-            db,
-            kind="enrich_metadata",
-            payload={"media_id": media_id, "request_id": request_id},
-            max_attempts=1,
-        )
+        try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
         db.commit()
     except Exception:
         db.rollback()

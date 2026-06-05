@@ -32,10 +32,12 @@ _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.pdf.value,
     MediaKind.epub.value,
 }
-_RETRYABLE_DOCUMENT_MEDIA_KINDS = {
+_RETRYABLE_SOURCE_MEDIA_KINDS = {
     MediaKind.epub.value,
     MediaKind.pdf.value,
     MediaKind.web_article.value,
+    MediaKind.video.value,
+    MediaKind.podcast_episode.value,
 }
 _VALID_TRANSCRIPT_STATES = {state.value for state in TranscriptState}
 _VALID_TRANSCRIPT_COVERAGES = {coverage.value for coverage in TranscriptCoverage}
@@ -79,6 +81,8 @@ def derive_capabilities(
     can_delete: bool = False,
     is_creator: bool = False,
     requested_url_exists: bool = False,
+    source_retry_available: bool = False,
+    source_refresh_available: bool = False,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state."""
     _validate_processing_status(processing_status)
@@ -138,20 +142,12 @@ def derive_capabilities(
     terminal_retry_error = (
         kind == MediaKind.pdf.value and last_error_code == "E_PDF_PASSWORD_REQUIRED"
     ) or (kind == MediaKind.epub.value and last_error_code == "E_ARCHIVE_UNSAFE")
-    retry_source_available = (
-        kind in {MediaKind.pdf.value, MediaKind.epub.value} and media_file_exists
-    ) or (kind == MediaKind.web_article.value and requested_url_exists)
     can_retry = (
         is_creator
-        and kind in _RETRYABLE_DOCUMENT_MEDIA_KINDS
+        and kind in _RETRYABLE_SOURCE_MEDIA_KINDS
         and processing_status == ProcessingStatus.failed.value
-        and retry_source_available
+        and source_retry_available
         and not terminal_retry_error
-    )
-    source_refresh_available = (
-        requested_url_exists
-        or (kind in _TRANSCRIPT_MEDIA_KINDS and external_playback_url_exists)
-        or (kind in {MediaKind.pdf.value, MediaKind.epub.value} and media_file_exists)
     )
     can_refresh_source = (
         is_creator
