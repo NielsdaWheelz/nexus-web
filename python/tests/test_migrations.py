@@ -8016,6 +8016,84 @@ class TestDurableSourceIngestMigrations:
             result = run_alembic_command("upgrade head")
             assert result.returncode == 0, f"restore head failed: {result.stderr}"
 
+    def test_0136_backfills_numeric_x_source_attempt_targets(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0135")
+            assert result.returncode == 0, f"upgrade 0135 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, requested_url, canonical_source_url,
+                            provider, provider_id, processing_status,
+                            created_by_user_id, processing_completed_at
+                        )
+                        VALUES (
+                            :id, 'web_article', 'Existing X media',
+                            'https://x.com/ada/status/2058605803267919911',
+                            'https://x.com/ada/status/2058605803267919911',
+                            'x', '2058605803267919911', 'ready_for_reading',
+                            :user_id, now()
+                        )
+                        """
+                    ),
+                    {"id": media_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media_source_attempts (
+                            media_id, created_by_user_id, source_type, attempt_no,
+                            status, intent_key, provider, provider_target_ref,
+                            source_payload
+                        )
+                        VALUES (
+                            :media_id, :user_id, 'x_author_thread', 1,
+                            'succeeded', :intent_key,
+                            'x', NULL, '{"backfilled": true}'::jsonb
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "user_id": user_id,
+                        "intent_key": f"backfill:x_author_thread:{media_id}",
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0136")
+            assert result.returncode == 0, f"upgrade 0136 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                row = session.execute(
+                    text(
+                        """
+                        SELECT provider, provider_target_ref, source_payload
+                        FROM media_source_attempts
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": media_id},
+                ).one()
+
+            assert row.provider == "x"
+            assert row.provider_target_ref == "2058605803267919911"
+            assert row.source_payload["post_id"] == "2058605803267919911"
+            assert row.source_payload["backfilled"] is True
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"restore head failed: {result.stderr}"
+
     def test_media_source_attempts_contract(self, migrated_engine):
         with Session(migrated_engine) as session:
             constraints = {
