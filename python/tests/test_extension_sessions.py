@@ -16,8 +16,38 @@ pytestmark = pytest.mark.integration
 PDF_CONTENT = b"%PDF-1.4\ncaptured pdf bytes"
 
 
+def _run_latest_source_attempt(
+    direct_db: DirectSessionManager, media_id: UUID, actor_user_id: UUID
+) -> None:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as db:
+        row = db.execute(
+            text(
+                """
+                SELECT id
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no DESC, created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+        result = run_source_attempt(
+            db=db,
+            media_id=media_id,
+            attempt_id=row[0],
+            actor_user_id=actor_user_id,
+            request_id="test-extension-source-attempt",
+        )
+        assert result["status"] == "success"
+
+
 class TestExtensionSessions:
-    def test_create_session_and_capture_article(self, auth_client, direct_db: DirectSessionManager):
+    def test_create_session_and_capture_article(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -41,28 +71,38 @@ class TestExtensionSessions:
                 "<script>bad()</script></article>"
             ),
         }
+        fake_storage = FakeStorageClient()
+        monkeypatch.setattr(
+            "nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage
+        )
 
         first_capture = auth_client.post(
             "/media/capture/article",
             headers={"Authorization": f"Bearer {token}"},
             json=payload,
         )
-        assert first_capture.status_code == 201
+        assert first_capture.status_code == 202
         first_data = first_capture.json()["data"]
         first_media_id = UUID(first_data["media_id"])
-        assert first_data["processing_status"] == "ready_for_reading"
+        assert first_data["source_attempt_status"] == "queued"
+        assert first_data["processing_status"] == "pending"
+        assert first_data["ingest_enqueued"] is True
+        _run_latest_source_attempt(direct_db, first_media_id, user_id)
 
         second_capture = auth_client.post(
             "/media/capture/article",
             headers={"Authorization": f"Bearer {token}"},
             json=payload,
         )
-        assert second_capture.status_code == 201
+        assert second_capture.status_code == 202
         second_data = second_capture.json()["data"]
         second_media_id = UUID(second_data["media_id"])
         assert second_media_id != first_media_id
+        _run_latest_source_attempt(direct_db, second_media_id, user_id)
 
         direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(first_media_id))
+        direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(second_media_id))
         direct_db.register_cleanup("media", "id", first_media_id)
         direct_db.register_cleanup("media", "id", second_media_id)
         direct_db.register_cleanup("extension_sessions", "id", session_id)
@@ -200,8 +240,9 @@ class TestExtensionSessions:
         token = create_response.json()["data"]["token"]
 
         fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr(
+            "nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage
+        )
 
         response = auth_client.post(
             "/media/capture/file",
@@ -218,7 +259,7 @@ class TestExtensionSessions:
         data = response.json()["data"]
         media_id = UUID(data["media_id"])
         assert data["idempotency_outcome"] == "created"
-        assert data["processing_status"] == "extracting"
+        assert data["processing_status"] == "pending"
         assert data["ingest_enqueued"] is True
 
         with direct_db.session() as db:

@@ -31,6 +31,7 @@ from nexus.db.models import (
     MediaKind,
     ProcessingStatus,
 )
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks
@@ -99,6 +100,29 @@ def _count_jobs_for_media(direct_db: DirectSessionManager, *, kind: str, media_i
                 ),
                 {"kind": kind, "media_id": str(media_id)},
             ).scalar_one()
+        )
+
+
+def _grant_test_ai_transcription_entitlement(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+) -> None:
+    direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
+    direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
+    direct_db.register_cleanup("podcast_transcription_usage_daily", "user_id", user_id)
+    with direct_db.session() as session:
+        grant_entitlement_override(
+            session,
+            user_id=user_id,
+            plan_tier="ai_plus",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="media source ingest test access",
+            actor_label="test",
         )
 
 
@@ -1331,7 +1355,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
 
         with (
             patch(
-                "nexus.services.upload.get_storage_client",
+                "nexus.services.media_source_ingest.get_storage_client",
                 return_value=fake_storage,
             ),
         ):
@@ -1425,7 +1449,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         _install_background_job_insert_failure(direct_db)
         try:
             with patch(
-                "nexus.services.upload.get_storage_client",
+                "nexus.services.media_source_ingest.get_storage_client",
                 return_value=fake_storage,
             ):
                 resp = auth_client.post(
@@ -1436,8 +1460,11 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         finally:
             _remove_background_job_insert_failure(direct_db)
 
-        assert resp.status_code == 500
-        assert resp.json()["error"]["code"] == "E_INTERNAL"
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["ingest_enqueued"] is False
+        assert data["processing_status"] == "failed"
+        assert data["source_attempt_status"] == "failed"
         assert fake_storage.get_object(stale_asset_path) == b"stale-image"
 
         with direct_db.session() as session:
@@ -1449,6 +1476,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.failed
             assert media_row.processing_attempts == 1
+            assert media_row.last_error_code == "E_INTERNAL"
 
 
 # =============================================================================
@@ -2191,7 +2219,9 @@ class TestRetryEpubEndpoint:
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
-            patch("nexus.services.upload.get_storage_client", return_value=fake_storage),
+            patch(
+                "nexus.services.media_source_ingest.get_storage_client", return_value=fake_storage
+            ),
         ):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -2410,21 +2440,27 @@ class TestRetryEpubEndpoint:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.services.upload.get_storage_client", return_value=fake_storage):
+        with patch(
+            "nexus.services.media_source_ingest.get_storage_client", return_value=fake_storage
+        ):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
                 json={"from_stage": "source"},
                 headers=auth_headers(user_id),
             )
 
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "E_STORAGE_MISSING"
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["ingest_enqueued"] is False
+        assert data["processing_status"] == "failed"
+        assert data["source_attempt_status"] == "failed"
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.failed
             assert media_row.processing_attempts == 1
+            assert media_row.last_error_code == "E_STORAGE_MISSING"
 
             # Artifacts must be preserved when precondition fails
             frag_count = session.query(Fragment).filter(Fragment.media_id == media_id).count()
@@ -2477,7 +2513,9 @@ class TestRetryEpubEndpoint:
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
-            patch("nexus.services.upload.get_storage_client", return_value=fake_storage),
+            patch(
+                "nexus.services.media_source_ingest.get_storage_client", return_value=fake_storage
+            ),
         ):
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -2539,7 +2577,9 @@ class TestRetryEpubEndpoint:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.services.upload.get_storage_client", return_value=fake_storage):
+        with patch(
+            "nexus.services.media_source_ingest.get_storage_client", return_value=fake_storage
+        ):
             _install_background_job_insert_failure(direct_db)
             try:
                 resp = auth_client.post(
@@ -3261,6 +3301,7 @@ def _register_podcast_refresh_cleanup(
     direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
     direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcription_jobs", "media_id", media_id)
+    direct_db.register_cleanup("podcast_transcript_request_audits", "media_id", media_id)
     direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
 
@@ -3279,6 +3320,7 @@ class TestRefreshSourceForPodcastMedia:
                 user_id=user_id,
             )
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
         add_media_to_default_library(auth_client, user_id, media_id)
 
         resp = auth_client.post(
@@ -3320,11 +3362,11 @@ class TestRefreshSourceForPodcastMedia:
                 ),
                 {"media_id": media_id},
             ).one()
-        assert row == (
-            "pending",
-            "operator_requeue",
-            0,
-            None,
+        assert row[0] == "pending"
+        assert row[1] == "operator_requeue"
+        assert row[2] == 30
+        assert row[3] is not None
+        assert row[4:] == (
             "queued",
             "none",
             "none",
@@ -3424,6 +3466,7 @@ class TestRefreshSourceForPodcastMedia:
             )
             session.commit()
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
         add_media_to_default_library(auth_client, user_id, media_id)
 
         resp = auth_client.post(
@@ -3466,11 +3509,11 @@ class TestRefreshSourceForPodcastMedia:
                 ),
                 {"media_id": media_id},
             ).one()
-        assert row == (
-            "pending",
-            "operator_requeue",
-            0,
-            None,
+        assert row[0] == "pending"
+        assert row[1] == "operator_requeue"
+        assert row[2] == 30
+        assert row[3] is not None
+        assert row[4:] == (
             None,
             7,
             None,
@@ -3500,6 +3543,7 @@ class TestRefreshSourceForPodcastMedia:
                 external_playback_url=None,
             )
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
+        _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
         add_media_to_default_library(auth_client, user_id, media_id)
 
         resp = auth_client.post(
@@ -3566,10 +3610,14 @@ class TestRefreshSourceForFileBackedMedia:
         direct_db.register_cleanup("media", "id", media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        resp = auth_client.post(
-            f"/media/{media_id}/refresh",
-            headers=auth_headers(user_id),
-        )
+        from unittest.mock import patch
+
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+            resp = auth_client.post(
+                f"/media/{media_id}/refresh",
+                headers=auth_headers(user_id),
+            )
 
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
@@ -3676,10 +3724,14 @@ class TestRefreshSourceForFileBackedMedia:
         direct_db.register_cleanup("media", "id", media_id)
         add_media_to_default_library(auth_client, user_id, media_id)
 
-        resp = auth_client.post(
-            f"/media/{media_id}/refresh",
-            headers=auth_headers(user_id),
-        )
+        from unittest.mock import patch
+
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+            resp = auth_client.post(
+                f"/media/{media_id}/refresh",
+                headers=auth_headers(user_id),
+            )
 
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
@@ -4578,7 +4630,7 @@ class TestPdfRetry:
 
         from unittest.mock import patch
 
-        with patch("nexus.services.upload.get_storage_client") as mock_storage:
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
             mock_storage.return_value.head_object.return_value = True
             resp = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -4612,10 +4664,10 @@ class TestPdfRetry:
             assert job_row[1] == "ingest_media_source"
             assert job_row[2]
 
-    def test_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
+    def test_retry_pdf_embed_failure_uses_source_attempt_retry_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """failure_stage='embed' -> embedding-only retry (no text rewrite)."""
+        """Hard cutover: source retry rebuilds source artifacts for every failure_stage."""
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
@@ -4634,11 +4686,15 @@ class TestPdfRetry:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        resp = auth_client.post(
-            f"/media/{media_id}/retry",
-            json={"from_stage": "source"},
-            headers=auth_headers(user_id),
-        )
+        from unittest.mock import patch
+
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+            resp = auth_client.post(
+                f"/media/{media_id}/retry",
+                json={"from_stage": "source"},
+                headers=auth_headers(user_id),
+            )
 
         assert resp.status_code == 202
         data = resp.json()["data"]
@@ -4669,15 +4725,27 @@ class TestPdfRetry:
             from sqlalchemy import text
 
             row = session.execute(
-                text("SELECT plain_text FROM media WHERE id = :id"),
+                text(
+                    """
+                    SELECT
+                        m.plain_text,
+                        m.page_count,
+                        m.processing_status,
+                        m.failure_stage,
+                        m.last_error_code,
+                        (SELECT COUNT(*) FROM pdf_page_text_spans WHERE media_id = m.id)
+                    FROM media m
+                    WHERE m.id = :id
+                    """
+                ),
                 {"id": media_id},
-            ).fetchone()
-            assert row[0] == "Existing text"
+            ).one()
+            assert row == (None, None, "extracting", None, None, 0)
 
-    def test_retry_pdf_transcribe_failure_stage_fails_closed_as_internal_integrity_error(
+    def test_retry_pdf_transcribe_failure_stage_uses_source_attempt_retry_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Impossible failure_stage='transcribe' for PDF -> fail closed."""
+        """Hard cutover: source retry is governed by the latest source attempt."""
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
@@ -4693,17 +4761,24 @@ class TestPdfRetry:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        resp = auth_client.post(
-            f"/media/{media_id}/retry",
-            json={"from_stage": "source"},
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 500
+        from unittest.mock import patch
 
-    def test_retry_pdf_embedding_only_path_does_not_rewrite_plain_text_or_page_spans(
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+            resp = auth_client.post(
+                f"/media/{media_id}/retry",
+                json={"from_stage": "source"},
+                headers=auth_headers(user_id),
+            )
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+    def test_retry_pdf_source_retry_rebuild_path_deletes_text_artifacts(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Embedding-only retry preserves text artifacts unchanged."""
+        """Source retry deletes stale PDF text artifacts before dispatch."""
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
@@ -4722,27 +4797,36 @@ class TestPdfRetry:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        auth_client.post(
-            f"/media/{media_id}/retry",
-            json={"from_stage": "source"},
-            headers=auth_headers(user_id),
-        )
+        from unittest.mock import patch
+
+        with patch("nexus.services.media_source_ingest.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+            resp = auth_client.post(
+                f"/media/{media_id}/retry",
+                json={"from_stage": "source"},
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["data"]["ingest_enqueued"] is True
 
         with direct_db.session() as session:
             from sqlalchemy import text
 
             row = session.execute(
-                text("SELECT plain_text, page_count FROM media WHERE id = :id"),
+                text(
+                    """
+                    SELECT
+                        m.plain_text,
+                        m.page_count,
+                        (SELECT COUNT(*) FROM pdf_page_text_spans WHERE media_id = m.id)
+                    FROM media m
+                    WHERE m.id = :id
+                    """
+                ),
                 {"id": media_id},
-            ).fetchone()
-            assert row[0] == "Preserved text content"
-            assert row[1] == 1
-
-            spans = session.execute(
-                text("SELECT COUNT(*) FROM pdf_page_text_spans WHERE media_id = :mid"),
-                {"mid": media_id},
-            ).scalar()
-            assert spans == 1
+            ).one()
+            assert row == (None, None, 0)
 
     def test_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
         """Text-rebuild path invalidates quote-match metadata before new artifacts."""
@@ -5164,10 +5248,13 @@ class TestCaptureLibraryIds:
             },
         )
 
-        assert response.status_code == 201, (
+        assert response.status_code == 202, (
             f"capture/article should succeed, got {response.status_code}: {response.text}"
         )
-        media_id = UUID(response.json()["data"]["media_id"])
+        data = response.json()["data"]
+        assert data["source_attempt_status"] == "queued"
+        assert data["ingest_enqueued"] is True
+        media_id = UUID(data["media_id"])
 
         direct_db.register_cleanup("fragment_blocks", "fragment_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -5198,8 +5285,9 @@ class TestCaptureLibraryIds:
         direct_db.register_cleanup("extension_sessions", "id", session_a_id)
 
         fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr(
+            "nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage
+        )
 
         pdf_bytes = b"%PDF-1.4\ncaptured pdf bytes for header empty"
         empty_response = auth_client.post(

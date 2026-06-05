@@ -8048,7 +8048,9 @@ class TestDurableSourceIngestMigrations:
         assert "uq_media_source_attempts_media_attempt" in constraints
         assert "FOREIGN KEY (media_id) REFERENCES media(id)" in set(constraints.values())
         assert "FOREIGN KEY (created_by_user_id) REFERENCES users(id)" in set(constraints.values())
-        assert "FOREIGN KEY (job_id) REFERENCES background_jobs(id)" in set(constraints.values())
+        assert "FOREIGN KEY (job_id) REFERENCES background_jobs(id) ON DELETE SET NULL" in set(
+            constraints.values()
+        )
 
         assert "idx_media_source_attempts_media_created" in indexes
         assert "created_at DESC" in indexes["idx_media_source_attempts_media_created"]

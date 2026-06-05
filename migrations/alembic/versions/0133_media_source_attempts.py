@@ -39,7 +39,7 @@ def upgrade() -> None:
             provider_target_ref text,
             source_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
             request_id text,
-            job_id uuid REFERENCES background_jobs(id),
+            job_id uuid REFERENCES background_jobs(id) ON DELETE SET NULL,
             error_code text,
             error_message text,
             retry_after_seconds integer,

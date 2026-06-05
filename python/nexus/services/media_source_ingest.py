@@ -75,7 +75,7 @@ from nexus.services.web_article_structure import (
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.paths import (
     build_source_artifact_storage_path,
     build_storage_path,
@@ -909,10 +909,8 @@ def retry_source_for_viewer(
         idempotency_key=clean_idempotency_key,
     )
     _mark_source_requeue_payload(retry_attempt)
-    mark_source_queued(db, media)
-    _prepare_source_requeue_domain_state(db, media, retry_attempt, viewer_id)
     db.commit()
-    ingest_enqueued = _enqueue_accepted_attempt(
+    ingest_enqueued = _dispatch_requeue_attempt(
         db,
         media_id=media.id,
         attempt_id=retry_attempt.id,
@@ -995,10 +993,8 @@ def refresh_source_for_viewer(
         idempotency_key=clean_idempotency_key,
     )
     _mark_source_requeue_payload(refresh_attempt)
-    mark_source_queued(db, media)
-    _prepare_source_requeue_domain_state(db, media, refresh_attempt, viewer_id)
     db.commit()
-    ingest_enqueued = _enqueue_accepted_attempt(
+    ingest_enqueued = _dispatch_requeue_attempt(
         db,
         media_id=media.id,
         attempt_id=refresh_attempt.id,
@@ -1375,16 +1371,26 @@ def _prepare_source_requeue_domain_state(
     media: Media,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
-) -> None:
+) -> tuple[list[str], StorageClientBase | None]:
+    cleanup_storage_client = _source_requeue_storage_client_if_required(media, attempt)
     if attempt.source_type in source_types.WEB_ARTICLE_ARTIFACT_SOURCE_TYPES:
         delete_web_article_artifacts(
             db,
             media_id=media.id,
             include_content_index=True,
         )
-        return
+        return [], cleanup_storage_client
+    if media.kind == MediaKind.pdf.value:
+        from nexus.services.pdf_ingest import delete_pdf_text_artifacts
+
+        delete_pdf_text_artifacts(db, media.id)
+        return [], cleanup_storage_client
+    if media.kind == MediaKind.epub.value:
+        from nexus.services.epub_lifecycle import delete_extraction_artifacts
+
+        return delete_extraction_artifacts(db, media.id), cleanup_storage_client
     if attempt.source_type != source_types.PODCAST_EPISODE_TRANSCRIPT:
-        return
+        return [], cleanup_storage_client
     from nexus.services.podcasts.transcription import (
         prepare_podcast_transcription_for_source_attempt,
     )
@@ -1397,6 +1403,47 @@ def _prepare_source_requeue_domain_state(
             dict(attempt.source_payload or {}).get("request_reason")
         ),
     )
+    return [], cleanup_storage_client
+
+
+def _source_requeue_storage_client_if_required(
+    media: Media,
+    attempt: MediaSourceAttempt,
+) -> StorageClientBase | None:
+    source_path: str | None = None
+    if attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
+        media_file = media.media_file
+        if media_file is None or not media_file.storage_path:
+            raise InvalidRequestError(
+                ApiErrorCode.E_STORAGE_MISSING,
+                "Source file metadata is missing.",
+            )
+        source_path = str(media_file.storage_path)
+    elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
+        source_path = str((attempt.source_payload or {}).get("storage_path") or "")
+        if not source_path:
+            raise InvalidRequestError(
+                ApiErrorCode.E_STORAGE_MISSING,
+                "Captured article source artifact is missing.",
+            )
+
+    if source_path is None:
+        return None
+
+    storage_client = get_storage_client()
+    try:
+        metadata = storage_client.head_object(source_path)
+    except StorageError as exc:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR,
+            "Failed to verify source storage before retry.",
+        ) from exc
+    if metadata is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_STORAGE_MISSING,
+            "Source storage object is missing.",
+        )
+    return storage_client
 
 
 def _podcast_request_reason(value: object) -> str:
@@ -1747,6 +1794,74 @@ def _enqueue_source_job(
         raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to enqueue source ingest job.") from exc
 
 
+def _dispatch_requeue_attempt(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+    failure_stage: str,
+) -> bool:
+    cleanup_storage_paths: list[str] = []
+    cleanup_storage_client: StorageClientBase | None = None
+    try:
+        media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+        attempt = (
+            db.execute(
+                select(MediaSourceAttempt)
+                .where(MediaSourceAttempt.id == attempt_id)
+                .with_for_update()
+            )
+            .scalars()
+            .one_or_none()
+        )
+        if media is None or attempt is None:
+            db.rollback()
+            return False
+        if attempt.media_id != media_id:
+            raise ApiError(ApiErrorCode.E_INTERNAL, "Source attempt media mismatch.")
+        if attempt.status == _ATTEMPT_FAILED:
+            db.commit()
+            return False
+
+        cleanup_storage_paths, cleanup_storage_client = _prepare_source_requeue_domain_state(
+            db, media, attempt, actor_user_id
+        )
+        mark_source_queued(db, media)
+        job = _enqueue_source_job(db, media_id, attempt_id, actor_user_id, request_id)
+        attempt.job_id = job.id
+        attempt.status = _ATTEMPT_QUEUED
+        attempt.retry_after_seconds = None
+        attempt.updated_at = func.now()
+        db.commit()
+    except Exception as exc:
+        if isinstance(exc, ApiError) and exc.code in {
+            ApiErrorCode.E_BILLING_REQUIRED,
+            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+        }:
+            _fail_source_attempt_and_media(
+                db,
+                media_id=media_id,
+                attempt_id=attempt_id,
+                exc=exc,
+                stage=failure_stage,
+            )
+            raise
+        db.rollback()
+        _fail_source_attempt_and_media(
+            db,
+            media_id=media_id,
+            attempt_id=attempt_id,
+            exc=exc,
+            stage=failure_stage,
+        )
+        return False
+
+    delete_document_storage_objects(cleanup_storage_paths, cleanup_storage_client)
+    return True
+
+
 def _enqueue_accepted_attempt(
     db: Session,
     *,
@@ -1892,10 +2007,7 @@ def _run_podcast_episode_transcript(
     actor_user_id: UUID,
     request_id: str | None,
 ) -> dict[str, object]:
-    from nexus.services.podcasts.transcription import (
-        prepare_podcast_transcription_for_source_attempt,
-        run_podcast_transcription_now,
-    )
+    from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is None:
@@ -1906,17 +2018,7 @@ def _run_podcast_episode_transcript(
             "Podcast transcript source attempts must target podcast episode media.",
         )
 
-    request_reason = _podcast_request_reason(
-        dict(attempt.source_payload or {}).get("request_reason")
-    )
     begin_extraction(db, media)
-    if request_reason == "operator_requeue":
-        prepare_podcast_transcription_for_source_attempt(
-            db,
-            media_id=media_id,
-            requested_by_user_id=actor_user_id,
-            request_reason=request_reason,
-        )
     db.commit()
 
     result = asdict(

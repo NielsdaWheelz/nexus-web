@@ -534,6 +534,7 @@ Database and deploy:
 
 - `migrations/alembic/versions/0132_external_provider_events.py`
 - `migrations/alembic/versions/0133_media_source_attempts.py`
+- `migrations/alembic/versions/0134_media_source_attempts_job_delete_contract.py`
 - `.env.example`
 - `deploy/env/env-prod-backend.example`
 - `deploy/env/env-prod-worker.example`

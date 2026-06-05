@@ -716,6 +716,26 @@ signing or storage writes fail, the attempt and media are marked failed. Storage
 cleanup after retry or duplicate resolution happens after DB state commits, using
 existing explicit cleanup patterns.
 
+Retry/refresh dispatch is a two-transaction command:
+
+- transaction 1 records the new `media_source_attempts` retry/refresh intent,
+- transaction 2 verifies non-reacquirable source storage when required, resets
+  rewriteable domain artifacts, inserts the `ingest_media_source` job, and marks
+  the attempt queued,
+- storage objects collected by transaction 2 are deleted only after that
+  transaction commits.
+
+If transaction 2 fails, the cleanup rolls back and the retry/refresh attempt is
+marked failed. The previous artifacts are not destroyed by a queue insertion or
+source-preflight failure.
+
+Podcast transcript source retry is part of the same dispatch contract. Operator
+requeues run transcript quota admission and write
+`podcast_transcript_request_audits` inside transaction 2 before the
+`ingest_media_source` job is visible. Quota or billing rejection is recorded on
+the source attempt and returned as the typed API error; it is not converted into
+a silent non-enqueued success.
+
 ## File Plan
 
 ### New Files
@@ -739,6 +759,9 @@ existing explicit cleanup patterns.
 - `migrations/alembic/versions/0133_media_source_attempts.py`
   - exact version depends on whether `0132_external_provider_events.py` is
     already merged.
+- `migrations/alembic/versions/0134_media_source_attempts_job_delete_contract.py`
+  - makes `media_source_attempts.job_id` `ON DELETE SET NULL` so durable source
+    attempts can outlive operational background-job pruning.
 - `python/tests/test_from_url.py`, `python/tests/test_upload.py`,
   `python/tests/test_reconcile_stale_ingest_media.py`, and focused media tests
   - owner-level behavior tests for source acceptance, post-acceptance failures,

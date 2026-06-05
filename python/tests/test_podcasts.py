@@ -552,6 +552,36 @@ def _subscribe(auth_client, user_id: UUID, payload: dict) -> dict:
     return response.json()["data"]
 
 
+def _run_latest_source_attempt_for_media(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+    *,
+    request_id: str = "test-podcast-source-attempt",
+) -> dict[str, object]:
+    from nexus.services.media_source_ingest import run_source_attempt
+
+    with direct_db.session() as session:
+        attempt_row = session.execute(
+            text(
+                """
+                SELECT id, created_by_user_id
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                ORDER BY attempt_no DESC, created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+        return run_source_attempt(
+            db=session,
+            media_id=media_id,
+            attempt_id=attempt_row[0],
+            actor_user_id=attempt_row[1],
+            request_id=request_id,
+        )
+
+
 def _run_subscription_sync(
     direct_db: DirectSessionManager,
     user_id: UUID,
@@ -613,7 +643,7 @@ def _run_subscription_sync(
             ).fetchall()
             for row in pending_source_attempts:
                 run_source_attempt(
-                    session,
+                    db=session,
                     media_id=row[0],
                     attempt_id=row[1],
                     actor_user_id=row[2],
@@ -3246,16 +3276,8 @@ class TestPodcastTranscriptRequestAdmission:
                 error_message="Transcript unavailable",
             ),
         )
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-        assert result.status == "failed"
+        result = _run_latest_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "failed"
 
         with direct_db.session() as session:
             used_after_failure = session.execute(
@@ -3320,13 +3342,12 @@ class TestPodcastTranscriptRequestAdmission:
         media_id = seeded["media_id"]
 
         # Drive the real wrapper's except SQLAlchemyError -> return False branch by
-        # making the PUBLIC enqueue boundary fail, instead of patching the private
-        # _enqueue_podcast_transcription_job wrapper (testing_standards.md §7).
+        # making the durable source-attempt enqueue boundary fail.
         def _raise(*_args, **_kwargs):
             raise SQLAlchemyError("enqueue boundary failure")
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.transcription.enqueue_job",
+            "nexus.services.media_source_ingest.enqueue_podcast_episode_transcript_source_attempt",
             _raise,
         )
 
@@ -3730,16 +3751,8 @@ class TestPodcastTranscriptRequestAdmission:
                 error_message="simulated provider failure",
             ),
         )
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-        assert result.status == "failed"
+        result = _run_latest_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "failed"
 
         monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
