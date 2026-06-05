@@ -530,9 +530,10 @@ There must be no third source-retry API and no source-specific retry route.
 - `pending`: durable item accepted, no source attempt has started,
 - `extracting`: source acquisition or materialization is running,
 - `ready_for_reading`: source materialized for document reading,
-- `embedding`: source readable, search/indexing still progressing,
-- `ready`: all applicable processing complete,
 - `failed`: source acquisition/materialization failed.
+
+Search and embedding readiness live in `media_content_index_states`, not
+`media.processing_status`.
 
 `failure_stage` uses existing values:
 

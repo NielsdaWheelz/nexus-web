@@ -34,6 +34,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES
+from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlights import (
     derive_exact_prefix_suffix,
     map_integrity_error,
@@ -236,6 +237,7 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
             JOIN visible_media vm ON vm.media_id = m.id
             LEFT JOIN media_file mf ON mf.media_id = m.id
             WHERE m.kind IN ('web_article', 'epub', 'pdf')
+              AND m.processing_status = 'ready_for_reading'
             ORDER BY lower(m.title), m.id
         """),
             {"viewer_id": viewer_id},
@@ -290,7 +292,11 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
 
     for highlight in highlight_rows:
         media_id = _highlight_media_id(highlight)
-        if media_id is not None and can_read_media(db, viewer_id, media_id):
+        if (
+            media_id is not None
+            and can_read_media(db, viewer_id, media_id)
+            and _is_vault_highlight_media_ready(db, media_id)
+        ):
             path, content = _highlight_file(db, highlight)
             files[path] = content
 
@@ -396,11 +402,7 @@ def _create_highlight_from_file(
     media = db.get(Media, media_id)
     if media is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if _processing_status_value(media.processing_status) not in {
-        "ready_for_reading",
-        "embedding",
-        "ready",
-    }:
+    if not _is_vault_highlight_media_ready(db, media_id):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
     color = str(metadata.get("color") or "yellow")
@@ -617,6 +619,9 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
                 """
                 SELECT cb.canonical_text, cb.locator
                 FROM media_content_index_states mcis
+                JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
+                  AND active_run.state = 'ready'
+                  AND active_run.deactivated_at IS NULL
                 JOIN content_blocks cb ON cb.index_run_id = mcis.active_run_id
                 WHERE mcis.media_id = :media_id
                   AND mcis.status = 'ready'
@@ -630,6 +635,26 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
         .all()
     )
     return [dict(row) for row in rows]
+
+
+def _is_vault_highlight_media_ready(db: Session, media_id: UUID) -> bool:
+    row = db.execute(
+        text("""
+            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            WHERE m.id = :media_id
+        """),
+        {"media_id": media_id},
+    ).fetchone()
+    if row is None:
+        return False
+    return is_text_document_ready(
+        str(row[0]),
+        str(row[1]),
+        str(row[2]) if row[2] is not None else None,
+        str(row[3]) if row[3] is not None else None,
+    )
 
 
 def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
@@ -1378,10 +1403,6 @@ def _parse_handle(handle: str, prefix: str) -> UUID:
     if not handle.startswith(expected):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid {prefix} handle")
     return UUID(hex=handle[len(expected) :])
-
-
-def _processing_status_value(value: object) -> str:
-    return str(getattr(value, "value", value))
 
 
 def _as_bool(value: object) -> bool:

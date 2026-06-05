@@ -10,7 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.services.capabilities import is_text_document_ready
 
 ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
 
@@ -44,10 +45,26 @@ def resolve_evidence_span(
                 es.resolver_kind,
                 ss.source_version,
                 ss.source_fingerprint,
-                ss.metadata AS snapshot_metadata
+                ss.metadata AS snapshot_metadata,
+                m.kind AS media_kind,
+                m.processing_status,
+                mts.transcript_state,
+                mts.transcript_coverage,
+                active_run.id AS active_ready_run_id
             FROM evidence_spans es
+            JOIN media m ON m.id = es.media_id
             LEFT JOIN source_snapshots ss
               ON ss.id = es.source_snapshot_id
+            LEFT JOIN media_transcript_states mts
+              ON mts.media_id = es.media_id
+            LEFT JOIN media_content_index_states mcis
+              ON mcis.media_id = es.media_id
+             AND mcis.active_run_id = es.index_run_id
+             AND mcis.status = 'ready'
+            LEFT JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             WHERE es.id = :evidence_span_id
             """
             ),
@@ -62,6 +79,15 @@ def resolve_evidence_span(
         or (index_run_id is not None and row["index_run_id"] != index_run_id)
         or not can_read_media(db, viewer_id, media_id)
     ):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
+    if not is_text_document_ready(
+        str(row["media_kind"]),
+        str(row["processing_status"]),
+        str(row["transcript_state"]) if row["transcript_state"] is not None else None,
+        str(row["transcript_coverage"]) if row["transcript_coverage"] is not None else None,
+    ):
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    if row["active_ready_run_id"] is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
 
     selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}

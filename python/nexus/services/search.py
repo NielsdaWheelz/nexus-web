@@ -138,6 +138,46 @@ TYPE_WEIGHTS = {
 MAX_SNIPPET_LENGTH = 300
 
 
+def _active_fragment_content_block_exists_sql(
+    fragment_alias: str,
+    index_state_alias: str,
+) -> str:
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM content_blocks cb
+            WHERE cb.media_id = {fragment_alias}.media_id
+              AND cb.index_run_id = {index_state_alias}.active_run_id
+              AND (
+                  cb.locator->>'fragment_id' = {fragment_alias}.id::text
+                  OR (
+                      cb.locator->>'kind' = 'transcript_time_text'
+                      AND {fragment_alias}.t_start_ms IS NOT NULL
+                      AND {fragment_alias}.t_end_ms IS NOT NULL
+                      AND CAST(cb.locator->>'t_start_ms' AS integer) < {fragment_alias}.t_end_ms
+                      AND CAST(cb.locator->>'t_end_ms' AS integer) > {fragment_alias}.t_start_ms
+                  )
+              )
+        )
+    """
+
+
+def _active_pdf_page_content_block_exists_sql(
+    pdf_anchor_alias: str,
+    index_state_alias: str,
+) -> str:
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM content_blocks cb
+            WHERE cb.media_id = {pdf_anchor_alias}.media_id
+              AND cb.index_run_id = {index_state_alias}.active_run_id
+              AND cb.locator->>'kind' = 'pdf_text'
+              AND CAST(cb.locator->>'page_number' AS integer) = {pdf_anchor_alias}.page_number
+        )
+    """
+
+
 @dataclass(slots=True)
 class _SearchScore:
     raw: float
@@ -962,6 +1002,7 @@ def get_search_result(
                 JOIN visible_media vm ON vm.media_id = cc.media_id
                 JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
                     AND mcis.active_run_id = cc.index_run_id
+                    AND mcis.status = 'ready'
                 JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
                     AND active_run.state = 'ready'
                     AND active_run.deactivated_at IS NULL
@@ -1035,12 +1076,16 @@ def get_search_result(
                     ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                     LIMIT 1
                 ) nav ON true
-                LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
-                LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                    AND active_run.state = 'ready'
-                    AND active_run.deactivated_at IS NULL
+                JOIN media_content_index_states mcis
+                  ON mcis.media_id = f.media_id
+                 AND mcis.status = 'ready'
+                JOIN content_index_runs active_run
+                  ON active_run.id = mcis.active_run_id
+                 AND active_run.state = 'ready'
+                 AND active_run.deactivated_at IS NULL
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE f.id = :id
+                  AND {_active_fragment_content_block_exists_sql("f", "mcis")}
                 """
             ),
             {"viewer_id": viewer_id, "id": fragment_id},
@@ -1192,6 +1237,7 @@ def get_search_result(
                     WHERE hpq.highlight_id = h.id
                 ) pdf_quads ON true
                 JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+                    AND mcis.status = 'ready'
                 JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
                     AND active_run.state = 'ready'
                     AND active_run.deactivated_at IS NULL
@@ -1204,19 +1250,21 @@ def get_search_result(
                             h.anchor_kind = 'fragment_offsets'
                             AND EXISTS (
                                 SELECT 1
-                                FROM highlight_fragment_anchors hfa
-                                JOIN fragments f ON f.id = hfa.fragment_id
-                                WHERE hfa.highlight_id = h.id
-                                  AND f.media_id = h.anchor_media_id
+                                FROM highlight_fragment_anchors hfa_current
+                                JOIN fragments f_current ON f_current.id = hfa_current.fragment_id
+                                WHERE hfa_current.highlight_id = h.id
+                                  AND f_current.media_id = h.anchor_media_id
+                                  AND {_active_fragment_content_block_exists_sql("f_current", "mcis")}
                             )
                         )
                         OR (
                             h.anchor_kind = 'pdf_page_geometry'
                             AND EXISTS (
                                 SELECT 1
-                                FROM highlight_pdf_anchors hpa
-                                WHERE hpa.highlight_id = h.id
-                                  AND hpa.media_id = h.anchor_media_id
+                                FROM highlight_pdf_anchors hpa_current
+                                WHERE hpa_current.highlight_id = h.id
+                                  AND hpa_current.media_id = h.anchor_media_id
+                                  AND {_active_pdf_page_content_block_exists_sql("hpa_current", "mcis")}
                             )
                         )
                   )
@@ -1434,9 +1482,18 @@ def get_search_result(
                     m.kind,
                     m.title,
                     m.published_date,
-                    mcc.contributor_credits
+                    mcc.contributor_credits,
+                    es.index_run_id
                 FROM evidence_spans es
                 JOIN media m ON m.id = es.media_id
+                JOIN media_content_index_states mcis
+                  ON mcis.media_id = es.media_id
+                 AND mcis.active_run_id = es.index_run_id
+                 AND mcis.status = 'ready'
+                JOIN content_index_runs active_run
+                  ON active_run.id = mcis.active_run_id
+                 AND active_run.state = 'ready'
+                 AND active_run.deactivated_at IS NULL
                 LEFT JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
@@ -1451,6 +1508,7 @@ def get_search_result(
             viewer_id=viewer_id,
             media_id=row[1],
             evidence_span_id=row[0],
+            index_run_id=row[9],
         )
         _require_resolved_evidence(resolution)
         return _result_to_out(
@@ -2023,6 +2081,7 @@ def _search_content_chunks(
                     JOIN visible_media vm ON vm.media_id = cc.media_id
                     JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
                         AND mcis.active_run_id = cc.index_run_id
+                        AND mcis.status = 'ready'
                     JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
                         AND active_run.state = 'ready'
                         AND active_run.deactivated_at IS NULL
@@ -2163,6 +2222,7 @@ def _search_content_chunks(
                     JOIN visible_media vm ON vm.media_id = cc.media_id
                     JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
                         AND mcis.active_run_id = cc.index_run_id
+                        AND mcis.status = 'ready'
                     JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
                         AND active_run.state = 'ready'
                         AND active_run.deactivated_at IS NULL
@@ -2711,12 +2771,16 @@ def _search_fragments(
                 ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                 LIMIT 1
             ) nav ON true
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
-            LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                AND active_run.state = 'ready'
-                AND active_run.deactivated_at IS NULL
+            JOIN media_content_index_states mcis
+              ON mcis.media_id = f.media_id
+             AND mcis.status = 'ready'
+            JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', f.canonical_text) @@ websearch_to_tsquery('english', :query)
+              AND {_active_fragment_content_block_exists_sql("f", "mcis")}
             {scope_filter}
             ORDER BY score DESC, f.idx ASC, f.id ASC
             LIMIT :limit
@@ -2855,6 +2919,7 @@ def _search_highlights(
                 WHERE hpq.highlight_id = h.id
             ) pdf_quads ON true
             JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+                AND mcis.status = 'ready'
             JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
                 AND active_run.state = 'ready'
                 AND active_run.deactivated_at IS NULL
@@ -2870,19 +2935,21 @@ def _search_highlights(
                         h.anchor_kind = 'fragment_offsets'
                         AND EXISTS (
                             SELECT 1
-                            FROM highlight_fragment_anchors hfa
-                            JOIN fragments f ON f.id = hfa.fragment_id
-                            WHERE hfa.highlight_id = h.id
-                              AND f.media_id = h.anchor_media_id
+                            FROM highlight_fragment_anchors hfa_current
+                            JOIN fragments f_current ON f_current.id = hfa_current.fragment_id
+                            WHERE hfa_current.highlight_id = h.id
+                              AND f_current.media_id = h.anchor_media_id
+                              AND {_active_fragment_content_block_exists_sql("f_current", "mcis")}
                         )
                     )
                     OR (
                         h.anchor_kind = 'pdf_page_geometry'
                         AND EXISTS (
                             SELECT 1
-                            FROM highlight_pdf_anchors hpa
-                            WHERE hpa.highlight_id = h.id
-                              AND hpa.media_id = h.anchor_media_id
+                            FROM highlight_pdf_anchors hpa_current
+                            WHERE hpa_current.highlight_id = h.id
+                              AND hpa_current.media_id = h.anchor_media_id
+                              AND {_active_pdf_page_content_block_exists_sql("hpa_current", "mcis")}
                         )
                     )
               )
@@ -3155,6 +3222,7 @@ def _search_evidence_spans(
                 m.title,
                 m.published_date,
                 mcc.contributor_credits,
+                es.index_run_id,
                 ts_rank_cd(
                     to_tsvector('english', es.span_text),
                     websearch_to_tsquery('english', :query)
@@ -3168,6 +3236,14 @@ def _search_evidence_spans(
             FROM evidence_spans es
             JOIN visible_media vm ON vm.media_id = es.media_id
             JOIN media m ON m.id = es.media_id
+            JOIN media_content_index_states mcis
+              ON mcis.media_id = es.media_id
+             AND mcis.active_run_id = es.index_run_id
+             AND mcis.status = 'ready'
+            JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             LEFT JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', es.span_text)
@@ -3187,6 +3263,7 @@ def _search_evidence_spans(
                 viewer_id=viewer_id,
                 media_id=row[1],
                 evidence_span_id=row[0],
+                index_run_id=row[9],
             )
             _require_resolved_evidence(resolution)
         except NotFoundError:
@@ -3199,12 +3276,12 @@ def _search_evidence_spans(
         results.append(
             _RankedEvidenceSpanResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[10] or row[2] or "")),
+                snippet=_truncate_snippet(str(row[11] or row[2] or "")),
                 source_version=str(row[4] or resolution.get("source_version") or ""),
                 citation_label=str(row[3] or resolution.get("citation_label") or ""),
                 locator=locator,
                 source=_build_search_source(row[1], row[5], row[6], row[8], row[7]),
-                score=_build_search_score(row[9]),
+                score=_build_search_score(row[10]),
             )
         )
     return results

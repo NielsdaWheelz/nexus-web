@@ -15,6 +15,8 @@ import MediaPaneBody from "./MediaPaneBody";
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   mediaKind: "pdf" as "pdf" | "web_article" | "epub",
+  retrievalStatus: "ready" as "ready" | "indexing" | "failed",
+  retrievalStatusReason: null as string | null,
   includeToc: false,
   isMobileViewport: false,
   readerFocusMode: "off" as
@@ -38,9 +40,10 @@ const paneShellMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/api/client")>(
+      "@/lib/api/client",
+    );
   return {
     ...actual,
     apiFetch: (...args: unknown[]) => testState.apiFetch(...args),
@@ -182,7 +185,8 @@ function mediaResponse() {
     title: "Reader fixture",
     canonical_source_url: null,
     processing_status: "ready_for_reading",
-    retrieval_status: "ready",
+    retrieval_status: testState.retrievalStatus,
+    retrieval_status_reason: testState.retrievalStatusReason,
     source_version: "source:v1",
     contributors: [],
     created_at: "2026-01-01T00:00:00Z",
@@ -279,9 +283,11 @@ async function getContentsSurfaceBody(
   return body;
 }
 
-function renderMediaPane(options: {
-  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-} = {}) {
+function renderMediaPane(
+  options: {
+    secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+  } = {},
+) {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
@@ -336,6 +342,8 @@ describe("MediaPaneBody pane sizing", () => {
   beforeEach(() => {
     testState.apiFetch.mockReset();
     testState.includeToc = false;
+    testState.retrievalStatus = "ready";
+    testState.retrievalStatusReason = null;
     testState.isMobileViewport = false;
     testState.readerFocusMode = "off";
     paneShellMocks.usePaneChromeOverride.mockReset();
@@ -441,7 +449,6 @@ describe("MediaPaneBody pane sizing", () => {
           }),
         );
       });
-
     },
   );
 
@@ -467,7 +474,6 @@ describe("MediaPaneBody pane sizing", () => {
         }),
       );
     });
-
   });
 
   it.each(["epub", "web_article"] as const)(
@@ -491,6 +497,19 @@ describe("MediaPaneBody pane sizing", () => {
         ([input]) => pathOf(input) === "/api/media/media-1/fragments",
       ),
     ).toHaveLength(1);
+  });
+
+  it("renders readable web article content while retrieval indexing is not ready", async () => {
+    testState.mediaKind = "web_article";
+    testState.retrievalStatus = "indexing";
+    testState.retrievalStatusReason = "Building the search index.";
+    renderMediaPane();
+
+    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
+    expect(screen.getByTestId("retrieval-readiness")).toHaveTextContent(
+      "Search index: indexing",
+    );
+    expect(screen.getByText("Building the search index.")).toBeInTheDocument();
   });
 
   it("publishes one-node web article contents independent of highlights", async () => {
@@ -517,7 +536,8 @@ describe("MediaPaneBody pane sizing", () => {
     async (kind) => {
       testState.mediaKind = kind;
       testState.includeToc = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+      const { onRequestSecondarySurface, onSetPaneSecondary } =
+        renderMediaPane();
       await getContentsSurfaceBody(onSetPaneSecondary);
 
       await renderLatestToolbar();

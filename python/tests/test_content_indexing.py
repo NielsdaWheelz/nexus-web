@@ -445,7 +445,7 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
                 :media_id,
                 'podcast_episode',
                 'Transcript Repair',
-                'ready_for_reading',
+                'pending',
                 :user_id
             )
             """
@@ -527,6 +527,13 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
     assert row[0] == "transcript"
     assert row[1] == "Podcast transcript evidence repair."
     assert row[2]["transcript_version_id"] == str(version_id)
+    assert (
+        db_session.scalar(
+            text("SELECT processing_status FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        )
+        == "pending"
+    )
 
 
 def test_pdf_repair_uses_current_snapshot_contract(db_session: Session):
@@ -591,6 +598,13 @@ def test_pdf_repair_uses_current_snapshot_contract(db_session: Session):
     assert snapshot[3]["text_extract_version"] == 1
     assert "legacy_repair" not in snapshot[3]
     assert "legacy_mutable_snapshot_repair" not in snapshot[3]
+    assert (
+        db_session.scalar(
+            text("SELECT processing_status FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        )
+        == "ready_for_reading"
+    )
 
 
 def _insert_ready_media(db_session: Session, *, user_id: UUID, media_id: UUID) -> None:

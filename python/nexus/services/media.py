@@ -17,6 +17,7 @@ from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
+    ApiError,
     ApiErrorCode,
     InvalidRequestError,
     NotFoundError,
@@ -29,7 +30,7 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
-from nexus.services.capabilities import derive_capabilities
+from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
 )
@@ -148,13 +149,26 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "mts.transcript_coverage",
     "COALESCE(mcis.status, 'pending') AS retrieval_status",
     "mcis.status_reason AS retrieval_status_reason",
+    """EXISTS(
+        SELECT 1
+        FROM content_index_runs active_run
+        WHERE active_run.id = mcis.active_run_id
+          AND active_run.state = 'ready'
+          AND active_run.deactivated_at IS NULL
+          AND mcis.status = 'ready'
+    ) AS retrieval_active_ready""",
     """(
         SELECT ss.source_version
         FROM content_blocks cb
+        JOIN content_index_runs active_run
+          ON active_run.id = cb.index_run_id
+         AND active_run.state = 'ready'
+         AND active_run.deactivated_at IS NULL
         JOIN source_snapshots ss
           ON ss.id = cb.source_snapshot_id
         WHERE cb.media_id = m.id
           AND cb.index_run_id = mcis.active_run_id
+          AND mcis.status = 'ready'
         ORDER BY cb.block_idx ASC
         LIMIT 1
     ) AS source_version""",
@@ -396,6 +410,7 @@ def _media_out_from_row(
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
         retrieval_status=row["retrieval_status"],
+        retrieval_active_ready=bool(row["retrieval_active_ready"]),
         can_delete=bool(row.get("can_delete")),
         is_creator=bool(row.get("is_creator")),
         requested_url_exists=bool(row.get("has_requested_url"))
@@ -637,9 +652,46 @@ def list_fragments_for_viewer(
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    media_row = db.execute(
+        text("""
+            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage,
+                   active_transcript.id AS active_transcript_version_id
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            LEFT JOIN podcast_transcript_versions active_transcript
+              ON active_transcript.media_id = m.id
+             AND active_transcript.is_active
+            WHERE m.id = :media_id
+        """),
+        {"media_id": media_id},
+    ).fetchone()
+    if media_row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media_kind = str(media_row[0])
+    if media_kind in {
+        "web_article",
+        "epub",
+        "podcast_episode",
+        "video",
+    } and not is_text_document_ready(
+        media_kind,
+        str(media_row[1]),
+        str(media_row[2]) if media_row[2] is not None else None,
+        str(media_row[3]) if media_row[3] is not None else None,
+    ):
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    active_transcript_version_id = media_row[4]
+    if media_kind in {"podcast_episode", "video"} and active_transcript_version_id is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    transcript_version_filter = (
+        "AND f.transcript_version_id = :active_transcript_version_id"
+        if media_kind in {"podcast_episode", "video"}
+        else "AND f.transcript_version_id IS NULL"
+    )
+
     # Query 2: Fetch fragments ordered by idx ASC
     result = db.execute(
-        text("""
+        text(f"""
             SELECT
                 f.id,
                 f.media_id,
@@ -652,8 +704,6 @@ def list_fragments_for_viewer(
                 f_source.source_version,
                 f.created_at
             FROM fragments f
-            LEFT JOIN podcast_transcript_versions ptv
-              ON ptv.media_id = f.media_id AND ptv.is_active
             LEFT JOIN media_content_index_states mcis
               ON mcis.media_id = f.media_id
             LEFT JOIN LATERAL (
@@ -677,14 +727,10 @@ def list_fragments_for_viewer(
                 LIMIT 1
             ) f_source ON TRUE
             WHERE f.media_id = :media_id
-              AND (
-                  f.transcript_version_id IS NULL
-                  OR ptv.id IS NULL
-                  OR f.transcript_version_id = ptv.id
-              )
+              {transcript_version_filter}
             ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
         """),
-        {"media_id": media_id},
+        {"media_id": media_id, "active_transcript_version_id": active_transcript_version_id},
     )
 
     return [
@@ -727,5 +773,5 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
         "updated_at": media.updated_at.isoformat(),
     }
     return MediaEventSnapshot(
-        payload=payload, terminal=media.processing_status in ("ready", "failed")
+        payload=payload, terminal=media.processing_status in ("ready_for_reading", "failed")
     )

@@ -601,9 +601,10 @@ capability-owned:
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
 readiness lives on the separate `media_content_index_states` machine.
-`failure_stage ∈ {extract, transcribe, embed, metadata, other}`; only `source`
-and `metadata` are user-retryable. `failure_stage='metadata'` and `'embed'` are
-soft warnings that coexist with readable media.
+`failure_stage ∈ {upload, extract, transcribe, embed, metadata, other}`. Source
+retryability is derived from the latest `media_source_attempts` row and
+capability projection; `source` is not a `failure_stage`. `failure_stage='metadata'`
+and `'embed'` are soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/upload/init` + `POST /media/{id}/ingest`, and
@@ -978,8 +979,8 @@ The things most likely to bite you, distilled:
    ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
    and processing transitions have named owners.
 5. **`ready_for_reading` is the document success terminal**; search/embedding
-   readiness is a *separate* state machine. Only `source` + `metadata` are
-   user-retryable stages.
+   readiness is a *separate* state machine. Source-attempt retry and metadata
+   retry are user-visible retry capabilities; `source` is not a `failure_stage`.
 6. **Reader offsets are Unicode codepoints into immutable `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.

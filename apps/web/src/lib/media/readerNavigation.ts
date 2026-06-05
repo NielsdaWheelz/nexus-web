@@ -85,9 +85,3 @@ export function parseReaderNavigationHrefAnchorId(
     throw error;
   }
 }
-
-const READABLE_STATUSES = new Set(["ready_for_reading", "embedding", "ready"]);
-
-export function isReadableStatus(status: string): boolean {
-  return READABLE_STATUSES.has(status);
-}

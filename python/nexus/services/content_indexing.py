@@ -986,9 +986,20 @@ def repair_ready_media_content_index_now(
                    mf.storage_path
             FROM media m
             LEFT JOIN media_file mf ON mf.media_id = m.id
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
             WHERE m.id = :media_id
-              AND m.processing_status IN ('ready_for_reading', 'embedding', 'ready')
               AND m.kind IN ('web_article', 'epub', 'pdf', 'podcast_episode')
+              AND (
+                  (
+                      m.kind IN ('web_article', 'epub', 'pdf')
+                      AND m.processing_status = 'ready_for_reading'
+                  )
+                  OR (
+                      m.kind = 'podcast_episode'
+                      AND mts.transcript_state IN ('ready', 'partial')
+                      AND mts.transcript_coverage IN ('partial', 'full')
+                  )
+              )
             """
         ),
         {"media_id": media_id},

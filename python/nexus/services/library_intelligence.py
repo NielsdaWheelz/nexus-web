@@ -28,6 +28,7 @@ from nexus.schemas.library_intelligence import (
     LibraryIntelligenceRefreshOut,
     LibraryIntelligenceSectionOut,
 )
+from nexus.services.capabilities import is_text_document_ready
 
 ARTIFACT_KIND = "overview"
 PROMPT_VERSION = "LibraryIntelligence.V1"
@@ -332,6 +333,8 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
                 m.title,
                 m.kind AS media_kind,
                 m.processing_status::text AS processing_status,
+                mts.transcript_state,
+                mts.transcript_coverage,
                 GREATEST(
                     m.updated_at,
                     COALESCE(MAX(f.created_at), m.updated_at),
@@ -341,13 +344,21 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
                 COUNT(DISTINCT cc.id) AS content_chunk_count
             FROM library_entries le
             JOIN media m ON m.id = le.media_id
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
+            LEFT JOIN media_content_index_states mcis
+              ON mcis.media_id = m.id
+             AND mcis.status = 'ready'
+            LEFT JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
-                AND cc.index_run_id = mcis.active_run_id
+                AND cc.index_run_id = active_run.id
             WHERE le.library_id = :library_id
               AND le.media_id IS NOT NULL
-            GROUP BY le.position, le.media_id, m.title, m.kind, m.processing_status, m.updated_at
+            GROUP BY le.position, le.media_id, m.title, m.kind, m.processing_status,
+                     mts.transcript_state, mts.transcript_coverage, m.updated_at
             ORDER BY le.position ASC, le.media_id ASC
             """
             ),
@@ -381,9 +392,15 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             LEFT JOIN podcast_episodes pe ON pe.podcast_id = p.id
             LEFT JOIN media m ON m.id = pe.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
+            LEFT JOIN media_content_index_states mcis
+              ON mcis.media_id = m.id
+             AND mcis.status = 'ready'
+            LEFT JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
-                AND cc.index_run_id = mcis.active_run_id
+                AND cc.index_run_id = active_run.id
             WHERE le.library_id = :library_id
               AND le.podcast_id IS NOT NULL
             GROUP BY le.position, le.podcast_id, p.title, p.updated_at
@@ -402,7 +419,15 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
 def _media_inventory_item(row: Mapping[str, Any]) -> dict[str, object]:
     text_count = int(row["content_chunk_count"])
     processing_status = str(row["processing_status"])
-    included = processing_status in {"ready", "ready_for_reading"} and text_count > 0
+    included = (
+        is_text_document_ready(
+            str(row["media_kind"]),
+            processing_status,
+            str(row["transcript_state"]) if row["transcript_state"] is not None else None,
+            str(row["transcript_coverage"]) if row["transcript_coverage"] is not None else None,
+        )
+        and text_count > 0
+    )
     return {
         "media_id": row["media_id"],
         "podcast_id": None,
@@ -930,11 +955,23 @@ def _first_snippet(db: Session, item: Mapping[str, Any]) -> Mapping[str, object]
             db.execute(
                 text(
                     """
-                SELECT id AS fragment_id, media_id, canonical_text
-                FROM fragments
-                WHERE media_id = :media_id
-                  AND btrim(canonical_text) != ''
-                ORDER BY idx ASC, id ASC
+                SELECT
+                    es.id AS evidence_span_id,
+                    cc.media_id,
+                    cc.chunk_text AS canonical_text
+                FROM media_content_index_states mcis
+                JOIN content_index_runs active_run
+                  ON active_run.id = mcis.active_run_id
+                 AND active_run.state = 'ready'
+                 AND active_run.deactivated_at IS NULL
+                JOIN content_chunks cc
+                  ON cc.media_id = mcis.media_id
+                 AND cc.index_run_id = active_run.id
+                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                WHERE mcis.media_id = :media_id
+                  AND mcis.status = 'ready'
+                  AND btrim(cc.chunk_text) != ''
+                ORDER BY cc.chunk_idx ASC, cc.id ASC
                 LIMIT 1
                 """
                 ),
@@ -948,12 +985,25 @@ def _first_snippet(db: Session, item: Mapping[str, Any]) -> Mapping[str, object]
         db.execute(
             text(
                 """
-            SELECT f.id AS fragment_id, f.media_id, f.canonical_text
+            SELECT
+                es.id AS evidence_span_id,
+                cc.media_id,
+                cc.chunk_text AS canonical_text
             FROM podcast_episodes pe
-            JOIN fragments f ON f.media_id = pe.media_id
+            JOIN media_content_index_states mcis
+              ON mcis.media_id = pe.media_id
+             AND mcis.status = 'ready'
+            JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
+            JOIN content_chunks cc
+              ON cc.media_id = pe.media_id
+             AND cc.index_run_id = active_run.id
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
             WHERE pe.podcast_id = :podcast_id
-              AND btrim(f.canonical_text) != ''
-            ORDER BY pe.published_at DESC NULLS LAST, f.idx ASC, f.id ASC
+              AND btrim(cc.chunk_text) != ''
+            ORDER BY pe.published_at DESC NULLS LAST, cc.chunk_idx ASC, cc.id ASC
             LIMIT 1
             """
             ),
@@ -1280,7 +1330,7 @@ def _insert_evidence(
             "source_ref": _source_ref(item, snippet),
             "snippet": _short_snippet(str(snippet["canonical_text"])),
             "locator": {
-                "fragment_id": str(snippet["fragment_id"]),
+                "evidence_span_id": str(snippet["evidence_span_id"]),
                 "media_id": str(snippet["media_id"]),
             },
         },

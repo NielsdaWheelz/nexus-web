@@ -34,8 +34,6 @@ def retry_metadata_for_viewer(
 
     if media.processing_status not in {
         ProcessingStatus.ready_for_reading,
-        ProcessingStatus.embedding,
-        ProcessingStatus.ready,
     }:
         raise ConflictError(
             ApiErrorCode.E_RETRY_INVALID_STATE,

@@ -116,6 +116,53 @@ def test_inspect_resource_pdf_returns_document_map(db_session: Session, bootstra
     assert ' n="' not in output
 
 
+def test_inspect_resource_pdf_requires_full_text_readiness(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = _make_pdf(db_session, library_id, pages=["A" * 3000, "B" * 3000])
+    db_session.execute(
+        text("DELETE FROM pdf_page_text_spans WHERE media_id = :media_id AND page_number = 2"),
+        {"media_id": media_id},
+    )
+    db_session.commit()
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_inspect_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert result.document_map is None
+
+
+def test_inspect_resource_blocks_non_ready_document(db_session: Session, bootstrapped_user: UUID):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session,
+        bootstrapped_user,
+        library_id,
+        title="Extracting Article",
+        status="extracting",
+    )
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_inspect_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert result.document_map is None
+
+
 @pytest.mark.parametrize("media_kind", ["podcast_episode", "video"])
 def test_inspect_resource_audio_video_uses_active_transcript_timecodes(
     db_session: Session, bootstrapped_user: UUID, media_kind: str
@@ -252,6 +299,148 @@ def test_inspect_resource_section_pointer_is_readable(db_session: Session, boots
     assert not read.is_error, f"A read_uri from the map must be readable; got {read}"
     assert read.kind == "page_range"
     assert read.body == "A" * 3000 + "B" * 3000
+
+
+def test_inspect_resource_transcript_media_requires_readable_transcript_state(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Queued Transcript"
+    )
+    transcript_version_id = uuid4()
+    db_session.execute(
+        text("UPDATE media SET kind = 'podcast_episode' WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO podcast_transcript_versions (
+                id, media_id, version_no, transcript_coverage, is_active,
+                request_reason, created_by_user_id
+            )
+            VALUES (:version_id, :media_id, 1, 'full', true, 'episode_open', :user_id)
+            """
+        ),
+        {
+            "version_id": transcript_version_id,
+            "media_id": media_id,
+            "user_id": bootstrapped_user,
+        },
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO media_transcript_states (
+                media_id, transcript_state, transcript_coverage, semantic_status,
+                last_request_reason
+            )
+            VALUES (:media_id, 'queued', 'none', 'none', 'episode_open')
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO fragments (
+                id, media_id, transcript_version_id, idx, canonical_text,
+                html_sanitized, t_start_ms, t_end_ms
+            )
+            VALUES (
+                :fragment_id, :media_id, :version_id, 0,
+                'Queued transcript text must not leak.',
+                '<p>Queued transcript text must not leak.</p>', 1000, 3000
+            )
+            """
+        ),
+        {"fragment_id": uuid4(), "media_id": media_id, "version_id": transcript_version_id},
+    )
+    db_session.commit()
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_inspect_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert result.document_map is None
+
+
+def test_inspect_resource_transcript_media_requires_active_transcript_version(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Inactive Transcript"
+    )
+    transcript_version_id = uuid4()
+    db_session.execute(
+        text("UPDATE media SET kind = 'podcast_episode' WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO podcast_transcript_versions (
+                id, media_id, version_no, transcript_coverage, is_active,
+                request_reason, created_by_user_id
+            )
+            VALUES (:version_id, :media_id, 1, 'full', false, 'episode_open', :user_id)
+            """
+        ),
+        {
+            "version_id": transcript_version_id,
+            "media_id": media_id,
+            "user_id": bootstrapped_user,
+        },
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO media_transcript_states (
+                media_id, transcript_state, transcript_coverage, semantic_status,
+                last_request_reason
+            )
+            VALUES (:media_id, 'ready', 'full', 'none', 'episode_open')
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO fragments (
+                id, media_id, transcript_version_id, idx, canonical_text,
+                html_sanitized, t_start_ms, t_end_ms
+            )
+            VALUES (
+                :fragment_id, :media_id, :version_id, 0,
+                'Inactive transcript text must not leak.',
+                '<p>Inactive transcript text must not leak.</p>', 1000, 3000
+            )
+            """
+        ),
+        {"fragment_id": uuid4(), "media_id": media_id, "version_id": transcript_version_id},
+    )
+    db_session.commit()
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_inspect_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert result.document_map is None
 
 
 def test_inspect_resource_non_media_is_not_inspectable(

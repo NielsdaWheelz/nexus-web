@@ -27,6 +27,7 @@ from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
+from nexus.services.media_processing_state import mark_ready_for_reading_by_id
 from nexus.services.transcript_segments import (
     TranscriptSegmentInput,
     insert_transcript_fragments,
@@ -231,22 +232,7 @@ def write_transcript_version(
         )
 
     if mark_media_ready:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET processing_status = 'ready_for_reading',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_completed_at = :now,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {"media_id": media_id, "now": now},
-        )
+        mark_ready_for_reading_by_id(db, media_id=media_id, now=now)
     set_media_transcript_state(
         db,
         media_id=media_id,

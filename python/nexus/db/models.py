@@ -62,16 +62,12 @@ class ProcessingStatus(str, PyEnum):
         pending: Created, waiting for job pickup
         extracting: Extraction requested and in-flight or queued
         ready_for_reading: Minimum readable artifacts exist
-        embedding: Readable; embedding job in-flight or queued
-        ready: All processing complete
         failed: Terminal failure recorded
     """
 
     pending = "pending"
     extracting = "extracting"
     ready_for_reading = "ready_for_reading"
-    embedding = "embedding"
-    ready = "ready"
     failed = "failed"
 
 
@@ -79,7 +75,7 @@ class FailureStage(str, PyEnum):
     """Stage at which processing failed.
 
     Used to determine reset behavior on retry. `metadata` is a soft warning
-    set by enrich_metadata; it coexists with processing_status='ready'
+    set by enrich_metadata; it coexists with readable media
     rather than implying a terminal failure.
     """
 
@@ -873,6 +869,17 @@ class Media(Base):
                 "processing_status = 'extracting' "
                 "AND kind IN ('web_article', 'pdf', 'epub', 'podcast_episode') "
                 "AND processing_started_at IS NOT NULL"
+            ),
+        ),
+        Index(
+            "idx_media_stale_pending_upload_cleanup",
+            "created_at",
+            "processing_started_at",
+            "id",
+            postgresql_where=text(
+                "processing_status = 'pending' "
+                "AND kind IN ('pdf', 'epub') "
+                "AND file_sha256 IS NULL"
             ),
         ),
     )

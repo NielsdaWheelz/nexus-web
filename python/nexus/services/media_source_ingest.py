@@ -95,8 +95,6 @@ _IN_FLIGHT_ATTEMPT_STATUSES = {
 }
 _REFRESHABLE_STATUSES = {
     ProcessingStatus.ready_for_reading,
-    ProcessingStatus.embedding,
-    ProcessingStatus.ready,
     ProcessingStatus.failed,
 }
 _NON_REACQUIRABLE_FILE_ERROR_CODES = {

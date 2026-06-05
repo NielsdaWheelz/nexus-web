@@ -15,6 +15,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.services.agent_tools.read_resource import ReadResourceResult, execute_read_resource
@@ -118,6 +119,103 @@ def test_read_resource_media_short_returns_full(db_session: Session, bootstrappe
     assert "First paragraph." in result.body and "Second paragraph." in result.body
 
 
+def test_read_resource_media_blocks_non_ready_document_with_fragments(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session,
+        bootstrapped_user,
+        library_id,
+        title="Extracting Article",
+        status="extracting",
+    )
+    _add_fragment(db_session, media_id, idx=0, text="Leaked draft text.")
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert "Leaked draft text" not in result.body
+
+
+def test_read_resource_transcript_media_requires_active_transcript_version(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Inactive Transcript"
+    )
+    transcript_version_id = uuid4()
+    db_session.execute(
+        text("UPDATE media SET kind = 'podcast_episode' WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO podcast_transcript_versions (
+                id, media_id, version_no, transcript_coverage, is_active,
+                request_reason, created_by_user_id
+            )
+            VALUES (:version_id, :media_id, 1, 'full', false, 'episode_open', :user_id)
+            """
+        ),
+        {
+            "version_id": transcript_version_id,
+            "media_id": media_id,
+            "user_id": bootstrapped_user,
+        },
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO media_transcript_states (
+                media_id, transcript_state, transcript_coverage, semantic_status,
+                last_request_reason
+            )
+            VALUES (:media_id, 'ready', 'full', 'none', 'episode_open')
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO fragments (
+                id, media_id, transcript_version_id, idx, canonical_text,
+                html_sanitized, t_start_ms, t_end_ms
+            )
+            VALUES (
+                :fragment_id, :media_id, :version_id, 0,
+                'Inactive transcript text must not leak.',
+                '<p>Inactive transcript text must not leak.</p>', 1000, 3000
+            )
+            """
+        ),
+        {"fragment_id": uuid4(), "media_id": media_id, "version_id": transcript_version_id},
+    )
+    db_session.commit()
+    uri = f"media:{media_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert "Inactive transcript text" not in result.body
+
+
 def test_read_resource_media_over_budget_redirects_to_inspect(
     db_session: Session, bootstrapped_user: UUID
 ):
@@ -160,6 +258,108 @@ def test_read_resource_pdf_page_range_slices_plain_text(
     assert result.kind == "page_range"
     assert result.body == "PAGE-TWO-TEXT. PAGE-THREE-TEXT. "
     assert "PAGE-ONE-TEXT" not in result.body
+
+
+def test_read_resource_pdf_page_range_blocks_non_ready_document(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = _make_pdf(db_session, library_id, pages=["PAGE-ONE-TEXT. "])
+    db_session.execute(
+        text("UPDATE media SET processing_status = 'extracting' WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    db_session.commit()
+    _admit_reference(db_session, conversation_id, f"media:{media_id}")
+
+    result = execute_read_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=f"page_range:{media_id}:1-1",
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert "PAGE-ONE-TEXT" not in result.body
+
+
+def test_read_resource_pdf_page_range_requires_full_text_readiness(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = _make_pdf(db_session, library_id, pages=["PAGE-ONE-TEXT. ", "PAGE-TWO-TEXT. "])
+    db_session.execute(
+        text(
+            """
+            DELETE FROM pdf_page_text_spans
+            WHERE media_id = :media_id AND page_number = 2
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.commit()
+    _admit_reference(db_session, conversation_id, f"media:{media_id}")
+
+    result = execute_read_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=f"page_range:{media_id}:1-1",
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert "PAGE-ONE-TEXT" not in result.body
+
+
+def test_read_resource_page_range_rejects_non_pdf_media(
+    db_session: Session, bootstrapped_user: UUID
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert library_id is not None
+    media_id = create_test_media_in_library(
+        db_session, bootstrapped_user, library_id, title="Not A PDF"
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE media
+            SET plain_text = 'ROGUE-PAGE-TEXT', page_count = 1
+            WHERE id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO pdf_page_text_spans (
+                media_id, page_number, start_offset, end_offset, text_extract_version
+            )
+            VALUES (:media_id, 1, 0, 15, 1)
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db_session.commit()
+    _admit_reference(db_session, conversation_id, f"media:{media_id}")
+
+    result = execute_read_resource(
+        db_session,
+        viewer_id=bootstrapped_user,
+        conversation_id=conversation_id,
+        uri=f"page_range:{media_id}:1-1",
+    )
+
+    assert result.is_error
+    assert result.error_code == "missing"
+    assert "ROGUE-PAGE-TEXT" not in result.body
 
 
 def test_read_resource_media_derived_pointer_readable_via_parent_media(

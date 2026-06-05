@@ -27,6 +27,8 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError
+from nexus.services.capabilities import is_text_document_ready
+from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.reader_navigation import get_media_navigation_for_viewer
 
 READ_DOCUMENT_MAX_CHARS = 50_000  # media: read over this → too_large redirect
@@ -82,17 +84,35 @@ def get_media_document_map_for_viewer(
     if not can_read_media(db, viewer_id, media_id):
         return None
     row = db.execute(
-        text("SELECT kind, title FROM media WHERE id = :id"), {"id": media_id}
+        text("""
+            SELECT m.kind, m.title, m.processing_status,
+                   mts.transcript_state, mts.transcript_coverage
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            WHERE m.id = :id
+        """),
+        {"id": media_id},
     ).fetchone()
     if row is None:
         return None
     kind = str(row[0])
     title = str(row[1])
+    if not is_text_document_ready(
+        kind,
+        str(row[2]),
+        str(row[3]) if row[3] is not None else None,
+        str(row[4]) if row[4] is not None else None,
+    ):
+        return None
+    if kind in ("podcast_episode", "video") and _active_transcript_version(db, media_id) is None:
+        return None
     if kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
         if sections is None:
             return None
     elif kind == "pdf":
+        if not is_pdf_quote_text_ready(db, media_id):
+            return None
         sections = _page_sections(db, media_id)
     elif kind in ("podcast_episode", "video"):
         sections = _transcript_sections(db, media_id)
@@ -121,11 +141,28 @@ def load_media_document_summary(
     """
     if not can_read_media(db, viewer_id, media_id):
         return None
-    row = db.execute(text("SELECT kind FROM media WHERE id = :id"), {"id": media_id}).fetchone()
+    row = db.execute(
+        text("""
+            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            WHERE m.id = :id
+        """),
+        {"id": media_id},
+    ).fetchone()
     if row is None:
         return None
     kind = str(row[0])
+    if not is_text_document_ready(
+        kind,
+        str(row[1]),
+        str(row[2]) if row[2] is not None else None,
+        str(row[3]) if row[3] is not None else None,
+    ):
+        return None
     if kind == "pdf":
+        if not is_pdf_quote_text_ready(db, media_id):
+            return None
         metrics = db.execute(
             text(
                 """
@@ -176,7 +213,7 @@ def load_media_document_summary(
     if kind in ("podcast_episode", "video"):
         version_id = _active_transcript_version(db, media_id)
         if version_id is None:
-            return MediaDocumentSummary(section_count=0, word_count=0)
+            return None
         metrics = db.execute(
             text(
                 """
@@ -206,19 +243,37 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     if not can_read_media(db, viewer_id, media_id):
         return None
     row = db.execute(
-        text("SELECT kind, title, plain_text FROM media WHERE id = :id"), {"id": media_id}
+        text("""
+            SELECT m.kind, m.title, m.plain_text, m.processing_status,
+                   mts.transcript_state, mts.transcript_coverage
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            WHERE m.id = :id
+        """),
+        {"id": media_id},
     ).fetchone()
     if row is None:
         return None
     kind = str(row[0])
     title = str(row[1])
+    if not is_text_document_ready(
+        kind,
+        str(row[3]),
+        str(row[4]) if row[4] is not None else None,
+        str(row[5]) if row[5] is not None else None,
+    ):
+        return None
     if kind == "pdf":
+        if not is_pdf_quote_text_ready(db, media_id):
+            return None
         body = str(row[2] or "")
     elif kind in ("web_article", "epub"):
         body = _join_fragments(db, media_id, transcript_version_id=None)
     elif kind in ("podcast_episode", "video"):
         version_id = _active_transcript_version(db, media_id)
-        body = _join_fragments(db, media_id, transcript_version_id=version_id) if version_id else ""
+        if version_id is None:
+            return None
+        body = _join_fragments(db, media_id, transcript_version_id=version_id)
     else:
         raise AssertionError(f"Unhandled media kind for full read: {kind}")
     return DocumentRead(media_id=media_id, kind=kind, title=title, body=body, char_count=len(body))
@@ -229,7 +284,19 @@ def read_page_range(
 ) -> str | None:
     if not can_read_media(db, viewer_id, media_id):
         return None
-    plain_text = db.scalar(text("SELECT plain_text FROM media WHERE id = :id"), {"id": media_id})
+    row = db.execute(
+        text("SELECT kind, plain_text, processing_status FROM media WHERE id = :id"),
+        {"id": media_id},
+    ).fetchone()
+    if row is None:
+        return None
+    if str(row[0]) != "pdf":
+        return None
+    if not is_text_document_ready(str(row[0]), str(row[2])):
+        return None
+    if not is_pdf_quote_text_ready(db, media_id):
+        return None
+    plain_text = row[1]
     if plain_text is None:
         return None
     bounds = db.execute(

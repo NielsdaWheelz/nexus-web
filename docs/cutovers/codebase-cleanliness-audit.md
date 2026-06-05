@@ -971,9 +971,12 @@ acting. Nothing here has been applied to the tree.
 `High` · `High-confidence` · `Duplication` · rules: `cleanliness.md §4`, `cleanliness.md §6`  
 **Where:** `python/nexus/services/library_intelligence.py:405` · `python/nexus/services/capabilities.py:6-12`  
 
-**Problem.** _media_inventory_item() at line 405 checks processing_status in {"ready", "ready_for_reading"} to decide if a media item is includeable. The canonical definition of readable processing statuses is READABLE_PROCESSING_STATUSES in capabilities.py, which includes the third status ProcessingStatus.embedding.value. Media in the 'embedding' state is readable (confirmed by epub_read.py:41, reader_navigation.py:44) but library_intelligence treats it as excluded, causing incorrect exclusion_reason and chunk-count suppression for such items.
+**Superseded by:** `docs/cutovers/media-document-readiness-hard-cutover.md`.
 
-**Fix.** Import READABLE_PROCESSING_STATUSES from nexus.services.capabilities and replace the inline set literal at line 405 with a membership check against that frozenset. This collapses two divergent owners of the same derived truth to one canonical definition.
+**Current contract.** `media.processing_status` has no `embedding` or `ready`
+states. `ready_for_reading` is the only successful document-readiness status,
+and library intelligence must use the centralized readiness/capability policy
+plus active-ready content-index checks instead of carrying a local status set.
 
 #### 🟠 3. N+1 query pattern in _sections_for_version read path
 `Medium` · `High-confidence` · `GodFile` · rules: `cleanliness.md §5`, `cleanliness.md §8`  
@@ -1083,9 +1086,11 @@ acting. Nothing here has been applied to the tree.
 `Low` · `High-confidence` · `Duplication` · rules: `cleanliness.md §4`  
 **Where:** `python/nexus/services/media.py:2670-2675` · `python/nexus/services/capabilities.py:6-12`  
 
-**Problem.** media.py:2670-2674 defines `ready_states = {ProcessingStatus.ready_for_reading, ProcessingStatus.embedding, ProcessingStatus.ready}` inline and then checks `if media.processing_status not in ready_states`. This is identical to the canonical READABLE_PROCESSING_STATUSES constant defined in capabilities.py, which epub_read.py and reader_navigation.py already import correctly.
+**Superseded by:** `docs/cutovers/media-document-readiness-hard-cutover.md`.
 
-**Fix.** Replace the inline ready_states set in _get_epub_asset_metadata_for_viewer with an import of READABLE_PROCESSING_STATUSES from nexus.services.capabilities, matching the pattern already used in epub_read.py:19.
+**Current contract.** EPUB asset serving must use the document-readiness owner
+and treat only `ready_for_reading` as readable. Do not recreate a local
+`ready_states` set and do not reintroduce old media processing states.
 
 
 <a id="py-content-indexing"></a>
@@ -2052,16 +2057,16 @@ The existing oracle.py becomes `execute_reading` orchestrator only, calling into
 
 <a id="py-pdf-ingest"></a>
 ## PDF ingest  · `py-pdf-ingest`
-*6 issues (2 High)*  
+*6 issues (1 High current, 1 High superseded)*
 
-> **Verdict.** The PDF ingest slice is reasonably decomposed across five files but has two serious problems. First, `tasks/ingest_pdf.py` is a god function: it manually mutates every field of the processing-state machine (processing_status, failure_stage, last_error_code, failed_at, updated_at) across at least four call sites in the same file, bypassing the `media_processing_state` service that exists precisely to own those transitions — a direct ownership-layering violation. Second, the block-assembly pipeline for building PDF content-index entries (locators, selectors, IndexableBlock construction, SourceSnapshotSpec) is fully duplicated between `tasks/ingest_pdf._index_pdf_evidence` and `content_indexing._repair_ready_pdf_content_index`, including a private `_text_quote` helper defined identically in both files with a subtle behavioural divergence. The module doc (`docs/modules/pdf.md`) is empty — no authoritative design is recorded, which is itself a doc-drift finding. The remaining files (`pdf_locking.py`, `pdf_readiness.py`) are focused and clean.
+> **Verdict.** The PDF ingest slice is reasonably decomposed across five files. The earlier processing-state ownership finding is superseded: `tasks/ingest_pdf.py` now routes failed and ready-for-reading transitions through `media_processing_state.py`. The current serious problem is the block-assembly pipeline for building PDF content-index entries (locators, selectors, IndexableBlock construction, SourceSnapshotSpec), which remains duplicated between `tasks/ingest_pdf._index_pdf_evidence` and `content_indexing._repair_ready_pdf_content_index`, including a private `_text_quote` helper defined identically in both files with a subtle behavioural divergence. The module doc (`docs/modules/pdf.md`) is empty — no authoritative design is recorded, which is itself a doc-drift finding. The remaining files (`pdf_locking.py`, `pdf_readiness.py`) are focused and clean.
 
 
-#### 🔴 1. ingest_pdf task bypasses media_processing_state for all state transitions
-`High` · `High-confidence` · `OwnershipLayering` · rules: `cleanliness.md §6`, `cleanliness.md §8`, `layers.md`  
+#### ✅ 1. ingest_pdf task bypasses media_processing_state for all state transitions
+`Superseded` · was `High` · `High-confidence` · `OwnershipLayering` · rules: `cleanliness.md §6`, `cleanliness.md §8`, `layers.md`
 **Where:** `python/nexus/tasks/ingest_pdf.py:84-89` · `python/nexus/tasks/ingest_pdf.py:109-119` · `python/nexus/tasks/ingest_pdf.py:149-158` · `python/nexus/tasks/ingest_pdf.py:205-211` · `python/nexus/tasks/ingest_pdf.py:392-396` · `python/nexus/services/media_processing_state.py:14-43`  
 
-**Problem.** The task directly mutates the six-field failure-state tuple (processing_status, failure_stage, last_error_code, last_error_message, failed_at, updated_at) at five distinct sites in ingest_pdf.py, rather than calling `mark_failed` / `begin_extraction` from `media_processing_state`. This means the state-machine invariant — that all six fields always move together — can be broken if any call site is updated in isolation. `media_processing_state` was created to be the single owner of these transitions, but the task bypasses it for the success path entirely and for the exception handler. The success path (lines 109–119) also sets a bare string `"E_PDF_TEXT_UNAVAILABLE"` as `last_error_code` rather than using an `ApiErrorCode` member — this string is not defined in `nexus/errors.py` and cannot be statically checked.
+**Problem.** Superseded by the media-document readiness cutover. The task previously mutated the six-field failure-state tuple (processing_status, failure_stage, last_error_code, last_error_message, failed_at, updated_at) directly. The current implementation routes processing failure and ready-for-reading completion through `media_processing_state.py`, so this is no longer a current ownership-layering defect.
 
 **Fix.** Add `mark_ready` (or `mark_ready_for_reading`) to `media_processing_state` that accepts the optional `last_error_code` parameter for the text-unavailable case. Add `mark_extract_failed` for the extract failure path. Replace every direct field-mutation block in `ingest_pdf.py` with calls to those helpers. The embed-failure path (line 392) which sets only `failure_stage` and `last_error_code` without transitioning `processing_status` should also become a named transition in `media_processing_state` (e.g. `mark_embed_failed`). Define `ApiErrorCode.E_PDF_TEXT_UNAVAILABLE` in `nexus/errors.py` and use it instead of the bare string.
 

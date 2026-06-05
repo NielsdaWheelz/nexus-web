@@ -182,11 +182,11 @@ class TestWebArticleCapabilities:
         assert caps.can_read is False
         assert caps.can_download_file is False
 
-    def test_web_article_ready(self):
-        """Web article ready can be read."""
+    def test_web_article_ready_for_reading(self):
+        """Web article ready_for_reading can be read."""
         caps = derive_capabilities(
             kind="web_article",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=False,
@@ -370,7 +370,7 @@ class TestDownloadCapability:
         """can_download_file requires media_file to exist."""
         caps_no_file = derive_capabilities(
             kind="pdf",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=False,
@@ -378,7 +378,7 @@ class TestDownloadCapability:
 
         caps_with_file = derive_capabilities(
             kind="pdf",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
@@ -409,8 +409,6 @@ class TestProcessingStatusProgression:
             ("pending", False),
             ("extracting", False),
             ("ready_for_reading", True),
-            ("embedding", True),
-            ("ready", True),
             ("failed", False),
         ],
     )
@@ -484,12 +482,11 @@ class TestProcessingStatusProgression:
 class TestSourceRefreshUploadedFiles:
     """Tests for can_refresh_source on uploaded pdf/epub media (spec section 4.3)."""
 
-    @pytest.mark.parametrize("status", ["ready", "ready_for_reading"])
-    def test_pdf_creator_can_refresh_source_when_file_exists_and_ready(self, status):
-        """PDF creator can refresh source when file present and status is ready-like."""
+    def test_pdf_creator_can_refresh_source_when_file_exists_and_ready(self):
+        """PDF creator can refresh source when file present and document-readable."""
         caps = derive_capabilities(
             kind="pdf",
-            processing_status=status,
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
@@ -497,9 +494,7 @@ class TestSourceRefreshUploadedFiles:
             source_refresh_available=True,
         )
 
-        assert caps.can_refresh_source is True, (
-            f"Expected can_refresh_source=True for pdf creator with file in status={status}"
-        )
+        assert caps.can_refresh_source is True
 
     def test_pdf_can_refresh_source_when_failed(self):
         """PDF can be refreshed when failed (failed is in _REFRESHABLE_PROCESSING_STATUSES)."""
@@ -519,7 +514,7 @@ class TestSourceRefreshUploadedFiles:
         """PDF cannot refresh source without the underlying file."""
         caps = derive_capabilities(
             kind="pdf",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=False,
@@ -532,7 +527,7 @@ class TestSourceRefreshUploadedFiles:
         """Non-creator viewers never get the refresh capability."""
         caps = derive_capabilities(
             kind="pdf",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
@@ -545,7 +540,7 @@ class TestSourceRefreshUploadedFiles:
         """EPUB creator can refresh source when file present."""
         caps = derive_capabilities(
             kind="epub",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
@@ -559,7 +554,7 @@ class TestSourceRefreshUploadedFiles:
         """EPUB cannot refresh source without the underlying file."""
         caps = derive_capabilities(
             kind="epub",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=False,
@@ -574,25 +569,23 @@ class TestCanRetryMetadata:
 
     @pytest.mark.parametrize("kind", ["pdf", "epub"])
     def test_can_retry_metadata_true_when_ready_and_creator(self, kind):
-        """can_retry_metadata is true for any ready document kind when viewer is creator."""
+        """can_retry_metadata is true for readable document media when viewer is creator."""
         caps = derive_capabilities(
             kind=kind,
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
             is_creator=True,
         )
 
-        assert caps.can_retry_metadata is True, (
-            f"Expected can_retry_metadata=True for creator on ready {kind}"
-        )
+        assert caps.can_retry_metadata is True
 
     def test_can_retry_metadata_false_when_not_creator(self):
         """can_retry_metadata is false for non-creator viewers."""
         caps = derive_capabilities(
             kind="pdf",
-            processing_status="ready",
+            processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
@@ -629,7 +622,7 @@ class TestCanRetryMetadata:
 
     @pytest.mark.parametrize(
         "status",
-        ["ready", "ready_for_reading", "embedding", "failed"],
+        ["pending", "extracting", "ready_for_reading", "failed"],
     )
     @pytest.mark.parametrize("kind", ["pdf", "epub", "web_article"])
     def test_can_retry_metadata_and_can_retry_mutually_exclusive(self, status, kind):
@@ -648,3 +641,14 @@ class TestCanRetryMetadata:
             f"Mutual exclusion violated for kind={kind} status={status}: "
             f"can_retry={caps.can_retry}, can_retry_metadata={caps.can_retry_metadata}"
         )
+
+    @pytest.mark.parametrize("status", ["embedding", "ready"])
+    def test_legacy_media_processing_statuses_are_invalid(self, status):
+        with pytest.raises(ValueError, match="Unsupported processing status"):
+            derive_capabilities(
+                kind="web_article",
+                processing_status=status,
+                last_error_code=None,
+                media_file_exists=False,
+                external_playback_url_exists=False,
+            )

@@ -139,7 +139,7 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
         start_block_offset=0,
         end_block_offset=len(text),
         span_text=text,
-        span_sha256=hashlib.sha256(f"span:{text}".encode()).hexdigest(),
+        span_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         selector={},
         citation_label="excerpt",
         resolver_kind="web",
@@ -246,7 +246,7 @@ def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "
         id=uuid4(),
         kind=MediaKind.pdf.value,
         title=title,
-        processing_status=ProcessingStatus.ready,
+        processing_status=ProcessingStatus.ready_for_reading,
         plain_text=plain_text,
         page_count=len(pages),
     )

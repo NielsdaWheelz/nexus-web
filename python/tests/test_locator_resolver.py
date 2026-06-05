@@ -19,8 +19,13 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.transcript_segments import TranscriptSegmentInput
-from tests.factories import add_library_entry_only as seed_media_in_library
-from tests.factories import get_user_default_library
+from tests.factories import (
+    add_library_entry_only as seed_media_in_library,
+)
+from tests.factories import (
+    create_searchable_media,
+    get_user_default_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -123,6 +128,51 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
     assert resolver["highlight"]["text_quote"]["exact"] == (
         "Durable quote needle for stale locator coverage."
     )
+
+
+def test_evidence_resolution_rejects_span_from_inactive_index_run(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+
+    with direct_db.session() as session:
+        media_id = create_searchable_media(session, user_id, title="Stale Evidence URL")
+        old_span_id = session.execute(
+            text(
+                """
+                SELECT primary_evidence_span_id
+                FROM content_chunks
+                WHERE media_id = :media_id
+                ORDER BY chunk_idx ASC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
+        rebuild_fragment_content_index(
+            session,
+            media_id=media_id,
+            source_kind="web_article",
+            artifact_ref=f"fragments:{fragment.id}:replacement",
+            fragments=[fragment],
+            reason="test_stale_evidence_url",
+        )
+        session.commit()
+
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+    response = auth_client.get(
+        f"/media/{media_id}/evidence/{old_span_id}",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 404, response.text
 
 
 def test_evidence_resolution_requires_primary_chunk_span_coherence(

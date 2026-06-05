@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
@@ -470,6 +470,100 @@ class TestMigrationUpgradeDowngrade:
             "or 'Hard cutover' marker; "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
+
+    def test_0137_rewrites_legacy_processing_statuses_and_replaces_enum(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0136").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_ids = {status: uuid4() for status in ("embedding", "ready", "ready_for_reading")}
+        try:
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for status, media_id in media_ids.items():
+                    session.execute(
+                        text("""
+                            INSERT INTO media (
+                                id, kind, title, processing_status, created_by_user_id
+                            )
+                            VALUES (
+                                :id, 'web_article', :title,
+                                CAST(:status AS processing_status_enum), :user_id
+                            )
+                        """),
+                        {
+                            "id": media_id,
+                            "title": f"Legacy {status}",
+                            "status": status,
+                            "user_id": user_id,
+                        },
+                    )
+                session.commit()
+        finally:
+            engine.dispose()
+
+        result = run_alembic_command("upgrade 0137")
+        assert result.returncode == 0, result.stderr
+
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                rows = dict(
+                    session.execute(
+                        text("""
+                            SELECT id, processing_status::text
+                            FROM media
+                            WHERE created_by_user_id = :user_id
+                        """),
+                        {"user_id": user_id},
+                    ).all()
+                )
+                assert rows[media_ids["embedding"]] == "ready_for_reading"
+                assert rows[media_ids["ready"]] == "ready_for_reading"
+                assert rows[media_ids["ready_for_reading"]] == "ready_for_reading"
+                labels = [
+                    row[0]
+                    for row in session.execute(
+                        text("""
+                            SELECT enumlabel
+                            FROM pg_enum
+                            WHERE enumtypid = 'processing_status_enum'::regtype
+                            ORDER BY enumsortorder
+                        """)
+                    )
+                ]
+                assert labels == ["pending", "extracting", "ready_for_reading", "failed"]
+                index_names = {
+                    row[0]
+                    for row in session.execute(
+                        text("""
+                            SELECT indexname
+                            FROM pg_indexes
+                            WHERE schemaname = 'public'
+                              AND tablename = 'media'
+                              AND indexname IN (
+                                  'idx_media_stale_extracting_recovery',
+                                  'idx_media_stale_pending_upload_cleanup'
+                              )
+                        """)
+                    )
+                }
+                assert index_names == {
+                    "idx_media_stale_extracting_recovery",
+                    "idx_media_stale_pending_upload_cleanup",
+                }
+        finally:
+            engine.dispose()
+
+    def test_0137_downgrade_to_0136_is_blocked(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0137").returncode == 0
+
+        result = run_alembic_command("downgrade 0136")
+
+        assert result.returncode != 0
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "Hard cutover: 0137 is not reversible" in combined
         reset_test_schema()
 
     def test_0107_canonicalizes_reader_selection_context_snapshots(self):
@@ -2565,8 +2659,6 @@ class TestSchemaConstraints:
             "pending",
             "extracting",
             "ready_for_reading",
-            "embedding",
-            "ready",
             "failed",
         ]
 
@@ -2594,6 +2686,28 @@ class TestSchemaConstraints:
 
             # Clean up
             session.execute(text("DELETE FROM media"))
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    @pytest.mark.parametrize("status", ["embedding", "ready"])
+    def test_legacy_processing_statuses_rejected(self, migrated_engine, status):
+        """Removed media processing statuses are rejected by the final enum."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            with pytest.raises(DBAPIError):
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, 'web_article', 'Legacy status', CAST(:status AS processing_status_enum), :user_id)
+                    """),
+                    {
+                        "id": uuid4(),
+                        "status": status,
+                        "user_id": user_id,
+                    },
+                )
+            session.rollback()
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 

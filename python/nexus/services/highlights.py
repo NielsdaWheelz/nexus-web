@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,17 +34,10 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
+from nexus.services.capabilities import is_text_document_ready
 from nexus.services.notes import linked_note_blocks_for_highlights
 
 logger = get_logger(__name__)
-
-# =============================================================================
-# Constants
-# =============================================================================
-
-# Processing statuses where media is ready for highlight mutations.
-_HIGHLIGHT_MUTATION_READY_STATUSES: set[str] = {"ready_for_reading", "embedding", "ready"}
-
 
 # =============================================================================
 # Shared Helpers
@@ -75,9 +68,24 @@ def _lock_fragment_row_for_highlight_write_or_404(db: Session, fragment_id: UUID
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
-def require_media_ready_or_409(processing_status: str) -> None:
-    """Raise 409 if media is not in a ready state for highlight mutations."""
-    if processing_status not in _HIGHLIGHT_MUTATION_READY_STATUSES:
+def _require_media_readable_for_highlight(db: Session, media_id: UUID) -> None:
+    row = db.execute(
+        text("""
+            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
+            FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            WHERE m.id = :media_id
+        """),
+        {"media_id": media_id},
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    if not is_text_document_ready(
+        str(row[0]),
+        str(row[1]),
+        str(row[2]) if row[2] is not None else None,
+        str(row[3]) if row[3] is not None else None,
+    ):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
 
@@ -216,18 +224,15 @@ def get_highlight_for_author_write_or_404(
     return highlight
 
 
-def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
-    """Resolve media for a highlight and check processing status."""
+def _require_media_readable_for_existing_highlight(db: Session, highlight: Highlight) -> None:
+    """Resolve media for a highlight and check document readability."""
 
     _require_typed_highlight_or_404(highlight)
     media_id = highlight.anchor_media_id
     if media_id is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    media_obj = db.get(Media, media_id)
-    if media_obj is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    require_media_ready_or_409(media_obj.processing_status.value)
+    _require_media_readable_for_highlight(db, media_id)
 
 
 def _batch_linked_conversations(
@@ -416,8 +421,8 @@ def create_highlight_for_fragment(
     # 1. Get fragment with visibility check
     fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
 
-    # 2. Require media ready
-    require_media_ready_or_409(fragment.media.processing_status.value)
+    # 2. Require a readable document surface
+    _require_media_readable_for_highlight(db, fragment.media_id)
 
     # Serialize duplicate-span checks on the fragment row before canonical
     # anchor writes.
@@ -641,7 +646,7 @@ def update_highlight(
     # PDF color-only update
     if anchor_kind == "pdf_page_geometry" and anchor_update is None:
         if req.color is not None and req.color != highlight.color:
-            _require_media_ready_for_highlight(db, highlight)
+            _require_media_readable_for_existing_highlight(db, highlight)
             stmt = (
                 update(Highlight)
                 .where(Highlight.id == highlight_id)
@@ -655,7 +660,7 @@ def update_highlight(
 
     fragment_anchor = _require_fragment_highlight_or_404(highlight)
 
-    _require_media_ready_for_highlight(db, highlight)
+    _require_media_readable_for_existing_highlight(db, highlight)
 
     current_start = fragment_anchor.start_offset
     current_end = fragment_anchor.end_offset

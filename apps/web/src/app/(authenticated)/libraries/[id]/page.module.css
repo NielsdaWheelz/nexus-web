@@ -329,8 +329,7 @@
   color: var(--ink-faint);
 }
 
-.mediaStatus[data-status="extracting"],
-.mediaStatus[data-status="embedding"] {
+.mediaStatus[data-status="extracting"] {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 35%, var(--edge));
 }

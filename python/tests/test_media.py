@@ -32,9 +32,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
-from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.storage.paths import build_epub_asset_storage_path
 from tests.factories import (
@@ -870,6 +868,154 @@ class TestGetMediaFragments:
         assert fragment["html_sanitized"] == FIXTURE_HTML_SANITIZED
         assert fragment["canonical_text"] == FIXTURE_CANONICAL_TEXT
 
+    def test_get_fragments_transcript_media_requires_readable_transcript_state(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        transcript_version_id = uuid4()
+        fragment_id = uuid4()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Queued Transcript Fragments",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/queued.mp3",
+                )
+            )
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_versions (
+                        id, media_id, version_no, transcript_coverage, is_active,
+                        request_reason, created_by_user_id
+                    )
+                    VALUES (:version_id, :media_id, 1, 'full', true, 'episode_open', :user_id)
+                    """
+                ),
+                {
+                    "version_id": transcript_version_id,
+                    "media_id": media_id,
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_transcript_states (
+                        media_id, transcript_state, transcript_coverage, semantic_status,
+                        last_request_reason
+                    )
+                    VALUES (:media_id, 'queued', 'none', 'none', 'episode_open')
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.add(
+                Fragment(
+                    id=fragment_id,
+                    media_id=media_id,
+                    transcript_version_id=transcript_version_id,
+                    idx=0,
+                    canonical_text="Queued transcript text must not leak.",
+                    html_sanitized="<p>Queued transcript text must not leak.</p>",
+                    t_start_ms=1000,
+                    t_end_ms=3000,
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_id, media_id)
+        response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+
+    def test_get_fragments_transcript_media_requires_active_transcript_version(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        transcript_version_id = uuid4()
+        fragment_id = uuid4()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Inactive Transcript Fragments",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/inactive.mp3",
+                )
+            )
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_versions (
+                        id, media_id, version_no, transcript_coverage, is_active,
+                        request_reason, created_by_user_id
+                    )
+                    VALUES (:version_id, :media_id, 1, 'full', false, 'episode_open', :user_id)
+                    """
+                ),
+                {
+                    "version_id": transcript_version_id,
+                    "media_id": media_id,
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_transcript_states (
+                        media_id, transcript_state, transcript_coverage, semantic_status,
+                        last_request_reason
+                    )
+                    VALUES (:media_id, 'ready', 'full', 'none', 'episode_open')
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.add(
+                Fragment(
+                    id=fragment_id,
+                    media_id=media_id,
+                    transcript_version_id=transcript_version_id,
+                    idx=0,
+                    canonical_text="Inactive transcript text must not leak.",
+                    html_sanitized="<p>Inactive transcript text must not leak.</p>",
+                    t_start_ms=1000,
+                    t_end_ms=3000,
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_id, media_id)
+        response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+
     def test_get_fragments_not_found(self, auth_client):
         """Non-existent media returns 404."""
         user_id = create_test_user_id()
@@ -1188,80 +1334,6 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
             assert b_idx == a_idx
             assert b_html == a_html, f"html_sanitized changed for chapter {b_idx}"
             assert b_text == a_text, f"canonical_text changed for chapter {b_idx}"
-
-
-class TestEpubFragmentContentStableAcrossEmbeddingStatusTransition:
-    """Scenario 11: embedding path transition coverage.
-
-    Verifies EPUB read endpoints remain readable in embedding/ready states
-    and fragment content is byte-for-byte stable across status changes.
-    """
-
-    def test_epub_fragment_content_stable_across_embedding_status_transition(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id, frag_ids = _create_ready_epub(session, num_chapters=2)
-
-        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        # Snapshot baseline in ready_for_reading
-        with direct_db.session() as session:
-            baseline = (
-                session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
-                .filter(Fragment.media_id == media_id)
-                .order_by(Fragment.idx)
-                .all()
-            )
-        assert len(baseline) == 2
-
-        for target_status in (ProcessingStatus.embedding, ProcessingStatus.ready):
-            with direct_db.session() as session:
-                media_obj = session.get(Media, media_id)
-                media_obj.processing_status = target_status
-                session.commit()
-
-            # Read endpoints remain readable
-            resp_navigation = auth_client.get(
-                f"/media/{media_id}/navigation", headers=auth_headers(user_id)
-            )
-            assert resp_navigation.status_code == 200
-            sections = resp_navigation.json()["data"]["sections"]
-            assert len(sections) == 2
-
-            for section in sections:
-                resp_section = auth_client.get(
-                    f"/media/{media_id}/sections/{section['section_id']}",
-                    headers=auth_headers(user_id),
-                )
-                assert resp_section.status_code == 200
-
-            # DB fragment content unchanged
-            with direct_db.session() as session:
-                current = (
-                    session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
-                    .filter(Fragment.media_id == media_id)
-                    .order_by(Fragment.idx)
-                    .all()
-                )
-
-            for (b_idx, b_html, b_text), (c_idx, c_html, c_text) in zip(
-                baseline, current, strict=True
-            ):
-                assert b_idx == c_idx
-                assert b_html == c_html, (
-                    f"html_sanitized changed at status={target_status} ch={b_idx}"
-                )
-                assert b_text == c_text, (
-                    f"canonical_text changed at status={target_status} ch={b_idx}"
-                )
 
 
 class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
@@ -2956,7 +3028,7 @@ class TestRetryMetadataEndpoint:
                     id=media_id,
                     kind=MediaKind.epub.value,
                     title="Ready EPUB",
-                    processing_status=ProcessingStatus.ready,
+                    processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                 )
             )
@@ -2976,8 +3048,8 @@ class TestRetryMetadataEndpoint:
         assert resp.status_code == 202, resp.text
         data = resp.json()["data"]
         assert data["metadata_enrichment_enqueued"] is True, data
-        assert data["processing_status"] == "ready", (
-            f"processing_status should remain 'ready', got {data['processing_status']}"
+        assert data["processing_status"] == "ready_for_reading", (
+            f"processing_status should remain 'ready_for_reading', got {data['processing_status']}"
         )
         assert data["media_id"] == str(media_id)
 
@@ -3027,7 +3099,7 @@ class TestRetryMetadataEndpoint:
                     id=media_id,
                     kind=MediaKind.epub.value,
                     title="Ready EPUB",
-                    processing_status=ProcessingStatus.ready,
+                    processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=creator,
                 )
             )
@@ -3595,7 +3667,7 @@ class TestRefreshSourceForFileBackedMedia:
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
-                processing_status="ready",
+                processing_status="ready_for_reading",
                 failure_stage="extract",
                 last_error_code="E_INGEST_FAILED",
                 plain_text="Old text",
@@ -3652,7 +3724,7 @@ class TestRefreshSourceForFileBackedMedia:
                     id=media_id,
                     kind=MediaKind.pdf.value,
                     title="PDF missing file",
-                    processing_status=ProcessingStatus.ready,
+                    processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                 )
             )
@@ -3684,7 +3756,7 @@ class TestRefreshSourceForFileBackedMedia:
                     id=media_id,
                     kind=MediaKind.epub.value,
                     title="Ready EPUB",
-                    processing_status=ProcessingStatus.ready,
+                    processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                 )
             )
@@ -3760,7 +3832,7 @@ class TestRefreshSourceForFileBackedMedia:
                     id=media_id,
                     kind=MediaKind.epub.value,
                     title="EPUB missing file",
-                    processing_status=ProcessingStatus.ready,
+                    processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                 )
             )
@@ -3907,7 +3979,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
 
 
 class TestGetWebArticleNavigation:
-    def test_navigation_response_reads_active_heading_index(
+    def test_navigation_response_reads_current_document_headings_without_index(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -3947,19 +4019,8 @@ class TestGetWebArticleNavigation:
                 canonical_text=prepared.canonical_text,
             )
             session.add(fragment)
-            session.flush()
-            insert_fragment_blocks(session, fragment.id, prepared.fragment_blocks)
-            rebuild_fragment_content_index(
-                session,
-                media_id=media_id,
-                source_kind="web_article",
-                artifact_ref=f"fragments:{fragment_id}",
-                fragments=[fragment],
-                reason="web_navigation_test",
-            )
             session.commit()
 
-        direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -4392,6 +4453,92 @@ def _create_pdf_media_with_state(
 
     session.commit()
     return media_id, user_id
+
+
+def _create_media_with_deactivated_ready_index(session: Session) -> tuple[UUID, UUID]:
+    media_id = uuid4()
+    user_id = uuid4()
+    run_id = uuid4()
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+    session.execute(
+        text("""
+            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+            VALUES (:media_id, 'web_article', 'Stale Searchable Article',
+                    'ready_for_reading', :user_id)
+        """),
+        {"media_id": media_id, "user_id": user_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO content_index_runs (
+                id, media_id, state, source_version, extractor_version,
+                chunker_version, embedding_provider, embedding_model,
+                embedding_version, embedding_config_hash, started_at, finished_at,
+                activated_at, deactivated_at
+            )
+            VALUES (
+                :run_id, :media_id, 'ready', 'test-source', 'test-extractor',
+                'test-chunker', 'test-provider', 'test-model', 'test-version',
+                'test-hash', now(), now(), now(), now()
+            )
+        """),
+        {"run_id": run_id, "media_id": media_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO media_content_index_states (
+                media_id, active_run_id, latest_run_id, status,
+                active_embedding_provider, active_embedding_model,
+                active_embedding_version, active_embedding_config_hash
+            )
+            VALUES (
+                :media_id, :run_id, :run_id, 'ready',
+                'test-provider', 'test-model', 'test-version', 'test-hash'
+            )
+        """),
+        {"media_id": media_id, "run_id": run_id},
+    )
+    session.commit()
+    return media_id, user_id
+
+
+class TestMediaRetrievalCapabilities:
+    def test_get_media_can_search_requires_active_ready_index_run(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_media_with_deactivated_ready_index(session)
+
+        direct_db.register_cleanup("media_content_index_states", "media_id", media_id)
+        direct_db.register_cleanup("content_index_runs", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert response.status_code == 200
+        assert response.json()["data"]["retrieval_status"] == "ready"
+        assert response.json()["data"]["capabilities"]["can_search"] is False
+
+    def test_list_media_can_search_requires_active_ready_index_run(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_media_with_deactivated_ready_index(session)
+
+        direct_db.register_cleanup("media_content_index_states", "media_id", media_id)
+        direct_db.register_cleanup("content_index_runs", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        response = auth_client.get("/media", headers=auth_headers(user_id))
+        assert response.status_code == 200
+        row = next(item for item in response.json()["data"] if item["id"] == str(media_id))
+        assert row["retrieval_status"] == "ready"
+        assert row["capabilities"]["can_search"] is False
 
 
 class TestPdfCapabilityDerivation:

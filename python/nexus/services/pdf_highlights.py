@@ -34,8 +34,8 @@ from nexus.schemas.highlights import (
 from nexus.services.highlights import (
     project_highlight,
     project_highlights_with_links,
-    require_media_ready_or_409,
 )
+from nexus.services.capabilities import is_document_status_ready
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
     GeometryValidationError,
@@ -95,6 +95,11 @@ def _get_page_span(db: Session, media_id: UUID, page_number: int) -> PdfPageText
         )
         .first()
     )
+
+
+def _require_pdf_media_ready_or_409(media: Media) -> None:
+    if not is_document_status_ready(media.processing_status.value):
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
 
 def _compute_write_time_match(
@@ -229,7 +234,7 @@ def create_pdf_highlight(
 ) -> TypedHighlightOut:
     """Create a PDF geometry highlight."""
     media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    require_media_ready_or_409(media.processing_status.value)
+    _require_pdf_media_ready_or_409(media)
     _validate_page_number(req.page_number, media.page_count)
 
     try:
@@ -372,7 +377,7 @@ def update_pdf_highlight_bounds(
     if media is None or media.kind != "pdf":
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    require_media_ready_or_409(media.processing_status.value)
+    _require_pdf_media_ready_or_409(media)
     _validate_page_number(bounds.page_number, media.page_count)
 
     try:

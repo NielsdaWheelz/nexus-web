@@ -2,6 +2,10 @@
 
 import { apiFetch, isUnauthenticatedApiError } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
+import {
+  requireDocumentProcessingStatus,
+  type DocumentProcessingStatus,
+} from "@/lib/media/documentReadiness";
 
 type FileKind = "pdf" | "epub";
 
@@ -77,7 +81,7 @@ export interface SourceIngestResult {
   sourceAttemptStatus: string;
   idempotencyOutcome: "created" | "reused" | "retrying" | "refreshed";
   duplicate: boolean;
-  processingStatus: string;
+  processingStatus: DocumentProcessingStatus;
   ingestEnqueued: boolean;
 }
 
@@ -87,7 +91,8 @@ export interface SourceActionResult extends SourceIngestResult {
 
 export function isFailedSourceIngest(result: SourceIngestResult): boolean {
   return (
-    result.processingStatus === "failed" || result.sourceAttemptStatus === "failed"
+    result.processingStatus === "failed" ||
+    result.sourceAttemptStatus === "failed"
   );
 }
 
@@ -166,7 +171,10 @@ export async function uploadIngestFile({
 
   if (!uploadOk) {
     try {
-      const failedIngest = await confirmUploadedMedia(init.data.media_id, libraryIds);
+      const failedIngest = await confirmUploadedMedia(
+        init.data.media_id,
+        libraryIds,
+      );
       return mapIngestResponse(failedIngest);
     } catch (error) {
       if (isUnauthenticatedApiError(error)) throw error;
@@ -203,7 +211,9 @@ function mapIngestResponse(ingest: IngestResponse): SourceIngestResult {
     sourceAttemptStatus: ingest.data.source_attempt_status,
     idempotencyOutcome: ingest.data.idempotency_outcome,
     duplicate: ingest.data.duplicate,
-    processingStatus: ingest.data.processing_status,
+    processingStatus: requireDocumentProcessingStatus(
+      ingest.data.processing_status,
+    ),
     ingestEnqueued: ingest.data.ingest_enqueued,
   };
 }
@@ -247,11 +257,14 @@ export async function retryMediaSource(
     idempotencyKey = createRandomId("media-source-retry"),
   }: { idempotencyKey?: string } = {},
 ): Promise<SourceActionResult> {
-  const response = await apiFetch<SourceActionResponse>(`/api/media/${mediaId}/retry`, {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ from_stage: "source" }),
-  });
+  const response = await apiFetch<SourceActionResponse>(
+    `/api/media/${mediaId}/retry`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ from_stage: "source" }),
+    },
+  );
   return mapSourceActionResponse(response);
 }
 
@@ -261,10 +274,13 @@ export async function refreshMediaSource(
     idempotencyKey = createRandomId("media-source-refresh"),
   }: { idempotencyKey?: string } = {},
 ): Promise<SourceActionResult> {
-  const response = await apiFetch<SourceActionResponse>(`/api/media/${mediaId}/refresh`, {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-  });
+  const response = await apiFetch<SourceActionResponse>(
+    `/api/media/${mediaId}/refresh`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+    },
+  );
   return mapSourceActionResponse(response);
 }
 
@@ -286,12 +302,16 @@ function mapAcceptedSourceResponse(
     sourceAttemptStatus: response.data.source_attempt_status,
     idempotencyOutcome: response.data.idempotency_outcome,
     duplicate,
-    processingStatus: response.data.processing_status,
+    processingStatus: requireDocumentProcessingStatus(
+      response.data.processing_status,
+    ),
     ingestEnqueued: response.data.ingest_enqueued,
   };
 }
 
-function mapSourceActionResponse(response: SourceActionResponse): SourceActionResult {
+function mapSourceActionResponse(
+  response: SourceActionResponse,
+): SourceActionResult {
   return {
     ...mapAcceptedSourceResponse(response),
     capabilities: response.data.capabilities,

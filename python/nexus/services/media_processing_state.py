@@ -5,7 +5,10 @@ together. Format lifecycles (pdf, epub, upload) call these transitions instead o
 mutating the columns directly, so the state machine has one owner.
 """
 
-from sqlalchemy import func
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, ProcessingStatus
@@ -88,6 +91,90 @@ def mark_ready_for_reading(db: Session, media: Media) -> None:
     media.failed_at = None
     media.updated_at = func.now()
     db.flush()
+
+
+def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
+    """Mark readable extraction complete by id; callers own the transaction."""
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET processing_status = :processing_status,
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_completed_at = :now,
+                failed_at = NULL,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "processing_status": ProcessingStatus.ready_for_reading.value,
+            "now": now,
+        },
+    )
+
+
+def mark_extraction_started_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
+    """Expose active source extraction by id without changing attempt accounting."""
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET processing_status = :processing_status,
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_started_at = :now,
+                processing_completed_at = NULL,
+                failed_at = NULL,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "processing_status": ProcessingStatus.extracting.value,
+            "now": now,
+        },
+    )
+
+
+def mark_failed_by_id(
+    db: Session,
+    *,
+    media_id: UUID,
+    stage: str,
+    error_code: str,
+    error_message: str,
+    now: datetime,
+) -> None:
+    """Transition media to the terminal failed state by id; callers own commit."""
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET processing_status = :processing_status,
+                failure_stage = :failure_stage,
+                last_error_code = :error_code,
+                last_error_message = :error_message,
+                processing_completed_at = NULL,
+                failed_at = :now,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "processing_status": ProcessingStatus.failed.value,
+            "failure_stage": FailureStage(stage).value,
+            "error_code": error_code,
+            "error_message": error_message,
+            "now": now,
+        },
+    )
 
 
 def mark_stage_warning(

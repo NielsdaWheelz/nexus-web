@@ -54,10 +54,12 @@ def _update_processing_status(direct_db: DirectSessionManager, media_id: UUID, s
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["ready_for_reading", "failed"])
 async def test_media_events_emits_state_on_open_and_changes_then_done(
     direct_db: DirectSessionManager,
+    terminal_status: str,
 ) -> None:
-    """Stream opens with current state, emits each change, terminates on ready.
+    """Stream opens with current state, emits each change, terminates on readable.
 
     Push-driven: each committed ``media`` UPDATE fires NOTIFY, which wakes the
     tail's LISTEN connection immediately.
@@ -93,30 +95,17 @@ async def test_media_events_emits_state_on_open_and_changes_then_done(
     assert "capabilities" in payload and isinstance(payload["capabilities"], dict)
     assert "updated_at" in payload and isinstance(payload["updated_at"], str)
 
-    # Advance to ready_for_reading; the next yielded frame should be the new state.
-    _update_processing_status(direct_db, media_id, "ready_for_reading")
+    # Advance to a terminal state; the next yielded frame should close the stream.
+    _update_processing_status(direct_db, media_id, terminal_status)
     next_chunk = await generator.__anext__()
     event_type, payload = _parse_state_event(next_chunk)
     assert event_type == "state", f"expected 'state' after status change, got '{event_type}'"
-    assert payload["processing_status"] == "ready_for_reading", (
-        f"expected 'ready_for_reading' after mid-stream update, got {payload}"
-    )
-
-    # Advance to terminal `ready`; expect one more state frame then a `done`.
-    _update_processing_status(direct_db, media_id, "ready")
-    chunk = await generator.__anext__()
-    event_type, payload = _parse_state_event(chunk)
-    assert event_type == "state", f"expected 'state' for terminal transition, got '{event_type}'"
-    assert payload["processing_status"] == "ready", (
-        f"expected 'ready' on terminal transition, got {payload}"
-    )
+    assert payload["processing_status"] == terminal_status
 
     done_chunk = await generator.__anext__()
     event_type, payload = _parse_state_event(done_chunk)
     assert event_type == "done", f"expected 'done' on terminal status, got '{event_type}'"
-    assert payload["processing_status"] == "ready", (
-        f"expected done payload to carry final state, got {payload}"
-    )
+    assert payload["processing_status"] == terminal_status
 
     # After `done`, the generator must close cleanly.
     with pytest.raises(StopAsyncIteration):

@@ -89,7 +89,7 @@ def _setup_pdf_media(
             page_spans=page_spans or PDF_PAGE_SPANS[:page_count],
             status=status,
         )
-        if status in {"ready", "ready_for_reading", "embedding"}:
+        if status == "ready_for_reading":
             index_result = repair_ready_media_content_index_now(
                 session,
                 media_id=media_id,

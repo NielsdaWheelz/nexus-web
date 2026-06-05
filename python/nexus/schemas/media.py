@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue, model
 
 from nexus.schemas.contributors import ContributorCreditOut
 
+MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
+
 
 class CapabilitiesOut(BaseModel):
     """Derived capabilities for a media item.
@@ -71,7 +73,7 @@ class MediaOut(BaseModel):
     kind: str  # "web_article", "epub", "pdf", "podcast_episode", "video"
     title: str
     canonical_source_url: str | None
-    processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
+    processing_status: MediaProcessingStatus
     transcript_state: str | None = None
     transcript_coverage: str | None = None
     retrieval_status: str | None = None
@@ -176,7 +178,7 @@ class ArticleCaptureResponse(BaseModel):
     source_type: str
     source_attempt_status: str
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
-    processing_status: str
+    processing_status: MediaProcessingStatus
     ingest_enqueued: bool
 
 
@@ -266,7 +268,7 @@ class TranscriptRequestResponse(BaseModel):
     """Response schema for transcript admission endpoint."""
 
     media_id: str
-    processing_status: str
+    processing_status: MediaProcessingStatus
     transcript_state: str
     transcript_coverage: str
     request_reason: TranscriptRequestReason
@@ -332,7 +334,7 @@ class FromUrlResponse(BaseModel):
     source_type: str
     source_attempt_status: str
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
-    processing_status: str
+    processing_status: MediaProcessingStatus
     ingest_enqueued: bool
 
 

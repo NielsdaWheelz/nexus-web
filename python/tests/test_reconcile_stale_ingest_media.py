@@ -1207,6 +1207,89 @@ def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
     )
 
 
+def test_reconciler_repairs_ready_semantic_rows_when_active_run_is_deactivated(
+    db_session: Session,
+):
+    from nexus.services.content_indexing import rebuild_transcript_content_index
+    from nexus.services.transcript_segments import TranscriptSegmentInput
+
+    media_id, version_id = _insert_ready_podcast_with_semantic_backlog(
+        db_session,
+        semantic_status="ready",
+        updated_seconds_ago=10_000_000,
+    )
+    rebuild_transcript_content_index(
+        db_session,
+        media_id=media_id,
+        transcript_version_id=version_id,
+        transcript_segments=[
+            TranscriptSegmentInput(
+                segment_idx=0,
+                canonical_text="semantic repair segment one",
+                t_start_ms=0,
+                t_end_ms=1300,
+                speaker_label="Host",
+            ),
+            TranscriptSegmentInput(
+                segment_idx=1,
+                canonical_text="semantic repair segment two",
+                t_start_ms=1500,
+                t_end_ms=2900,
+                speaker_label="Guest",
+            ),
+        ],
+        reason="test_deactivated_ready_run",
+    )
+    old_run_id = db_session.execute(
+        text(
+            """
+            SELECT active_run_id
+            FROM media_content_index_states
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one()
+    db_session.execute(
+        text("UPDATE content_index_runs SET deactivated_at = now() WHERE id = :run_id"),
+        {"run_id": old_run_id},
+    )
+    db_session.commit()
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(
+                stale_seconds=10_000_000,
+                max_attempts=3,
+                semantic_batch_limit=5000,
+                semantic_retry_failed_seconds=300,
+            ),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["semantic_scanned"] >= 1, result
+    assert result["semantic_repaired"] >= 1, result
+    new_run_id = db_session.execute(
+        text(
+            """
+            SELECT active_run_id
+            FROM media_content_index_states
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert new_run_id != old_run_id
+
+
 def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
     db_session: Session,
 ):

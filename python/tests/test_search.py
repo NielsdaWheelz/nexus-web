@@ -48,9 +48,7 @@ from nexus.services.search import (
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
-    add_library_entry_only as seed_media_in_library,
-)
-from tests.factories import (
+    activate_replacement_content_index_run,
     add_library_member,
     add_media_to_library,
     create_normalized_fragment_highlight,
@@ -65,6 +63,9 @@ from tests.factories import (
     create_test_message,
     get_user_default_library,
     share_conversation_to_library,
+)
+from tests.factories import (
+    add_library_entry_only as seed_media_in_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -600,6 +601,78 @@ class TestBasicSearch:
 
         response = auth_client.get(
             "/search?q=unindexed&types=highlight",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200
+        result_ids = {row["id"] for row in response.json()["results"]}
+        assert str(highlight_id) not in result_ids
+
+        with direct_db.session() as session:
+            with pytest.raises(NotFoundError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="highlight",
+                    result_id=str(highlight_id),
+                )
+
+    def test_highlight_search_requires_anchor_in_active_index_artifact(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Fragment highlights are citable only when their anchor exists in the active index."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(
+                session, user_id, title="Reindexed Highlight Article"
+            )
+            fragment_id = session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM fragments
+                    WHERE media_id = :media_id
+                    ORDER BY idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            active_run_id = session.execute(
+                text(
+                    """
+                    SELECT active_run_id
+                    FROM media_content_index_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            highlight_id = create_normalized_fragment_highlight(
+                session,
+                user_id,
+                fragment_id,
+                media_id,
+                start_offset=0,
+                end_offset=len("reindexed"),
+                exact="reindexed",
+            )
+            activate_replacement_content_index_run(
+                session,
+                media_id=media_id,
+                active_run_id=active_run_id,
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=reindexed&types=highlight",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200
@@ -1422,6 +1495,51 @@ class TestSearchResultFormat:
         )
         result_ids = {row["id"] for row in response.json()["results"]}
         assert str(active_chunk_id) not in result_ids
+
+    def test_direct_evidence_span_result_requires_active_ready_index_run(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Stale Evidence Source")
+            old_span_id = session.execute(
+                text(
+                    """
+                    SELECT cc.primary_evidence_span_id
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment.id}:stale-evidence",
+                fragments=[fragment],
+                reason="test_stale_evidence",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            with pytest.raises(NotFoundError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="evidence_span",
+                    result_id=str(old_span_id),
+                )
 
     def test_content_chunk_search_skips_stale_snapshot_text(
         self, auth_client, direct_db: DirectSessionManager
@@ -2670,6 +2788,58 @@ class TestSemanticTranscriptChunkSearch:
         )
         chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
         assert chunk_results == [], "lexical search must not return chunks while index is pending"
+
+    def test_content_chunk_search_requires_ready_index_state_with_active_ready_run(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        with direct_db.session() as session:
+            chunk_id = session.execute(
+                text(
+                    """
+                    SELECT cc.id
+                    FROM content_chunks cc
+                    JOIN media_content_index_states mcis
+                      ON mcis.media_id = cc.media_id
+                     AND mcis.active_run_id = cc.index_run_id
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            session.execute(
+                text(
+                    """
+                    UPDATE media_content_index_states
+                    SET status = 'pending'
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=false",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        assert [r for r in response.json()["results"] if r["type"] == "content_chunk"] == []
+
+        with direct_db.session() as session:
+            with pytest.raises(NotFoundError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="content_chunk",
+                    result_id=str(chunk_id),
+                )
 
     def test_lexical_search_uses_prior_active_ready_run_when_latest_index_failed(
         self, auth_client, direct_db: DirectSessionManager

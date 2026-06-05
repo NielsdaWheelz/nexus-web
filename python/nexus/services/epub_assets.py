@@ -9,8 +9,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.capabilities import is_document_status_ready
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.read import read_object_checked
 
@@ -105,11 +106,7 @@ def _get_epub_asset_metadata_for_viewer(
     if media.kind != MediaKind.epub.value:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media")
 
-    if media.processing_status not in {
-        ProcessingStatus.ready_for_reading,
-        ProcessingStatus.embedding,
-        ProcessingStatus.ready,
-    }:
+    if not is_document_status_ready(media.processing_status):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
     if not asset_key or not _ASSET_KEY_RE.match(asset_key):

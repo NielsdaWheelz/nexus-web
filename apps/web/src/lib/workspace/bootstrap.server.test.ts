@@ -90,7 +90,7 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("loads fragments for a readable media kind and composes the media pane resource", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/media/abc");
-    const media = { kind: "audiobook", capabilities: { can_read: true } };
+    const media = { kind: "podcast_episode", capabilities: { can_read: true } };
     const fragment = { id: "frag-1", text: "hello" };
     respondWith({
       "/me/reader-profile": PROFILE_OK,

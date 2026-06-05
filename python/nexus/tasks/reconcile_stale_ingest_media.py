@@ -233,7 +233,7 @@ def reconcile_stale_ingest_media_job(
                     )
                   )
                   AND m.kind IN ('web_article', 'epub', 'pdf')
-                  AND m.processing_status IN ('ready_for_reading', 'embedding', 'ready')
+                  AND m.processing_status = 'ready_for_reading'
                 ORDER BY mcis.updated_at ASC, mcis.media_id ASC
                 LIMIT :limit
                 """
@@ -335,7 +335,11 @@ def reconcile_stale_ingest_media_job(
                               NOT EXISTS (
                                   SELECT 1
                                   FROM media_content_index_states mcis
-                                  JOIN source_snapshots ss ON ss.index_run_id = mcis.active_run_id
+                                  JOIN content_index_runs active_run
+                                    ON active_run.id = mcis.active_run_id
+                                   AND active_run.state = 'ready'
+                                   AND active_run.deactivated_at IS NULL
+                                  JOIN source_snapshots ss ON ss.index_run_id = active_run.id
                                   WHERE mcis.media_id = mts.media_id
                                     AND mcis.status = 'ready'
                                     AND mcis.active_embedding_provider = :embedding_provider

@@ -18,6 +18,7 @@ import {
 } from "@/lib/api/resource";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/api";
+import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 
 // Bootstrap prefetch deadline — paint-adjacent, never paint-blocking (D-10/AC-10).
 // callFastAPI aborts the upstream at this deadline; a timed-out loader is omitted
@@ -32,23 +33,6 @@ interface SeededResource {
 }
 
 type PaneServerLoader = (params: RouteParams) => Promise<SeededResource>;
-
-// Mirrors shouldLoadInitialFragments in MediaPaneBody. Kept honest by media's
-// AC-4 hydration-hit test: if either side drifts, the seeded shape stops matching
-// and the test fails.
-function mediaLoadsInitialFragments(media: {
-  kind?: string;
-  capabilities?: { can_read?: boolean } | null;
-}): boolean {
-  return (
-    media.kind !== "epub" &&
-    media.kind !== "pdf" &&
-    media.kind !== "web_article" &&
-    (media.kind !== "podcast_episode" && media.kind !== "video"
-      ? true
-      : Boolean(media.capabilities?.can_read))
-  );
-}
 
 // Server-side prefetch for the URL-primary pane (D-6): each loader seeds the EXACT
 // cacheKey + value shape the pane's useResource reads, so the initial pane paints
@@ -101,7 +85,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
         opts,
       )
     ).data;
-    const fragments = mediaLoadsInitialFragments(media)
+    const fragments = shouldLoadInitialMediaFragments(media)
       ? (
           await callFastAPI<{ data: unknown }>(
             mediaFragmentsResource.serverPath(resourceParams),

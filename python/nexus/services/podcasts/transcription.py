@@ -39,6 +39,10 @@ from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
+from nexus.services.media_processing_state import (
+    mark_extraction_started_by_id,
+    mark_failed_by_id,
+)
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
@@ -118,13 +122,18 @@ def _semantic_index_requires_repair(
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model,
                 mcis.active_embedding_version,
-                mcis.active_embedding_config_hash
+                mcis.active_embedding_config_hash,
+                active_run.id IS NOT NULL AS has_active_ready_run
             FROM podcast_transcript_versions ptv
             LEFT JOIN media_content_index_states mcis ON mcis.media_id = ptv.media_id
+            LEFT JOIN content_index_runs active_run
+              ON active_run.id = mcis.active_run_id
+             AND active_run.state = 'ready'
+             AND active_run.deactivated_at IS NULL
             LEFT JOIN source_snapshots ss ON ss.id = (
                 SELECT id
                 FROM source_snapshots
-                WHERE index_run_id = mcis.active_run_id
+                WHERE index_run_id = active_run.id
                   AND source_kind = 'transcript'
                 ORDER BY created_at DESC
                 LIMIT 1
@@ -138,6 +147,7 @@ def _semantic_index_requires_repair(
         return True
     return (
         row[0] != "ready"
+        or row[6] is not True
         or row[1] != str(transcript_version_id)
         or row[2] != embedding_provider
         or row[3] != embedding_model
@@ -938,27 +948,13 @@ def mark_podcast_transcription_failure(
         transcript_state = "failed_provider"
 
     if mark_media_failed:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'failed',
-                    failure_stage = 'transcribe',
-                    last_error_code = :error_code,
-                    last_error_message = :error_message,
-                    processing_completed_at = NULL,
-                    failed_at = :now,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "error_code": error_code,
-                "error_message": error_message[:1000],
-                "now": now,
-            },
+        mark_failed_by_id(
+            db,
+            media_id=media_id,
+            stage="transcribe",
+            error_code=error_code,
+            error_message=error_message[:1000],
+            now=now,
         )
     db.execute(
         text(
@@ -1194,26 +1190,10 @@ def run_podcast_transcription_now(
         return TranscriptionRunResult(status="failed", error_code=ApiErrorCode.E_INVALID_KIND.value)
 
     if mark_media_ready or mark_media_failed:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'extracting',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_started_at = :now,
-                    processing_completed_at = NULL,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "now": claim_now,
-            },
+        mark_extraction_started_by_id(
+            db,
+            media_id=media_id,
+            now=claim_now,
         )
     set_media_transcript_state(
         db,
@@ -1389,7 +1369,11 @@ def repair_podcast_transcript_semantic_index_now(
                           NOT EXISTS (
                               SELECT 1
                               FROM media_content_index_states mcis
-                              JOIN source_snapshots ss ON ss.index_run_id = mcis.active_run_id
+                              JOIN content_index_runs active_run
+                                ON active_run.id = mcis.active_run_id
+                               AND active_run.state = 'ready'
+                               AND active_run.deactivated_at IS NULL
+                              JOIN source_snapshots ss ON ss.index_run_id = active_run.id
                               WHERE mcis.media_id = mts.media_id
                                 AND mcis.status = 'ready'
                                 AND mcis.active_embedding_provider = :embedding_provider
