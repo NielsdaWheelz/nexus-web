@@ -182,9 +182,7 @@ def test_author_thread_fetch_paginates_and_fetches_missing_quotes(monkeypatch):
                                 "text": "Second same-author post.",
                                 "created_at": "2026-04-15T12:01:00.000Z",
                                 "conversation_id": "1234567890",
-                                "referenced_tweets": [
-                                    {"type": "replied_to", "id": "1234567890"}
-                                ],
+                                "referenced_tweets": [{"type": "replied_to", "id": "1234567890"}],
                             }
                         ],
                         "meta": {"result_count": 1},

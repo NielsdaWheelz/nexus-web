@@ -313,7 +313,9 @@ def upload_client(engine, fake_storage, monkeypatch):
 
     # Patch storage to use fake client
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
-    monkeypatch.setattr("nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage)
+    monkeypatch.setattr(
+        "nexus.services.media_source_ingest.get_storage_client", lambda: fake_storage
+    )
     monkeypatch.setattr("nexus.services.media_file_access.get_storage_client", lambda: fake_storage)
 
     verifier = MockJwtVerifier()

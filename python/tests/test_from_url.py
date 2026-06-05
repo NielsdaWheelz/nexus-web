@@ -116,7 +116,9 @@ def _patch_remote_file_limits(monkeypatch, *, limit_bytes: int = REMOTE_FILE_LIM
 
 
 def _patch_remote_storage(monkeypatch, storage_client) -> None:
-    monkeypatch.setattr("nexus.services.media_source_ingest.get_storage_client", lambda: storage_client)
+    monkeypatch.setattr(
+        "nexus.services.media_source_ingest.get_storage_client", lambda: storage_client
+    )
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.tasks.ingest_epub.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.tasks.ingest_pdf.get_storage_client", lambda: storage_client)

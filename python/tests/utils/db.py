@@ -122,7 +122,9 @@ class DirectSessionManager:
 
                 if table == "background_jobs" and column == "id":
                     session.execute(
-                        text("UPDATE media_source_attempts SET job_id = NULL WHERE job_id = :value"),
+                        text(
+                            "UPDATE media_source_attempts SET job_id = NULL WHERE job_id = :value"
+                        ),
                         {"value": value},
                     )
 

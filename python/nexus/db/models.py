@@ -1101,6 +1101,7 @@ class MediaSourceAttempt(Base):
         ),
     )
 
+
 class ProjectGutenbergCatalogEntry(Base):
     """Local mirror of the Project Gutenberg catalog metadata feed."""
 

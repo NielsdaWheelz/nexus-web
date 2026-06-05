@@ -8047,32 +8047,27 @@ class TestDurableSourceIngestMigrations:
         assert "ck_media_source_attempts_status" in constraints
         assert "uq_media_source_attempts_media_attempt" in constraints
         assert "FOREIGN KEY (media_id) REFERENCES media(id)" in set(constraints.values())
-        assert "FOREIGN KEY (created_by_user_id) REFERENCES users(id)" in set(
-            constraints.values()
-        )
-        assert "FOREIGN KEY (job_id) REFERENCES background_jobs(id)" in set(
-            constraints.values()
-        )
+        assert "FOREIGN KEY (created_by_user_id) REFERENCES users(id)" in set(constraints.values())
+        assert "FOREIGN KEY (job_id) REFERENCES background_jobs(id)" in set(constraints.values())
 
         assert "idx_media_source_attempts_media_created" in indexes
         assert "created_at DESC" in indexes["idx_media_source_attempts_media_created"]
         assert "id DESC" in indexes["idx_media_source_attempts_media_created"]
         assert "idx_media_source_attempts_request_id" in indexes
-        assert "WHERE (request_id IS NOT NULL)" in indexes[
-            "idx_media_source_attempts_request_id"
-        ]
+        assert "WHERE (request_id IS NOT NULL)" in indexes["idx_media_source_attempts_request_id"]
         assert "idx_media_source_attempts_source_type_status_updated" in indexes
         assert "source_type" in indexes["idx_media_source_attempts_source_type_status_updated"]
         assert "status" in indexes["idx_media_source_attempts_source_type_status_updated"]
         assert "idx_media_source_attempts_provider_target" in indexes
         assert "provider_target_ref" in indexes["idx_media_source_attempts_provider_target"]
-        assert "WHERE ((provider IS NOT NULL) AND (provider_target_ref IS NOT NULL))" in indexes[
-            "idx_media_source_attempts_provider_target"
-        ]
+        assert (
+            "WHERE ((provider IS NOT NULL) AND (provider_target_ref IS NOT NULL))"
+            in indexes["idx_media_source_attempts_provider_target"]
+        )
         assert "uq_media_source_attempts_idempotency" in indexes
-        assert "WHERE (idempotency_key IS NOT NULL)" in indexes[
-            "uq_media_source_attempts_idempotency"
-        ]
+        assert (
+            "WHERE (idempotency_key IS NOT NULL)" in indexes["uq_media_source_attempts_idempotency"]
+        )
 
     def test_external_provider_events_correlation_contract(self, migrated_engine):
         with Session(migrated_engine) as session:
@@ -8105,7 +8100,10 @@ class TestDurableSourceIngestMigrations:
         assert "ck_external_provider_events_status" in constraints
         assert "FOREIGN KEY (viewer_id) REFERENCES users(id)" in constraint_defs
         assert "FOREIGN KEY (media_id) REFERENCES media(id)" in constraint_defs
-        assert "FOREIGN KEY (source_attempt_id) REFERENCES media_source_attempts(id)" in constraint_defs
+        assert (
+            "FOREIGN KEY (source_attempt_id) REFERENCES media_source_attempts(id)"
+            in constraint_defs
+        )
         assert "ix_external_provider_events_request_id" in indexes
         assert "ix_external_provider_events_source_attempt_id" in indexes
         assert "ix_external_provider_events_provider_status_created" in indexes

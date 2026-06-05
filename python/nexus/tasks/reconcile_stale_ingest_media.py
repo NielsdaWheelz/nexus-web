@@ -457,7 +457,6 @@ def _dispatch_recovery_task(db: Session, media: Media, request_id: str | None) -
     raise ValueError(f"Unsupported recovery kind: {media.kind}")
 
 
-
 def _mark_content_index_state_failed(db: Session, media_id, message: str) -> None:
     db.execute(
         text(

@@ -62,9 +62,7 @@ def _run_source_attempt_for_media(direct_db, media_id: UUID) -> dict[str, object
         )
 
 
-def test_live_x_author_thread_ingest_indexes_real_provider_thread(
-    auth_client, direct_db, tmp_path
-):
+def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, direct_db, tmp_path):
     settings = get_settings()
     if settings.nexus_env.value == "test":
         pytest.fail("live provider gate must run with NEXUS_ENV=local, staging, or prod")
@@ -129,9 +127,7 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(
     media_trace = assert_media_ready(auth_client, headers, media_id)
     fragment_trace = assert_fragment_content_contains(direct_db, media_id, expected_text)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "web_article", "web")
-    search_trace = assert_search_and_resolver(
-        auth_client, headers, media_id, expected_text, "web"
-    )
+    search_trace = assert_search_and_resolver(auth_client, headers, media_id, expected_text, "web")
 
     assert provider_event["provider"] == "x", provider_event
     assert provider_event["capability"] == "author-thread", provider_event

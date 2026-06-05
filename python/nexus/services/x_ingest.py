@@ -274,6 +274,7 @@ def _refresh_x_author_thread_media_for_viewer(
         "idempotency_outcome": "refreshed",
     }
 
+
 def _create_or_reuse_x_snapshot_post_media(
     db: Session,
     viewer_id: UUID,

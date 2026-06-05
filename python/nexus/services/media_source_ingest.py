@@ -451,8 +451,7 @@ def accept_browser_file_capture(
                 source_attempt_status=existing_attempt.status,
                 idempotency_outcome="reused",
                 processing_status=_status_to_str(media.processing_status),
-                ingest_enqueued=existing_attempt.status
-                in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
+                ingest_enqueued=existing_attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
             )
 
     existing_media = _find_reusable_file_media(db, viewer_id, kind, sha256)
@@ -521,7 +520,9 @@ def accept_browser_file_capture(
         db, viewer_id, media.id, library_ids
     )
     valid_signature = has_valid_file_signature(payload, kind)
-    storage_path = build_storage_path(media.id, get_file_extension(kind)) if valid_signature else None
+    storage_path = (
+        build_storage_path(media.id, get_file_extension(kind)) if valid_signature else None
+    )
     if valid_signature:
         media.file_sha256 = sha256
         db.add(
@@ -736,9 +737,7 @@ def run_source_attempt(
     """Run one queued source attempt and persist the terminal attempt state."""
     attempt = (
         db.execute(
-            select(MediaSourceAttempt)
-            .where(MediaSourceAttempt.id == attempt_id)
-            .with_for_update()
+            select(MediaSourceAttempt).where(MediaSourceAttempt.id == attempt_id).with_for_update()
         )
         .scalars()
         .one_or_none()
@@ -1479,9 +1478,7 @@ def _supersede_source_media(
 ) -> list[str]:
     attempt = (
         db.execute(
-            select(MediaSourceAttempt)
-            .where(MediaSourceAttempt.id == attempt_id)
-            .with_for_update()
+            select(MediaSourceAttempt).where(MediaSourceAttempt.id == attempt_id).with_for_update()
         )
         .scalars()
         .one_or_none()
@@ -1909,7 +1906,9 @@ def _run_podcast_episode_transcript(
             "Podcast transcript source attempts must target podcast episode media.",
         )
 
-    request_reason = _podcast_request_reason(dict(attempt.source_payload or {}).get("request_reason"))
+    request_reason = _podcast_request_reason(
+        dict(attempt.source_payload or {}).get("request_reason")
+    )
     begin_extraction(db, media)
     if request_reason == "operator_requeue":
         prepare_podcast_transcription_for_source_attempt(
@@ -2239,7 +2238,11 @@ def _run_post_success_source_actions(
             ).scalars()
         )
         first_fragment = next(
-            (fragment for fragment in fragments if fragment_id is None or fragment.id == fragment_id),
+            (
+                fragment
+                for fragment in fragments
+                if fragment_id is None or fragment.id == fragment_id
+            ),
             None,
         )
         if first_fragment is not None:
@@ -2372,11 +2375,7 @@ def _find_idempotent_source_action_attempt(
     if attempt is None:
         return None
     intent = _parse_source_action_intent_key(attempt.intent_key)
-    if (
-        intent is None
-        or intent.get("media_id") != str(media_id)
-        or intent.get("action") != action
-    ):
+    if intent is None or intent.get("media_id") != str(media_id) or intent.get("action") != action:
         raise ConflictError(
             ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
             "Idempotency key was reused for a different source ingest request.",
@@ -2421,7 +2420,9 @@ def _parse_source_action_intent_key(intent_key: str) -> dict[str, str] | None:
     action = payload.get("action")
     media_id = payload.get("media_id")
     previous_attempt_id = payload.get("previous_attempt_id")
-    if not all(isinstance(value, str) and value for value in (action, media_id, previous_attempt_id)):
+    if not all(
+        isinstance(value, str) and value for value in (action, media_id, previous_attempt_id)
+    ):
         return None
     return {
         "action": action,

@@ -46,7 +46,9 @@ def _register_youtube_media_cleanup(
     direct_db.register_cleanup("media", "id", media_id)
 
 
-def _run_latest_source_attempt(direct_db: DirectSessionManager, media_id: UUID) -> dict[str, object]:
+def _run_latest_source_attempt(
+    direct_db: DirectSessionManager, media_id: UUID
+) -> dict[str, object]:
     from nexus.services.media_source_ingest import run_source_attempt
 
     with direct_db.session() as session:
