@@ -142,7 +142,7 @@ def derive_capabilities(
         can_play = False
 
     if is_pdf:
-        can_read = media_file_exists
+        can_read = media_file_exists and processing_status != ProcessingStatus.failed.value
     elif is_document:
         can_read = status_ready_for_reading
     elif is_transcript_media:
@@ -153,13 +153,15 @@ def derive_capabilities(
     else:
         raise ValueError(f"Unsupported media kind: {kind}")
 
-    if is_transcript_unavailable:
+    if is_pdf:
+        can_highlight = media_file_exists and status_ready_for_reading
+    elif is_transcript_unavailable:
         can_highlight = False
     else:
         can_highlight = can_read
 
     if is_pdf:
-        can_quote = can_read and pdf_quote_text_ready
+        can_quote = can_highlight and pdf_quote_text_ready
     elif is_transcript_unavailable:
         can_quote = False
     else:

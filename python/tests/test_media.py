@@ -4569,6 +4569,33 @@ class TestPdfCapabilityDerivation:
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
 
+    def test_get_media_failed_pdf_can_download_but_not_read(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="extract",
+                last_error_code="E_PDF_PASSWORD_REQUIRED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_read"] is False
+        assert caps["can_highlight"] is False
+        assert caps["can_quote"] is False
+        assert caps["can_search"] is False
+        assert caps["can_download_file"] is True
+
     def test_get_media_pdf_quote_search_capabilities_require_full_text_readiness(
         self, auth_client, direct_db: DirectSessionManager
     ):

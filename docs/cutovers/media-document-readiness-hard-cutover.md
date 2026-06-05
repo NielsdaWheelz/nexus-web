@@ -239,6 +239,11 @@ the product intentionally supports file viewing. `can_quote`, page-range text
 reads, and search require extracted text/page spans or a ready retrieval index,
 as appropriate.
 
+Terminal PDF extraction failures are not visual-readable through the media
+reader even when the original file remains downloadable. Password-protected or
+encrypted PDFs must surface the failed-document UI rather than falling through
+to the PDF viewer.
+
 `ocr_required` is a retrieval/text-read state. It must not be collapsed into
 `processing_status = failed` unless source extraction itself failed.
 

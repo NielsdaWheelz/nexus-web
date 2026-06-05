@@ -476,6 +476,40 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
+  it("renders password-protected failed PDFs outside the PDF reader", async () => {
+    testState.mediaKind = "pdf";
+    testState.apiFetch.mockImplementation(async (input: unknown) => {
+      const path = pathOf(input);
+      if (path === "/api/media/media-1") {
+        const media = mediaResponse();
+        return jsonResponse({
+          ...media,
+          processing_status: "failed",
+          last_error_code: "E_PDF_PASSWORD_REQUIRED",
+          capabilities: {
+            ...media.capabilities,
+            can_read: false,
+            can_highlight: false,
+            can_quote: false,
+            can_search: false,
+            can_download_file: true,
+          },
+        });
+      }
+      if (path === "/api/media/media-1/highlights") {
+        return jsonResponse({ highlights: [] });
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    renderMediaPane();
+
+    expect(
+      await screen.findByText("This PDF is password-protected"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("pdf-reader")).not.toBeInTheDocument();
+  });
+
   it.each(["epub", "web_article"] as const)(
     "renders readable %s text content",
     async (kind) => {

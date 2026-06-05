@@ -18,7 +18,7 @@ class TestPdfCapabilities:
     """Tests for PDF media capabilities."""
 
     def test_pdf_pending_with_file(self):
-        """PDF with file in pending status can be read (pdf.js renders)."""
+        """PDF with file in pending status can be viewed but not annotated."""
         caps = derive_capabilities(
             kind="pdf",
             processing_status="pending",
@@ -28,12 +28,30 @@ class TestPdfCapabilities:
         )
 
         assert caps.can_read is True
-        assert caps.can_highlight is True
+        assert caps.can_highlight is False
         assert caps.can_download_file is True
         # PDF can_quote requires plain_text extraction
         assert caps.can_quote is False
         assert caps.can_search is False
         assert caps.can_play is False
+
+    def test_pdf_failed_with_file_can_download_but_not_read(self):
+        """Terminal PDF extraction failures do not enter the reader surface."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code="E_PDF_PASSWORD_REQUIRED",
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            pdf_quote_text_ready=True,
+            retrieval_status="ready",
+        )
+
+        assert caps.can_read is False
+        assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
+        assert caps.can_download_file is True
 
     def test_pdf_ready_for_reading_with_plain_text(self):
         """PDF ready_for_reading with full quote readiness can quote."""
