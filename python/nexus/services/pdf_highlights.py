@@ -31,11 +31,11 @@ from nexus.schemas.highlights import (
     PdfBoundsUpdate,
     TypedHighlightOut,
 )
+from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
     project_highlights_with_links,
 )
-from nexus.services.capabilities import is_document_status_ready
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
     GeometryValidationError,
