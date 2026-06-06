@@ -30,6 +30,15 @@ describe("retrieval locator contract", () => {
         text_quote_selector: { exact: "unsupported quote" },
       }),
     ).toBe(false);
+    expect(
+      isRetrievalLocator({
+        type: "transcript_time_range",
+        media_id: "media-1",
+        transcript_version_id: "transcript-version-1",
+        t_start_ms: 1,
+        t_end_ms: 2,
+      }),
+    ).toBe(false);
   });
 
   it("accepts documented locator variants at runtime", () => {

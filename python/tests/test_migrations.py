@@ -178,8 +178,8 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
     """Insert the minimum rows needed to exercise evidence_span offset constraints."""
     user_id = uuid4()
     media_id = uuid4()
-    run_id = uuid4()
-    snapshot_id = uuid4()
+    index_run_id = uuid4()
+    source_snapshot_id = uuid4()
     first_block_id = uuid4()
     second_block_id = uuid4()
 
@@ -213,18 +213,18 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
                 :id,
                 :media_id,
                 'ready',
-                'test_source_v1',
-                'test_extractor_v1',
-                'test_chunker_v1',
-                'test',
-                'test_model',
-                'test_model',
-                :hash,
+                'fixture:v1',
+                'fixture',
+                'fixture',
+                'fixture',
+                'fixture',
+                'fixture',
+                'fixture',
                 now()
             )
             """
         ),
-        {"id": run_id, "media_id": media_id, "hash": "a" * 64},
+        {"id": index_run_id, "media_id": media_id},
     )
     session.execute(
         text(
@@ -247,21 +247,26 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
             VALUES (
                 :id,
                 :media_id,
-                :run_id,
+                :index_run_id,
                 'web_article',
-                'html',
+                'fragments',
                 'fixture',
-                'text/html',
-                22,
-                'fixture-fingerprint',
-                'test_source_v1',
-                'test_extractor_v1',
-                :sha,
+                'text/plain',
+                25,
+                'fixture',
+                'fixture:v1',
+                'fixture',
+                :content_sha256,
                 '{}'::jsonb
             )
             """
         ),
-        {"id": snapshot_id, "media_id": media_id, "run_id": run_id, "sha": "b" * 64},
+        {
+            "id": source_snapshot_id,
+            "media_id": media_id,
+            "index_run_id": index_run_id,
+            "content_sha256": "a" * 64,
+        },
     )
     for block_idx, block_id, text_value, start_offset, end_offset in (
         (0, first_block_id, "first block", 0, 11),
@@ -289,12 +294,12 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
                 VALUES (
                     :id,
                     :media_id,
-                    :run_id,
-                    :snapshot_id,
+                    :index_run_id,
+                    :source_snapshot_id,
                     :block_idx,
                     'paragraph',
                     :text_value,
-                    :sha,
+                    :text_sha256,
                     :start_offset,
                     :end_offset,
                     '[]'::jsonb,
@@ -307,11 +312,11 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
             {
                 "id": block_id,
                 "media_id": media_id,
-                "run_id": run_id,
-                "snapshot_id": snapshot_id,
+                "index_run_id": index_run_id,
+                "source_snapshot_id": source_snapshot_id,
                 "block_idx": block_idx,
                 "text_value": text_value,
-                "sha": str(block_idx) * 64,
+                "text_sha256": "b" * 64,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
             },
@@ -320,8 +325,8 @@ def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
 
     return {
         "media_id": media_id,
-        "run_id": run_id,
-        "snapshot_id": snapshot_id,
+        "index_run_id": index_run_id,
+        "source_snapshot_id": source_snapshot_id,
         "first_block_id": first_block_id,
         "second_block_id": second_block_id,
     }
@@ -353,14 +358,14 @@ def insert_cross_block_backwards_evidence_span(
             VALUES (
                 :id,
                 :media_id,
-                :run_id,
-                :snapshot_id,
+                :index_run_id,
+                :source_snapshot_id,
                 :first_block_id,
                 :second_block_id,
                 9,
                 2,
                 'cross block span',
-                :sha,
+                :span_sha256,
                 '{}'::jsonb,
                 'Fixture',
                 'web'
@@ -370,11 +375,11 @@ def insert_cross_block_backwards_evidence_span(
         {
             "id": evidence_span_id,
             "media_id": fixture["media_id"],
-            "run_id": fixture["run_id"],
-            "snapshot_id": fixture["snapshot_id"],
+            "index_run_id": fixture["index_run_id"],
+            "source_snapshot_id": fixture["source_snapshot_id"],
             "first_block_id": fixture["first_block_id"],
             "second_block_id": fixture["second_block_id"],
-            "sha": "c" * 64,
+            "span_sha256": "c" * 64,
         },
     )
     return evidence_span_id
@@ -1026,7 +1031,7 @@ class TestMigrationUpgradeDowngrade:
 
     def test_0127_backfills_owned_asset_columns(self):
         """The 0072 seed plates are backfilled to the bundled owned-asset fixture
-        and the four object-provenance columns become NOT NULL at head."""
+        and the current owned-asset columns remain NOT NULL at head."""
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -1038,7 +1043,7 @@ class TestMigrationUpgradeDowngrade:
                     session.execute(
                         text(
                             """
-                            SELECT storage_key, content_type, byte_size, sha256
+                            SELECT storage_key, content_type, byte_size
                             FROM oracle_corpus_images
                             """
                         )
@@ -1046,56 +1051,52 @@ class TestMigrationUpgradeDowngrade:
                     .mappings()
                     .all()
                 )
+                columns = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'oracle_corpus_images'
+                            """
+                        )
+                    )
+                }
 
             assert rows, "expected at least one seeded oracle_corpus_images row"
+            assert "sha256" not in columns
+            assert "corpus_set_version_id" not in columns
             for row in rows:
-                assert (
-                    row["storage_key"]
-                    == "oracle/plates/451cc39a41ea2a2b1bb0dccc9e58df2c7908bd0bac67d219878bf767234a8fa3.jpg"
-                )
+                assert row["storage_key"].startswith("oracle/plates/")
+                assert row["storage_key"].endswith(".jpg")
                 assert row["content_type"] == "image/jpeg"
                 assert row["byte_size"] == 9382
-                assert (
-                    row["sha256"]
-                    == "451cc39a41ea2a2b1bb0dccc9e58df2c7908bd0bac67d219878bf767234a8fa3"
-                )
                 assert row["storage_key"] is not None
                 assert row["content_type"] is not None
                 assert row["byte_size"] is not None
-                assert row["sha256"] is not None
         finally:
             engine.dispose()
             reset_test_schema()
 
     def test_0127_owned_asset_schema_contract_is_enforced(self):
-        """The four object-provenance columns are not merely backfilled — the
-        head schema enforces the invariants. Each negative insert below is valid
-        EXCEPT for the one field under test and must be rejected by the matching
-        NOT NULL / CHECK constraint. This guards against a regression that
-        dropped ``SET NOT NULL`` or any of the four 0127 CHECK constraints while
-        leaving the backfill (and thus ``test_0127_backfills_owned_asset_columns``)
-        passing. (§6 DB-constraint testing exception.)"""
+        """The current owned-asset columns are not merely backfilled.
+
+        The head schema enforces the surviving route/storage invariants after
+        the current-only cutover drops corpus-version and SHA identity.
+        """
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
             result = run_alembic_command("upgrade head")
             assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
 
-            # The deterministic 0072 seed plates exist at head; reuse an existing
-            # corpus_set_version_id so every negative insert is FK-valid and
-            # differs from a good row by exactly the one field under test.
-            with Session(engine) as session:
-                corpus_set_version_id = session.execute(
-                    text("SELECT corpus_set_version_id FROM oracle_corpus_images LIMIT 1")
-                ).scalar_one()
-
             # Known-good column template (everything but ``id``/``created_at``/``tags``,
             # which carry server defaults). Each case overrides exactly one binding.
             def good_params() -> dict:
-                digest = "0" * 64
+                slug = f"contract-test-{str(uuid4())[:8]}"
                 return {
                     "id": uuid4(),
-                    "corpus_set_version_id": corpus_set_version_id,
                     "source_repository": "wikimedia",
                     "source_url": f"https://example.test/{uuid4()}.jpg",
                     "artist": "Anon",
@@ -1103,17 +1104,15 @@ class TestMigrationUpgradeDowngrade:
                     "attribution_text": "Attribution",
                     "width": 1,
                     "height": 1,
-                    "storage_key": f"oracle/plates/{digest}.jpg",
+                    "storage_key": f"oracle/plates/{slug}.jpg",
                     "content_type": "image/jpeg",
                     "byte_size": 1,
-                    "sha256": digest,
                 }
 
             insert_sql = text(
                 """
                 INSERT INTO oracle_corpus_images (
                     id,
-                    corpus_set_version_id,
                     source_repository,
                     source_url,
                     artist,
@@ -1123,12 +1122,10 @@ class TestMigrationUpgradeDowngrade:
                     height,
                     storage_key,
                     content_type,
-                    byte_size,
-                    sha256
+                    byte_size
                 )
                 VALUES (
                     :id,
-                    :corpus_set_version_id,
                     :source_repository,
                     :source_url,
                     :artist,
@@ -1138,8 +1135,7 @@ class TestMigrationUpgradeDowngrade:
                     :height,
                     :storage_key,
                     :content_type,
-                    :byte_size,
-                    :sha256
+                    :byte_size
                 )
                 """
             )
@@ -1157,24 +1153,10 @@ class TestMigrationUpgradeDowngrade:
                 ({"byte_size": 0}, ("ck_oracle_images_byte_size_positive",)),
                 # 3) disallowed content_type -> ck_oracle_images_content_type.
                 ({"content_type": "image/svg+xml"}, ("ck_oracle_images_content_type",)),
-                # 4) sha256 not 64 lowercase hex chars -> ck_oracle_images_sha256_hex.
-                (
-                    {"sha256": "short"},
-                    ("ck_oracle_images_sha256_hex", "storage_key_sha256_match"),
-                ),
-                (
-                    {"sha256": "A" * 64},
-                    ("ck_oracle_images_sha256_hex", "storage_key_sha256_match"),
-                ),
-                # 5) storage_key must be oracle/plates/<64 lowercase hex>.<ext>.
-                ({"storage_key": "oracle/plates/contract-test.jpg"}, ("storage_key_shape",)),
+                # 4) storage_key must be oracle/plates/<stable-key>.<ext>.
+                ({"storage_key": "oracle/plates/.jpg"}, ("storage_key_shape",)),
                 ({"storage_key": "media/x.jpg"}, ("storage_key_shape",)),
-                # 6) storage_key digest must equal sha256.
-                (
-                    {"storage_key": f"oracle/plates/{'1' * 64}.jpg"},
-                    ("storage_key_sha256_match",),
-                ),
-                # 7) storage_key extension must match content_type.
+                # 5) storage_key extension must match content_type.
                 ({"content_type": "image/png"}, ("storage_key_content_type_match",)),
             ]
 
@@ -1795,9 +1777,9 @@ class TestMigrationUpgradeDowngrade:
 
             assert all(row[0] is not None for row in rows)
             indexed_by_media = {row[1]: (row[2], row[3]) for row in rows}
-            assert indexed_by_media[web_id] == ("pending", "evidence_cutover_backfill")
-            assert indexed_by_media[epub_id] == ("pending", "evidence_cutover_backfill")
-            assert indexed_by_media[pdf_id] == ("pending", "evidence_cutover_backfill")
+            assert indexed_by_media[web_id] == ("pending", "current_only_artifacts_cutover")
+            assert indexed_by_media[epub_id] == ("pending", "current_only_artifacts_cutover")
+            assert indexed_by_media[pdf_id] == ("pending", "current_only_artifacts_cutover")
             assert pending_id not in indexed_by_media
         finally:
             reset_test_schema()
@@ -2092,6 +2074,587 @@ class TestMigrationUpgradeDowngrade:
                     session.commit()
                 session.rollback()
                 assert "ck_message_retrievals_result_type" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0138_current_only_artifacts_strips_identity_and_drops_columns(self):
+        """0138 is a hard cutover from versioned/hash artifact identity to current rows."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        legacy_keys = {
+            "base_page_revision",
+            "base_revision",
+            "block_hashes",
+            "contentHash",
+            "contentSha256",
+            "content_hash",
+            "content_sha256",
+            "fileSha256",
+            "file_sha256",
+            "fingerprint",
+            "geometry_fingerprint",
+            "geometry_version",
+            "hash",
+            "manifestSha256",
+            "manifest_sha256",
+            "provider_request_hash",
+            "revision",
+            "sha256",
+            "sourceFingerprint",
+            "sourceVersion",
+            "source_fingerprint",
+            "source_sha256",
+            "source_version",
+            "stable_hash",
+            "stable_prefix_hash",
+            "transcriptVersionId",
+            "transcript_version_id",
+            "version",
+        }
+
+        def assert_no_legacy_identity(value):
+            if isinstance(value, dict):
+                assert legacy_keys.isdisjoint(value.keys())
+                for child in value.values():
+                    assert_no_legacy_identity(child)
+            elif isinstance(value, list):
+                for child in value:
+                    assert_no_legacy_identity(child)
+
+        try:
+            result = run_alembic_command("upgrade 0136")
+            assert result.returncode == 0, f"upgrade to 0136 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            tool_call_id = uuid4()
+            retrieval_id = uuid4()
+            candidate_id = uuid4()
+            pdf_media_id = uuid4()
+            epub_media_id = uuid4()
+            podcast_id = uuid4()
+            podcast_media_id = uuid4()
+            legacy_opml_provider_id = "opml-" + ("a" * 40)
+            legacy_feed_episode_id = "feed-" + ("b" * 40)
+            page_id = uuid4()
+            note_block_id = uuid4()
+            search_document_id = uuid4()
+
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text("""
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :user_id, 'private', 3)
+                    """),
+                    {"id": conversation_id, "user_id": user_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, message_document
+                        )
+                        VALUES (
+                            :id, :conversation_id, 1, 'user', 'legacy user', 'complete',
+                            CAST(:message_document AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": user_message_id,
+                        "conversation_id": conversation_id,
+                        "message_document": json.dumps(
+                            {
+                                "type": "message_document",
+                                "blocks": [
+                                    {
+                                        "type": "text",
+                                        "sourceVersion": "fragment:v1",
+                                        "stable_hash": "old-block-hash",
+                                        "attrs": {
+                                            "sha256": "a" * 64,
+                                            "source_fingerprint": "sha256:old",
+                                            "block_hashes": ["old-block-hash"],
+                                        },
+                                    }
+                                ],
+                                "stable_prefix_hash": "old-prefix",
+                            }
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status,
+                            parent_message_id, message_document
+                        )
+                        VALUES (
+                            :id, :conversation_id, 2, 'assistant', 'legacy assistant', 'complete',
+                            :parent_message_id, CAST(:message_document AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": user_message_id,
+                        "message_document": json.dumps(
+                            {
+                                "type": "message_document",
+                                "version": 1,
+                                "blocks": [
+                                    {
+                                        "type": "citation",
+                                        "result_ref": {
+                                            "type": "media",
+                                            "id": str(pdf_media_id),
+                                            "source_version": "media:v1",
+                                            "file_sha256": "b" * 64,
+                                            "provider_request_hash": "old-provider-request",
+                                        },
+                                    }
+                                ],
+                            }
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id, file_sha256
+                        )
+                        VALUES (
+                            :id, 'pdf', 'Legacy PDF', 'pending', :user_id, :file_sha256
+                        )
+                    """),
+                    {"id": pdf_media_id, "user_id": user_id, "file_sha256": "c" * 64},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id, file_sha256
+                        )
+                        VALUES (
+                            :id, 'epub', 'Legacy EPUB', 'pending', :user_id, :file_sha256
+                        )
+                    """),
+                    {"id": epub_media_id, "user_id": user_id, "file_sha256": "d" * 64},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO podcasts (
+                            id, provider, provider_podcast_id, title, feed_url
+                        )
+                        VALUES (
+                            :id, 'podcast_index', :provider_podcast_id,
+                            'Legacy Podcast', 'https://example.test/feed.xml'
+                        )
+                    """),
+                    {"id": podcast_id, "provider_podcast_id": legacy_opml_provider_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id,
+                            canonical_source_url, external_playback_url, provider,
+                            provider_id, published_date
+                        )
+                        VALUES (
+                            :id, 'podcast_episode', 'Legacy Episode', 'ready_for_reading',
+                            :user_id, 'https://example.test/feed.xml',
+                            'https://cdn.example.test/audio.mp3', 'podcast_index',
+                            'legacy-episode', '2026-01-02T03:04:05Z'
+                        )
+                    """),
+                    {"id": podcast_media_id, "user_id": user_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO podcast_episodes (
+                            media_id, podcast_id, provider_episode_id, fallback_identity
+                        )
+                        VALUES (
+                            :media_id, :podcast_id, :provider_episode_id, :fallback_identity
+                        )
+                    """),
+                    {
+                        "media_id": podcast_media_id,
+                        "podcast_id": podcast_id,
+                        "provider_episode_id": legacy_feed_episode_id,
+                        "fallback_identity": "f" * 64,
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO epub_resources (
+                            id, media_id, package_href, asset_key, storage_path,
+                            content_type, size_bytes, sha256
+                        )
+                        VALUES (
+                            :id, :media_id, 'images/cover.png', 'images/cover.png',
+                            'epub-assets/current/cover.png', 'image/png', 12, :sha256
+                        )
+                    """),
+                    {"id": uuid4(), "media_id": epub_media_id, "sha256": "e" * 64},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO media_source_attempts (
+                            id, media_id, created_by_user_id, source_type, attempt_no,
+                            status, intent_key, source_payload
+                        )
+                        VALUES (
+                            :id, :media_id, :user_id, 'uploaded_pdf_file', 1,
+                            'succeeded', 'legacy-intent', CAST(:source_payload AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": uuid4(),
+                        "media_id": pdf_media_id,
+                        "user_id": user_id,
+                        "source_payload": json.dumps(
+                            {
+                                "kind": "pdf",
+                                "file_sha256": "f" * 64,
+                                "nested": {"contentSha256": "0" * 64},
+                            }
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO pages (id, user_id, title, revision)
+                        VALUES (:id, :user_id, 'Legacy Page', 7)
+                    """),
+                    {"id": page_id, "user_id": user_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO note_blocks (
+                            id, user_id, page_id, order_key, body_pm_json, body_text, revision
+                        )
+                        VALUES (
+                            :id, :user_id, :page_id, 'a0',
+                            '{"type":"doc","content":[]}'::jsonb, 'Legacy block', 9
+                        )
+                    """),
+                    {"id": note_block_id, "user_id": user_id, "page_id": page_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO message_tool_calls (
+                            id, conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, status, result_refs,
+                            selected_context_refs
+                        )
+                        VALUES (
+                            :id, :conversation_id, :user_message_id, :assistant_message_id,
+                            'app_search', 0, 'complete', CAST(:result_refs AS jsonb),
+                            CAST(:selected_context_refs AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": tool_call_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "result_refs": json.dumps(
+                            [
+                                {
+                                    "type": "media",
+                                    "id": str(pdf_media_id),
+                                    "sourceVersion": "media:v1",
+                                    "sha256": "1" * 64,
+                                }
+                            ]
+                        ),
+                        "selected_context_refs": json.dumps(
+                            [
+                                {
+                                    "type": "reader_selection",
+                                    "locator": {"transcript_version_id": str(uuid4())},
+                                    "revision": 3,
+                                }
+                            ]
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO message_retrievals (
+                            id, tool_call_id, ordinal, result_type, source_id,
+                            media_id, context_ref, result_ref, locator, source_version
+                        )
+                        VALUES (
+                            :id, :tool_call_id, 0, 'media', :source_id, :media_id,
+                            CAST(:context_ref AS jsonb), CAST(:result_ref AS jsonb),
+                            CAST(:locator AS jsonb), 'media:v1'
+                        )
+                    """),
+                    {
+                        "id": retrieval_id,
+                        "tool_call_id": tool_call_id,
+                        "source_id": str(pdf_media_id),
+                        "media_id": pdf_media_id,
+                        "context_ref": json.dumps(
+                            {"type": "media", "id": str(pdf_media_id), "source_version": "media:v1"}
+                        ),
+                        "result_ref": json.dumps(
+                            {"type": "media", "id": str(pdf_media_id), "content_hash": "hash"}
+                        ),
+                        "locator": json.dumps(
+                            {
+                                "type": "pdf_text_quote",
+                                "media_id": str(pdf_media_id),
+                                "geometry_fingerprint": "old",
+                            }
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO message_retrieval_candidate_ledgers (
+                            id, tool_call_id, retrieval_id, ordinal, result_type, source_id,
+                            selection_status, selection_reason, result_ref, locator,
+                            source_version
+                        )
+                        VALUES (
+                            :id, :tool_call_id, :retrieval_id, 0, 'media', :source_id,
+                            'retrieved', 'migration', CAST(:result_ref AS jsonb),
+                            CAST(:locator AS jsonb), 'media:v1'
+                        )
+                    """),
+                    {
+                        "id": candidate_id,
+                        "tool_call_id": tool_call_id,
+                        "retrieval_id": retrieval_id,
+                        "source_id": str(pdf_media_id),
+                        "result_ref": json.dumps(
+                            {
+                                "type": "media",
+                                "id": str(pdf_media_id),
+                                "manifest_sha256": "2" * 64,
+                            }
+                        ),
+                        "locator": json.dumps(
+                            {"type": "pdf", "media_id": str(pdf_media_id), "fingerprint": "old"}
+                        ),
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO object_search_documents (
+                            id, user_id, object_type, object_id, title_text, body_text,
+                            search_text, route_path, content_hash, index_version,
+                            index_status
+                        )
+                        VALUES (
+                            :id, :user_id, 'page', :object_id, 'Legacy Search',
+                            'body', 'Legacy Search body', :route_path, 'old-hash',
+                            1, 'ready'
+                        )
+                    """),
+                    {
+                        "id": search_document_id,
+                        "user_id": user_id,
+                        "object_id": page_id,
+                        "route_path": f"/pages/{page_id}",
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                for table_name, removed_columns in {
+                    "media": {"file_sha256"},
+                    "epub_resources": {"sha256"},
+                    "pages": {"revision"},
+                    "note_blocks": {"revision"},
+                    "message_retrievals": {"source_version"},
+                    "message_retrieval_candidate_ledgers": {"source_version"},
+                    "object_search_documents": {"content_hash", "index_version"},
+                    "chat_prompt_assemblies": {
+                        "stable_prefix_hash",
+                        "provider_request_hash",
+                    },
+                    "message_llm": {"stable_prefix_hash"},
+                }.items():
+                    columns = {
+                        row[0]
+                        for row in session.execute(
+                            text("""
+                                SELECT column_name
+                                FROM information_schema.columns
+                                WHERE table_name = :table_name
+                            """),
+                            {"table_name": table_name},
+                        )
+                    }
+                    assert removed_columns.isdisjoint(columns)
+
+                indexes = {
+                    row[0]
+                    for row in session.execute(
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'media'")
+                    )
+                }
+                assert "uix_media_file_sha256" not in indexes
+                assert "idx_media_stale_pending_upload_cleanup" not in indexes
+
+                for value in session.execute(
+                    text("SELECT message_document FROM messages ORDER BY seq")
+                ).scalars():
+                    assert_no_legacy_identity(value)
+                for value in session.execute(
+                    text("SELECT source_payload FROM media_source_attempts")
+                ).scalars():
+                    assert_no_legacy_identity(value)
+                for row in session.execute(
+                    text("""
+                        SELECT context_ref, result_ref, locator
+                        FROM message_retrievals
+                    """)
+                ).mappings():
+                    assert_no_legacy_identity(row["context_ref"])
+                    assert_no_legacy_identity(row["result_ref"])
+                    assert_no_legacy_identity(row["locator"])
+                for row in session.execute(
+                    text("""
+                        SELECT result_ref, locator
+                        FROM message_retrieval_candidate_ledgers
+                    """)
+                ).mappings():
+                    assert_no_legacy_identity(row["result_ref"])
+                    assert_no_legacy_identity(row["locator"])
+                for row in session.execute(
+                    text("""
+                        SELECT result_refs, selected_context_refs
+                        FROM message_tool_calls
+                    """)
+                ).mappings():
+                    assert_no_legacy_identity(row["result_refs"])
+                    assert_no_legacy_identity(row["selected_context_refs"])
+
+                assert (
+                    session.execute(
+                        text("SELECT COUNT(*) FROM object_search_documents")
+                    ).scalar_one()
+                    == 0
+                )
+                assert session.execute(
+                    text("""
+                        SELECT fallback_identity
+                        FROM podcast_episodes
+                        WHERE media_id = :media_id
+                    """),
+                    {"media_id": podcast_media_id},
+                ).scalar_one() == (
+                    "audio_url=https://cdn.example.test/audio.mp3\n"
+                    "title=legacy episode\n"
+                    "published_at=2026-01-02t03:04:05z"
+                )
+                assert (
+                    session.execute(
+                        text("SELECT provider_podcast_id FROM podcasts WHERE id = :id"),
+                        {"id": podcast_id},
+                    ).scalar_one()
+                    == "opml-feed-url=https://example.test/feed.xml"
+                )
+                assert (
+                    session.execute(
+                        text("""
+                        SELECT provider_episode_id
+                        FROM podcast_episodes
+                        WHERE media_id = :media_id
+                    """),
+                        {"media_id": podcast_media_id},
+                    ).scalar_one()
+                    == "feed-title-legacy-episode-published-2026-01-02t03-04-05z"
+                )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0138_blocks_ambiguous_podcast_fallback_identity_rewrite(self):
+        """0138 fails with an operator error before a fallback unique violation."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0136")
+            assert result.returncode == 0, f"upgrade to 0136 failed: {result.stderr}"
+
+            user_id = uuid4()
+            podcast_id = uuid4()
+            media_a_id = uuid4()
+            media_b_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text("""
+                        INSERT INTO podcasts (
+                            id, provider, provider_podcast_id, title, feed_url
+                        )
+                        VALUES (
+                            :id, 'podcast_index', 'legacy-podcast',
+                            'Legacy Podcast', 'https://example.test/feed.xml'
+                        )
+                    """),
+                    {"id": podcast_id},
+                )
+                for media_id, provider_episode_id, fallback_identity in (
+                    (media_a_id, "legacy-episode-a", "legacy-fallback-a"),
+                    (media_b_id, "legacy-episode-b", "legacy-fallback-b"),
+                ):
+                    session.execute(
+                        text("""
+                            INSERT INTO media (
+                                id, kind, title, processing_status, created_by_user_id,
+                                canonical_source_url, external_playback_url, provider,
+                                provider_id, published_date
+                            )
+                            VALUES (
+                                :id, 'podcast_episode', 'Same Episode', 'ready_for_reading',
+                                :user_id, 'https://example.test/feed.xml',
+                                'https://cdn.example.test/same.mp3', 'podcast_index',
+                                :provider_id, '2026-01-02T03:04:05Z'
+                            )
+                        """),
+                        {
+                            "id": media_id,
+                            "user_id": user_id,
+                            "provider_id": provider_episode_id,
+                        },
+                    )
+                    session.execute(
+                        text("""
+                            INSERT INTO podcast_episodes (
+                                media_id, podcast_id, provider_episode_id, fallback_identity
+                            )
+                            VALUES (
+                                :media_id, :podcast_id,
+                                :provider_episode_id, :fallback_identity
+                            )
+                        """),
+                        {
+                            "media_id": media_id,
+                            "podcast_id": podcast_id,
+                            "provider_episode_id": provider_episode_id,
+                            "fallback_identity": fallback_identity,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+
+            assert result.returncode != 0
+            assert "duplicate podcast episodes normalize to the same fallback_identity" in (
+                result.stderr or ""
+            )
+            assert "uq_podcast_episodes_podcast_fallback_identity" not in (result.stderr or "")
         finally:
             reset_test_schema()
             engine.dispose()
@@ -2893,60 +3456,33 @@ class TestS1SchemaConstraints:
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
-    def test_file_sha256_uniqueness_per_user(self, migrated_engine):
-        """Partial unique index on (user, kind, sha256) enforced for pdf/epub."""
+    def test_media_file_sha256_identity_is_removed(self, migrated_engine):
+        """PDF/EPUB file bytes are not app-level media identity at head."""
         with Session(migrated_engine) as session:
-            user_id = uuid4()
-            another_user_id = uuid4()
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": another_user_id})
-
-            file_sha256 = "abc123def456"
-
-            # Create first pdf with sha256
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
-                    VALUES (:id, 'pdf', 'First PDF', 'pending', :user_id, :file_sha256)
-                """),
-                {"id": uuid4(), "user_id": user_id, "file_sha256": file_sha256},
-            )
-            session.commit()
-
-            # Same user, same sha256 → should fail
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
+            media_columns = {
+                row[0]
+                for row in session.execute(
                     text("""
-                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
-                        VALUES (:id, 'pdf', 'Duplicate PDF', 'pending', :user_id, :file_sha256)
-                    """),
-                    {"id": uuid4(), "user_id": user_id, "file_sha256": file_sha256},
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'media'
+                    """)
                 )
-                session.commit()
+            }
+            media_indexes = {
+                row[0]
+                for row in session.execute(
+                    text("""
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE tablename = 'media'
+                    """)
+                )
+            }
 
-            session.rollback()
-            assert "uix_media_file_sha256" in str(exc_info.value)
-
-            # Different user, same sha256 → should succeed
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
-                    VALUES (:id, 'pdf', 'Another User PDF', 'pending', :user_id, :file_sha256)
-                """),
-                {"id": uuid4(), "user_id": another_user_id, "file_sha256": file_sha256},
-            )
-            session.commit()
-
-            # Clean up
-            session.execute(
-                text("DELETE FROM media WHERE created_by_user_id IN (:u1, :u2)"),
-                {"u1": user_id, "u2": another_user_id},
-            )
-            session.execute(
-                text("DELETE FROM users WHERE id IN (:u1, :u2)"),
-                {"u1": user_id, "u2": another_user_id},
-            )
-            session.commit()
+        assert "file_sha256" not in media_columns
+        assert "uix_media_file_sha256" not in media_indexes
+        assert "idx_media_stale_pending_upload_cleanup" not in media_indexes
 
     def test_requested_url_length_constraint(self, migrated_engine):
         """Check constraint prevents requested_url over 2048 characters."""
@@ -3741,22 +4277,10 @@ class TestWorkerRuntime:
             ],
         )
         assert_index(
-            "idx_media_stale_pending_upload_cleanup",
-            table_name="media",
-            keys=["created_at", "processing_started_at", "id"],
-            predicate_fragments=[
-                "processing_status",
-                "pending",
-                "pdf",
-                "epub",
-                "file_sha256 IS NULL",
-            ],
-        )
-        assert_index(
             "ix_media_content_index_states_repair_waiting",
             table_name="media_content_index_states",
             keys=["updated_at", "media_id"],
-            predicate_fragments=["pending", "failed", "active_run_id IS NULL"],
+            predicate_fragments=["pending", "failed"],
         )
         assert_index(
             "ix_media_content_index_states_repair_indexing",
@@ -3775,23 +4299,6 @@ class TestWorkerRuntime:
                 "pending",
                 "failed",
             ],
-        )
-        source_index = indexes.get("ix_source_snapshots_transcript_run_version")
-        assert source_index is not None, "Expected transcript source snapshot expression index."
-        assert source_index["table_name"] == "source_snapshots"
-        source_keys = list(source_index["keys"])
-        assert source_keys[0] == "index_run_id", f"Unexpected source index keys: {source_keys}"
-        assert "metadata" in source_keys[1] and "transcript_version_id" in source_keys[1], (
-            f"Unexpected transcript source expression key: {source_keys}"
-        )
-        source_predicate = str(source_index["predicate"]).lower()
-        assert "source_kind" in source_predicate and "=" in source_predicate, (
-            f"Expected source snapshot index to filter source_kind equality. "
-            f"Predicate={source_index['predicate']}"
-        )
-        assert "'transcript'" in source_predicate, (
-            f"Expected source snapshot index to filter only transcript sources. "
-            f"Predicate={source_index['predicate']}"
         )
 
 
@@ -6348,16 +6855,13 @@ class TestMigration0026SemanticChunkBackfill:
                 ),
                 {"media_id": media_id},
             ).fetchone()
-            version_row = session.execute(
+            version_table = session.execute(
                 text(
                     """
-                    SELECT id, version_no, is_active
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id
+                    SELECT to_regclass('public.podcast_transcript_versions')
                     """
                 ),
-                {"media_id": media_id},
-            ).fetchone()
+            ).scalar()
             segment_count = session.execute(
                 text("SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
                 {"media_id": media_id},
@@ -6392,12 +6896,7 @@ class TestMigration0026SemanticChunkBackfill:
             "legacy transcript rows backfilled before pgvector cutover must be marked pending "
             "until re-indexed with production semantic embeddings"
         )
-        # The active version is resolved by podcast_transcript_versions.is_active
-        # (the denormalized active-version pointer was dropped in 0130); the
-        # version_row is_active assertion below covers "legacy media has an active version".
-        assert version_row is not None
-        assert version_row[1] == 1
-        assert version_row[2] is True
+        assert version_table is None
         assert segment_count == 2
         assert chunk_count == 0, (
             "the evidence hard cutover must not preserve stale pre-cutover transcript chunks"
@@ -7879,7 +8378,7 @@ class TestConversationReferencesCutoverMigration0121:
             f"got {prompt_columns}"
         )
 
-    def test_0126_drops_prompt_version_provenance_columns(self, migrated_engine):
+    def test_0137_drops_prompt_version_and_hash_provenance_columns(self, migrated_engine):
         with Session(migrated_engine) as session:
             columns_by_table = {
                 table_name: {
@@ -7902,18 +8401,18 @@ class TestConversationReferencesCutoverMigration0121:
             "prompt_version",
             "prompt_plan_version",
             "assembler_version",
+            "stable_prefix_hash",
+            "provider_request_hash",
         }.isdisjoint(columns_by_table["chat_prompt_assemblies"]), (
-            "chat_prompt_assemblies must not retain prompt-version provenance columns; "
+            "chat_prompt_assemblies must not retain prompt version/hash provenance columns; "
             f"got {columns_by_table['chat_prompt_assemblies']}"
         )
-        assert {"prompt_version", "prompt_plan_version"}.isdisjoint(
+        assert {"prompt_version", "prompt_plan_version", "stable_prefix_hash"}.isdisjoint(
             columns_by_table["message_llm"]
         ), (
-            "message_llm must not retain prompt-version provenance columns; "
+            "message_llm must not retain prompt version/hash provenance columns; "
             f"got {columns_by_table['message_llm']}"
         )
-        assert "stable_prefix_hash" in columns_by_table["chat_prompt_assemblies"]
-        assert "stable_prefix_hash" in columns_by_table["message_llm"]
 
     def test_0121_conversations_has_no_scope_columns(self, migrated_engine):
         """Scope columns were dropped by 0114 and stay dropped through 0121."""
@@ -8018,18 +8517,17 @@ class TestDurableSourceIngestMigrations:
                         """
                         INSERT INTO media (
                             id, kind, title, processing_status, created_by_user_id,
-                            file_sha256, processing_completed_at
+                            processing_completed_at
                         )
                         VALUES (
                             :id, 'epub', 'Legacy uploaded EPUB',
-                            'ready_for_reading', :user_id, :sha, now()
+                            'ready_for_reading', :user_id, now()
                         )
                         """
                     ),
                     {
                         "id": uploaded_epub_id,
                         "user_id": user_id,
-                        "sha": "a" * 64,
                     },
                 )
                 session.execute(

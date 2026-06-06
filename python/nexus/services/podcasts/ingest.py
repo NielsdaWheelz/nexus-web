@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -22,9 +21,9 @@ from nexus.services.contributor_credits import (
 from nexus.services.library_entries import assign_libraries_for_media_in_current_transaction
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.transcript_segments import normalize_transcript_segments
-from nexus.services.transcripts.versions import (
+from nexus.services.transcripts.current import (
     ensure_media_transcript_state_row,
-    write_transcript_version,
+    write_current_transcript,
 )
 
 from ._normalize import (
@@ -83,7 +82,7 @@ def sync_subscription_ingest(
 
     for episode in selected_episodes:
         guid = normalize_optional_text(episode.get("guid"))
-        fallback_identity = _compute_fallback_identity(podcast_id, episode)
+        fallback_identity = _compute_fallback_identity(episode)
         description_html = normalize_optional_text(episode.get("description_html"))
         description_text = normalize_optional_text(episode.get("description_text"))
         description = description_text[:2000] if description_text else None
@@ -410,20 +409,17 @@ def sync_subscription_ingest(
         )
         transcript_state = "partial" if transcript_coverage == "partial" else "ready"
 
-        result = write_transcript_version(
+        write_current_transcript(
             db,
             media_id=media_id,
-            created_by_user_id=viewer_id,
             request_reason="rss_feed",
             transcript_coverage=transcript_coverage,
             transcript_segments=transcript_segments,
             now=now,
         )
-        transcript_version_id = result.transcript_version_id
         logger.info(
             "rss_transcript_persisted",
             media_id=str(media_id),
-            transcript_version_id=str(transcript_version_id),
             transcript_state=transcript_state,
             transcript_coverage=transcript_coverage,
             source_type=source_type,
@@ -663,9 +659,12 @@ def _find_existing_episode_media_id(
     return row[0]
 
 
-def _compute_fallback_identity(podcast_id: UUID, episode: dict[str, Any]) -> str:
-    audio_url = str(episode.get("audio_url") or "").strip().lower()
-    title = str(episode.get("title") or "").strip().lower()
-    published_at = str(episode.get("published_at") or "").strip().lower()
-    seed = f"{podcast_id}|{audio_url}|{title}|{published_at}"
-    return hashlib.sha256(seed.encode()).hexdigest()
+def _compute_fallback_identity(episode: dict[str, Any]) -> str:
+    audio_url = _fallback_identity_part(episode.get("audio_url"))
+    title = _fallback_identity_part(episode.get("title"))
+    published_at = _fallback_identity_part(episode.get("published_at"))
+    return f"audio_url={audio_url}\ntitle={title}\npublished_at={published_at}"
+
+
+def _fallback_identity_part(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().split())

@@ -157,7 +157,6 @@ class TestIngestionStateTransitions:
             db_session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment_id}",
             fragments=[fragment],
             reason="test_ready_index",
         )

@@ -3,8 +3,7 @@
 Tests cover:
 - Upload initialization
 - File validation (magic bytes, size)
-- Ingest confirmation with SHA-256 hashing
-- Deduplication
+- Ingest confirmation
 - Permission enforcement
 - Signed download URLs
 
@@ -12,7 +11,6 @@ Note: Tests use FakeStorageClient for unit tests.
 Supabase integration tests live in test_supabase_integration.py.
 """
 
-import hashlib
 import threading
 from uuid import UUID, uuid4
 
@@ -45,11 +43,9 @@ pytestmark = pytest.mark.integration
 # Sample file content for testing
 PDF_MAGIC = b"%PDF-1.4"
 PDF_CONTENT = PDF_MAGIC + b"fake pdf content " * 1000  # ~18KB
-PDF_SHA256 = hashlib.sha256(PDF_CONTENT).hexdigest()
 
 EPUB_MAGIC = b"PK\x03\x04"
 EPUB_CONTENT = EPUB_MAGIC + b"fake epub content " * 1000
-EPUB_SHA256 = hashlib.sha256(EPUB_CONTENT).hexdigest()
 
 INVALID_CONTENT = b"not a valid file"
 
@@ -166,95 +162,6 @@ def _library_entries_for_media(direct_db: DirectSessionManager, media_id: str | 
             {"media_id": UUID(str(media_id))},
         ).fetchall()
     return {UUID(str(row[0])) for row in rows}
-
-
-def _seed_duplicate_upload_loser_rows(
-    direct_db: DirectSessionManager,
-    *,
-    user_id: UUID,
-    winner_media_id: str,
-    loser_media_id: str,
-) -> None:
-    with direct_db.session() as session:
-        session.execute(
-            text("""
-                INSERT INTO user_media_deletions (user_id, media_id)
-                VALUES (:user_id, :media_id)
-            """),
-            {"user_id": user_id, "media_id": UUID(loser_media_id)},
-        )
-        session.execute(
-            text("""
-                INSERT INTO media_content_index_states (media_id, status, status_reason)
-                VALUES (:media_id, 'failed', 'test_duplicate_cleanup')
-            """),
-            {"media_id": UUID(loser_media_id)},
-        )
-        session.execute(
-            text("""
-                INSERT INTO object_links (
-                    user_id,
-                    relation_type,
-                    a_type,
-                    a_id,
-                    b_type,
-                    b_id
-                )
-                VALUES (:user_id, 'references', 'media', :loser_id, 'media', :winner_id)
-            """),
-            {
-                "user_id": user_id,
-                "loser_id": UUID(loser_media_id),
-                "winner_id": UUID(winner_media_id),
-            },
-        )
-        session.commit()
-
-
-def _assert_duplicate_upload_loser_deleted(
-    direct_db: DirectSessionManager,
-    *,
-    media_id: str,
-) -> None:
-    loser_id = UUID(media_id)
-    with direct_db.session() as session:
-        assert _count_rows(session, "media", "id = :media_id", media_id=loser_id) == 0
-        assert (
-            _count_rows(session, "library_entries", "media_id = :media_id", media_id=loser_id) == 0
-        )
-        assert (
-            _count_rows(
-                session,
-                "default_library_intrinsics",
-                "media_id = :media_id",
-                media_id=loser_id,
-            )
-            == 0
-        )
-        assert (
-            _count_rows(session, "user_media_deletions", "media_id = :media_id", media_id=loser_id)
-            == 0
-        )
-        assert _count_rows(session, "media_file", "media_id = :media_id", media_id=loser_id) == 0
-        assert (
-            _count_rows(
-                session,
-                "media_content_index_states",
-                "media_id = :media_id",
-                media_id=loser_id,
-            )
-            == 0
-        )
-        object_links = session.execute(
-            text("""
-                SELECT COUNT(*)
-                FROM object_links
-                WHERE (a_type = 'media' AND a_id = :media_id)
-                   OR (b_type = 'media' AND b_id = :media_id)
-            """),
-            {"media_id": loser_id},
-        ).scalar_one()
-        assert int(object_links) == 0
 
 
 def _count_rows(session, table: str, where: str, **params: object) -> int:
@@ -661,12 +568,12 @@ class TestConfirmIngest:
         assert data["media_id"] == media_id
         assert data["duplicate"] is False
 
-        # Verify hash was stored in DB
+        # Verify the upload was moved to the final media-owned storage path.
         with direct_db.session() as session:
             result = session.execute(
                 text(
                     """
-                    SELECT m.file_sha256, mf.storage_path
+                    SELECT mf.storage_path
                     FROM media m
                     JOIN media_file mf ON mf.media_id = m.id
                     WHERE m.id = :id
@@ -676,8 +583,7 @@ class TestConfirmIngest:
             )
             row = result.fetchone()
             assert row is not None
-            assert row[0] == PDF_SHA256
-            assert row[1] == final_storage_path
+            assert row[0] == final_storage_path
 
         assert fake_storage.get_object(storage_path) is None
         assert fake_storage.get_object(final_storage_path) == PDF_CONTENT
@@ -1052,8 +958,8 @@ class TestConfirmIngest:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "E_FORBIDDEN"
 
-    def test_ingest_duplicate_detection(self, upload_client, fake_storage, direct_db):
-        """Second upload of same file returns existing media."""
+    def test_same_file_upload_creates_separate_media(self, upload_client, fake_storage, direct_db):
+        """Second upload of same file bytes creates its own media row."""
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1096,19 +1002,12 @@ class TestConfirmIngest:
         ).json()["data"]
 
         media_id_2 = init_2["media_id"]
-        # Note: media_id_2 will be deleted by dedupe, so cleanup registration
-        # is not strictly needed, but let's be safe
         direct_db.register_cleanup("library_entries", "media_id", media_id_2)
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
-        _seed_duplicate_upload_loser_rows(
-            direct_db,
-            user_id=user_id,
-            winner_media_id=media_id_1,
-            loser_media_id=media_id_2,
-        )
 
         init_2_storage_path = _upload_storage_path(init_2, "pdf")
+        init_2_final_path = _final_storage_path(init_2, "pdf")
         fake_storage.put_object(init_2_storage_path, PDF_CONTENT, "application/pdf")
 
         ingest_2 = upload_client.post(
@@ -1116,15 +1015,18 @@ class TestConfirmIngest:
             headers=auth_headers(user_id),
         ).json()["data"]
 
-        # Should return existing media
-        assert ingest_2["duplicate"] is True
-        assert ingest_2["media_id"] == media_id_1
+        assert ingest_2["duplicate"] is False
+        assert ingest_2["media_id"] == media_id_2
         assert fake_storage.get_object(init_2_storage_path) is None
+        assert fake_storage.get_object(init_2_final_path) == PDF_CONTENT
 
-        _assert_duplicate_upload_loser_deleted(direct_db, media_id=media_id_2)
+        with direct_db.session() as session:
+            assert _count_rows(session, "media", "id = :media_id", media_id=UUID(media_id_2)) == 1
 
-    def test_ingest_different_users_no_dedupe(self, upload_client, fake_storage, direct_db):
-        """Same file by different users creates separate rows (no cross-user dedupe)."""
+    def test_same_file_upload_by_different_users_creates_separate_media(
+        self, upload_client, fake_storage, direct_db
+    ):
+        """Same file by different users creates separate media rows."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
@@ -1380,7 +1282,7 @@ class TestMediaWithCapabilities:
             _upload_storage_path(init_response, "pdf"), PDF_CONTENT, "application/pdf"
         )
 
-        # Get media (before ingest, sha256 not set but file exists)
+        # Get media before ingest while the staged file exists.
         response = upload_client.get(
             f"/media/{media_id}",
             headers=auth_headers(user_id),
@@ -1453,10 +1355,10 @@ class TestUploadProvenance:
             ).fetchone()
             assert entry is not None
 
-    def test_ingest_duplicate_keeps_winner_attached_with_intrinsic(
+    def test_second_same_file_upload_gets_default_library_intrinsic(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
-        """Dedup path keeps winner in default library with intrinsic."""
+        """A second upload owns its own default-library intrinsic."""
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1480,7 +1382,7 @@ class TestUploadProvenance:
         fake_storage.put_object(_upload_storage_path(init1, "pdf"), PDF_CONTENT, "application/pdf")
         upload_client.post(f"/media/{media_id_1}/ingest", headers=auth_headers(user_id))
 
-        # Second upload (same content = duplicate)
+        # Second upload with the same content owns a separate current media row.
         init2 = upload_client.post(
             "/media/upload/init",
             json={
@@ -1500,9 +1402,10 @@ class TestUploadProvenance:
         fake_storage.put_object(_upload_storage_path(init2, "pdf"), PDF_CONTENT, "application/pdf")
         resp = upload_client.post(f"/media/{media_id_2}/ingest", headers=auth_headers(user_id))
         assert resp.status_code == 200
-        winner_id = resp.json()["data"]["media_id"]
+        current_id = resp.json()["data"]["media_id"]
+        assert current_id == media_id_2
 
-        # Verify winner has intrinsic
+        # Verify the second media has its own intrinsic.
         with direct_db.session() as session:
             dl = session.execute(
                 text("""
@@ -1517,14 +1420,14 @@ class TestUploadProvenance:
                     SELECT 1 FROM default_library_intrinsics
                     WHERE default_library_id = :dl AND media_id = :m
                 """),
-                {"dl": dl[0], "m": winner_id},
+                {"dl": dl[0], "m": current_id},
             ).fetchone()
             assert intrinsic is not None
 
-    def test_duplicate_confirm_applies_selected_libraries_to_winner(
+    def test_confirm_applies_selected_libraries_to_current_media(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
-        """Confirm-time destinations attach to the dedupe winner, not the loser."""
+        """Confirm-time destinations attach to the media being confirmed."""
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
@@ -1538,20 +1441,20 @@ class TestUploadProvenance:
             "/media/upload/init",
             json={
                 "kind": "pdf",
-                "filename": "winner.pdf",
+                "filename": "first.pdf",
                 "content_type": "application/pdf",
                 "size_bytes": len(PDF_CONTENT),
             },
             headers=auth_headers(user_id),
         ).json()["data"]
-        winner_media_id = init1["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", winner_media_id)
-        direct_db.register_cleanup("library_entries", "media_id", winner_media_id)
-        direct_db.register_cleanup("media_file", "media_id", winner_media_id)
-        direct_db.register_cleanup("media", "id", winner_media_id)
+        first_media_id = init1["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", first_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", first_media_id)
+        direct_db.register_cleanup("media_file", "media_id", first_media_id)
+        direct_db.register_cleanup("media", "id", first_media_id)
         fake_storage.put_object(_upload_storage_path(init1, "pdf"), PDF_CONTENT, "application/pdf")
         first_confirm = upload_client.post(
-            f"/media/{winner_media_id}/ingest",
+            f"/media/{first_media_id}/ingest",
             headers=auth_headers(user_id),
         )
         assert first_confirm.status_code == 200
@@ -1560,28 +1463,28 @@ class TestUploadProvenance:
             "/media/upload/init",
             json={
                 "kind": "pdf",
-                "filename": "loser.pdf",
+                "filename": "second.pdf",
                 "content_type": "application/pdf",
                 "size_bytes": len(PDF_CONTENT),
             },
             headers=auth_headers(user_id),
         ).json()["data"]
-        loser_media_id = init2["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", loser_media_id)
-        direct_db.register_cleanup("library_entries", "media_id", loser_media_id)
-        direct_db.register_cleanup("media_file", "media_id", loser_media_id)
-        direct_db.register_cleanup("media", "id", loser_media_id)
+        second_media_id = init2["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", second_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", second_media_id)
+        direct_db.register_cleanup("media_file", "media_id", second_media_id)
+        direct_db.register_cleanup("media", "id", second_media_id)
         fake_storage.put_object(_upload_storage_path(init2, "pdf"), PDF_CONTENT, "application/pdf")
 
-        duplicate_confirm = upload_client.post(
-            f"/media/{loser_media_id}/ingest",
+        confirm = upload_client.post(
+            f"/media/{second_media_id}/ingest",
             json={"library_ids": [str(selected_library_id)]},
             headers=auth_headers(user_id),
         )
 
-        assert duplicate_confirm.status_code == 200
-        assert duplicate_confirm.json()["data"]["media_id"] == winner_media_id
-        assert selected_library_id in _library_entries_for_media(direct_db, winner_media_id)
+        assert confirm.status_code == 200
+        assert confirm.json()["data"]["media_id"] == second_media_id
+        assert selected_library_id in _library_entries_for_media(direct_db, second_media_id)
 
     def test_invalid_confirm_does_not_attach_confirm_time_libraries(
         self, upload_client, fake_storage, direct_db: DirectSessionManager

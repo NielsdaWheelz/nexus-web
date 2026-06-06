@@ -23,7 +23,6 @@ describe("notes ProseMirror schema", () => {
       bodyMarkdown: "",
       bodyText: "Embedded page",
       collapsed: false,
-      revision: 1,
       children: [],
     };
 
@@ -64,7 +63,6 @@ describe("notes ProseMirror schema", () => {
         bodyMarkdown: "Hello",
         bodyText: "Hello",
         collapsed: false,
-        revision: 1,
         children: [],
       },
     ]);

@@ -41,9 +41,8 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     artifactPath,
     filename: "svms-real-media-fresh.pdf",
     mimeType: "application/pdf",
-    expectedSha256: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sha256,
+    expectedSizeBytes: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sizeBytes,
     seededMediaId: seed.fixtures.pdf.media_id,
-    seededSha256: seed.fixtures.pdf.artifact_sha256,
     artifactSalt: "upload-pdf",
   });
   const mediaId = upload.media_id;

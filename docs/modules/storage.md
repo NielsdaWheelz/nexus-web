@@ -10,11 +10,11 @@ does not authorize access and must not encode user identity.
 | Original PDF/EPUB uploads | `media_file` | `media/{media_id}/original.{pdf|epub}` | viewer-authenticated media/file services |
 | Direct-upload staging | transient upload flow | `uploads/media/{media_id}/original.{pdf|epub}` | private upload lifecycle only |
 | Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
-| Oracle plates | `oracle_corpus_images` | `oracle/plates/{sha256}.{jpg|png|webp}` | public owned-asset route, internal-header protected |
+| Oracle plates | `oracle_corpus_images` | `oracle/plates/{slug}.{jpg|png|webp}` | public owned-asset route, internal-header protected |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.
-Integrity-sensitive reads use `read_object_checked` so persisted `sha256` and
-byte-size metadata are enforced at read time.
+Storage keys are owner IDs or stable source keys, not content hashes. Object
+reads enforce DB-owned byte-size metadata at read time.
 
 ## Public vs Private Assets
 

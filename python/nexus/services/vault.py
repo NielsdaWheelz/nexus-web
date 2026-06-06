@@ -6,7 +6,6 @@ from the server; highlight/page Markdown bodies are the local editing surface.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -34,7 +33,6 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES
-from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlights import (
     derive_exact_prefix_suffix,
     map_integrity_error,
@@ -232,12 +230,11 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
                 {visible_media_ids_cte_sql()}
             )
             SELECT m.id, m.kind, m.title, m.canonical_source_url, m.processing_status,
-                   m.file_sha256, m.page_count, mf.storage_path, mf.content_type
+                   m.page_count, mf.storage_path, mf.content_type
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
             LEFT JOIN media_file mf ON mf.media_id = m.id
             WHERE m.kind IN ('web_article', 'epub', 'pdf')
-              AND m.processing_status = 'ready_for_reading'
             ORDER BY lower(m.title), m.id
         """),
             {"viewer_id": viewer_id},
@@ -292,11 +289,7 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
 
     for highlight in highlight_rows:
         media_id = _highlight_media_id(highlight)
-        if (
-            media_id is not None
-            and can_read_media(db, viewer_id, media_id)
-            and _is_vault_highlight_media_ready(db, media_id)
-        ):
+        if media_id is not None and can_read_media(db, viewer_id, media_id):
             path, content = _highlight_file(db, highlight)
             files[path] = content
 
@@ -333,10 +326,6 @@ def _sync_highlight_content(
         return False, "Highlight does not exist or is not owned by this user"
     if highlight.anchor_kind not in {"fragment_offsets", "pdf_page_geometry"}:
         return False, "Unsupported highlight anchor kind"
-
-    local_hash = _highlight_hash(metadata, body)
-    if local_hash == metadata.get("last_synced_sha256"):
-        return False, None
 
     server_updated_at = _highlight_server_updated_at(highlight)
     if str(metadata.get("server_updated_at") or "") != server_updated_at:
@@ -402,7 +391,11 @@ def _create_highlight_from_file(
     media = db.get(Media, media_id)
     if media is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if not _is_vault_highlight_media_ready(db, media_id):
+    if _processing_status_value(media.processing_status) not in {
+        "ready_for_reading",
+        "embedding",
+        "ready",
+    }:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
     color = str(metadata.get("color") or "yellow")
@@ -486,9 +479,10 @@ def _apply_highlight_changes(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlights require pdf_page_geometry selectors",
             )
-        exported = _highlight_hash(_metadata_for_highlight(highlight), body)
-        local = _highlight_hash(metadata, body)
-        if exported != local and str(metadata.get("exact") or "") != highlight.exact:
+        server_metadata = _metadata_for_highlight(highlight)
+        if str(metadata.get("exact") or "") != highlight.exact or metadata.get(
+            "page"
+        ) != server_metadata.get("page"):
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlight selectors must be edited in the reader",
@@ -573,9 +567,6 @@ def _sync_page_content(
     if page is None or page.user_id != viewer_id:
         return False, "Page does not exist or is not owned by this user"
 
-    local_hash = _page_hash(metadata, body)
-    if local_hash == metadata.get("last_synced_sha256"):
-        return False, None
     if str(metadata.get("server_updated_at") or "") != page.updated_at.isoformat():
         return False, "Server page changed since this file was exported"
     if _as_bool(metadata.get("deleted")):
@@ -619,10 +610,7 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
                 """
                 SELECT cb.canonical_text, cb.locator
                 FROM media_content_index_states mcis
-                JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                  AND active_run.state = 'ready'
-                  AND active_run.deactivated_at IS NULL
-                JOIN content_blocks cb ON cb.index_run_id = mcis.active_run_id
+                JOIN content_blocks cb ON cb.media_id = mcis.media_id
                 WHERE mcis.media_id = :media_id
                   AND mcis.status = 'ready'
                   AND cb.canonical_text <> ''
@@ -637,30 +625,9 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
     return [dict(row) for row in rows]
 
 
-def _is_vault_highlight_media_ready(db: Session, media_id: UUID) -> bool:
-    row = db.execute(
-        text("""
-            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
-            FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :media_id
-        """),
-        {"media_id": media_id},
-    ).fetchone()
-    if row is None:
-        return False
-    return is_text_document_ready(
-        str(row[0]),
-        str(row[1]),
-        str(row[2]) if row[2] is not None else None,
-        str(row[3]) if row[3] is not None else None,
-    )
-
-
 def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
     body = _highlight_note_body(db, highlight)
-    metadata["last_synced_sha256"] = _highlight_hash(metadata, body)
     return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
 
 
@@ -675,7 +642,6 @@ def _page_file(db: Session, page: Page) -> tuple[str, str]:
         "deleted": False,
     }
     body = _page_body(db, page)
-    metadata["last_synced_sha256"] = _page_hash(metadata, body)
     return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
 
 
@@ -1150,7 +1116,6 @@ def _media_markdown(
         "media_handle": media_handle,
         "kind": str(row["kind"]),
         "title": str(row["title"]),
-        "source_sha256": str(row["file_sha256"] or ""),
         "immutable_source": True,
     }
     lines = [
@@ -1199,44 +1164,6 @@ def _joined_block_text(content_blocks: list[dict[str, object]]) -> str:
 
 def _joined_fragment_html(fragments: list[Fragment]) -> str:
     return "\n".join(fragment.html_sanitized for fragment in fragments)
-
-
-def _highlight_hash(metadata: dict[str, object], body: str) -> str:
-    return _stable_hash(
-        {
-            key: metadata.get(key)
-            for key in (
-                "media_handle",
-                "selector_kind",
-                "fragment_handle",
-                "page",
-                "start_offset",
-                "end_offset",
-                "color",
-                "deleted",
-                "exact",
-                "prefix",
-                "suffix",
-            )
-        },
-        body,
-    )
-
-
-def _page_hash(metadata: dict[str, object], body: str) -> str:
-    return _stable_hash(
-        {
-            "title": metadata.get("title"),
-            "deleted": metadata.get("deleted"),
-        },
-        body,
-    )
-
-
-def _stable_hash(metadata: dict[str, object], body: str) -> str:
-    return hashlib.sha256(
-        (json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n" + body).encode("utf-8")
-    ).hexdigest()
 
 
 def _read_frontmatter(text_content: str) -> tuple[dict[str, object], str]:
@@ -1403,6 +1330,10 @@ def _parse_handle(handle: str, prefix: str) -> UUID:
     if not handle.startswith(expected):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid {prefix} handle")
     return UUID(hex=handle[len(expected) :])
+
+
+def _processing_status_value(value: object) -> str:
+    return str(getattr(value, "value", value))
 
 
 def _as_bool(value: object) -> bool:

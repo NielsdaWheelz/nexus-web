@@ -1,6 +1,5 @@
 """Focused tests for EPUB asset DB/storage lifetime ordering."""
 
-import hashlib
 from uuid import uuid4
 
 import pytest
@@ -38,7 +37,6 @@ def test_epub_asset_storage_read_happens_after_short_db_phase(monkeypatch):
             storage_path=storage_path,
             content_type="image/png",
             size_bytes=len(asset_content),
-            sha256=hashlib.sha256(asset_content).hexdigest(),
         )
 
     class AssertingStorageClient(FakeStorageClient):

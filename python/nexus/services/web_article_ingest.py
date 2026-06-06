@@ -95,14 +95,9 @@ def _do_ingest(
                 SELECT EXISTS (
                     SELECT 1
                     FROM media_content_index_states mcis
-                    JOIN content_index_runs cir ON cir.id = mcis.active_run_id
-                    JOIN source_snapshots ss ON ss.index_run_id = cir.id
-                    JOIN content_chunks cc ON cc.index_run_id = cir.id
+                    JOIN content_chunks cc ON cc.media_id = mcis.media_id
                     WHERE mcis.media_id = :id
                       AND mcis.status = 'ready'
-                      AND cir.state = 'ready'
-                      AND cir.deactivated_at IS NULL
-                      AND ss.source_kind = 'web_article'
                       AND cc.source_kind = 'web_article'
                 )
                 """

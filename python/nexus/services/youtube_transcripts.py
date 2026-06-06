@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -168,12 +167,10 @@ def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[st
             f"YouTube transcript fixture unavailable: {exc}",
         )
 
-    if len(payload) != 9_805 or hashlib.sha256(payload).hexdigest() != (
-        "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
-    ):
+    if len(payload) != 9_805:
         return _failure(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "YouTube transcript fixture hash mismatch",
+            "YouTube transcript fixture size mismatch",
         )
 
     from nexus.services.rss_transcript_fetch import parse_srt_transcript
@@ -191,7 +188,6 @@ def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[st
         "provider_fixture": {
             "path": str(path),
             "byte_length": len(payload),
-            "sha256": "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237",
             "provider_video_id": video_id,
         },
     }

@@ -7,6 +7,7 @@ import {
 } from "@/lib/notes/prosemirror/schema";
 import {
   deletedRootBlockIdsForPersistence,
+  pageDraftMetadataFromStorage,
   readDraftBlocksForPersistence,
 } from "./PagePaneBody";
 
@@ -67,7 +68,6 @@ describe("readDraftBlocksForPersistence", () => {
         bodyMarkdown: "const answer = 42;",
         bodyText: "const answer = 42;",
         collapsed: false,
-        revision: 1,
         children: [],
       },
     ]);
@@ -107,10 +107,58 @@ describe("readDraftBlocksForPersistence", () => {
   });
 });
 
+describe("pageDraftMetadataFromStorage", () => {
+  it("accepts exact current draft metadata", () => {
+    expect(pageDraftMetadataFromStorage(currentDraftMetadata())).toEqual(currentDraftMetadata());
+  });
+
+  it("rejects legacy revision metadata", () => {
+    expect(
+      pageDraftMetadataFromStorage({
+        ...currentDraftMetadata(),
+        pageRevision: 3,
+      })
+    ).toBeNull();
+    expect(
+      pageDraftMetadataFromStorage({
+        ...currentDraftMetadata(),
+        blockRevisions: { "block-1": 2 },
+      })
+    ).toBeNull();
+  });
+
+  it("rejects legacy revision fields on draft blocks", () => {
+    const metadata = currentDraftMetadata();
+    expect(
+      pageDraftMetadataFromStorage({
+        ...metadata,
+        knownBlocks: [{ ...metadata.knownBlocks[0], revision: 2 }],
+      })
+    ).toBeNull();
+  });
+});
+
 interface OutlineInput {
   id: string;
   text: string;
   children: OutlineInput[];
+}
+
+function currentDraftMetadata() {
+  return {
+    knownBlocks: [
+      {
+        id: "block-1",
+        parentBlockId: null,
+        beforeBlockId: null,
+        afterBlockId: null,
+        blockKind: "bullet",
+        bodyPmJson: { type: "paragraph" },
+        collapsed: false,
+      },
+    ],
+    focusedRootParentBlockId: null,
+  };
 }
 
 function outlineDoc(blocks: OutlineInput[]): ProseMirrorNode {

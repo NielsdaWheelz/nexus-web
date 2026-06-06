@@ -3,32 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-
-
-def prompt_assembly_metadata(
-    db: Session,
-    *,
-    run_id: UUID,
-) -> str | None:
-    row = db.execute(
-        text(
-            """
-            SELECT stable_prefix_hash
-            FROM chat_prompt_assemblies
-            WHERE chat_run_id = :run_id
-            """
-        ),
-        {"run_id": run_id},
-    ).first()
-    if row is None:
-        return None
-    return row[0]
 
 
 def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> None:
@@ -71,8 +50,7 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
                     selection_status,
                     selection_reason,
                     result_ref,
-                    locator,
-                    source_version
+                    locator
                 )
                 SELECT tool_call_id,
                        id,
@@ -85,8 +63,7 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
                        'included_in_prompt',
                        'prompt_assembly',
                        result_ref,
-                       locator,
-                       source_version
+                       locator
                 FROM message_retrievals
                 WHERE id = ANY(:included_ids)
                 """
@@ -121,8 +98,7 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
                     selection_status,
                     selection_reason,
                     result_ref,
-                    locator,
-                    source_version
+                    locator
                 )
                 SELECT tool_call_id,
                        id,
@@ -135,8 +111,7 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
                        'excluded_by_budget',
                        'prompt_assembly',
                        result_ref,
-                       locator,
-                       source_version
+                       locator
                 FROM message_retrievals
                 WHERE id = ANY(:dropped_ids)
                   AND selected = true

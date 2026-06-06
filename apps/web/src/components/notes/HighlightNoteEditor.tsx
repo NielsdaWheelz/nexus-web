@@ -1,19 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
-import { fetchNoteBlock } from "@/lib/notes/api";
 import {
   createOutlineDocFromBlock,
   firstOutlineBlockFromDoc,
 } from "@/lib/notes/prosemirror/schema";
 import {
-  clearStoredNoteEditorDraft,
   readStoredNoteEditorDraft,
   useNoteEditorSession,
   type NoteEditorSessionStatus,
@@ -38,24 +35,15 @@ export default function HighlightNoteEditor({
     highlightId: string,
     noteBlockId: string | null,
     createBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-    baseRevision: number | null
+    bodyPmJson: Record<string, unknown>
   ) => Promise<HighlightLinkedNoteBlock>;
-  onDelete: (
-    noteBlockId: string,
-    baseRevision: number,
-    shouldApply: () => boolean
-  ) => Promise<void>;
+  onDelete: (noteBlockId: string, shouldApply: () => boolean) => Promise<void>;
   onLocalChange?: () => void;
   onOpenLink: (href: string, options: { newPane: boolean }) => void;
 }) {
   const feedback = useFeedback();
-  const [editorResetVersion, setEditorResetVersion] = useState(0);
-  const [resetDoc, setResetDoc] = useState<ProseMirrorNode | null>(null);
-  const [conflictAction, setConflictAction] = useState<"overwrite" | "reload" | null>(null);
   const editVersionRef = useRef(0);
   const persistedBlockIdRef = useRef<string | null>(note?.note_block_id ?? null);
-  const persistedRevisionRef = useRef<number | null>(note?.revision ?? null);
   const draftBlockRef = useRef({
     highlightId,
     blockId: note?.note_block_id ?? newBlockId(),
@@ -73,12 +61,10 @@ export default function HighlightNoteEditor({
   }
   const draftBlockId = draftBlockRef.current.blockId;
   const resourceKey = `highlight:${highlightId}:${draftBlockId}`;
-  const editorResourceKey = `${resourceKey}:editor:${editorResetVersion}`;
   const currentResourceKeyRef = useRef(resourceKey);
 
   useEffect(() => {
     currentResourceKeyRef.current = resourceKey;
-    setResetDoc(null);
   }, [resourceKey]);
 
   useEffect(() => {
@@ -88,20 +74,18 @@ export default function HighlightNoteEditor({
       noteBlockId === draftBlockId
     ) {
       persistedBlockIdRef.current = noteBlockId;
-      persistedRevisionRef.current = note?.revision ?? null;
     }
-  }, [draftBlockId, note?.revision, noteBlockId]);
+  }, [draftBlockId, noteBlockId]);
 
   const initialDoc = useMemo(
     () =>
-      resetDoc ??
       readStoredNoteEditorDraft(resourceKey)?.doc ??
       createOutlineDocFromBlock({
         id: note?.note_block_id ?? draftBlockId,
         bodyPmJson: note?.body_pm_json ?? null,
         bodyText: note?.body_text ?? "",
       }),
-    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id, resetDoc, resourceKey]
+    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id, resourceKey]
   );
 
   const saveDoc = useCallback(
@@ -112,34 +96,27 @@ export default function HighlightNoteEditor({
       if (!block) return;
 
       const persistedBlockId = persistedBlockIdRef.current;
-      const persistedRevision = persistedRevisionRef.current;
       if (highlightNoteBodyHasContent(block)) {
         const savedBlock = await onSave(
           highlightId,
           persistedBlockId,
           block.id,
-          block.bodyPmJson,
-          persistedRevision
+          block.bodyPmJson
         );
         if (currentResourceKeyRef.current === saveResourceKey) {
           persistedBlockIdRef.current =
             savedBlock?.note_block_id ?? persistedBlockId ?? block.id;
-          persistedRevisionRef.current = savedBlock?.revision ?? persistedRevision;
         }
         return;
       }
 
       if (persistedBlockId) {
-        if (persistedRevision === null) {
-          throw new Error("Highlight note is missing revision metadata");
-        }
         const shouldApply = () =>
           currentResourceKeyRef.current === saveResourceKey &&
           editVersionRef.current === saveEditVersion;
-        await onDelete(persistedBlockId, persistedRevision, shouldApply);
+        await onDelete(persistedBlockId, shouldApply);
         if (shouldApply()) {
           persistedBlockIdRef.current = null;
-          persistedRevisionRef.current = null;
         }
       }
     },
@@ -153,71 +130,12 @@ export default function HighlightNoteEditor({
       if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Failed to save note" }));
     },
-    onConflict: (error) => {
-      feedback.show(toFeedback(error, { fallback: "Note has a save conflict" }));
-    },
   });
   const {
     status: saveStatus,
     scheduleSave: scheduleSessionSave,
     flush: flushSession,
-    reset: resetSession,
   } = session;
-
-  const overwriteWithLocalDraft = useCallback(async () => {
-    const persistedBlockId = persistedBlockIdRef.current;
-    if (!persistedBlockId) {
-      flushSession();
-      return;
-    }
-    setConflictAction("overwrite");
-    try {
-      const latestBlock = await fetchNoteBlock(persistedBlockId);
-      persistedRevisionRef.current = latestBlock.revision;
-      flushSession();
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      feedback.show(toFeedback(error, { fallback: "Latest note revision could not be loaded" }));
-    } finally {
-      setConflictAction(null);
-    }
-  }, [feedback, flushSession]);
-
-  const reloadLatestNote = useCallback(async () => {
-    const persistedBlockId = persistedBlockIdRef.current;
-    setConflictAction("reload");
-    try {
-      clearStoredNoteEditorDraft(resourceKey);
-      resetSession();
-      if (!persistedBlockId) {
-        setResetDoc(
-          createOutlineDocFromBlock({
-            id: draftBlockId,
-            bodyPmJson: null,
-            bodyText: "",
-          })
-        );
-        setEditorResetVersion((version) => version + 1);
-        return;
-      }
-      const latestBlock = await fetchNoteBlock(persistedBlockId);
-      persistedBlockIdRef.current = latestBlock.id;
-      persistedRevisionRef.current = latestBlock.revision;
-      setResetDoc(
-        createOutlineDocFromBlock({
-          id: latestBlock.id,
-          bodyPmJson: latestBlock.bodyPmJson,
-          bodyText: latestBlock.bodyText,
-        })
-      );
-      setEditorResetVersion((version) => version + 1);
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      feedback.show(toFeedback(error, { fallback: "Latest note could not be loaded" }));
-    } finally {
-      setConflictAction(null);
-    }
-  }, [draftBlockId, feedback, resetSession, resourceKey]);
 
   const scheduleSave = useCallback(
     (nextDoc: ProseMirrorNode) => {
@@ -257,7 +175,7 @@ export default function HighlightNoteEditor({
   return (
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
       <ProseMirrorOutlineEditor
-        resourceKey={editorResourceKey}
+        resourceKey={resourceKey}
         initialDoc={initialDoc}
         editable={editable}
         ariaLabel="Highlight note"
@@ -271,28 +189,6 @@ export default function HighlightNoteEditor({
       />
       {saveLabelForStatus(saveStatus) ? (
         <div className={styles.status}>{saveLabelForStatus(saveStatus)}</div>
-      ) : null}
-      {saveStatus === "conflict" && editable ? (
-        <div className={styles.conflictActions}>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void overwriteWithLocalDraft()}
-            disabled={conflictAction !== null}
-          >
-            Keep local draft
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void reloadLatestNote()}
-            disabled={conflictAction !== null}
-          >
-            Reload latest
-          </Button>
-        </div>
       ) : null}
     </div>
   );
@@ -331,6 +227,5 @@ function saveLabelForStatus(status: NoteEditorSessionStatus): string {
   if (status === "saving") return "Saving...";
   if (status === "saved") return "Saved";
   if (status === "failed") return "Save failed";
-  if (status === "conflict") return "Conflict";
   return "";
 }

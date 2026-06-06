@@ -177,12 +177,12 @@ class TestApiSafety:
         assert "encrypted_key" not in key
         assert "key_nonce" not in key
         assert "master_key_version" not in key
+        assert "fingerprint" not in key
 
         # These fields should be present
         assert "id" in key
         assert "provider" in key
         assert "provider_display_name" in key
-        assert "fingerprint" in key
         assert "key_fingerprint" in key
         assert "status" in key
         assert "created_at" in key
@@ -721,7 +721,7 @@ class TestListKeys:
         ]
         assert {item["status"] for item in data} == {"missing"}
         assert all(item["id"] is None for item in data)
-        assert all(item["fingerprint"] is None for item in data)
+        assert all(item["key_fingerprint"] is None for item in data)
 
     def test_list_keys_returns_all_user_keys(self, auth_client):
         """List keys returns saved keys plus missing enabled provider states."""

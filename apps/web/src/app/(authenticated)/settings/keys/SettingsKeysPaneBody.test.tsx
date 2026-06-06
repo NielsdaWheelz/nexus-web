@@ -28,7 +28,6 @@ describe("SettingsKeysPaneBody", () => {
                 id: "key_openai",
                 provider: "openai",
                 provider_display_name: "OpenAI",
-                fingerprint: "abc123",
                 key_fingerprint: "abc123",
                 status: "valid",
                 created_at: "2026-01-01T00:00:00Z",
@@ -75,7 +74,6 @@ describe("SettingsKeysPaneBody", () => {
               id: null,
               provider: "openai",
               provider_display_name: "OpenAI",
-              fingerprint: null,
               key_fingerprint: null,
               status: "missing",
               created_at: null,
@@ -111,7 +109,6 @@ describe("SettingsKeysPaneBody", () => {
                 id: "key_openai",
                 provider: "openai",
                 provider_display_name: "OpenAI",
-                fingerprint: "abc123",
                 key_fingerprint: "abc123",
                 status: "valid",
                 created_at: "2026-01-01T00:00:00Z",
@@ -130,12 +127,12 @@ describe("SettingsKeysPaneBody", () => {
                 message: "Authentication required",
               },
             },
-            401,
+            401
           );
         }
 
         throw new Error(`Unexpected request path: ${path}`);
-      }),
+      })
     );
 
     render(<SettingsKeysPaneBody />);
@@ -143,7 +140,7 @@ describe("SettingsKeysPaneBody", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Test" }));
 
     await waitFor(() =>
-      expect(redirectToLoginForCurrentLocation).toHaveBeenCalledTimes(1),
+      expect(redirectToLoginForCurrentLocation).toHaveBeenCalledTimes(1)
     );
     expect(screen.queryByRole("alert")).toBeNull();
   });

@@ -22,7 +22,6 @@ const sections: ReaderNavigationSection[] = [
     href_fragment: null,
     anchor_id: null,
     char_count: 100,
-    source_version: "source:v1",
   },
   {
     section_id: "chapter-2.xhtml",
@@ -38,7 +37,6 @@ const sections: ReaderNavigationSection[] = [
     href_fragment: null,
     anchor_id: null,
     char_count: 100,
-    source_version: "source:v1",
   },
 ];
 

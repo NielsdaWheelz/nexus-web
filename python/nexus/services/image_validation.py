@@ -1,6 +1,5 @@
 """SSRF-safe image fetch + validation core (URL/DNS/redirect/decode), shared by proxy and ingestion."""
 
-import hashlib
 import io
 import socket
 import warnings
@@ -459,13 +458,12 @@ def fetch_with_redirect(
 class ValidatedImage:
     data: bytes
     content_type: str
-    sha256: str
     width: int
     height: int
 
 
 def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
-    """Validate a URL (SSRF), fetch with bounded redirects, decode + size/magic checks, and hash."""
+    """Validate a URL (SSRF), fetch with bounded redirects, and decode + size/magic checks."""
     _, hostname, _ = validate_url(url)
     check_hostname_denylist(hostname)
     validate_dns_resolution(hostname)
@@ -476,7 +474,6 @@ def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
     return ValidatedImage(
         data=data,
         content_type=content_type,
-        sha256=hashlib.sha256(data).hexdigest(),
         width=width,
         height=height,
     )

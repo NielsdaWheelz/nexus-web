@@ -4,6 +4,7 @@ import {
   type RetrievalLocator,
 } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { isRecord } from "@/lib/validation";
 import {
   ALL_SEARCH_TYPES,
@@ -152,6 +153,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     return null;
   }
   const contextRef = row.context_ref as Record<string, unknown>;
+  if (hasLegacyArtifactIdentityKey(row)) {
+    return null;
+  }
   if (
     typeof contextRef.type !== "string" ||
     !ALL_SEARCH_TYPES.includes(contextRef.type as SearchType) ||
@@ -269,7 +273,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       if (
         typeof row.media_id !== "string" ||
         typeof row.media_kind !== "string" ||
-        typeof row.source_version !== "string" ||
         typeof row.citation_label !== "string" ||
         base.context_ref.type !== "content_chunk" ||
         !base.context_ref.evidence_span_ids ||
@@ -290,7 +293,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         type: "content_chunk",
         media_id: row.media_id,
         media_kind: row.media_kind,
-        source_version: row.source_version,
         citation_label: row.citation_label,
         source: {
           ...row.source,
@@ -301,7 +303,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     }
     case "fragment": {
       if (
-        typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("fragment", row.locator) ||
         !isValidSource(row.source) ||
@@ -316,7 +317,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       return {
         ...base,
         type: "fragment",
-        source_version: row.source_version,
         citation_label:
           typeof row.citation_label === "string" ? row.citation_label : null,
         locator: row.locator,
@@ -327,22 +327,17 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       };
     }
     case "page":
-      if (typeof row.source_version !== "string") {
-        return null;
-      }
       return {
         ...base,
         type: "page",
         description:
           typeof row.description === "string" ? row.description : null,
-        source_version: row.source_version,
       };
     case "note_block":
       if (
         typeof row.page_id !== "string" ||
         typeof row.page_title !== "string" ||
         typeof row.body_text !== "string" ||
-        typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("note_block", row.locator)
       ) {
@@ -356,14 +351,12 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         body_text: row.body_text,
         highlight_excerpt:
           typeof row.highlight_excerpt === "string" ? row.highlight_excerpt : null,
-        source_version: row.source_version,
         locator: row.locator,
       };
     case "highlight": {
       if (
         typeof row.color !== "string" ||
         typeof row.exact !== "string" ||
-        typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("highlight", row.locator) ||
         !isValidSource(row.source)
@@ -379,7 +372,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         type: "highlight",
         color: row.color,
         exact: row.exact,
-        source_version: row.source_version,
         citation_label:
           typeof row.citation_label === "string" ? row.citation_label : null,
         locator: row.locator,
@@ -393,7 +385,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       if (
         typeof row.conversation_id !== "string" ||
         typeof row.seq !== "number" ||
-        typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("message", row.locator)
       ) {
@@ -405,13 +396,11 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         type: "message",
         conversation_id: row.conversation_id,
         seq: row.seq,
-        source_version: row.source_version,
         locator: row.locator,
       };
     case "evidence_span": {
       if (
         typeof row.evidence_span_id !== "string" ||
-        typeof row.source_version !== "string" ||
         typeof row.citation_label !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("evidence_span", row.locator) ||
@@ -428,7 +417,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         ...base,
         type: "evidence_span",
         evidence_span_id: row.evidence_span_id,
-        source_version: row.source_version,
         citation_label: row.citation_label,
         locator: row.locator,
         source: {
@@ -452,7 +440,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         typeof row.source_id !== "string" ||
         typeof row.result_ref !== "string" ||
         typeof row.url !== "string" ||
-        typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         row.locator.type !== "external_url" ||
         !Array.isArray(row.extra_snippets) ||
@@ -477,7 +464,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
           typeof row.source_name === "string" ? row.source_name : null,
         rank: typeof row.rank === "number" ? row.rank : null,
         provider: typeof row.provider === "string" ? row.provider : null,
-        source_version: row.source_version,
         locator: row.locator,
         selected: row.selected,
       };

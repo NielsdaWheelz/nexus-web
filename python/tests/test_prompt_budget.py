@@ -158,5 +158,5 @@ def test_prompt_block_manifest_excludes_text():
 
     manifest = block.manifest_entry(ordinal=0, included=True)
 
-    assert manifest["stable_hash"] == block.stable_hash
+    assert "stable_hash" not in manifest
     assert "quoted evidence" not in str(manifest)

@@ -40,7 +40,6 @@ class TestRecoverableAnomaly:
 
         assert isinstance(outcome, PendingWriteOutcome)
         assert outcome.match_status == "pending"
-        assert outcome.match_version is None
         assert outcome.start_offset is None
         assert outcome.end_offset is None
         assert outcome.prefix == ""
@@ -142,7 +141,6 @@ class TestMatchResultPersistence:
     def test_unique_match_fields(self):
         result = MatchResult(
             status=MatchStatus.unique,
-            match_version=1,
             start_offset=10,
             end_offset=20,
             prefix="pre",
@@ -150,6 +148,6 @@ class TestMatchResultPersistence:
         )
         fields = match_result_to_persistence_fields(result)
         assert fields["plain_text_match_status"] == "unique"
-        assert fields["plain_text_match_version"] == 1
+        assert "plain_text_match_version" not in fields
         assert fields["plain_text_start_offset"] == 10
         assert fields["plain_text_end_offset"] == 20

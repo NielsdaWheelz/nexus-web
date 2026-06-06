@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -90,8 +88,6 @@ class PromptBlock:
     text: str
     estimated_tokens: int
     source_refs: tuple[Mapping[str, object], ...]
-    source_version: str
-    stable_hash: str
     cache_policy: Mapping[str, object] | None = None
     privacy_scope: str = "conversation"
     required_provider_capability: str | None = None
@@ -104,9 +100,7 @@ class PromptBlock:
             "ordinal": ordinal,
             "included": included,
             "estimated_tokens": self.estimated_tokens,
-            "stable_hash": self.stable_hash,
             "source_refs": [dict(ref) for ref in self.source_refs],
-            "source_version": self.source_version,
             "cache_policy": dict(self.cache_policy) if self.cache_policy is not None else None,
             "privacy_scope": self.privacy_scope,
         }
@@ -187,28 +181,14 @@ def make_prompt_block(
     lane: BudgetLane,
     text: str,
     source_refs: Sequence[Mapping[str, object]] = (),
-    source_version: str = "v1",
     cache_policy: Mapping[str, object] | None = None,
     privacy_scope: str = "conversation",
     required_provider_capability: str | None = None,
 ) -> PromptBlock:
-    """Create one structured prompt block with its stable hash."""
+    """Create one structured prompt block."""
 
     refs = tuple(dict(ref) for ref in source_refs)
     estimated_tokens = estimate_tokens(text)
-    stable_hash = _stable_hash(
-        {
-            "id": block_id,
-            "role": role,
-            "lane": lane,
-            "text": text,
-            "source_refs": refs,
-            "source_version": source_version,
-            "cache_policy": cache_policy,
-            "privacy_scope": privacy_scope,
-            "required_provider_capability": required_provider_capability,
-        }
-    )
     return PromptBlock(
         id=block_id,
         role=role,
@@ -216,8 +196,6 @@ def make_prompt_block(
         text=text,
         estimated_tokens=estimated_tokens,
         source_refs=refs,
-        source_version=source_version,
-        stable_hash=stable_hash,
         cache_policy=cache_policy,
         privacy_scope=privacy_scope,
         required_provider_capability=required_provider_capability,
@@ -228,11 +206,6 @@ def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
     """Estimate provider input tokens for structured prompt blocks."""
 
     return sum(block.estimated_tokens for block in blocks)
-
-
-def _stable_hash(value: Mapping[str, object]) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def estimate_reasoning_reserve(provider: str, reasoning: str) -> int:

@@ -30,7 +30,6 @@ class TestPageScopedUniqueMatch:
         )
 
         assert result.status == MatchStatus.unique
-        assert result.match_version == 1
         assert result.start_offset == 12
         assert result.end_offset == 23
         assert result.prefix != ""
@@ -92,7 +91,6 @@ class TestEmptyExact:
             page_span_end=9,
         )
         assert result.status == MatchStatus.empty_exact
-        assert result.match_version == 1
         assert result.start_offset is None
 
 

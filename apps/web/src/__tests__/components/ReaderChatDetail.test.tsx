@@ -60,7 +60,6 @@ function message(
     role,
     message_document: {
       type: "message_document",
-      version: 1,
       blocks: content.trim()
         ? [
             {

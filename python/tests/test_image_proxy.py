@@ -14,6 +14,7 @@ import pytest
 import respx
 from httpx import Response
 
+import nexus.services.image_proxy as image_proxy
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.image_proxy import (
     ImageCache,
@@ -552,15 +553,22 @@ class TestETagHandling:
         assert etag.startswith('"')
         assert etag.endswith('"')
 
-    def test_compute_etag_is_consistent(self):
+    def test_compute_etag_is_opaque_per_generation(self, monkeypatch):
+        times = iter([100, 101])
+        monkeypatch.setattr(image_proxy, "time_ns", lambda: next(times))
+
         etag1 = compute_etag(b"same data")
         etag2 = compute_etag(b"same data")
-        assert etag1 == etag2
+        assert etag1 == '"img-9-100"'
+        assert etag2 == '"img-9-101"'
 
-    def test_compute_etag_differs_for_different_data(self):
-        etag1 = compute_etag(b"data1")
-        etag2 = compute_etag(b"data2")
-        assert etag1 != etag2
+    def test_compute_etag_does_not_encode_content_bytes(self, monkeypatch):
+        monkeypatch.setattr(image_proxy, "time_ns", lambda: 200)
+
+        etag1 = compute_etag(b"abcde")
+        etag2 = compute_etag(b"vwxyz")
+        assert etag1 == '"img-5-200"'
+        assert etag2 == '"img-5-200"'
 
     def test_etags_match_exact(self):
         assert etags_match('"abc123"', '"abc123"')

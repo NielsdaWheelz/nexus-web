@@ -53,13 +53,11 @@ def _enabled_providers() -> tuple[str, ...]:
 
 
 def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
-    fingerprint = key.key_fingerprint
     return UserApiKeyOut(
         id=key.id,
         provider=key.provider,
         provider_display_name=provider_display_name(key.provider) or key.provider,
-        fingerprint=fingerprint,
-        key_fingerprint=fingerprint,
+        key_fingerprint=key.key_fingerprint,
         status=cast(KeyProviderStateStatus, key.status),
         created_at=key.created_at,
         last_tested_at=key.last_tested_at,

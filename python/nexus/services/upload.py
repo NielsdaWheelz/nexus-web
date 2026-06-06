@@ -5,18 +5,15 @@ All media-domain upload logic lives here.
 
 Key invariants:
 - Upload initialization creates pending media without dispatching extraction
-- SHA-256 computed synchronously at ingest time
-- Deduplication via (created_by_user_id, kind, file_sha256) constraint
+- Upload confirmation validates the staged object and moves it to the final owner path
 - Storage operations happen after DB transaction commits
 """
 
-import hashlib
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -31,9 +28,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.services import library_entries
 from nexus.services.file_ingest_validation import has_valid_file_signature
-from nexus.services.media_deletion import delete_duplicate_document_media
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import (
     build_storage_path,
@@ -71,18 +66,6 @@ def init_upload(
     )
 
 
-def _find_existing_by_hash(db: Session, user_id: UUID, kind: str, sha256: str) -> Media | None:
-    """Find existing media by hash for deduplication."""
-    result = db.execute(
-        select(Media).where(
-            Media.created_by_user_id == user_id,
-            Media.kind == kind,
-            Media.file_sha256 == sha256,
-        )
-    )
-    return result.scalar()
-
-
 def confirm_ingest(
     db: Session,
     viewer_id: UUID,
@@ -90,7 +73,7 @@ def confirm_ingest(
 ) -> dict:
     """Confirm upload and process file.
 
-    Validates file, computes hash, handles deduplication.
+    Validates the staged file and promotes it to the current storage object.
     Extraction dispatch is owned by the media-kind lifecycle layer.
 
     Args:
@@ -99,7 +82,7 @@ def confirm_ingest(
         media_id: The media ID to ingest.
 
     Returns:
-        Dict with media_id and duplicate flag.
+        Dict with media_id and a false duplicate flag retained by the API contract.
 
     Raises:
         NotFoundError: If media doesn't exist.
@@ -122,12 +105,6 @@ def confirm_ingest(
             "Only the creator can confirm upload",
         )
 
-    if media.file_sha256 is not None:
-        return {
-            "media_id": str(media.id),
-            "duplicate": False,
-        }
-
     media_file = media.media_file
     if not media_file:
         raise InvalidRequestError(
@@ -141,6 +118,17 @@ def confirm_ingest(
     ext = get_file_extension(kind)
     final_storage_path = build_storage_path(media_id, ext)
     expected_staging_path = build_upload_staging_storage_path(media_id, ext)
+    if storage_path == final_storage_path:
+        if media.processing_status == "pending":
+            db.rollback()
+            raise ConflictError(
+                ApiErrorCode.E_UPLOAD_CONFLICT,
+                "Upload state is not staged for confirmation.",
+            )
+        return {
+            "media_id": str(media.id),
+            "duplicate": False,
+        }
     if storage_path != expected_staging_path:
         db.rollback()
         raise ConflictError(
@@ -159,7 +147,7 @@ def confirm_ingest(
     db.commit()
 
     try:
-        computed_sha, total_bytes = _read_validated_upload_object(
+        total_bytes = _read_validated_upload_object(
             storage_client,
             storage_path,
             kind,
@@ -195,21 +183,21 @@ def confirm_ingest(
             "Only the creator can confirm upload",
         )
 
-    if media.file_sha256 is not None:
-        db.commit()
-        _delete_upload_object(storage_client, storage_path, media_id, "already_confirmed")
-        return {
-            "media_id": str(media.id),
-            "duplicate": False,
-        }
-
-        media_file = media.media_file
+    media_file = media.media_file
     if not media_file:
         _delete_upload_object(storage_client, storage_path, media_id, "missing_media_file")
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
         )
+
+    if media_file.storage_path == final_storage_path:
+        db.commit()
+        _delete_upload_object(storage_client, storage_path, media_id, "already_confirmed")
+        return {
+            "media_id": str(media.id),
+            "duplicate": False,
+        }
 
     if media_file.storage_path != storage_path or int(media_file.size_bytes or 0) != declared_size:
         db.rollback()
@@ -229,7 +217,7 @@ def confirm_ingest(
 
     try:
         storage_client.copy_object(storage_path, final_storage_path)
-        final_sha, final_size = _read_validated_upload_object(
+        final_size = _read_validated_upload_object(
             storage_client,
             final_storage_path,
             kind,
@@ -255,7 +243,7 @@ def confirm_ingest(
         )
         raise
 
-    if final_sha != computed_sha or final_size != total_bytes:
+    if final_size != total_bytes:
         _delete_upload_object(
             storage_client, final_storage_path, media_id, "final_integrity_mismatch"
         )
@@ -288,7 +276,8 @@ def confirm_ingest(
             "Only the creator can confirm upload",
         )
 
-    if media.file_sha256 is not None:
+    media_file = media.media_file
+    if media_file is not None and media_file.storage_path == final_storage_path:
         db.commit()
         _delete_upload_object(
             storage_client, storage_path, media_id, "already_confirmed_after_copy"
@@ -298,7 +287,6 @@ def confirm_ingest(
             "duplicate": False,
         }
 
-    media_file = media.media_file
     if not media_file:
         _delete_upload_object(storage_client, storage_path, media_id, "missing_file_after_copy")
         _delete_upload_object(
@@ -320,65 +308,10 @@ def confirm_ingest(
             "Upload state changed while it was being confirmed.",
         )
 
-    existing = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
-
-    if existing and existing.id != media.id:
-        library_entries.ensure_media_in_default_library(db, viewer_id, existing.id)
-        from nexus.services.media_source_ingest import transfer_source_attempts_to_media
-
-        transfer_source_attempts_to_media(
-            db,
-            loser_media_id=media_id,
-            winner_media_id=existing.id,
-            terminal_status="succeeded",
-        )
-        _delete_duplicate_upload_loser(
-            db,
-            storage_client,
-            media_id,
-            [storage_path, final_storage_path],
-            "duplicate_loser",
-        )
-
-        return {
-            "media_id": str(existing.id),
-            "duplicate": True,
-        }
-
-    try:
-        media.file_sha256 = computed_sha
-        media.updated_at = datetime.now(UTC)
-        media_file.size_bytes = total_bytes
-        media_file.storage_path = final_storage_path
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        winner = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
-        if winner:
-            library_entries.ensure_media_in_default_library(db, viewer_id, winner.id)
-            from nexus.services.media_source_ingest import transfer_source_attempts_to_media
-
-            transfer_source_attempts_to_media(
-                db,
-                loser_media_id=media_id,
-                winner_media_id=winner.id,
-                terminal_status="succeeded",
-            )
-            _delete_duplicate_upload_loser(
-                db,
-                storage_client,
-                media_id,
-                [storage_path, final_storage_path],
-                "integrity_duplicate_loser",
-            )
-
-            return {
-                "media_id": str(winner.id),
-                "duplicate": True,
-            }
-
-        _delete_upload_object(storage_client, final_storage_path, media_id, "dedupe_failed")
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Unexpected error during deduplication") from None
+    media.updated_at = datetime.now(UTC)
+    media_file.size_bytes = total_bytes
+    media_file.storage_path = final_storage_path
+    db.flush()
 
     db.commit()
     _delete_upload_object(storage_client, storage_path, media_id, "confirmed")
@@ -391,7 +324,7 @@ def confirm_ingest(
 
 def _clear_upload_confirmation_claim(db: Session, media_id: UUID) -> None:
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is not None and media.file_sha256 is None:
+    if media is not None:
         media.processing_started_at = None
         media.updated_at = db.execute(text("SELECT now()")).scalar_one()
     db.commit()
@@ -412,26 +345,6 @@ def _delete_upload_object(storage_client, storage_path: str, media_id: UUID, rea
         )
 
 
-def _delete_duplicate_upload_loser(
-    db: Session,
-    storage_client,
-    media_id: UUID,
-    storage_paths: list[str],
-    reason: str,
-) -> None:
-    db_storage_paths = delete_duplicate_document_media(db, media_id)
-    db.commit()
-    cleanup_paths: list[str] = []
-    seen_paths: set[str] = set()
-    for storage_path in [*storage_paths, *db_storage_paths]:
-        if storage_path in seen_paths:
-            continue
-        cleanup_paths.append(storage_path)
-        seen_paths.add(storage_path)
-    for storage_path in cleanup_paths:
-        _delete_upload_object(storage_client, storage_path, media_id, reason)
-
-
 def _clear_upload_confirmation_claim_and_delete_upload(
     db: Session,
     media_id: UUID,
@@ -449,7 +362,7 @@ def _read_validated_upload_object(
     declared_size: int,
     *,
     max_size: int,
-) -> tuple[str, int]:
+) -> int:
     metadata = storage_client.head_object(storage_path)
     if metadata is None:
         raise InvalidRequestError(
@@ -467,7 +380,6 @@ def _read_validated_upload_object(
             "Uploaded file size does not match the upload request. Please upload the file again.",
         )
 
-    hasher = hashlib.sha256()
     total_bytes = 0
     first_chunk = True
     for chunk in storage_client.stream_object(storage_path):
@@ -485,11 +397,9 @@ def _read_validated_upload_object(
                 ApiErrorCode.E_FILE_TOO_LARGE,
                 f"File size exceeds maximum {max_size} bytes for {kind}.",
             )
-        hasher.update(chunk)
-
     if total_bytes <= 0 or total_bytes != metadata.size_bytes or total_bytes != declared_size:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Uploaded file size does not match the stored object. Please upload the file again.",
         )
-    return hasher.hexdigest(), total_bytes
+    return total_bytes

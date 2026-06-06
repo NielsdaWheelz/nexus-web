@@ -77,7 +77,6 @@ function isRetrievalContextRef(
 type SearchCitationBase<
   TType extends SearchCitationResultType,
   TContextType extends RetrievalContextRef["type"],
-  TSourceVersion extends string | null,
   TLocator extends RetrievalLocator | null,
 > = {
   type: TType;
@@ -95,7 +94,6 @@ type SearchCitationBase<
     evidence_span_ids?: string[];
   };
   evidence_span_id?: string | null;
-  source_version: TSourceVersion;
   locator: TLocator;
   media_id: string | null;
   media_kind: string | null;
@@ -106,14 +104,12 @@ type SearchCitationBase<
 type MediaSearchCitationEventData = SearchCitationBase<
   "media",
   "media",
-  null,
   null
 >;
 
 type PodcastSearchCitationEventData = SearchCitationBase<
   "podcast",
   "podcast",
-  null,
   null
 > & {
   contributors: Array<Record<string, unknown>>;
@@ -122,21 +118,18 @@ type PodcastSearchCitationEventData = SearchCitationBase<
 type EpisodeSearchCitationEventData = SearchCitationBase<
   "episode",
   "media",
-  null,
   null
 >;
 
 type VideoSearchCitationEventData = SearchCitationBase<
   "video",
   "media",
-  null,
   null
 >;
 
 type ContentChunkSearchCitationEventData = SearchCitationBase<
   "content_chunk",
   "content_chunk",
-  string,
   MediaRetrievalLocator
 > & {
   citation_label: string;
@@ -147,14 +140,12 @@ type ContentChunkSearchCitationEventData = SearchCitationBase<
 type FragmentSearchCitationEventData = SearchCitationBase<
   "fragment",
   "fragment",
-  string,
   MediaRetrievalLocator
 >;
 
 type PageSearchCitationEventData = SearchCitationBase<
   "page",
   "page",
-  string,
   null
 > & {
   description?: string | null;
@@ -163,7 +154,6 @@ type PageSearchCitationEventData = SearchCitationBase<
 type NoteBlockSearchCitationEventData = SearchCitationBase<
   "note_block",
   "note_block",
-  string,
   Extract<RetrievalLocator, { type: "note_block_offsets" }>
 > & {
   page_id: string;
@@ -175,7 +165,6 @@ type NoteBlockSearchCitationEventData = SearchCitationBase<
 type HighlightSearchCitationEventData = SearchCitationBase<
   "highlight",
   "highlight",
-  string,
   MediaRetrievalLocator
 > & {
   color: string;
@@ -185,7 +174,6 @@ type HighlightSearchCitationEventData = SearchCitationBase<
 type MessageSearchCitationEventData = SearchCitationBase<
   "message",
   "message",
-  string,
   Extract<RetrievalLocator, { type: "message_offsets" }>
 > & {
   conversation_id: string;
@@ -195,7 +183,6 @@ type MessageSearchCitationEventData = SearchCitationBase<
 type ContributorSearchCitationEventData = SearchCitationBase<
   "contributor",
   "contributor",
-  null,
   null
 > & {
   contributor_handle: string;
@@ -204,7 +191,6 @@ type ContributorSearchCitationEventData = SearchCitationBase<
 type EvidenceSpanSearchCitationEventData = SearchCitationBase<
   "evidence_span",
   "evidence_span",
-  string,
   MediaRetrievalLocator
 > & {
   citation_label: string;
@@ -215,7 +201,6 @@ type EvidenceSpanSearchCitationEventData = SearchCitationBase<
 type ConversationSearchCitationEventData = SearchCitationBase<
   "conversation",
   "conversation",
-  null,
   null
 >;
 
@@ -258,7 +243,6 @@ export type WebCitationEventData = {
   provider?: string | null;
   provider_request_id?: string | null;
   rank?: number;
-  source_version: string;
   context_ref: Extract<RetrievalContextRef, { type: "web_result" }>;
   media_id: null;
   media_kind: null;
@@ -281,7 +265,6 @@ const SEARCH_CITATION_BASE_KEYS = [
   "citation_label",
   "context_ref",
   "evidence_span_id",
-  "source_version",
   "locator",
   "media_id",
   "media_kind",
@@ -325,19 +308,14 @@ export function isSearchCitationEventData(
         typeof citation.source_kind === "string" &&
         Array.isArray(citation.evidence_span_ids) &&
         citation.evidence_span_ids.every((id) => typeof id === "string") &&
-        typeof citation.source_version === "string" &&
         typeof citation.citation_label === "string"
       );
     case "fragment":
-      return (
-        isSearchCitationBase(citation, "fragment", "fragment", []) &&
-        typeof citation.source_version === "string"
-      );
+      return isSearchCitationBase(citation, "fragment", "fragment", []);
     case "page":
       return (
         isSearchCitationBase(citation, "page", "page", ["description"]) &&
-        isOptionalString(citation.description) &&
-        typeof citation.source_version === "string"
+        isOptionalString(citation.description)
       );
     case "note_block":
       return (
@@ -350,8 +328,7 @@ export function isSearchCitationEventData(
         typeof citation.page_id === "string" &&
         typeof citation.page_title === "string" &&
         typeof citation.body_text === "string" &&
-        isOptionalString(citation.highlight_excerpt) &&
-        typeof citation.source_version === "string"
+        isOptionalString(citation.highlight_excerpt)
       );
     case "highlight":
       return (
@@ -360,8 +337,7 @@ export function isSearchCitationEventData(
           "exact",
         ]) &&
         typeof citation.color === "string" &&
-        typeof citation.exact === "string" &&
-        typeof citation.source_version === "string"
+        typeof citation.exact === "string"
       );
     case "message":
       return (
@@ -370,8 +346,7 @@ export function isSearchCitationEventData(
           "seq",
         ]) &&
         typeof citation.conversation_id === "string" &&
-        typeof citation.seq === "number" &&
-        typeof citation.source_version === "string"
+        typeof citation.seq === "number"
       );
     case "contributor":
       return (
@@ -384,7 +359,6 @@ export function isSearchCitationEventData(
         isSearchCitationBase(citation, "evidence_span", "evidence_span", []) &&
         typeof citation.evidence_span_id === "string" &&
         typeof citation.citation_label === "string" &&
-        typeof citation.source_version === "string" &&
         typeof citation.media_id === "string"
       );
     case "conversation":
@@ -414,8 +388,6 @@ function isSearchCitationBase(
     isRetrievalContextRef(citation.context_ref) &&
     citation.context_ref.type === contextType &&
     isOptionalString(citation.evidence_span_id) &&
-    (citation.source_version === null ||
-      typeof citation.source_version === "string") &&
     isSearchCitationLocator(resultType, citation.locator) &&
     (typeof citation.media_id === "string" || citation.media_id === null) &&
     (typeof citation.media_kind === "string" || citation.media_kind === null) &&
@@ -480,7 +452,6 @@ export function isWebCitationEventData(
       "provider",
       "provider_request_id",
       "rank",
-      "source_version",
       "context_ref",
       "media_id",
       "media_kind",
@@ -519,7 +490,6 @@ export function isWebCitationEventData(
       citation.provider_request_id === null ||
       typeof citation.provider_request_id === "string") &&
     (citation.rank === undefined || Number.isInteger(citation.rank)) &&
-    typeof citation.source_version === "string" &&
     isRetrievalContextRef(citation.context_ref) &&
     citation.context_ref.type === "web_result" &&
     isRetrievalLocator(citation.locator) &&

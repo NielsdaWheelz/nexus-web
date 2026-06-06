@@ -48,7 +48,9 @@ from nexus.services.search import (
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
-    activate_replacement_content_index_run,
+    add_library_entry_only as seed_media_in_library,
+)
+from tests.factories import (
     add_library_member,
     add_media_to_library,
     create_normalized_fragment_highlight,
@@ -63,9 +65,6 @@ from tests.factories import (
     create_test_message,
     get_user_default_library,
     share_conversation_to_library,
-)
-from tests.factories import (
-    add_library_entry_only as seed_media_in_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -177,7 +176,6 @@ class TestBasicSearch:
                 session,
                 media_id=media_id,
                 source_kind="epub",
-                artifact_ref="test://epub-search-contract",
                 fragments=[fragment],
                 reason="test",
             )
@@ -506,7 +504,7 @@ class TestBasicSearch:
         direct_results = [r for r in direct_response.json()["results"] if r["type"] == "fragment"]
         assert len(direct_results) >= 1
         direct_row = direct_results[0]
-        assert direct_row["source_version"]
+        assert "source_version" not in direct_row
         assert direct_row["citation_label"]
         assert direct_row["locator"]["type"] == "web_text_offsets"
         assert direct_row["locator"]["media_id"] == str(media_id)
@@ -536,7 +534,7 @@ class TestBasicSearch:
         note_block_results = [r for r in data["results"] if r["type"] == "note_block"]
         assert len(note_block_results) >= 1
         note_row = next(r for r in note_block_results if r["id"] == str(note_block_id))
-        assert note_row["source_version"] == f"note_block:{note_block_id}:revision:1"
+        assert "source_version" not in note_row
         assert note_row["locator"] == {
             "type": "note_block_offsets",
             "page_id": note_row["page_id"],
@@ -552,7 +550,7 @@ class TestBasicSearch:
         assert page_response.status_code == 200
         page_results = [r for r in page_response.json()["results"] if r["type"] == "page"]
         assert len(page_results) >= 1
-        assert page_results[0]["source_version"].startswith("page:")
+        assert "source_version" not in page_results[0]
 
         highlight_response = auth_client.get(
             "/search?q=test+exact&types=highlight",
@@ -562,15 +560,15 @@ class TestBasicSearch:
         highlight_row = next(
             r for r in highlight_response.json()["results"] if r["id"] == str(highlight_id)
         )
-        assert highlight_row["source_version"].startswith("web_article:fragments:")
+        assert "source_version" not in highlight_row
         assert highlight_row["citation_label"]
         assert highlight_row["locator"]["type"] == "web_text_offsets"
         assert highlight_row["locator"]["media_id"] == str(media_id)
 
-    def test_highlight_search_requires_active_source_version(
+    def test_highlight_search_requires_active_index_run(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Highlight search omits citable results without durable source provenance."""
+        """Highlight search omits citable results without an active current index run."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -616,78 +614,6 @@ class TestBasicSearch:
                     result_id=str(highlight_id),
                 )
 
-    def test_highlight_search_requires_anchor_in_active_index_artifact(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Fragment highlights are citable only when their anchor exists in the active index."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        with direct_db.session() as session:
-            media_id = create_searchable_media(
-                session, user_id, title="Reindexed Highlight Article"
-            )
-            fragment_id = session.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM fragments
-                    WHERE media_id = :media_id
-                    ORDER BY idx ASC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
-            active_run_id = session.execute(
-                text(
-                    """
-                    SELECT active_run_id
-                    FROM media_content_index_states
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
-            highlight_id = create_normalized_fragment_highlight(
-                session,
-                user_id,
-                fragment_id,
-                media_id,
-                start_offset=0,
-                end_offset=len("reindexed"),
-                exact="reindexed",
-            )
-            activate_replacement_content_index_run(
-                session,
-                media_id=media_id,
-                active_run_id=active_run_id,
-            )
-            session.commit()
-
-        direct_db.register_cleanup("highlights", "id", highlight_id)
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        response = auth_client.get(
-            "/search?q=reindexed&types=highlight",
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200
-        result_ids = {row["id"] for row in response.json()["results"]}
-        assert str(highlight_id) not in result_ids
-
-        with direct_db.session() as session:
-            with pytest.raises(NotFoundError):
-                get_search_result(
-                    db=session,
-                    viewer_id=user_id,
-                    result_type="highlight",
-                    result_id=str(highlight_id),
-                )
-
     def test_search_finds_messages(self, auth_client, direct_db: DirectSessionManager):
         """Search finds messages in conversations."""
         user_id = create_test_user_id()
@@ -708,7 +634,7 @@ class TestBasicSearch:
         message_results = [r for r in data["results"] if r["type"] == "message"]
         assert len(message_results) >= 1
         message_row = next(r for r in message_results if r["id"] == str(message_id))
-        assert message_row["source_version"] == f"message:{message_id}"
+        assert "source_version" not in message_row
         assert message_row["locator"] == {
             "type": "message_offsets",
             "conversation_id": str(conversation_id),
@@ -1423,7 +1349,7 @@ class TestSearchResultFormat:
             }
             assert "idx" not in result
 
-    def test_content_chunk_search_skips_primary_span_from_other_index_run(
+    def test_content_chunk_search_drops_prior_span_after_current_rebuild(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -1448,7 +1374,6 @@ class TestSearchResultFormat:
                 session,
                 media_id=media_id,
                 source_kind="web_article",
-                artifact_ref=f"fragments:{fragment.id}:stale-search",
                 fragments=[fragment],
                 reason="test_stale_search",
             )
@@ -1459,25 +1384,26 @@ class TestSearchResultFormat:
                     FROM content_chunks cc
                     JOIN media_content_index_states mcis
                       ON mcis.media_id = cc.media_id
-                     AND mcis.active_run_id = cc.index_run_id
+                     AND mcis.status = 'ready'
                     WHERE cc.media_id = :media_id
                     ORDER BY cc.chunk_idx ASC
                     LIMIT 1
-                    """
+                """
                 ),
                 {"media_id": media_id},
             ).scalar_one()
-            session.execute(
+            old_span_exists = session.execute(
                 text(
                     """
-                    UPDATE content_chunks
-                    SET primary_evidence_span_id = :old_span_id
-                    WHERE id = :active_chunk_id
+                    SELECT 1
+                    FROM evidence_spans
+                    WHERE id = :old_span_id
                     """
                 ),
-                {"active_chunk_id": active_chunk_id, "old_span_id": old_span_id},
-            )
+                {"old_span_id": old_span_id},
+            ).scalar()
             session.commit()
+        assert old_span_exists is None
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1490,56 +1416,14 @@ class TestSearchResultFormat:
         )
 
         assert response.status_code == 200, (
-            f"Expected stale primary span to be skipped, got "
+            f"Expected current rebuilt chunks to be searchable, got "
             f"{response.status_code}: {response.text}"
         )
-        result_ids = {row["id"] for row in response.json()["results"]}
-        assert str(active_chunk_id) not in result_ids
-
-    def test_direct_evidence_span_result_requires_active_ready_index_run(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        with direct_db.session() as session:
-            media_id = create_searchable_media(session, user_id, title="Stale Evidence Source")
-            old_span_id = session.execute(
-                text(
-                    """
-                    SELECT cc.primary_evidence_span_id
-                    FROM content_chunks cc
-                    WHERE cc.media_id = :media_id
-                    ORDER BY cc.chunk_idx ASC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
-            fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
-            rebuild_fragment_content_index(
-                session,
-                media_id=media_id,
-                source_kind="web_article",
-                artifact_ref=f"fragments:{fragment.id}:stale-evidence",
-                fragments=[fragment],
-                reason="test_stale_evidence",
-            )
-            session.commit()
-
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        with direct_db.session() as session:
-            with pytest.raises(NotFoundError):
-                get_search_result(
-                    db=session,
-                    viewer_id=user_id,
-                    result_type="evidence_span",
-                    result_id=str(old_span_id),
-                )
+        content_chunk_rows = [
+            row for row in response.json()["results"] if row["type"] == "content_chunk"
+        ]
+        assert any(row["id"] == str(active_chunk_id) for row in content_chunk_rows)
+        assert all(str(old_span_id) not in row["evidence_span_ids"] for row in content_chunk_rows)
 
     def test_content_chunk_search_skips_stale_snapshot_text(
         self, auth_client, direct_db: DirectSessionManager
@@ -1556,7 +1440,7 @@ class TestSearchResultFormat:
                     FROM content_chunks cc
                     JOIN media_content_index_states mcis
                       ON mcis.media_id = cc.media_id
-                     AND mcis.active_run_id = cc.index_run_id
+                     AND mcis.status = 'ready'
                     WHERE cc.media_id = :media_id
                     ORDER BY cc.chunk_idx ASC
                     LIMIT 1
@@ -1719,7 +1603,7 @@ class TestSearchResultFormat:
                         id, tool_call_id, ordinal, result_type, source_id,
                         context_ref, result_ref, deep_link, score, selected,
                         source_title, exact_snippet, locator, retrieval_status,
-                        included_in_prompt, source_version
+                        included_in_prompt
                     )
                     VALUES (
                         :retrieval_id, :tool_call_id, 0, 'web_result', 'web:calypso',
@@ -1737,7 +1621,6 @@ class TestSearchResultFormat:
                             'snippet', 'Calypso archive public evidence snippet',
                             'provider', 'test',
                             'provider_request_id', 'provider-request-1',
-                            'source_version', 'web_search:test:provider-request-1',
                             'locator', jsonb_build_object(
                                 'type', 'external_url',
                                 'url', 'https://example.com/calypso',
@@ -1762,8 +1645,7 @@ class TestSearchResultFormat:
                             'display_url', 'example.com/calypso'
                         ),
                         'web_result',
-                        true,
-                        'web_search:test:provider-request-1'
+                        true
                     )
                 """),
                 {"retrieval_id": retrieval_id, "tool_call_id": tool_call_id},
@@ -1790,7 +1672,7 @@ class TestSearchResultFormat:
         assert result["result_ref"] == "web:calypso"
         assert result["url"] == "https://example.com/calypso"
         assert result["deep_link"] == "https://example.com/calypso"
-        assert result["source_version"] == "web_search:test:provider-request-1"
+        assert "source_version" not in result
         assert result["locator"] == {
             "type": "external_url",
             "url": "https://example.com/calypso",
@@ -2006,6 +1888,7 @@ class TestSearchResultFormat:
             _model, vector = build_text_embedding("semanticneedle")
             assert document is not None
             document_id = document.id
+            page_id = page.id
             document.index_status = "ready"
             session.add(
                 ObjectSearchEmbedding(
@@ -2015,35 +1898,36 @@ class TestSearchResultFormat:
                     object_id=document.object_id,
                     embedding_model=_model,
                     embedding_dimensions=len(vector),
-                    content_hash=document.content_hash,
-                    index_version=document.index_version,
                     embedding=vector,
                 )
             )
             session.commit()
 
-        lexical_response = auth_client.get(
-            "/search?q=semanticneedle&types=page&semantic=false",
-            headers=auth_headers(user_id),
-        )
-        assert lexical_response.status_code == 200, lexical_response.text
-        assert lexical_response.json()["results"] == []
+        with direct_db.session() as session:
+            lexical_rows = object_search.search_objects(
+                session,
+                viewer_id=user_id,
+                object_type="page",
+                query_text="semanticneedle",
+                semantic_query_embedding=None,
+                scope_type="all",
+                scope_id=None,
+                limit=10,
+            )
+            assert lexical_rows == []
 
-        semantic_response = auth_client.get(
-            "/search?q=semanticneedle&types=page&semantic=true",
-            headers=auth_headers(user_id),
-        )
-        assert semantic_response.status_code == 200, semantic_response.text
-        result_ids = {row["id"] for row in semantic_response.json()["results"]}
-        assert str(page.id) in result_ids
-
-        default_response = auth_client.get(
-            "/search?q=semanticneedle&types=page",
-            headers=auth_headers(user_id),
-        )
-        assert default_response.status_code == 200, default_response.text
-        default_result_ids = {row["id"] for row in default_response.json()["results"]}
-        assert str(page.id) in default_result_ids
+            semantic_rows = object_search.search_objects(
+                session,
+                viewer_id=user_id,
+                object_type="page",
+                query_text="semanticneedle",
+                semantic_query_embedding=build_text_embedding("semanticneedle"),
+                scope_type="all",
+                scope_id=None,
+                limit=10,
+            )
+            result_ids = {row["object_id"] for row in semantic_rows}
+            assert page_id in result_ids
 
         _model, unrelated_vector = build_text_embedding("unrelatedobjectmiss")
         with direct_db.session() as session:
@@ -2062,12 +1946,119 @@ class TestSearchResultFormat:
             )
             session.commit()
 
-        unrelated_response = auth_client.get(
-            "/search?q=unrelatedobjectmiss&types=page",
-            headers=auth_headers(user_id),
-        )
-        assert unrelated_response.status_code == 200, unrelated_response.text
-        assert unrelated_response.json()["results"] == []
+        with direct_db.session() as session:
+            unrelated_rows = object_search.search_objects(
+                session,
+                viewer_id=user_id,
+                object_type="page",
+                query_text="unrelatedobjectmiss",
+                semantic_query_embedding=build_text_embedding("unrelatedobjectmiss"),
+                scope_type="all",
+                scope_id=None,
+                limit=10,
+            )
+            assert unrelated_rows == []
+
+    def test_page_reprojection_deletes_stale_object_search_embeddings(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            page = notes.create_page(
+                session,
+                user_id,
+                CreatePageRequest(title="Current Projection Page", description="ordinary notes"),
+            )
+            document = session.scalar(
+                select(ObjectSearchDocument).where(
+                    ObjectSearchDocument.user_id == user_id,
+                    ObjectSearchDocument.object_type == "page",
+                    ObjectSearchDocument.object_id == page.id,
+                )
+            )
+            _model, vector = build_text_embedding("staleprojectionneedle")
+            assert document is not None
+            document_id = document.id
+            page_id = page.id
+            document.index_status = "ready"
+            session.add(
+                ObjectSearchEmbedding(
+                    user_id=user_id,
+                    search_document_id=document.id,
+                    object_type=document.object_type,
+                    object_id=document.object_id,
+                    embedding_model=_model,
+                    embedding_dimensions=len(vector),
+                    embedding=vector,
+                )
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            initial_rows = object_search.search_objects(
+                session,
+                viewer_id=user_id,
+                object_type="page",
+                query_text="staleprojectionneedle",
+                semantic_query_embedding=build_text_embedding("staleprojectionneedle"),
+                scope_type="all",
+                scope_id=None,
+                limit=10,
+            )
+            initial_result_ids = {row["object_id"] for row in initial_rows}
+            assert page_id in initial_result_ids
+
+        with direct_db.session() as session:
+            page = session.get(Page, page_id)
+            assert page is not None
+            page.description = "changed projection text without the stale semantic token"
+            object_search.project_page(session, user_id, page)
+            session.commit()
+
+        with direct_db.session() as session:
+            document = session.get(ObjectSearchDocument, document_id)
+            assert document is not None
+            assert document.index_status == "pending_embedding"
+            stale_embedding_ids = session.scalars(
+                select(ObjectSearchEmbedding.id).where(
+                    ObjectSearchEmbedding.search_document_id == document_id
+                )
+            ).all()
+            assert stale_embedding_ids == []
+            session.add(
+                ObjectSearchEmbedding(
+                    user_id=user_id,
+                    search_document_id=document_id,
+                    object_type=document.object_type,
+                    object_id=document.object_id,
+                    embedding_model=_model,
+                    embedding_dimensions=len(vector),
+                    embedding=vector,
+                )
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            stale_rows = object_search.search_objects(
+                session,
+                viewer_id=user_id,
+                object_type="page",
+                query_text="staleprojectionneedle",
+                semantic_query_embedding=build_text_embedding("staleprojectionneedle"),
+                scope_type="all",
+                scope_id=None,
+                limit=10,
+            )
+            stale_result_ids = {row["object_id"] for row in stale_rows}
+            assert page_id not in stale_result_ids
 
 
 # =============================================================================
@@ -2557,7 +2548,6 @@ class TestSemanticTranscriptChunkSearch:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         media_id = uuid4()
-        version_id = uuid4()
         transcript_segments = segments or [
             TranscriptSegmentInput(
                 segment_idx=0,
@@ -2606,24 +2596,11 @@ class TestSemanticTranscriptChunkSearch:
                 ),
                 {"default_library_id": default_library_id, "media_id": media_id},
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcript_versions (
-                        id, media_id, version_no, transcript_coverage,
-                        is_active, created_by_user_id
-                    )
-                    VALUES (:id, :media_id, 1, 'full', true, :created_by_user_id)
-                    """
-                ),
-                {"id": version_id, "media_id": media_id, "created_by_user_id": user_id},
-            )
             for segment_idx, segment in enumerate(transcript_segments):
                 session.execute(
                     text(
                         """
                         INSERT INTO podcast_transcript_segments (
-                            transcript_version_id,
                             media_id,
                             segment_idx,
                             canonical_text,
@@ -2632,7 +2609,6 @@ class TestSemanticTranscriptChunkSearch:
                             speaker_label
                         )
                         VALUES (
-                            :transcript_version_id,
                             :media_id,
                             :segment_idx,
                             :canonical_text,
@@ -2643,7 +2619,6 @@ class TestSemanticTranscriptChunkSearch:
                         """
                     ),
                     {
-                        "transcript_version_id": version_id,
                         "media_id": media_id,
                         "segment_idx": segment_idx,
                         "canonical_text": segment.canonical_text,
@@ -2673,7 +2648,6 @@ class TestSemanticTranscriptChunkSearch:
             rebuild_transcript_content_index(
                 session,
                 media_id=media_id,
-                transcript_version_id=version_id,
                 transcript_segments=transcript_segments,
                 reason="test",
             )
@@ -2682,11 +2656,8 @@ class TestSemanticTranscriptChunkSearch:
                     text(
                         """
                         UPDATE media_content_index_states
-                        SET active_run_id = NULL,
-                            active_embedding_provider = NULL,
+                        SET active_embedding_provider = NULL,
                             active_embedding_model = NULL,
-                            active_embedding_version = NULL,
-                            active_embedding_config_hash = NULL,
                             status = :semantic_status
                         WHERE media_id = :media_id
                         """
@@ -2696,7 +2667,6 @@ class TestSemanticTranscriptChunkSearch:
             session.commit()
 
         direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
         direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2724,6 +2694,7 @@ class TestSemanticTranscriptChunkSearch:
         top = chunk_results[0]
         assert top["source"]["media_id"] == str(media_id)
         assert top["locator"]["type"] == "transcript_time_range"
+        assert "transcript_version_id" not in top["locator"]
         assert top["locator"]["t_start_ms"] == 1000
         assert top["locator"]["t_end_ms"] == 5000
         assert "transformer" in top["snippet"].lower()
@@ -2789,59 +2760,7 @@ class TestSemanticTranscriptChunkSearch:
         chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
         assert chunk_results == [], "lexical search must not return chunks while index is pending"
 
-    def test_content_chunk_search_requires_ready_index_state_with_active_ready_run(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id, media_id = self._seed_transcript_chunk_media(
-            auth_client,
-            direct_db,
-            semantic_status="ready",
-        )
-        with direct_db.session() as session:
-            chunk_id = session.execute(
-                text(
-                    """
-                    SELECT cc.id
-                    FROM content_chunks cc
-                    JOIN media_content_index_states mcis
-                      ON mcis.media_id = cc.media_id
-                     AND mcis.active_run_id = cc.index_run_id
-                    WHERE cc.media_id = :media_id
-                    ORDER BY cc.chunk_idx ASC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
-            session.execute(
-                text(
-                    """
-                    UPDATE media_content_index_states
-                    SET status = 'pending'
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            )
-            session.commit()
-
-        response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=false",
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, response.text
-        assert [r for r in response.json()["results"] if r["type"] == "content_chunk"] == []
-
-        with direct_db.session() as session:
-            with pytest.raises(NotFoundError):
-                get_search_result(
-                    db=session,
-                    viewer_id=user_id,
-                    result_type="content_chunk",
-                    result_id=str(chunk_id),
-                )
-
-    def test_lexical_search_uses_prior_active_ready_run_when_latest_index_failed(
+    def test_lexical_search_excludes_content_chunks_when_current_index_failed(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id, media_id = self._seed_transcript_chunk_media(
@@ -2862,11 +2781,8 @@ class TestSemanticTranscriptChunkSearch:
                     """
                     SELECT
                         status,
-                        active_run_id,
                         active_embedding_provider,
-                        active_embedding_model,
-                        active_embedding_version,
-                        active_embedding_config_hash
+                        active_embedding_model
                     FROM media_content_index_states
                     WHERE media_id = :media_id
                     """
@@ -2874,25 +2790,20 @@ class TestSemanticTranscriptChunkSearch:
                 {"media_id": media_id},
             ).one()
             session.commit()
-        assert state[0] == "ready"
-        assert state[1] is not None
-        assert state[2] is not None
-        assert state[3] is not None
-        assert state[4] is not None
-        assert state[5] is not None
+        assert state[0] == "failed"
+        assert state[1] is None
+        assert state[2] is None
 
         response = auth_client.get(
             "/search?q=transformer+attention&types=content_chunk&semantic=false",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
-            f"expected lexical search to use active ready run after latest failure, got "
+            f"expected lexical search to succeed while current index is failed, got "
             f"{response.status_code}: {response.text}"
         )
         chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
-        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results), (
-            "content chunk search must gate on the active ready run, not the latest state status"
-        )
+        assert all(row["source"]["media_id"] != str(media_id) for row in chunk_results)
 
     @pytest.mark.parametrize(
         ("provider_status", "provider_body"),
@@ -3061,8 +2972,7 @@ class TestSemanticTranscriptChunkSearch:
                 text(
                     """
                     UPDATE media_content_index_states
-                    SET active_embedding_model = 'other_model',
-                        active_embedding_version = 'other_model'
+                    SET active_embedding_model = 'other_model'
                     WHERE media_id = :media_id
                     """
                 ),
@@ -3073,7 +2983,6 @@ class TestSemanticTranscriptChunkSearch:
                     """
                     UPDATE content_embeddings ce
                     SET embedding_model = 'other_model',
-                        embedding_version = 'other_model',
                         embedding_vector = CAST(:embedding AS vector)
                     FROM content_chunks cc
                     WHERE ce.chunk_id = cc.id
@@ -3174,16 +3083,14 @@ class TestSemanticTranscriptChunkSearch:
         ), "semantic retrieval must not miss relevant chunks after irrelevant transcript rows"
 
 
-class TestSearchTranscriptVersionNavigation:
-    def test_note_block_search_uses_note_deep_link_when_linked_highlight_targets_old_version(
+class TestSearchTranscriptNavigation:
+    def test_note_block_search_uses_note_deep_link_when_linked_highlight_targets_transcript(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         media_id = uuid4()
-        version_v1 = uuid4()
-        version_v2 = uuid4()
         old_fragment_id = uuid4()
         active_fragment_id = uuid4()
         highlight_id = uuid4()
@@ -3212,12 +3119,12 @@ class TestSearchTranscriptVersionNavigation:
                     VALUES (
                         :id,
                         'podcast_episode',
-                        'Version Navigation Episode',
-                        'https://feeds.example.com/version-nav.xml',
+                        'Transcript Navigation Episode',
+                        'https://feeds.example.com/transcript-nav.xml',
                         'ready_for_reading',
-                        'https://cdn.example.com/version-nav.mp3',
+                        'https://cdn.example.com/transcript-nav.mp3',
                         'podcast_index',
-                        'version-nav-episode-1',
+                        'transcript-nav-episode-1',
                         :user_id
                     )
                     """
@@ -3233,54 +3140,6 @@ class TestSearchTranscriptVersionNavigation:
                     """
                 ),
                 {"default_library_id": default_library_id, "media_id": media_id},
-            )
-
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcript_versions (
-                        id,
-                        media_id,
-                        version_no,
-                        transcript_coverage,
-                        is_active,
-                        request_reason,
-                        created_by_user_id,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES
-                        (
-                            :version_v1,
-                            :media_id,
-                            1,
-                            'full',
-                            false,
-                            'episode_open',
-                            :user_id,
-                            :now_ts,
-                            :now_ts
-                        ),
-                        (
-                            :version_v2,
-                            :media_id,
-                            2,
-                            'full',
-                            true,
-                            'operator_requeue',
-                            :user_id,
-                            :now_ts,
-                            :now_ts
-                        )
-                    """
-                ),
-                {
-                    "version_v1": version_v1,
-                    "version_v2": version_v2,
-                    "media_id": media_id,
-                    "user_id": user_id,
-                    "now_ts": now_ts,
-                },
             )
             session.execute(
                 text(
@@ -3314,7 +3173,6 @@ class TestSearchTranscriptVersionNavigation:
                         canonical_text,
                         t_start_ms,
                         t_end_ms,
-                        transcript_version_id,
                         created_at
                     )
                     VALUES
@@ -3326,7 +3184,6 @@ class TestSearchTranscriptVersionNavigation:
                             'old transcript segment',
                             0,
                             1000,
-                            :version_v1,
                             :now_ts
                         ),
                         (
@@ -3337,7 +3194,6 @@ class TestSearchTranscriptVersionNavigation:
                             'active transcript segment',
                             80,
                             1080,
-                            :version_v2,
                             :now_ts
                         )
                     """
@@ -3346,8 +3202,6 @@ class TestSearchTranscriptVersionNavigation:
                     "old_fragment_id": old_fragment_id,
                     "active_fragment_id": active_fragment_id,
                     "media_id": media_id,
-                    "version_v1": version_v1,
-                    "version_v2": version_v2,
                     "now_ts": now_ts,
                 },
             )
@@ -3411,7 +3265,7 @@ class TestSearchTranscriptVersionNavigation:
                 text(
                     """
                     INSERT INTO pages (id, user_id, title)
-                    VALUES (:page_id, :user_id, 'Version Navigation Notes')
+                    VALUES (:page_id, :user_id, 'Transcript Navigation Notes')
                     """
                 ),
                 {"page_id": page_id, "user_id": user_id},
@@ -3510,8 +3364,6 @@ class TestSearchTranscriptVersionNavigation:
         direct_db.register_cleanup("fragments", "id", old_fragment_id)
         direct_db.register_cleanup("fragments", "id", active_fragment_id)
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
-        direct_db.register_cleanup("podcast_transcript_versions", "id", version_v1)
-        direct_db.register_cleanup("podcast_transcript_versions", "id", version_v2)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)

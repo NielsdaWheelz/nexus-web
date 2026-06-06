@@ -10,8 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.services.capabilities import is_text_document_ready
+from nexus.errors import ApiErrorCode, NotFoundError
 
 ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
 
@@ -29,7 +28,6 @@ def resolve_evidence_span(
     viewer_id: UUID,
     media_id: UUID,
     evidence_span_id: UUID,
-    index_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     row = (
         db.execute(
@@ -39,32 +37,10 @@ def resolve_evidence_span(
                 es.id,
                 es.media_id,
                 es.span_text,
-                es.index_run_id,
                 es.selector,
                 es.citation_label,
-                es.resolver_kind,
-                ss.source_version,
-                ss.source_fingerprint,
-                ss.metadata AS snapshot_metadata,
-                m.kind AS media_kind,
-                m.processing_status,
-                mts.transcript_state,
-                mts.transcript_coverage,
-                active_run.id AS active_ready_run_id
+                es.resolver_kind
             FROM evidence_spans es
-            JOIN media m ON m.id = es.media_id
-            LEFT JOIN source_snapshots ss
-              ON ss.id = es.source_snapshot_id
-            LEFT JOIN media_transcript_states mts
-              ON mts.media_id = es.media_id
-            LEFT JOIN media_content_index_states mcis
-              ON mcis.media_id = es.media_id
-             AND mcis.active_run_id = es.index_run_id
-             AND mcis.status = 'ready'
-            LEFT JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
             WHERE es.id = :evidence_span_id
             """
             ),
@@ -73,24 +49,11 @@ def resolve_evidence_span(
         .mappings()
         .first()
     )
-    if (
-        row is None
-        or row["media_id"] != media_id
-        or (index_run_id is not None and row["index_run_id"] != index_run_id)
-        or not can_read_media(db, viewer_id, media_id)
-    ):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    if not is_text_document_ready(
-        str(row["media_kind"]),
-        str(row["processing_status"]),
-        str(row["transcript_state"]) if row["transcript_state"] is not None else None,
-        str(row["transcript_coverage"]) if row["transcript_coverage"] is not None else None,
-    ):
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    if row["active_ready_run_id"] is None:
+    if row is None or row["media_id"] != media_id or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
 
     selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}
+    _assert_no_legacy_selector_identity(selector)
     resolver_kind = str(row["resolver_kind"])
     params: dict[str, str] = {"evidence": str(evidence_span_id)}
     raw_text_quote = selector.get("text_quote")
@@ -126,13 +89,7 @@ def resolve_evidence_span(
             selector,
             evidence_span_id=evidence_span_id,
             text_quote=text_quote_out,
-            selector_matches=(
-                _pdf_selector_snapshot_matches(
-                    selector=selector,
-                    snapshot_source_fingerprint=row["source_fingerprint"],
-                )
-                and snapshot_text_matches
-            ),
+            selector_matches=snapshot_text_matches,
         )
 
     elif resolver_kind == "transcript":
@@ -141,11 +98,7 @@ def resolve_evidence_span(
             evidence_span_id=evidence_span_id,
             text_quote=text_quote_out,
             selector_matches=(
-                _transcript_selector_snapshot_matches(
-                    selector=selector,
-                    snapshot_metadata=row["snapshot_metadata"],
-                )
-                and snapshot_text_matches
+                _transcript_selector_time_range_valid(selector=selector) and snapshot_text_matches
             ),
         )
     else:
@@ -158,7 +111,6 @@ def resolve_evidence_span(
         "media_id": str(media_id),
         "citation_label": str(row["citation_label"]),
         "span_text": str(row["span_text"] or ""),
-        "source_version": str(row["source_version"] or ""),
         "resolver": {
             "kind": resolver_kind,
             "route": f"/media/{media_id}",
@@ -267,11 +219,6 @@ def _resolve_pdf_selector(
                 "page_label": selector.get("page_label")
                 if isinstance(selector.get("page_label"), str)
                 else None,
-                "source_fingerprint": (
-                    selector.get("source_fingerprint")
-                    if isinstance(selector.get("source_fingerprint"), str)
-                    else None
-                ),
                 "text_quote": text_quote,
                 "geometry": {**geometry, "quads": quads} if quads else None,
             },
@@ -350,17 +297,11 @@ def _evidence_span_snapshot_matches(
                 JOIN content_blocks start_block
                   ON start_block.id = es.start_block_id
                  AND start_block.media_id = es.media_id
-                 AND start_block.index_run_id = es.index_run_id
-                 AND start_block.source_snapshot_id = es.source_snapshot_id
                 JOIN content_blocks end_block
                   ON end_block.id = es.end_block_id
                  AND end_block.media_id = es.media_id
-                 AND end_block.index_run_id = es.index_run_id
-                 AND end_block.source_snapshot_id = es.source_snapshot_id
                 JOIN content_blocks cb
                   ON cb.media_id = es.media_id
-                 AND cb.index_run_id = es.index_run_id
-                 AND cb.source_snapshot_id = es.source_snapshot_id
                  AND cb.block_idx BETWEEN start_block.block_idx AND end_block.block_idx
                 WHERE es.id = :evidence_span_id
                 ORDER BY cb.block_idx ASC
@@ -414,41 +355,28 @@ def _evidence_span_snapshot_matches(
     return reconstructed == span_text and span_text == exact
 
 
-def _pdf_selector_snapshot_matches(
-    *,
-    selector: dict[str, Any],
-    snapshot_source_fingerprint: Any,
-) -> bool:
-    selector_fingerprint = selector.get("source_fingerprint")
-    if not isinstance(selector_fingerprint, str) or not selector_fingerprint.strip():
-        return False
-    if (
-        isinstance(snapshot_source_fingerprint, str)
-        and snapshot_source_fingerprint
-        and selector_fingerprint != snapshot_source_fingerprint
-    ):
-        return False
-    return True
+_LEGACY_SELECTOR_IDENTITY_KEYS = frozenset(
+    {
+        "content_hash",
+        "content_sha256",
+        "file_sha256",
+        "fingerprint",
+        "geometry_fingerprint",
+        "geometry_version",
+        "hash",
+        "manifest_sha256",
+        "sha256",
+        "source_fingerprint",
+        "source_sha256",
+        "source_version",
+        "sourceVersion",
+        "transcript_version_id",
+        "version",
+    }
+)
 
 
-def _transcript_selector_snapshot_matches(
-    *,
-    selector: dict[str, Any],
-    snapshot_metadata: Any,
-) -> bool:
-    raw_transcript_version_id = selector.get("transcript_version_id")
-    if not isinstance(raw_transcript_version_id, str):
-        return False
-    try:
-        transcript_version_id = UUID(raw_transcript_version_id)
-    except ValueError:
-        return False
-
-    metadata = snapshot_metadata if isinstance(snapshot_metadata, dict) else {}
-    metadata_version_id = metadata.get("transcript_version_id")
-    if metadata_version_id is not None and str(metadata_version_id) != str(transcript_version_id):
-        return False
-
+def _transcript_selector_time_range_valid(*, selector: dict[str, Any]) -> bool:
     t_start_ms = selector.get("t_start_ms")
     t_end_ms = selector.get("t_end_ms")
     if not (
@@ -460,3 +388,19 @@ def _transcript_selector_snapshot_matches(
         return False
 
     return True
+
+
+def _assert_no_legacy_selector_identity(selector: dict[str, Any]) -> None:
+    if _contains_legacy_selector_identity(selector):
+        raise RuntimeError("Evidence selector includes legacy artifact identity")
+
+
+def _contains_legacy_selector_identity(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in _LEGACY_SELECTOR_IDENTITY_KEYS or _contains_legacy_selector_identity(child)
+            for key, child in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_legacy_selector_identity(child) for child in value)
+    return False

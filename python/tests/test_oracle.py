@@ -22,7 +22,6 @@ from nexus.config import clear_settings_cache
 from nexus.db.models import (
     OracleCorpusImage,
     OracleCorpusPassage,
-    OracleCorpusSetVersion,
     OracleCorpusWork,
     OracleReading,
 )
@@ -52,6 +51,11 @@ from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
 
+ORACLE_TEST_SOURCE_REPOSITORY = "test:oracle-current-corpus"
+ORACLE_TEST_WORK_SLUGS = tuple(
+    f"oracle-test-work-{index + 1}" for index in range(ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS)
+)
+
 
 @pytest.fixture(autouse=True)
 def anthropic_key(monkeypatch):
@@ -70,7 +74,6 @@ def _require_oracle_schema(engine: Engine) -> None:
         "oracle_corpus_works",
         "oracle_corpus_passages",
         "oracle_corpus_images",
-        "oracle_corpus_set_versions",
     } - tables
     if missing:
         pytest.fail(f"oracle schema not present: {', '.join(sorted(missing))}")
@@ -79,18 +82,6 @@ def _require_oracle_schema(engine: Engine) -> None:
 @pytest.fixture
 def oracle_schema(engine: Engine) -> None:
     _require_oracle_schema(engine)
-
-
-def _seed_oracle_corpus_version(db: Session) -> UUID:
-    version = OracleCorpusSetVersion(
-        id=uuid4(),
-        version=f"oracle-test-{uuid4()}",
-        label="Oracle test corpus",
-        embedding_model=current_transcript_embedding_model(),
-    )
-    db.add(version)
-    db.flush()
-    return version.id
 
 
 def _oracle_test_embedding_literal(text_value: str) -> str:
@@ -144,22 +135,27 @@ def _set_oracle_image_embedding(
     )
 
 
+def _clear_oracle_corpus(db: Session) -> None:
+    db.execute(text("DELETE FROM oracle_corpus_images"))
+    db.execute(text("DELETE FROM oracle_corpus_passages"))
+    db.execute(text("DELETE FROM oracle_corpus_works"))
+
+
 def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
-    run_token = uuid4().hex[:12]
-    corpus_set_version_id = _seed_oracle_corpus_version(db)
+    corpus_id = uuid4()
+    source_repository = ORACLE_TEST_SOURCE_REPOSITORY
     work_ids: list[UUID] = []
     passage_index = 0
-    for index, slug in enumerate(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS):
+    for index, slug in enumerate(ORACLE_TEST_WORK_SLUGS):
         work = OracleCorpusWork(
             id=uuid4(),
-            corpus_set_version_id=corpus_set_version_id,
             slug=slug,
             title=f"Oracle Test Work {index}",
             author="A. Scribe",
             year="1850",
             edition_label="Test edition",
-            source_repository="test",
-            source_url=f"https://example.com/oracle-work-{run_token}-{index}",
+            source_repository=source_repository,
+            source_url=f"https://example.com/oracle-test-work-{index + 1}",
         )
         db.add(work)
         db.flush()
@@ -179,11 +175,11 @@ def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
             db.add(
                 OracleCorpusPassage(
                     id=passage_id,
-                    corpus_set_version_id=corpus_set_version_id,
                     work_id=work.id,
                     passage_index=local_index,
                     canonical_text=canonical_text,
                     locator_label=f"Test Work {index}, passage {local_index + 1}",
+                    source={"repository": source_repository},
                     tags=tags,
                 )
             )
@@ -199,17 +195,15 @@ def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
     for index in range(ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES):
         image = OracleCorpusImage(
             id=uuid4(),
-            corpus_set_version_id=corpus_set_version_id,
-            source_repository="test",
-            source_url=f"https://example.com/oracle-plate-{run_token}-{index}.jpg",
+            source_repository=source_repository,
+            source_url=f"https://example.com/oracle-test-plate-{index + 1}.jpg",
             artist="Test Engraver",
             work_title=f"The Test Plate {index}",
             year="1860",
             attribution_text=f"Test Engraver, The Test Plate {index}, test collection.",
             width=800,
             height=1200,
-            sha256=f"{index:064x}",
-            storage_key=f"oracle/plates/{index:064x}.jpg",
+            storage_key=f"oracle/plates/test-plate-{index + 1}.jpg",
             content_type="image/jpeg",
             byte_size=1000 + index,
             tags=["forest", "lamp"],
@@ -222,26 +216,21 @@ def _seed_oracle_corpus(db: Session) -> tuple[UUID, list[UUID], UUID]:
             text_value=f"{image.work_title} {' '.join(image.tags)}",
         )
         image_ids.append(image.id)
-    return corpus_set_version_id, work_ids, image_ids[0]
+    return corpus_id, work_ids, image_ids[0]
 
 
 def _register_oracle_corpus_cleanup(
     direct_db: DirectSessionManager,
-    corpus_set_version_id: UUID,
+    corpus_id: UUID,
+    work_ids: list[UUID] | None = None,
 ) -> None:
-    direct_db.register_cleanup("oracle_corpus_set_versions", "id", corpus_set_version_id)
     direct_db.register_cleanup(
-        "oracle_corpus_works", "corpus_set_version_id", corpus_set_version_id
+        "oracle_corpus_works", "source_repository", ORACLE_TEST_SOURCE_REPOSITORY
     )
+    for work_id in work_ids or []:
+        direct_db.register_cleanup("oracle_corpus_passages", "work_id", work_id)
     direct_db.register_cleanup(
-        "oracle_corpus_passages",
-        "corpus_set_version_id",
-        corpus_set_version_id,
-    )
-    direct_db.register_cleanup(
-        "oracle_corpus_images",
-        "corpus_set_version_id",
-        corpus_set_version_id,
+        "oracle_corpus_images", "source_repository", ORACLE_TEST_SOURCE_REPOSITORY
     )
 
 
@@ -249,18 +238,15 @@ def _insert_pending_reading(
     db: Session,
     *,
     user_id: UUID,
-    corpus_set_version_id: UUID,
     question: str,
     folio_number: int = 1,
 ) -> UUID:
     reading = OracleReading(
         id=uuid4(),
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         folio_number=folio_number,
         question_text=question,
         status="pending",
-        prompt_version="oracle-v3",
     )
     db.add(reading)
     db.commit()
@@ -616,25 +602,22 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
             text(
                 """
                 SELECT
-                    csv.id,
-                    csv.embedding_model,
-                    count(DISTINCT ocw.id) AS work_count,
-                    count(DISTINCT ocp.id) AS passage_count,
-                    count(DISTINCT oci.id) AS image_count
-                FROM oracle_corpus_set_versions csv
-                LEFT JOIN oracle_corpus_works ocw ON ocw.corpus_set_version_id = csv.id
-                LEFT JOIN oracle_corpus_passages ocp ON ocp.corpus_set_version_id = csv.id
-                LEFT JOIN oracle_corpus_images oci ON oci.corpus_set_version_id = csv.id
-                WHERE csv.version = 'black-forest-oracle-v1'
-                GROUP BY csv.id
+                    (SELECT count(*) FROM oracle_corpus_works) AS work_count,
+                    (SELECT count(*) FROM oracle_corpus_passages) AS passage_count,
+                    (SELECT count(*) FROM oracle_corpus_images) AS image_count,
+                    (
+                        SELECT embedding_model
+                        FROM oracle_corpus_passages
+                        WHERE embedding_model IS NOT NULL
+                        LIMIT 1
+                    ) AS embedding_model
                 """
             )
         )
         .mappings()
-        .one_or_none()
+        .one()
     )
 
-    assert corpus is not None, "migration should seed black-forest-oracle-v1"
     assert corpus["work_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS
     assert corpus["passage_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES
     assert corpus["image_count"] >= ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES
@@ -644,10 +627,8 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
                 """
                 SELECT slug
                 FROM oracle_corpus_works
-                WHERE corpus_set_version_id = :corpus_set_version_id
                 """
             ),
-            {"corpus_set_version_id": corpus["id"]},
         ).scalars()
     )
     unsafe_plate_count = db_session.execute(
@@ -655,11 +636,9 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
             """
             SELECT count(*)
             FROM oracle_corpus_images
-            WHERE corpus_set_version_id = :corpus_set_version_id
-              AND (width > 4096 OR height > 4096)
+            WHERE width > 4096 OR height > 4096
             """
         ),
-        {"corpus_set_version_id": corpus["id"]},
     ).scalar_one()
     plate_audit_row = (
         db_session.execute(
@@ -667,13 +646,11 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
                 """
                 SELECT source_page_url, source_url, license_text, attribution_text
                 FROM oracle_corpus_images
-                WHERE corpus_set_version_id = :corpus_set_version_id
-                  AND source_page_url IS NOT NULL
+                WHERE source_page_url IS NOT NULL
                 ORDER BY source_page_url
                 LIMIT 1
                 """
             ),
-            {"corpus_set_version_id": corpus["id"]},
         )
         .mappings()
         .one_or_none()
@@ -684,15 +661,12 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
             SELECT
                 (SELECT count(*)
                  FROM oracle_corpus_passages
-                 WHERE corpus_set_version_id = :corpus_set_version_id
-                   AND (embedding_model IS NULL OR embedding IS NULL))
+                 WHERE embedding_model IS NULL OR embedding IS NULL)
               + (SELECT count(*)
                  FROM oracle_corpus_images
-                 WHERE corpus_set_version_id = :corpus_set_version_id
-                   AND (embedding_model IS NULL OR embedding IS NULL))
+                 WHERE embedding_model IS NULL OR embedding IS NULL)
             """
         ),
-        {"corpus_set_version_id": corpus["id"]},
     ).scalar_one()
     mismatched_embedding_count = db_session.execute(
         text(
@@ -700,22 +674,19 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
             SELECT
                 (SELECT count(*)
                  FROM oracle_corpus_passages
-                 WHERE corpus_set_version_id = :corpus_set_version_id
-                   AND embedding_model != :embedding_model)
+                 WHERE embedding_model != :embedding_model)
               + (SELECT count(*)
                  FROM oracle_corpus_images
-                 WHERE corpus_set_version_id = :corpus_set_version_id
-                   AND embedding_model != :embedding_model)
+                 WHERE embedding_model != :embedding_model)
             """
         ),
         {
-            "corpus_set_version_id": corpus["id"],
             "embedding_model": corpus["embedding_model"],
         },
     ).scalar_one()
 
     assert seeded_slugs.issuperset(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS), (
-        "migration seed should include every documented first-release work slug; "
+        "migration seed should include every documented current-corpus work slug; "
         f"missing={sorted(set(ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS) - seeded_slugs)}"
     )
     assert corpus["embedding_model"] == "test_hash_v2_256"
@@ -739,7 +710,7 @@ def test_create_reading_accepts_fresh_migrated_manifest_seed(
     )
 
     assert reading.status == "pending"
-    assert reading.corpus_set_version_id == corpus["id"]
+    assert not hasattr(reading, "corpus_set_version_id")
 
 
 def test_create_reading_checks_llm_limits_before_enqueue(
@@ -776,19 +747,18 @@ def test_build_corpus_validation_exits_nonzero_when_counts_are_short(
     oracle_schema,
 ) -> None:
     oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    corpus_set_version_id = _seed_oracle_corpus_version(db_session)
+    _clear_oracle_corpus(db_session)
 
     with pytest.raises(SystemExit) as exc_info:
         oracle_build_corpus._validate_corpus_counts(
             db_session,
-            corpus_set_version_id,
             expected_works=ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
             expected_passages=ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
             expected_images=ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
         )
 
     message = str(exc_info.value)
-    assert "Oracle corpus seed incomplete" in message
+    assert "Oracle current corpus seed incomplete" in message
     assert f"works=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS}" in message
     assert f"passages=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES}" in message
     assert f"images=0/{ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES}" in message
@@ -799,7 +769,8 @@ def test_build_corpus_validation_requires_embeddings(
     oracle_schema,
 ) -> None:
     oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _clear_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session)
     db_session.execute(
         text("""
             UPDATE oracle_corpus_passages
@@ -808,18 +779,15 @@ def test_build_corpus_validation_requires_embeddings(
             WHERE id = (
                 SELECT id
                 FROM oracle_corpus_passages
-                WHERE corpus_set_version_id = :corpus_set_version_id
                 ORDER BY passage_index ASC, id ASC
                 LIMIT 1
             )
         """),
-        {"corpus_set_version_id": corpus_set_version_id},
     )
 
     with pytest.raises(SystemExit) as exc_info:
         oracle_build_corpus._validate_corpus_counts(
             db_session,
-            corpus_set_version_id,
             expected_works=ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
             expected_passages=ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
             expected_images=ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
@@ -830,31 +798,12 @@ def test_build_corpus_validation_requires_embeddings(
     )
 
 
-def test_build_corpus_refuses_to_mutate_existing_version(
+def test_build_corpus_has_no_version_metadata_row(
     db_session: Session,
     oracle_schema,
-    monkeypatch,
 ) -> None:
     oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    existing_version = f"oracle-test-{uuid4()}"
-    monkeypatch.setattr(oracle_build_corpus, "CORPUS_VERSION", existing_version)
-    db_session.add(
-        OracleCorpusSetVersion(
-            id=uuid4(),
-            version=existing_version,
-            label="Existing Oracle corpus",
-            embedding_model="test-embedding",
-        )
-    )
-    db_session.flush()
-
-    with pytest.raises(SystemExit) as exc_info:
-        oracle_build_corpus._ensure_corpus_set_version(db_session)
-
-    message = str(exc_info.value)
-    assert "already exists" in message
-    assert "immutable" in message
-    assert "ORACLE_CORPUS_VERSION" in message
+    assert not hasattr(oracle_build_corpus, "_ensure_current_corpus_metadata")
 
 
 def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
@@ -863,7 +812,6 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
     monkeypatch,
 ) -> None:
     oracle_build_corpus = importlib.import_module("scripts.oracle.build_corpus")
-    corpus_set_version_id = _seed_oracle_corpus_version(db_session)
 
     fake_data = b"\xff\xd8\xff" + b"x" * 100
 
@@ -885,7 +833,6 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
         lambda url, client: ValidatedImage(
             data=fake_data,
             content_type="image/jpeg",
-            sha256="a" * 64,
             width=640,
             height=960,
         ),
@@ -911,7 +858,6 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
         db_session,
         client=None,
         storage=storage,
-        corpus_set_version_id=corpus_set_version_id,
         manifest=manifest,
     )
 
@@ -920,12 +866,12 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
             text(
                 """
                 SELECT source_page_url, source_url, license_text, attribution_text,
-                       storage_key, content_type, byte_size, sha256
+                       storage_key, content_type, byte_size
                 FROM oracle_corpus_images
-                WHERE corpus_set_version_id = :corpus_set_version_id
+                WHERE source_url = :source_url
                 """
             ),
-            {"corpus_set_version_id": corpus_set_version_id},
+            {"source_url": "https://upload.wikimedia.org/oracle-asset.jpg"},
         )
         .mappings()
         .one()
@@ -937,13 +883,12 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
     assert row["attribution_text"] == "Test Artist, Audit Plate. Public domain."
 
     # New owned-asset columns are derived from the decoded image bytes.
-    expected_storage_key = "oracle/plates/" + "a" * 64 + ".jpg"
+    expected_storage_key = "oracle/plates/oracle-audit.jpg"
     assert row["storage_key"] == expected_storage_key
     assert row["content_type"] == "image/jpeg"
-    assert row["sha256"] == "a" * 64
     assert row["byte_size"] == len(fake_data)
 
-    # The validated bytes are uploaded exactly once, to the content-addressed key.
+    # The validated bytes are uploaded exactly once, to the stable current key.
     assert storage.put_calls == [(expected_storage_key, fake_data, "image/jpeg")]
 
     # A re-seed against an existing object skips the upload (idempotent), while the
@@ -958,7 +903,6 @@ def test_build_corpus_preserves_plate_audit_url_license_and_asset_url(
             db_session,
             client=None,
             storage=existing_storage,
-            corpus_set_version_id=corpus_set_version_id,
             manifest=manifest,
         )
     assert existing_storage.put_calls == []
@@ -996,11 +940,11 @@ def test_create_reading_allocates_unique_folios_under_concurrent_requests(
     user_id = uuid4()
     with direct_db.session() as db:
         db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -1029,13 +973,13 @@ def test_post_oracle_reading_returns_stream_connection_shape(
 ) -> None:
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "owner_user_id", user_id)
     direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -1069,11 +1013,10 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
         user_id,
         title="Lantern Monograph",
     )
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Where does the lantern lead?",
     )
 
@@ -1084,20 +1027,21 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
     assert any(source_kind == "user_media" for source_kind in router.indices.values()), (
         f"LLM request should include user-library candidates, got {router.indices}"
     )
-    source_refs = list(
+    sources = list(
         db_session.execute(
             text(
                 """
-                SELECT source_ref
+                SELECT source
                 FROM oracle_reading_passages
                 WHERE reading_id = :reading_id
+                  AND source_kind = 'user_media'
                 """
             ),
             {"reading_id": reading_id},
         ).scalars()
     )
-    assert any("content_chunk_id" in source_ref for source_ref in source_refs), (
-        f"expected at least one persisted passage from a content chunk, got {source_refs}"
+    assert any(source.get("media_id") for source in sources), (
+        f"expected at least one persisted passage from user media, got {sources}"
     )
 
 
@@ -1122,11 +1066,10 @@ def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
         ),
         {"media_id": media_id},
     )
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Where does the lantern lead?",
     )
     router = _UnexpectedRouter()
@@ -1164,11 +1107,10 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
         user_id,
         title="Indexed Lantern Monograph",
     )
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Where does the lantern lead?",
     )
     router = _UnexpectedRouter()
@@ -1214,24 +1156,22 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
     )
 
 
-def test_execute_reading_records_corpus_version_and_stable_provider_hash(
+def test_execute_reading_has_no_provider_or_corpus_identity_columns(
     db_session: Session,
     oracle_schema,
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session)
     first_reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
         folio_number=1,
     )
     second_reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
         folio_number=2,
     )
@@ -1242,26 +1182,31 @@ def test_execute_reading_records_corpus_version_and_stable_provider_hash(
         execute_reading(db_session, reading_id=second_reading_id, llm_router=router)
     )
 
-    rows = db_session.execute(
-        text(
-            """
-            SELECT corpus_set_version_id, provider_request_hash
+    columns = {column["name"] for column in inspect(db_session.bind).get_columns("oracle_readings")}
+    statuses = (
+        db_session.execute(
+            text(
+                """
+            SELECT status
             FROM oracle_readings
             WHERE id IN (:first_reading_id, :second_reading_id)
             ORDER BY folio_number
             """
-        ),
-        {
-            "first_reading_id": first_reading_id,
-            "second_reading_id": second_reading_id,
-        },
-    ).all()
+            ),
+            {
+                "first_reading_id": first_reading_id,
+                "second_reading_id": second_reading_id,
+            },
+        )
+        .scalars()
+        .all()
+    )
 
     assert first["status"] == "complete", f"expected first reading to complete, got {first}"
     assert second["status"] == "complete", f"expected second reading to complete, got {second}"
-    assert [row[0] for row in rows] == [corpus_set_version_id, corpus_set_version_id]
-    assert rows[0][1] and len(rows[0][1]) == 64
-    assert rows[0][1] == rows[1][1]
+    assert statuses == ["complete", "complete"]
+    assert "corpus_set_version_id" not in columns
+    assert "provider_request_hash" not in columns
 
 
 def test_execute_reading_reserves_and_commits_oracle_token_budget(
@@ -1271,11 +1216,10 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1301,17 +1245,16 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
     assert reserve_event[3] is not None and reserve_event[3] >= 2000
 
 
-def test_execute_reading_persists_structured_durable_citation_source_refs(
+def test_execute_reading_persists_current_locator_and_source(
     db_session: Session,
     oracle_schema,
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1323,7 +1266,7 @@ def test_execute_reading_persists_structured_durable_citation_source_refs(
         db_session.execute(
             text(
                 """
-                SELECT source_ref, locator_label
+                SELECT locator, source, locator_label
                 FROM oracle_reading_passages
                 WHERE reading_id = :reading_id
                   AND source_kind = 'public_domain'
@@ -1336,16 +1279,18 @@ def test_execute_reading_persists_structured_durable_citation_source_refs(
         .mappings()
         .one()
     )
-    source_ref = row["source_ref"]
+    passage_columns = {
+        column["name"] for column in inspect(db_session.bind).get_columns("oracle_reading_passages")
+    }
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
-    assert source_ref["type"] == "oracle_corpus_passage"
-    assert source_ref["citation_key"] and len(source_ref["citation_key"]) == 64
-    assert source_ref["locator"]["label"] == row["locator_label"]
-    assert isinstance(source_ref["locator"]["passage_index"], int)
-    assert source_ref["source"]["type"] == "public_domain_work"
-    assert source_ref["source"]["url"].startswith("https://example.com/oracle-work-")
-    assert source_ref["citation"]["citation_key"] == source_ref["citation_key"]
+    assert row["locator"]["label"] == row["locator_label"]
+    assert isinstance(row["locator"]["passage_index"], int)
+    assert row["source"]["type"] == "public_domain_work"
+    assert row["source"]["url"].startswith("https://example.com/oracle-test-work-")
+    assert "source_ref" not in passage_columns
+    assert "citation_key" not in json.dumps(row["source"])
+    assert "text_sha256" not in json.dumps(row["source"])
 
 
 def test_get_oracle_reading_returns_proxied_plate_urls(
@@ -1356,11 +1301,10 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     user_id = uuid4()
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(session)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(session)
         reading_id = _insert_pending_reading(
             session,
             user_id=user_id,
-            corpus_set_version_id=corpus_set_version_id,
             question="What does the lamp reveal?",
         )
         result = asyncio.run(
@@ -1393,16 +1337,7 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
     )
 
     direct_db.register_cleanup("users", "id", user_id)
-    direct_db.register_cleanup("oracle_corpus_set_versions", "id", corpus_set_version_id)
-    direct_db.register_cleanup(
-        "oracle_corpus_works", "corpus_set_version_id", corpus_set_version_id
-    )
-    direct_db.register_cleanup(
-        "oracle_corpus_images", "corpus_set_version_id", corpus_set_version_id
-    )
-    direct_db.register_cleanup(
-        "oracle_corpus_passages", "corpus_set_version_id", corpus_set_version_id
-    )
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
@@ -1422,11 +1357,10 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1486,11 +1420,10 @@ def test_execute_reading_rejects_non_strict_provider_json(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1531,11 +1464,10 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     user_id = uuid4()
     with direct_db.session() as db_session:
         db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
         reading_id = _insert_pending_reading(
             db_session,
             user_id=user_id,
-            corpus_set_version_id=corpus_set_version_id,
             question="What does the lamp reveal?",
         )
 
@@ -1584,7 +1516,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
         db_session.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
@@ -1636,11 +1568,10 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1692,12 +1623,11 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_seed_is_incomplete
     oracle_schema,
 ) -> None:
     user_id = uuid4()
+    _clear_oracle_corpus(db_session)
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id = _seed_oracle_corpus_version(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1751,11 +1681,10 @@ def test_execute_reading_rejects_model_minted_citation_details(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1802,22 +1731,20 @@ def test_execute_reading_emits_events_in_eternal_order(
 
     with direct_db.session() as db:
         db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.add(
             OracleReading(
                 id=reading_id,
                 user_id=user_id,
-                corpus_set_version_id=corpus_set_version_id,
                 folio_number=1,
                 question_text="What does the lamp reveal?",
                 status="pending",
-                prompt_version="oracle-v3",
             )
         )
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "id", reading_id)
     direct_db.register_cleanup("oracle_reading_passages", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
@@ -1870,11 +1797,9 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_er
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id = _seed_oracle_corpus_version(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What happens when the worker breaks?",
     )
 
@@ -1938,11 +1863,10 @@ def test_execute_reading_rejects_out_of_list_theme(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -1983,11 +1907,10 @@ def test_execute_reading_sortes_attribution_format(
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
     reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="What does the lamp reveal?",
     )
 
@@ -2028,13 +1951,12 @@ def test_concordance_ordering_by_score(
     """Folios sharing plate+theme rank above theme-only, which ranks above passage-only."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    corpus_set_version_id, _work_ids, image_id = _seed_oracle_corpus(db_session)
+    corpus_id, _work_ids, image_id = _seed_oracle_corpus(db_session)
 
     # Reference reading — folio 1
     ref_reading_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Reference question for concordance test.",
         folio_number=1,
     )
@@ -2042,7 +1964,7 @@ def test_concordance_ordering_by_score(
         execute_reading(db_session, reading_id=ref_reading_id, llm_router=_PublicOnlyRouter())
     )
 
-    # Fetch the image_id and citation key used by the reference reading
+    # Fetch the image_id and one current locator/source used by the reference reading
     ref_row = (
         db_session.execute(
             text("SELECT image_id FROM oracle_readings WHERE id = :id"),
@@ -2053,24 +1975,27 @@ def test_concordance_ordering_by_score(
     )
     ref_image_id = ref_row["image_id"]
 
-    ref_citation_key = db_session.execute(
-        text(
-            """
-            SELECT source_ref->>'citation_key'
-            FROM oracle_reading_passages
-            WHERE reading_id = :reading_id
-            ORDER BY phase
-            LIMIT 1
-            """
-        ),
-        {"reading_id": ref_reading_id},
-    ).scalar_one()
+    ref_passage = (
+        db_session.execute(
+            text(
+                """
+                SELECT source_kind, locator, source
+                FROM oracle_reading_passages
+                WHERE reading_id = :reading_id
+                ORDER BY phase
+                LIMIT 1
+                """
+            ),
+            {"reading_id": ref_reading_id},
+        )
+        .mappings()
+        .one()
+    )
 
     # folio 2: shares plate + theme (score >= 4)
     folio2_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Second folio for concordance test.",
         folio_number=2,
     )
@@ -2088,31 +2013,36 @@ def test_concordance_ordering_by_score(
     )
     db_session.commit()
 
-    # folio 3: shares only a passage citation key (score = N passages)
+    # folio 3: shares only a current passage locator/source (score = N passages)
     folio3_id = _insert_pending_reading(
         db_session,
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         question="Third folio for concordance test.",
         folio_number=3,
     )
     asyncio.run(execute_reading(db_session, reading_id=folio3_id, llm_router=_PublicOnlyRouter()))
-    # Ensure folio3 shares a passage citation key with reference but not same image/theme
+    # Ensure folio3 shares a passage locator/source with reference but not same image/theme
     db_session.execute(
         text("UPDATE oracle_readings SET folio_theme = 'Of Solitude' WHERE id = :id"),
         {"id": folio3_id},
     )
-    # Overwrite one passage citation_key to match the reference
     db_session.execute(
         text(
             """
             UPDATE oracle_reading_passages
-            SET source_ref = jsonb_set(source_ref, '{citation_key}', CAST(:ck AS jsonb))
+            SET source_kind = :source_kind,
+                locator = CAST(:locator AS jsonb),
+                source = CAST(:source AS jsonb)
             WHERE reading_id = :reading_id
               AND phase = 'descent'
             """
         ),
-        {"reading_id": folio3_id, "ck": json.dumps(ref_citation_key)},
+        {
+            "reading_id": folio3_id,
+            "source_kind": ref_passage["source_kind"],
+            "locator": json.dumps(ref_passage["locator"]),
+            "source": json.dumps(ref_passage["source"]),
+        },
     )
     db_session.commit()
 
@@ -2141,13 +2071,13 @@ def test_list_oracle_readings_returns_all_readings(
 ) -> None:
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "owner_user_id", user_id)
     direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -2184,13 +2114,13 @@ def test_concordance_endpoint_returns_empty_list_when_reading_not_complete(
 ) -> None:
     user_id = uuid4()
     with direct_db.session() as db:
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.commit()
 
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "owner_user_id", user_id)
     direct_db.register_cleanup("memberships", "user_id", user_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "user_id", user_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 
@@ -2219,14 +2149,14 @@ def test_concordance_endpoint_returns_404_for_another_users_reading(
     owner_id = uuid4()
     other_id = uuid4()
     with direct_db.session() as db:
-        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        corpus_id, _work_ids, _image_id = _seed_oracle_corpus(db)
         db.commit()
 
     direct_db.register_cleanup("users", "id", owner_id)
     direct_db.register_cleanup("users", "id", other_id)
     direct_db.register_cleanup("libraries", "owner_user_id", owner_id)
     direct_db.register_cleanup("memberships", "user_id", owner_id)
-    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_id, _work_ids)
     direct_db.register_cleanup("oracle_readings", "user_id", owner_id)
     monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
 

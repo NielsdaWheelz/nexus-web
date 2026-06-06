@@ -28,7 +28,7 @@ libraries.
   then write default plus selected destinations through `library_entries`. Source
   owners attach destinations inside their creation transaction whenever they
   create new media; upload confirm attaches confirm-time destinations only after
-  successful file validation and dedupe resolution.
+  successful staged-file validation.
 
 ## Android Share Flow
 
@@ -56,8 +56,8 @@ The selected destination set is additive and idempotent:
 - every successful capture is in the user's default library,
 - selected destinations are added in request order after validation,
 - existing entries are not duplicated,
-- duplicate upload/media dedupe applies selected destinations to the returned
-  winner media ID,
+- canonical URL/provider media dedupe applies selected destinations to the
+  returned winner media ID,
 - failed confirm-time upload validation does not attach confirm-time
   destinations.
 - failed post-acceptance source acquisition or extraction remains attached to

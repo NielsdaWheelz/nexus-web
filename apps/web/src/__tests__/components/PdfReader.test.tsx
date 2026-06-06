@@ -523,7 +523,6 @@ describe("PdfReader selection chat destinations", () => {
         exact: "First quote",
       },
       snippet: "First quote",
-      sourceVersion: "pdf:media-1:v1",
       highlightBehavior: "pulse",
       focusBehavior: "scroll_into_view",
     });

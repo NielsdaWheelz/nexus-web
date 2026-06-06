@@ -79,7 +79,6 @@ test("@real-media video transcript opens seekable evidence", async ({
 
     writeRealMediaTrace(testInfo, "real-video-transcript-trace.json", {
       fixture_id: "video-nasa-picturing-earth-behind-scenes-captions",
-      artifact_sha256: seed.fixtures.video.artifact_sha256,
       media_id: mediaId,
       query,
       search_api_url: search.api_url,

@@ -14,7 +14,6 @@ describe("retrieval citation contract", () => {
         snippet: "match",
         deep_link: "/media/media-1",
         context_ref: { type: "media", id: "media-1" },
-        source_version: null,
         locator: {
           type: "web_text_offsets",
           media_id: "media-1",
@@ -39,7 +38,6 @@ describe("retrieval citation contract", () => {
         snippet: "match",
         deep_link: "/conversations/conversation-1",
         context_ref: { type: "message", id: "message-1" },
-        source_version: "message:message-1:v1",
         locator: {
           type: "web_text_offsets",
           media_id: "media-1",
@@ -67,7 +65,6 @@ describe("retrieval citation contract", () => {
         snippet: "match",
         deep_link: "/media/media-1",
         context_ref: { type: "media", id: "media-1" },
-        source_version: null,
         locator: null,
         media_id: "media-1",
         media_kind: "web_article",
@@ -92,6 +89,33 @@ describe("retrieval citation contract", () => {
           evidence_span_ids: ["span-1"],
         },
         evidence_span_ids: ["span-1"],
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 1,
+          end_offset: 6,
+        },
+        media_id: "media-1",
+        media_kind: "web_article",
+        score: 1,
+        selected: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects legacy source version fields", () => {
+    expect(
+      isSearchCitationEventData({
+        type: "fragment",
+        id: "fragment-1",
+        result_type: "fragment",
+        source_id: "fragment-1",
+        title: "Article",
+        source_label: "Fragment",
+        snippet: "match",
+        deep_link: "/media/media-1#fragment-fragment-1",
+        context_ref: { type: "fragment", id: "fragment-1" },
         source_version: "fragment:fragment-1:v1",
         locator: {
           type: "web_text_offsets",

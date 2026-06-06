@@ -23,14 +23,12 @@ const MEASURE_DEBOUNCE_MS = 75;
 export interface AnchoredHighlightRow {
   id: string;
   exact: string;
-  source_version?: string;
   color: HighlightColor;
   linked_note_blocks?: {
     note_block_id: string;
     body_pm_json?: Record<string, unknown>;
     body_markdown?: string;
     body_text: string;
-    revision: number;
   }[];
   anchor?: {
     fragment_id?: string;

@@ -149,7 +149,6 @@ def test_note_body_pm_json_rejects_non_prosemirror_shapes():
 
     with pytest.raises(ValidationError):
         UpdateNoteBlockRequest(
-            base_revision=1,
             body_pm_json={
                 "type": "paragraph",
                 "content": [{"type": "unknown_node", "text": "bad"}],
@@ -267,7 +266,6 @@ def test_nested_note_create_move_and_delete_cleanup(db_session, bootstrapped_use
         db_session,
         bootstrapped_user,
         parent.id,
-        db_session.get(NoteBlock, parent.id).revision,
     )
 
     with pytest.raises(NotFoundError):
@@ -305,17 +303,6 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
         bootstrapped_user,
         CreateNoteBlockRequest(page_id=page.id, parent_block_id=first.id, body_markdown="child"),
     )
-    db_session.expire_all()
-    stored_page = db_session.get(Page, page.id)
-    assert stored_page is not None
-    first_row = db_session.get(NoteBlock, first.id)
-    second_row = db_session.get(NoteBlock, second.id)
-    child_row = db_session.get(NoteBlock, child.id)
-    assert first_row is not None and second_row is not None and child_row is not None
-    base_page_revision = stored_page.revision
-    first_revision = first_row.revision
-    second_revision = second_row.revision
-    child_revision = child_row.revision
     created_id = uuid4()
 
     result = notes.patch_page_document(
@@ -324,11 +311,9 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
         page.id,
         PatchPageDocumentRequest(
             client_mutation_id="mutation-1",
-            base_page_revision=base_page_revision,
             blocks=[
                 {
                     "id": first.id,
-                    "base_revision": first_revision,
                     "parent_block_id": None,
                     "before_block_id": None,
                     "after_block_id": None,
@@ -353,7 +338,6 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
                 },
                 {
                     "id": child.id,
-                    "base_revision": child_revision,
                     "parent_block_id": None,
                     "before_block_id": None,
                     "after_block_id": first.id,
@@ -365,24 +349,21 @@ def test_patch_page_document_applies_create_update_move_and_delete_atomically(
                     "collapsed": False,
                 },
             ],
-            deleted_blocks=[{"id": second.id, "base_revision": second_revision}],
+            deleted_blocks=[second.id],
         ),
     )
 
     assert result.client_mutation_id == "mutation-1"
-    assert result.page.revision == base_page_revision + 1
     assert [block.id for block in result.page.blocks] == [first.id, child.id]
     assert result.page.blocks[0].body_text == "first edited"
     assert [block.id for block in result.page.blocks[0].children] == [created_id]
     assert result.page.blocks[0].children[0].body_text == "new child"
     assert result.page.blocks[1].parent_block_id is None
     assert db_session.get(NoteBlock, second.id) is None
-    assert db_session.get(NoteBlock, first.id).revision == first_revision + 1
-    assert db_session.get(NoteBlock, child.id).revision == child_revision + 1
 
 
 @pytest.mark.integration
-def test_patch_page_document_rejects_stale_block_revision_without_mutating(
+def test_patch_page_document_overwrites_current_block_without_compare_tokens(
     db_session,
     bootstrapped_user,
 ):
@@ -396,51 +377,85 @@ def test_patch_page_document_rejects_stale_block_revision_without_mutating(
         bootstrapped_user,
         CreateNoteBlockRequest(page_id=page.id, body_markdown="original"),
     )
-    base_page_revision = db_session.get(Page, page.id).revision
-    stale_block_revision = db_session.get(NoteBlock, block.id).revision
 
     notes.update_note_block(
         db_session,
         bootstrapped_user,
         block.id,
         UpdateNoteBlockRequest(
-            base_revision=stale_block_revision,
             body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "remote"}]},
         ),
     )
 
-    with pytest.raises(ApiError) as conflict:
-        notes.patch_page_document(
-            db_session,
-            bootstrapped_user,
-            page.id,
-            PatchPageDocumentRequest(
-                client_mutation_id="mutation-stale",
-                base_page_revision=base_page_revision,
-                blocks=[
+    result = notes.patch_page_document(
+        db_session,
+        bootstrapped_user,
+        page.id,
+        PatchPageDocumentRequest(
+            client_mutation_id="mutation-current",
+            blocks=[
+                {
+                    "id": block.id,
+                    "parent_block_id": None,
+                    "before_block_id": None,
+                    "after_block_id": None,
+                    "block_kind": "bullet",
+                    "body_pm_json": {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "local"}],
+                    },
+                    "collapsed": False,
+                }
+            ],
+        ),
+    )
+
+    assert result.page.blocks[0].body_text == "local"
+    assert db_session.get(NoteBlock, block.id).body_text == "local"
+
+
+def test_patch_page_document_rejects_legacy_revision_tokens():
+    block_id = uuid4()
+    with pytest.raises(ValidationError):
+        PatchPageDocumentRequest.model_validate(
+            {
+                "client_mutation_id": "mutation-legacy",
+                "base_page_revision": 12,
+                "blocks": [],
+                "deleted_blocks": [],
+            }
+        )
+    with pytest.raises(ValidationError):
+        PatchPageDocumentRequest.model_validate(
+            {
+                "client_mutation_id": "mutation-legacy",
+                "blocks": [
                     {
-                        "id": block.id,
-                        "base_revision": stale_block_revision,
+                        "id": str(block_id),
                         "parent_block_id": None,
                         "before_block_id": None,
                         "after_block_id": None,
                         "block_kind": "bullet",
-                        "body_pm_json": {
-                            "type": "paragraph",
-                            "content": [{"type": "text", "text": "local"}],
-                        },
+                        "body_pm_json": {"type": "paragraph"},
                         "collapsed": False,
+                        "base_revision": 4,
                     }
                 ],
-            ),
+                "deleted_blocks": [],
+            }
         )
-
-    assert conflict.value.code == ApiErrorCode.E_NOTE_CONFLICT
-    assert db_session.get(NoteBlock, block.id).body_text == "remote"
+    with pytest.raises(ValidationError):
+        PatchPageDocumentRequest.model_validate(
+            {
+                "client_mutation_id": "mutation-legacy",
+                "blocks": [],
+                "deleted_blocks": [{"id": str(block_id), "base_revision": 4}],
+            }
+        )
 
 
 @pytest.mark.integration
-def test_patch_page_document_allows_independent_stale_page_revision_edits(
+def test_patch_page_document_applies_independent_current_block_edits(
     db_session,
     bootstrapped_user,
 ):
@@ -459,9 +474,6 @@ def test_patch_page_document_allows_independent_stale_page_revision_edits(
         bootstrapped_user,
         CreateNoteBlockRequest(page_id=page.id, after_block_id=first.id, body_markdown="second"),
     )
-    base_page_revision = db_session.get(Page, page.id).revision
-    first_revision = db_session.get(NoteBlock, first.id).revision
-    second_revision = db_session.get(NoteBlock, second.id).revision
 
     notes.patch_page_document(
         db_session,
@@ -469,11 +481,9 @@ def test_patch_page_document_allows_independent_stale_page_revision_edits(
         page.id,
         PatchPageDocumentRequest(
             client_mutation_id="mutation-first",
-            base_page_revision=base_page_revision,
             blocks=[
                 {
                     "id": first.id,
-                    "base_revision": first_revision,
                     "parent_block_id": None,
                     "before_block_id": None,
                     "after_block_id": None,
@@ -493,11 +503,9 @@ def test_patch_page_document_allows_independent_stale_page_revision_edits(
         page.id,
         PatchPageDocumentRequest(
             client_mutation_id="mutation-second",
-            base_page_revision=base_page_revision,
             blocks=[
                 {
                     "id": second.id,
-                    "base_revision": second_revision,
                     "parent_block_id": None,
                     "before_block_id": None,
                     "after_block_id": first.id,
@@ -793,6 +801,44 @@ def test_pinned_objects_api_filters_and_reorders_by_surface(
 
 
 @pytest.mark.integration
+def test_delete_note_block_api_rejects_legacy_revision_body(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = create_test_user_id()
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+
+    headers = auth_headers(user_id)
+    assert auth_client.get("/me", headers=headers).status_code == 200
+    page_response = auth_client.post(
+        "/notes/pages",
+        headers=headers,
+        json={"title": f"Delete body page {uuid4()}"},
+    )
+    assert page_response.status_code == 201, page_response.text
+    block_response = auth_client.post(
+        "/notes/blocks",
+        headers=headers,
+        json={
+            "page_id": page_response.json()["data"]["id"],
+            "body_markdown": "delete me",
+        },
+    )
+    assert block_response.status_code == 201, block_response.text
+
+    delete_response = auth_client.request(
+        "DELETE",
+        f"/notes/blocks/{block_response.json()['data']['id']}",
+        headers=headers,
+        json={"base_revision": 1},
+    )
+
+    assert delete_response.status_code == 422, delete_response.text
+
+
+@pytest.mark.integration
 def test_object_ref_search_returns_contributors_and_content_chunks(
     db_session,
     bootstrapped_user,
@@ -1069,7 +1115,6 @@ def test_inline_reference_sync_skips_reverse_duplicate_link(db_session, bootstra
         bootstrapped_user,
         block.id,
         UpdateNoteBlockRequest(
-            base_revision=db_session.get(NoteBlock, block.id).revision,
             body_pm_json=_paragraph_with_page_ref(target.id, "Target"),
         ),
     )
@@ -1330,7 +1375,6 @@ def test_update_note_block_syncs_inline_reference_links(db_session, bootstrapped
         bootstrapped_user,
         block.id,
         UpdateNoteBlockRequest(
-            base_revision=db_session.get(NoteBlock, block.id).revision,
             body_pm_json=_paragraph_with_page_ref(second_target.id, "Second target"),
         ),
     )

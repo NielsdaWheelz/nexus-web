@@ -176,7 +176,6 @@ describe("loadWorkspaceBootstrap", () => {
               id: "page-1",
               title: "Seeded page",
               description: "",
-              revision: "7",
               updated_at: "2026-01-01T00:00:00Z",
             },
           ],
@@ -191,7 +190,6 @@ describe("loadWorkspaceBootstrap", () => {
         id: "page-1",
         title: "Seeded page",
         description: null,
-        revision: 7,
         updatedAt: "2026-01-01T00:00:00Z",
       },
     ]);
@@ -205,7 +203,6 @@ describe("loadWorkspaceBootstrap", () => {
         data: {
           id: "block-1",
           page_id: "page-9",
-          revision: 1,
         },
       },
     });

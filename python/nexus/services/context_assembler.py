@@ -56,10 +56,6 @@ from nexus.services.search import get_search_result
 
 CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
 
-# Stable, content-free provenance id for the invariant system block. The prompt's
-# identity is its content-only stable_prefix_hash, not a version label.
-SYSTEM_BLOCK_SOURCE_VERSION = "system"
-
 
 @dataclass(frozen=True)
 class HistoryUnit:
@@ -72,10 +68,8 @@ class HistoryUnit:
 
 @dataclass(frozen=True)
 class AssemblyLedger:
-    stable_prefix_hash: str
     cacheable_input_tokens_estimate: int
     prompt_block_manifest: Mapping[str, object]
-    provider_request_hash: str
     max_context_tokens: int
     reserved_output_tokens: int
     reserved_reasoning_tokens: int
@@ -109,9 +103,6 @@ def assemble_chat_context(
     *,
     run: ChatRun,
     model: Model,
-    environment: str,
-    key_mode_used: str,
-    provider_account_boundary: str,
     max_output_tokens: int,
     reader_context: ReaderContextHint | None = None,
     reader_selection: ReaderSelectionRequest | None = None,
@@ -147,7 +138,6 @@ def assemble_chat_context(
         role="system",
         lane="system",
         text=render_system_prompt_block(),
-        source_version=SYSTEM_BLOCK_SOURCE_VERSION,
         cache_policy=CACHE_POLICY_5M,
         required_provider_capability="prompt_cache",
     )
@@ -194,7 +184,6 @@ def assemble_chat_context(
                     lane="attached_context",
                     text=_render_branch_anchor_block(user_message.branch_anchor),
                     source_refs=[branch_anchor_ref],
-                    source_version=f"message_branch_anchor:{user_message.id}",
                 ),
                 branch_anchor_ref,
             )
@@ -221,7 +210,6 @@ def assemble_chat_context(
         lane="current_user",
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
-        source_version=f"message:{user_message.id}",
     )
     budget = build_prompt_budget(
         max_context_tokens=model.max_context_tokens,
@@ -268,7 +256,6 @@ def assemble_chat_context(
                 lane="recent_history",
                 text=turn.content,
                 source_refs=[{"type": "message", "id": str(message_id)}],
-                source_version=f"message:{message_id}",
             )
             for turn, message_id in zip(unit.turns, unit.message_ids, strict=True)
         )
@@ -308,16 +295,6 @@ def assemble_chat_context(
         dynamic_system_blocks=dynamic_system_blocks,
         history_blocks=history_blocks,
         current_user_block=current_user_block,
-        cache_identity=_cache_identity(
-            run=run,
-            model=model,
-            environment=environment,
-            key_mode_used=key_mode_used,
-            provider_account_boundary=provider_account_boundary,
-        ),
-        model_name=model.model_name,
-        max_tokens=max_output_tokens,
-        reasoning_effort=run.reasoning,
     )
     estimated_input_tokens = validate_prompt_plan_budget(prompt_plan, budget.input_budget_tokens)
     validate_prompt_size(prompt_plan)
@@ -359,10 +336,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
         "model_id": run.model_id,
-        "stable_prefix_hash": ledger.stable_prefix_hash,
         "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
-        "provider_request_hash": ledger.provider_request_hash,
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
         "reserved_reasoning_tokens": ledger.reserved_reasoning_tokens,
@@ -381,7 +356,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     existing = db.execute(
         text(
             """
-            SELECT id, provider_request_hash
+            SELECT id
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :chat_run_id
             FOR UPDATE
@@ -398,10 +373,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 conversation_id,
                 assistant_message_id,
                 model_id,
-                stable_prefix_hash,
                 cacheable_input_tokens_estimate,
                 prompt_block_manifest,
-                provider_request_hash,
                 max_context_tokens,
                 reserved_output_tokens,
                 reserved_reasoning_tokens,
@@ -418,10 +391,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :conversation_id,
                 :assistant_message_id,
                 :model_id,
-                :stable_prefix_hash,
                 :cacheable_input_tokens_estimate,
                 :prompt_block_manifest,
-                :provider_request_hash,
                 :max_context_tokens,
                 :reserved_output_tokens,
                 :reserved_reasoning_tokens,
@@ -446,11 +417,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
         return
 
-    if existing[1] == payload["provider_request_hash"]:
-        return
-    # justify-service-invariant-check: chat_run_id uniqueness cannot encode provider hash equivalence.
-    # justify-defect: conflicting prompt assembly for one chat run indicates caller/state corruption.
-    raise ValueError("prompt assembly already persisted with different provider request hash")
+    return
 
 
 def _build_reader_context_block(
@@ -479,15 +446,12 @@ def _build_reader_context_block(
 
     fragments: list[str] = []
     source_refs: list[Mapping[str, object]] = []
-    source_version_parts: list[str] = []
     if media_title:
         fragments.append(f'media "{xml_escape(media_title)}"')
         source_refs.append({"type": "media", "id": str(media_id)})
-        source_version_parts.append(f"media:{media_id}")
     if library_name:
         fragments.append(f'library "{xml_escape(library_name)}"')
         source_refs.append({"type": "library", "id": str(library_id)})
-        source_version_parts.append(f"library:{library_id}")
     if not fragments:
         return None
 
@@ -499,7 +463,6 @@ def _build_reader_context_block(
         lane="attached_context",
         text=text_block,
         source_refs=source_refs,
-        source_version="reader_context_hint:" + "|".join(source_version_parts),
     )
 
 
@@ -544,7 +507,6 @@ def _build_reader_selection_block(
             {"type": "media", "id": str(reader_selection.media_id)},
             {"type": "highlight", "id": str(reader_selection.highlight_id)},
         ],
-        source_version=f"reader_selection:{reader_selection.highlight_id}",
     )
 
 
@@ -597,7 +559,6 @@ def _build_resources_block(
         lane="attached_context",
         text="\n".join(lines),
         source_refs=source_refs,
-        source_version=f"resources:{conversation_id}:{len(uris)}",
         cache_policy=None,
     )
     return block, {"resource_count": len(uris), "resource_uris": uris}, tuple(citations)
@@ -869,26 +830,6 @@ def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[Turn]:
     return turns
 
 
-def _cache_identity(
-    *,
-    run: ChatRun,
-    model: Model,
-    environment: str,
-    key_mode_used: str,
-    provider_account_boundary: str,
-) -> Mapping[str, object]:
-    return {
-        "environment": environment,
-        "owner_user_id": str(run.owner_user_id),
-        "conversation_id": str(run.conversation_id),
-        "provider": model.provider,
-        "model_name": model.model_name,
-        "key_mode_requested": run.key_mode,
-        "key_mode_used": key_mode_used,
-        "provider_account_boundary": provider_account_boundary,
-    }
-
-
 def _build_ledger(
     selection: BudgetSelection,
     *,
@@ -899,10 +840,8 @@ def _build_ledger(
     included_context_refs: Sequence[Mapping[str, object]],
 ) -> AssemblyLedger:
     return AssemblyLedger(
-        stable_prefix_hash=prompt_plan.stable_prefix_hash,
         cacheable_input_tokens_estimate=prompt_plan.cacheable_input_tokens_estimate,
         prompt_block_manifest=prompt_plan.manifest(),
-        provider_request_hash=prompt_plan.provider_request_hash,
         max_context_tokens=model.max_context_tokens,
         reserved_output_tokens=selection.budget.reserved_output_tokens,
         reserved_reasoning_tokens=selection.budget.reserved_reasoning_tokens,

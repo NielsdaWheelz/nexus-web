@@ -10,7 +10,6 @@ import {
 } from "@/components/feedback/Feedback";
 import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
-import Button from "@/components/ui/Button";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
@@ -20,11 +19,12 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isRecord } from "@/lib/validation";
+import { hasTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import {
   createEmptyOutlineDoc,
   noteBlocksToOutlineDoc,
@@ -59,11 +59,20 @@ interface PersistedDraftBlock {
 }
 
 interface PageDraftMetadata {
-  pageRevision: number;
-  blockRevisions: [string, number][];
   knownBlocks: PersistedDraftBlock[];
   focusedRootParentBlockId: string | null;
 }
+
+const PAGE_DRAFT_METADATA_KEYS = new Set(["knownBlocks", "focusedRootParentBlockId"]);
+const PERSISTED_DRAFT_BLOCK_KEYS = new Set([
+  "id",
+  "parentBlockId",
+  "beforeBlockId",
+  "afterBlockId",
+  "blockKind",
+  "bodyPmJson",
+  "collapsed",
+]);
 
 interface LoadedNoteEditorResource {
   loadKey: string;
@@ -94,19 +103,15 @@ export default function PagePaneBody({
   const [titleDraft, setTitleDraft] = useState("");
   const [initialDoc, setInitialDoc] = useState<ProseMirrorNode | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [editorResetVersion, setEditorResetVersion] = useState(0);
-  const [conflictAction, setConflictAction] = useState<"discard" | "overwrite" | null>(null);
   const saveScope = focusBlockId ? `block:${focusBlockId}` : `page:${pageId}`;
-  const editorResourceKey = `${saveScope}:editor:${editorResetVersion}`;
+  const editorResourceKey = `${saveScope}:editor`;
   const initialPageKey =
     initialPage && initialPage.id === pageId
-      ? `initial:${initialPage.id}:${initialPage.revision}`
+      ? `initial:${initialPage.id}:${initialPage.updatedAt ?? ""}`
       : "server";
   const editorLoadKey = `${saveScope}:load:${initialPageKey}`;
-  const pageRevisionRef = useRef<number | null>(null);
   const knownBlockIdsRef = useRef<Set<string>>(new Set());
   const knownBlockParentIdsRef = useRef<Map<string, string | null>>(new Map());
-  const knownBlockRevisionsRef = useRef<Map<string, number>>(new Map());
   const knownBlockDraftsRef = useRef<Map<string, PersistedDraftBlock>>(new Map());
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
@@ -122,28 +127,17 @@ export default function PagePaneBody({
     async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {
       const scope = saveScope;
       const knownBlockIds = new Set(knownBlockIdsRef.current);
-      const knownBlockRevisions = new Map(knownBlockRevisionsRef.current);
       const knownBlockDrafts = new Map(knownBlockDraftsRef.current);
       const drafts = readDraftBlocksForPersistence(
         doc,
         focusBlockId ? focusedRootParentBlockIdRef.current : null
       );
-      const basePageRevision = pageRevisionRef.current;
-      if (basePageRevision === null) {
-        throw new Error("Loaded note page is missing a revision");
-      }
       const nextIds = new Set(drafts.map((block) => block.id));
       const deletedBlocks = deletedRootBlockIdsForPersistence(
         knownBlockIds,
         nextIds,
         knownBlockParentIdsRef.current
-      ).map((blockId) => {
-        const baseRevision = knownBlockRevisions.get(blockId);
-        if (baseRevision === undefined) {
-          throw new Error("Known note block is missing a revision");
-        }
-        return { id: blockId, baseRevision };
-      });
+      );
       const changedBlocks = drafts.filter((block) => {
         if (!knownBlockIds.has(block.id)) {
           return true;
@@ -157,37 +151,22 @@ export default function PagePaneBody({
 
       const result = await saveNotePageDocument(pageId, {
         clientMutationId,
-        basePageRevision,
         focusBlockId: focusBlockId ?? null,
         topLevelParentBlockId: focusBlockId ? focusedRootParentBlockIdRef.current : null,
-        blocks: changedBlocks.map((block) => {
-          if (!knownBlockIds.has(block.id)) {
-            return { ...block, baseRevision: null };
-          }
-          const baseRevision = knownBlockRevisions.get(block.id);
-          if (baseRevision === undefined) {
-            throw new Error("Known note block is missing a revision");
-          }
-          return { ...block, baseRevision };
-        }),
+        blocks: changedBlocks,
         deletedBlocks,
       });
 
       if (currentSaveScopeRef.current === scope) {
-        const responseRevisions = flatBlockRevisions(result.page.blocks);
         knownBlockIdsRef.current = nextIds;
         knownBlockParentIdsRef.current = new Map(
           drafts.map((block) => [block.id, block.parentBlockId])
         );
         knownBlockDraftsRef.current = draftBlocksById(drafts);
-        knownBlockRevisionsRef.current =
-          responseRevisions.size > 0 ? responseRevisions : new Map();
-        pageRevisionRef.current = requiredRevision(result.page.revision);
         setPage((currentPage) =>
           currentPage
             ? {
                 ...currentPage,
-                revision: result.page.revision,
                 updatedAt: result.page.updatedAt,
               }
             : result.page
@@ -198,13 +177,7 @@ export default function PagePaneBody({
   );
 
   const draftMetadata = useCallback((): PageDraftMetadata | null => {
-    const pageRevision = pageRevisionRef.current;
-    if (pageRevision === null) {
-      return null;
-    }
     return {
-      pageRevision,
-      blockRevisions: Array.from(knownBlockRevisionsRef.current.entries()),
       knownBlocks: Array.from(knownBlockDraftsRef.current.values()),
       focusedRootParentBlockId: focusedRootParentBlockIdRef.current,
     };
@@ -216,9 +189,6 @@ export default function PagePaneBody({
     draftMetadata,
     onError: (error) => {
       setFeedback(toFeedback(error, { fallback: "Notes could not be saved." }));
-    },
-    onConflict: (error) => {
-      setFeedback(toFeedback(error, { fallback: "Notes have a save conflict." }));
     },
   });
   const {
@@ -242,38 +212,6 @@ export default function PagePaneBody({
     },
   });
 
-  const loadServerDocument = useCallback(async (): Promise<ProseMirrorNode> => {
-    const loadedPage = await fetchNotePage(pageId);
-    if (!focusBlockId) {
-      setPage(loadedPage);
-      setTitleDraft(loadedPage.title);
-      pageRevisionRef.current = requiredRevision(loadedPage.revision);
-      focusedRootParentBlockIdRef.current = null;
-      knownBlockIdsRef.current = new Set(flatPageBlockIds(loadedPage));
-      knownBlockParentIdsRef.current = flatBlockParentIds(loadedPage.blocks);
-      knownBlockRevisionsRef.current = flatBlockRevisions(loadedPage.blocks);
-      const persistedDoc = loadedPage.blocks.length
-        ? noteBlocksToOutlineDoc(loadedPage.blocks)
-        : null;
-      knownBlockDraftsRef.current = persistedDoc
-        ? draftBlocksById(readDraftBlocksForPersistence(persistedDoc))
-        : new Map();
-      return persistedDoc ?? createEmptyOutlineDoc(newBlockId());
-    }
-
-    const block = await fetchNoteBlock(focusBlockId);
-    setPage({ ...loadedPage, blocks: [block] });
-    setTitleDraft(loadedPage.title);
-    pageRevisionRef.current = requiredRevision(loadedPage.revision);
-    focusedRootParentBlockIdRef.current = block.parentBlockId;
-    knownBlockIdsRef.current = new Set(flatBlockIds([block]));
-    knownBlockParentIdsRef.current = flatBlockParentIds([block]);
-    knownBlockRevisionsRef.current = flatBlockRevisions([block]);
-    const doc = noteBlocksToOutlineDoc([block]);
-    knownBlockDraftsRef.current = draftBlocksById(readDraftBlocksForPersistence(doc));
-    return doc;
-  }, [focusBlockId, pageId]);
-
   const applyLoadedEditorResource = useCallback(
     (loaded: LoadedNoteEditorResource) => {
       if (loaded.loadKey !== editorLoadKeyRef.current) {
@@ -285,11 +223,9 @@ export default function PagePaneBody({
         if (!loaded.focusedBlock) {
           setPage(loadedPage);
           setTitleDraft(loadedPage.title);
-          pageRevisionRef.current = requiredRevision(loadedPage.revision);
           focusedRootParentBlockIdRef.current = null;
           knownBlockIdsRef.current = new Set(flatPageBlockIds(loadedPage));
           knownBlockParentIdsRef.current = flatBlockParentIds(loadedPage.blocks);
-          knownBlockRevisionsRef.current = flatBlockRevisions(loadedPage.blocks);
           const persistedDoc = loadedPage.blocks.length
             ? noteBlocksToOutlineDoc(loadedPage.blocks)
             : null;
@@ -301,14 +237,12 @@ export default function PagePaneBody({
             ? pageDraftMetadataFromStorage(storedDraft.metadata)
             : null;
           if (storedDraft && storedMetadata) {
-            pageRevisionRef.current = storedMetadata.pageRevision;
             knownBlockIdsRef.current = new Set(
               storedMetadata.knownBlocks.map((block) => block.id)
             );
             knownBlockParentIdsRef.current = new Map(
               storedMetadata.knownBlocks.map((block) => [block.id, block.parentBlockId])
             );
-            knownBlockRevisionsRef.current = new Map(storedMetadata.blockRevisions);
             knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
             focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
             setInitialDoc(storedDraft.doc);
@@ -325,11 +259,9 @@ export default function PagePaneBody({
         const block = loaded.focusedBlock;
         setPage({ ...loadedPage, blocks: [block] });
         setTitleDraft(loadedPage.title);
-        pageRevisionRef.current = requiredRevision(loadedPage.revision);
         focusedRootParentBlockIdRef.current = block.parentBlockId;
         knownBlockIdsRef.current = new Set(flatBlockIds([block]));
         knownBlockParentIdsRef.current = flatBlockParentIds([block]);
-        knownBlockRevisionsRef.current = flatBlockRevisions([block]);
         const doc = noteBlocksToOutlineDoc([block]);
         knownBlockDraftsRef.current = draftBlocksById(readDraftBlocksForPersistence(doc));
         const storedDraft = readStoredNoteEditorDraft(loaded.saveScope);
@@ -337,12 +269,10 @@ export default function PagePaneBody({
           ? pageDraftMetadataFromStorage(storedDraft.metadata)
           : null;
         if (storedDraft && storedMetadata) {
-          pageRevisionRef.current = storedMetadata.pageRevision;
           knownBlockIdsRef.current = new Set(storedMetadata.knownBlocks.map((item) => item.id));
           knownBlockParentIdsRef.current = new Map(
             storedMetadata.knownBlocks.map((item) => [item.id, item.parentBlockId])
           );
-          knownBlockRevisionsRef.current = new Map(storedMetadata.blockRevisions);
           knownBlockDraftsRef.current = draftBlocksById(storedMetadata.knownBlocks);
           focusedRootParentBlockIdRef.current = storedMetadata.focusedRootParentBlockId;
           setInitialDoc(storedDraft.doc);
@@ -389,7 +319,6 @@ export default function PagePaneBody({
       if (!page || !trimmed || trimmed === page.title) return;
       try {
         const updated = await updateNotePage(page.id, { title: trimmed });
-        pageRevisionRef.current = requiredRevision(updated.revision);
         setPage(updated);
         setTitleDraft(updated.title);
       } catch (error: unknown) {
@@ -399,37 +328,6 @@ export default function PagePaneBody({
     },
     [page]
   );
-
-  const discardLocalDraft = useCallback(async () => {
-    setConflictAction("discard");
-    setFeedback(null);
-    try {
-      clearStoredNoteEditorDraft(saveScope);
-      resetSession();
-      const doc = await loadServerDocument();
-      setInitialDoc(doc);
-      setEditorResetVersion((version) => version + 1);
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Latest note could not be loaded." }));
-    } finally {
-      setConflictAction(null);
-    }
-  }, [loadServerDocument, resetSession, saveScope]);
-
-  const overwriteWithLocalDraft = useCallback(async () => {
-    setConflictAction("overwrite");
-    setFeedback(null);
-    try {
-      await loadServerDocument();
-      flushSession();
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Latest note revisions could not be loaded." }));
-    } finally {
-      setConflictAction(null);
-    }
-  }, [flushSession, loadServerDocument]);
 
   const openBlock = useCallback(
     (blockId: string, openInNewPane: boolean) => {
@@ -506,36 +404,7 @@ export default function PagePaneBody({
         aria-label="Page title"
       />
       <div className={styles.editorMeta}>{saveLabelForStatus(saveStatus)}</div>
-      {saveStatus === "conflict" ? (
-        <FeedbackNotice
-          severity="warning"
-          title="Notes have a save conflict."
-          message="Your local draft is still here."
-        >
-          <div className={styles.conflictActions}>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void overwriteWithLocalDraft()}
-              disabled={conflictAction !== null}
-            >
-              Keep local draft
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void discardLocalDraft()}
-              disabled={conflictAction !== null}
-            >
-              Reload latest
-            </Button>
-          </div>
-        </FeedbackNotice>
-      ) : feedback ? (
-        <FeedbackNotice {...feedback} />
-      ) : null}
+      {feedback ? <FeedbackNotice {...feedback} /> : null}
       <ProseMirrorOutlineEditor
         resourceKey={editorResourceKey}
         initialDoc={initialDoc}
@@ -565,7 +434,6 @@ function saveLabelForStatus(status: NoteEditorSessionStatus): string {
   if (status === "dirty") return "Unsaved";
   if (status === "saving") return "Saving...";
   if (status === "failed") return "Save failed";
-  if (status === "conflict") return "Conflict";
   return "Saved";
 }
 
@@ -651,61 +519,57 @@ function draftBlockChanged(current: PersistedDraftBlock, previous: PersistedDraf
   );
 }
 
-function pageDraftMetadataFromStorage(value: unknown): PageDraftMetadata | null {
-  if (typeof value !== "object" || value === null) {
+export function pageDraftMetadataFromStorage(value: unknown): PageDraftMetadata | null {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, PAGE_DRAFT_METADATA_KEYS) ||
+    hasTopLevelLegacyArtifactIdentityKey(value)
+  ) {
     return null;
   }
-  const metadata = value as Partial<PageDraftMetadata>;
   if (
-    typeof metadata.pageRevision !== "number" ||
-    !Number.isFinite(metadata.pageRevision) ||
-    !Array.isArray(metadata.blockRevisions) ||
-    !Array.isArray(metadata.knownBlocks) ||
-    (metadata.focusedRootParentBlockId !== null &&
-      typeof metadata.focusedRootParentBlockId !== "string")
+    !Array.isArray(value.knownBlocks) ||
+    (value.focusedRootParentBlockId !== null &&
+      typeof value.focusedRootParentBlockId !== "string")
   ) {
     return null;
   }
 
-  const blockRevisions: [string, number][] = [];
-  for (const entry of metadata.blockRevisions) {
-    if (
-      !Array.isArray(entry) ||
-      entry.length !== 2 ||
-      typeof entry[0] !== "string" ||
-      typeof entry[1] !== "number" ||
-      !Number.isFinite(entry[1])
-    ) {
-      return null;
-    }
-    blockRevisions.push([entry[0], entry[1]]);
-  }
-
   const knownBlocks: PersistedDraftBlock[] = [];
-  for (const block of metadata.knownBlocks) {
+  for (const block of value.knownBlocks) {
     if (
-      typeof block !== "object" ||
-      block === null ||
+      !isRecord(block) ||
+      !hasOnlyKeys(block, PERSISTED_DRAFT_BLOCK_KEYS) ||
+      hasTopLevelLegacyArtifactIdentityKey(block) ||
       typeof block.id !== "string" ||
       (block.parentBlockId !== null && typeof block.parentBlockId !== "string") ||
       (block.beforeBlockId !== null && typeof block.beforeBlockId !== "string") ||
       (block.afterBlockId !== null && typeof block.afterBlockId !== "string") ||
-      typeof block.blockKind !== "string" ||
-      typeof block.bodyPmJson !== "object" ||
-      block.bodyPmJson === null ||
+      !isNoteBlockKind(block.blockKind) ||
+      !isRecord(block.bodyPmJson) ||
       typeof block.collapsed !== "boolean"
     ) {
       return null;
     }
-    knownBlocks.push(block);
+    knownBlocks.push({
+      id: block.id,
+      parentBlockId: block.parentBlockId,
+      beforeBlockId: block.beforeBlockId,
+      afterBlockId: block.afterBlockId,
+      blockKind: block.blockKind,
+      bodyPmJson: block.bodyPmJson,
+      collapsed: block.collapsed,
+    });
   }
 
   return {
-    pageRevision: metadata.pageRevision,
-    blockRevisions,
     knownBlocks,
-    focusedRootParentBlockId: metadata.focusedRootParentBlockId,
+    focusedRootParentBlockId: value.focusedRootParentBlockId,
   };
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
 function flatPageBlockIds(page: NotePage): string[] {
@@ -714,7 +578,6 @@ function flatPageBlockIds(page: NotePage): string[] {
 
 interface BlockWithChildren {
   id: string;
-  revision?: number;
   children: BlockWithChildren[];
 }
 
@@ -739,25 +602,4 @@ function flatBlockParentIds(blocks: BlockWithChildren[]): Map<string, string | n
 
   visit(blocks, null);
   return parentIds;
-}
-
-function flatBlockRevisions(blocks: NoteBlock[]): Map<string, number> {
-  const revisions = new Map<string, number>();
-
-  function visit(children: NoteBlock[]) {
-    for (const block of children) {
-      revisions.set(block.id, requiredRevision(block.revision));
-      visit(block.children);
-    }
-  }
-
-  visit(blocks);
-  return revisions;
-}
-
-function requiredRevision(revision: number | undefined): number {
-  if (typeof revision !== "number" || !Number.isFinite(revision)) {
-    throw new Error("Loaded note page is missing revision metadata");
-  }
-  return revision;
 }

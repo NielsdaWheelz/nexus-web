@@ -114,8 +114,8 @@ def _make_searchable_highlight(db: Session, user_id: UUID, *, title: str) -> tup
     """A highlight whose ``get_search_result(..., "highlight", id)`` SUCCEEDS.
 
     ``create_searchable_media`` builds a fragment AND an active content index;
-    anchoring a highlight to that fragment gives it a resolvable locator +
-    source_version, which is what makes the search lookup return a result.
+    anchoring a highlight to that fragment gives it a resolvable locator, which
+    is what makes the search lookup return a result.
 
     Returns ``(media_id, highlight_id)`` so the caller can register cleanups.
     """
@@ -182,7 +182,7 @@ def _retrievals_under(db: Session, tool_call_id: UUID) -> list:
         db.execute(
             sql_text(
                 "SELECT citation_ordinal, selected, retrieval_status, result_ref, "
-                "source_version, media_id, locator, result_type "
+                "media_id, locator, result_type "
                 "FROM message_retrievals WHERE tool_call_id = :tcid ORDER BY ordinal"
             ),
             {"tcid": tool_call_id},
@@ -274,8 +274,7 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert row["retrieval_status"] == "attached_context"
         assert row["result_type"] == "highlight"
         assert row["result_ref"] is not None
-        # A clickable highlight target carries a locator + source_version + media_id.
-        assert row["source_version"] is not None
+        # A clickable highlight target carries a locator + media_id.
         assert row["media_id"] is not None
         assert row["locator"] is not None
 
@@ -472,7 +471,6 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
         assert len(rows) == 1, f"Expected one read retrieval row; got {rows}"
         assert rows[0]["citation_ordinal"] == 5
         assert rows[0]["result_type"] == "highlight"
-        assert rows[0]["source_version"] is not None
         assert rows[0]["locator"] is not None
 
     _register_user_cleanup(direct_db, user_id)
@@ -560,7 +558,7 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
             assert len(rows) == 1
             assert rows[0]["citation_ordinal"] == 10 + offset
             assert rows[0]["result_type"] == read.citation_result_type
-            assert rows[0]["source_version"] is not None or read.citation_result_type == "media"
+            assert rows[0]["locator"] is not None or read.citation_result_type == "media"
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)

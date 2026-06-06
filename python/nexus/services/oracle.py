@@ -7,7 +7,6 @@ and SSE event emission are all linear and explicit here.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Sequence
@@ -19,7 +18,7 @@ import httpx
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest, Turn
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,14 +28,12 @@ from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     OracleCorpusImage,
     OracleCorpusPassage,
-    OracleCorpusSetVersion,
     OracleCorpusWork,
     OracleReading,
     OracleReadingEvent,
     OracleReadingPassage,
 )
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
-from nexus.hashing import stable_json_hash
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.oracle import (
@@ -59,7 +56,6 @@ from nexus.services.semantic_chunks import (
 
 logger = get_logger(__name__)
 
-ORACLE_PROMPT_VERSION = "oracle-v3"
 ORACLE_MODEL_NAME = "claude-haiku-4-5-20251001"
 ORACLE_PROVIDER = "anthropic"
 ORACLE_MAX_OUTPUT_TOKENS = 2000
@@ -188,15 +184,11 @@ def _insert_reading_with_next_folio(
         select(func.max(OracleReading.folio_number)).where(OracleReading.user_id == viewer_id)
     )
     next_folio = (max_folio or 0) + 1
-    corpus_set_version_id = _active_corpus_set_version_id(db)
-
     reading = OracleReading(
         user_id=viewer_id,
-        corpus_set_version_id=corpus_set_version_id,
         folio_number=next_folio,
         question_text=question,
         status="pending",
-        prompt_version=ORACLE_PROMPT_VERSION,
     )
     db.add(reading)
     db.flush()
@@ -209,27 +201,9 @@ def _insert_reading_with_next_folio(
     return reading
 
 
-def _active_corpus_set_version_id(db: Session) -> UUID:
-    corpus_set_version_id = (
-        db.execute(
-            select(OracleCorpusSetVersion.id)
-            .order_by(
-                desc(OracleCorpusSetVersion.created_at),
-                desc(OracleCorpusSetVersion.version),
-            )
-            .limit(1)
-        )
-        .scalars()
-        .one_or_none()
-    )
-    if corpus_set_version_id is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Oracle corpus is not seeded")
-    _ensure_corpus_seed_ready(db, corpus_set_version_id=corpus_set_version_id)
-    return corpus_set_version_id
-
-
-def _ensure_corpus_seed_ready(db: Session, *, corpus_set_version_id: UUID) -> None:
-    """Reject a corpus version until scripts/oracle manifests have fully seeded it."""
+def _ensure_current_corpus_ready(db: Session) -> None:
+    """Reject the current corpus until scripts/oracle manifests have fully seeded it."""
+    embedding_model = _corpus_embedding_model()
     counts = (
         db.execute(
             select(
@@ -239,13 +213,13 @@ def _ensure_corpus_seed_ready(db: Session, *, corpus_set_version_id: UUID) -> No
                 func.count(func.distinct(OracleCorpusPassage.id))
                 .filter(
                     OracleCorpusPassage.embedding.is_not(None),
-                    OracleCorpusPassage.embedding_model == OracleCorpusSetVersion.embedding_model,
+                    OracleCorpusPassage.embedding_model == embedding_model,
                 )
                 .label("passage_embedding_count"),
                 func.count(func.distinct(OracleCorpusImage.id))
                 .filter(
                     OracleCorpusImage.embedding.is_not(None),
-                    OracleCorpusImage.embedding_model == OracleCorpusSetVersion.embedding_model,
+                    OracleCorpusImage.embedding_model == embedding_model,
                 )
                 .label("image_embedding_count"),
                 func.count(func.distinct(OracleCorpusImage.id))
@@ -255,33 +229,14 @@ def _ensure_corpus_seed_ready(db: Session, *, corpus_set_version_id: UUID) -> No
                 )
                 .label("safe_image_count"),
             )
-            .select_from(OracleCorpusSetVersion)
-            .outerjoin(
-                OracleCorpusWork,
-                OracleCorpusWork.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .outerjoin(
-                OracleCorpusPassage,
-                OracleCorpusPassage.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .outerjoin(
-                OracleCorpusImage,
-                OracleCorpusImage.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .where(OracleCorpusSetVersion.id == corpus_set_version_id)
+            .select_from(OracleCorpusWork)
+            .outerjoin(OracleCorpusPassage, OracleCorpusPassage.work_id == OracleCorpusWork.id)
+            .outerjoin(OracleCorpusImage, text("true"))
         )
         .mappings()
         .one()
     )
-    seeded_slugs = set(
-        db.execute(
-            select(OracleCorpusWork.slug).where(
-                OracleCorpusWork.corpus_set_version_id == corpus_set_version_id
-            )
-        )
-        .scalars()
-        .all()
-    )
+    seeded_slugs = set(db.execute(select(OracleCorpusWork.slug)).scalars().all())
     missing_slugs = [
         slug for slug in ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS if slug not in seeded_slugs
     ]
@@ -366,7 +321,6 @@ def get_reading_detail(
             OracleReadingPassageOut(
                 phase=row.phase,
                 source_kind=row.source_kind,
-                source_ref=row.source_ref,
                 exact_snippet=row.exact_snippet,
                 locator_label=row.locator_label,
                 attribution_text=row.attribution_text,
@@ -477,7 +431,9 @@ def compute_concordance(
                             SELECT COUNT(*)
                             FROM oracle_reading_passages p1
                             JOIN oracle_reading_passages p2
-                                ON p1.source_ref->>'citation_key' = p2.source_ref->>'citation_key'
+                                ON p1.source_kind = p2.source_kind
+                               AND p1.locator = p2.locator
+                               AND p1.source = p2.source
                             WHERE p1.reading_id = r.id
                               AND p2.reading_id = :reading_id
                         ) AS shared_passage_count,
@@ -487,7 +443,9 @@ def compute_concordance(
                             SELECT COUNT(*)
                             FROM oracle_reading_passages p1
                             JOIN oracle_reading_passages p2
-                                ON p1.source_ref->>'citation_key' = p2.source_ref->>'citation_key'
+                                ON p1.source_kind = p2.source_kind
+                               AND p1.locator = p2.locator
+                               AND p1.source = p2.source
                             WHERE p1.reading_id = r.id
                               AND p2.reading_id = :reading_id
                         ) AS score
@@ -596,15 +554,15 @@ def fail_reading_after_worker_exception(db: Session, *, reading_id: UUID) -> dic
 
 @dataclass(frozen=True)
 class _Candidate:
-    """One retrieved passage offered to the LLM by index. Citation fields
-    flow only from this record into persistence — never from the LLM."""
+    """One retrieved passage offered to the LLM by index."""
 
     source_kind: str  # "public_domain" | "user_media"
     exact_snippet: str
     locator_label: str
     attribution_text: str
     deep_link: str | None
-    source_ref: dict[str, Any]
+    locator: dict[str, Any]
+    source: dict[str, Any]
     tags: list[str]
     score: float
 
@@ -626,7 +584,6 @@ async def execute_reading(
     question = reading.question_text
     viewer_id = reading.user_id
     folio_number = reading.folio_number
-    corpus_set_version_id = reading.corpus_set_version_id
 
     try:
         api_key = _ensure_oracle_platform_llm_available()
@@ -648,7 +605,7 @@ async def execute_reading(
             return {"status": "failed", "error_code": exc.code.value}
 
         try:
-            _ensure_corpus_seed_ready(db, corpus_set_version_id=corpus_set_version_id)
+            _ensure_current_corpus_ready(db)
         except ApiError:
             _fail(
                 db,
@@ -658,17 +615,13 @@ async def execute_reading(
             return {"status": "failed", "error_code": "E_ORACLE_CORPUS_INCOMPLETE"}
 
         try:
-            corpus_query_embedding_model = _corpus_embedding_model(
-                db,
-                corpus_set_version_id=corpus_set_version_id,
-            )
+            corpus_query_embedding_model = _corpus_embedding_model()
             corpus_query_embedding_model, corpus_query_embedding = _build_query_embedding_for_model(
                 question,
                 embedding_model=corpus_query_embedding_model,
             )
             plate = _pick_plate(
                 db,
-                corpus_set_version_id=corpus_set_version_id,
                 query_embedding_model=corpus_query_embedding_model,
                 query_embedding=corpus_query_embedding,
             )
@@ -682,7 +635,6 @@ async def execute_reading(
                 )
             candidates = _retrieve_corpus_passages(
                 db,
-                corpus_set_version_id=corpus_set_version_id,
                 question=question,
                 query_embedding_model=corpus_query_embedding_model,
                 query_embedding=corpus_query_embedding,
@@ -716,7 +668,6 @@ async def execute_reading(
             question=question,
             candidates=candidates,
         )
-        provider_request_hash = _provider_request_hash(request)
         estimated_tokens = _estimate_llm_request_tokens(request)
         try:
             rate_limiter.reserve_token_budget(viewer_id, reading_id, estimated_tokens)
@@ -735,7 +686,6 @@ async def execute_reading(
             return {"status": status, "noop": True}
         reading.status = "streaming"
         reading.started_at = db.scalar(select(func.now()))
-        reading.provider_request_hash = provider_request_hash
         db.flush()
         _append_event(
             db,
@@ -830,11 +780,10 @@ async def execute_reading(
                 reading_id=reading_id,
                 phase=phase,
                 source_kind=candidate.source_kind,
-                source_ref=candidate.source_ref,
                 exact_snippet=candidate.exact_snippet,
                 locator_label=candidate.locator_label,
-                locator=candidate.source_ref["locator"],
-                source=candidate.source_ref["source"],
+                locator=candidate.locator,
+                source=candidate.source,
                 attribution_text=candidate.attribution_text,
                 marginalia_text=marginalia,
                 deep_link=candidate.deep_link,
@@ -848,7 +797,6 @@ async def execute_reading(
                 {
                     "phase": phase,
                     "source_kind": candidate.source_kind,
-                    "source_ref": candidate.source_ref,
                     "exact_snippet": candidate.exact_snippet,
                     "locator_label": candidate.locator_label,
                     "attribution_text": candidate.attribution_text,
@@ -938,12 +886,7 @@ def _viewer_has_searchable_media(db: Session, *, viewer_id: UUID) -> bool:
                     FROM visible_media vm
                     JOIN media_content_index_states mcis ON mcis.media_id = vm.media_id
                         AND mcis.status = 'ready'
-                        AND mcis.active_run_id IS NOT NULL
-                    JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                        AND active_run.state = 'ready'
-                        AND active_run.deactivated_at IS NULL
                     JOIN content_chunks cc ON cc.media_id = vm.media_id
-                        AND cc.index_run_id = mcis.active_run_id
                     WHERE btrim(cc.chunk_text) <> ''
                     LIMIT 1
                 )
@@ -1110,17 +1053,13 @@ def _build_query_embedding_for_model(
 def _retrieve_corpus_passages(
     db: Session,
     *,
-    corpus_set_version_id: UUID,
     question: str,
     query_embedding_model: str,
     query_embedding: list[float],
 ) -> list[_Candidate]:
     tokens = set(ORACLE_TOKEN_RE.findall(question.lower()))
     embedding_dims = transcript_embedding_dimensions()
-    corpus_embedding_model = _corpus_embedding_model(
-        db,
-        corpus_set_version_id=corpus_set_version_id,
-    )
+    corpus_embedding_model = _corpus_embedding_model()
     if corpus_embedding_model != query_embedding_model:
         raise ApiError(
             ApiErrorCode.E_APP_SEARCH_FAILED,
@@ -1153,16 +1092,13 @@ def _retrieve_corpus_passages(
                 FROM oracle_corpus_passages ocp
                 JOIN oracle_corpus_works ocw ON ocw.id = ocp.work_id
                 JOIN query_embedding qe ON true
-                WHERE ocp.corpus_set_version_id = :corpus_set_version_id
-                  AND ocw.corpus_set_version_id = :corpus_set_version_id
-                  AND ocp.embedding_model = :embedding_model
+                WHERE ocp.embedding_model = :embedding_model
                   AND ocp.embedding IS NOT NULL
                 ORDER BY ocp.embedding <=> qe.embedding ASC, ocw.slug ASC, ocp.passage_index ASC
                 LIMIT 200
                 """
             ),
             {
-                "corpus_set_version_id": corpus_set_version_id,
                 "embedding_model": query_embedding_model,
                 "query_embedding": to_pgvector_literal(query_embedding),
             },
@@ -1197,10 +1133,8 @@ def _retrieve_corpus_passages(
                     f"{row['work_author']} opened to *{row['work_title']}* {row['locator_label']}."
                 ),
                 deep_link=str(row["source_url"]),
-                source_ref=_public_domain_source_ref_from_row(
-                    corpus_set_version_id=corpus_set_version_id,
-                    row=row,
-                ),
+                locator=_public_domain_locator_from_row(row),
+                source=_public_domain_source_from_row(row),
                 tags=[str(tag) for tag in row["tags"] or []],
                 score=score,
             )
@@ -1230,7 +1164,7 @@ def _retrieve_user_library_passages(
         key=lambda candidate: (-candidate.score, candidate.exact_snippet),
     )
     for candidate in ranked:
-        media_id = str(candidate.source_ref.get("media_id") or "")
+        media_id = str(candidate.source.get("media_id") or "")
         if media_id and media_id in used_media:
             continue
         if media_id:
@@ -1304,16 +1238,10 @@ def _retrieve_user_content_chunks_by_embedding(
                 JOIN media m ON m.id = cc.media_id
                 JOIN visible_media vm ON vm.media_id = cc.media_id
                 JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                    AND mcis.active_run_id = cc.index_run_id
                     AND mcis.status = 'ready'
-                JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                    AND active_run.state = 'ready'
-                    AND active_run.deactivated_at IS NULL
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
                     AND ce.embedding_provider = mcis.active_embedding_provider
                     AND ce.embedding_model = mcis.active_embedding_model
-                    AND ce.embedding_version = mcis.active_embedding_version
-                    AND ce.embedding_config_hash = mcis.active_embedding_config_hash
                     AND ce.embedding_dimensions = :embedding_dims
                     AND ce.embedding_vector IS NOT NULL
                 JOIN query_embedding qe ON true
@@ -1341,19 +1269,21 @@ def _candidate_from_content_chunk_row(row: dict[str, Any], *, score: float) -> _
     summary_locator = dict(row["summary_locator"] or {})
     heading_path = [str(part) for part in row["heading_path"] or [] if str(part).strip()]
     locator_label = _content_chunk_locator_label(media_title, heading_path)
+    locator, source = _user_content_chunk_reference(
+        row,
+        media_title=media_title,
+        locator_label=locator_label,
+        summary_locator=summary_locator,
+        heading_path=heading_path,
+    )
     return _Candidate(
         source_kind="user_media",
         exact_snippet=str(row["chunk_text"] or "")[:1200],
         locator_label=locator_label,
         attribution_text=f"From *{media_title}*, your library.",
         deep_link=None,
-        source_ref=_user_content_chunk_source_ref(
-            row,
-            media_title=media_title,
-            locator_label=locator_label,
-            summary_locator=summary_locator,
-            heading_path=heading_path,
-        ),
+        locator=locator,
+        source=source,
         tags=["user-library", str(row["source_kind"])],
         score=score,
     )
@@ -1366,63 +1296,40 @@ def _content_chunk_locator_label(media_title: str, heading_path: list[str]) -> s
     return f"From your library: {media_title}"
 
 
-def _public_domain_source_ref_from_row(
-    *,
-    corpus_set_version_id: UUID,
-    row: dict[str, Any],
-) -> dict[str, Any]:
+def _public_domain_locator_from_row(row: dict[str, Any]) -> dict[str, Any]:
     locator = dict(row["locator"] or {})
     if not locator:
         locator = _structured_locator(str(row["locator_label"]), int(row["passage_index"]))
+    return locator
+
+
+def _public_domain_source_from_row(row: dict[str, Any]) -> dict[str, Any]:
     source = dict(row["source"] or {})
-    if not source:
-        source = {
-            "type": "public_domain_work",
-            "repository": str(row["source_repository"]),
-            "url": str(row["source_url"]),
-            "work_slug": str(row["work_slug"]),
-            "title": str(row["work_title"]),
-            "author": str(row["work_author"]),
-            "edition_label": str(row["edition_label"]),
-            "year": row["work_year"],
-        }
-    citation_key = _stable_citation_key(
-        {
-            "type": "oracle_corpus_passage",
-            "corpus_set_version_id": str(corpus_set_version_id),
-            "work_slug": str(row["work_slug"]),
-            "passage_index": int(row["passage_index"]),
-            "text_sha256": hashlib.sha256(str(row["canonical_text"]).encode("utf-8")).hexdigest(),
-        }
-    )
-    return {
-        "type": "oracle_corpus_passage",
-        "citation_key": citation_key,
-        "corpus_set_version_id": str(corpus_set_version_id),
-        "work_id": str(row["work_id"]),
+    source.pop("citation_key", None)
+    source.pop("text_sha256", None)
+    source.pop("source_ref", None)
+    current_source = {
+        "type": "public_domain_work",
+        "repository": str(row["source_repository"]),
+        "url": str(row["source_url"]),
         "work_slug": str(row["work_slug"]),
-        "passage_id": str(row["passage_id"]),
-        "passage_index": int(row["passage_index"]),
-        "locator": locator,
-        "source": source,
-        "citation": {
-            "citation_key": citation_key,
-            "locator_label": str(row["locator_label"]),
-            "source_title": str(row["work_title"]),
-            "source_author": str(row["work_author"]),
-            "source_url": str(row["source_url"]),
-        },
+        "title": str(row["work_title"]),
+        "author": str(row["work_author"]),
+        "edition_label": str(row["edition_label"]),
+        "year": row["work_year"],
     }
+    extras = {key: value for key, value in source.items() if key not in current_source}
+    return {**current_source, **extras}
 
 
-def _user_content_chunk_source_ref(
+def _user_content_chunk_reference(
     row: dict[str, Any],
     *,
     media_title: str,
     locator_label: str,
     summary_locator: dict[str, Any],
     heading_path: list[str],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     evidence_span_id = (
         str(row["primary_evidence_span_id"])
         if row["primary_evidence_span_id"] is not None
@@ -1442,33 +1349,7 @@ def _user_content_chunk_source_ref(
         "summary_locator": summary_locator,
         "evidence_span_id": evidence_span_id,
     }
-    citation_key = _stable_citation_key(
-        {
-            "type": "content_chunk",
-            "media_id": str(row["media_id"]),
-            "content_chunk_id": str(row["content_chunk_id"]),
-            "chunk_idx": int(row["chunk_idx"]),
-        }
-    )
-    return {
-        "type": "content_chunk",
-        "citation_key": citation_key,
-        "content_chunk_id": str(row["content_chunk_id"]),
-        "evidence_span_id": evidence_span_id,
-        "media_id": str(row["media_id"]),
-        "media_title": media_title,
-        "content_source_kind": str(row["source_kind"]),
-        "chunk_idx": int(row["chunk_idx"]),
-        "summary_locator": summary_locator,
-        "locator": locator,
-        "source": source,
-        "citation": {
-            "citation_key": citation_key,
-            "locator_label": locator_label,
-            "source_title": media_title,
-            "media_id": str(row["media_id"]),
-        },
-    }
+    return locator, source
 
 
 def _structured_locator(locator_label: str, passage_index: int) -> dict[str, Any]:
@@ -1490,33 +1371,17 @@ def _structured_locator(locator_label: str, passage_index: int) -> dict[str, Any
     return locator
 
 
-def _stable_citation_key(payload: dict[str, Any]) -> str:
-    stable = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(stable.encode("utf-8")).hexdigest()
-
-
-def _corpus_embedding_model(db: Session, *, corpus_set_version_id: UUID) -> str:
-    embedding_model = db.scalar(
-        select(OracleCorpusSetVersion.embedding_model).where(
-            OracleCorpusSetVersion.id == corpus_set_version_id
-        )
-    )
-    if embedding_model is None:
-        raise ApiError(ApiErrorCode.E_APP_SEARCH_FAILED, "Oracle corpus version is missing")
-    return embedding_model
+def _corpus_embedding_model() -> str:
+    return current_transcript_embedding_model()
 
 
 def _pick_plate(
     db: Session,
     *,
-    corpus_set_version_id: UUID,
     query_embedding_model: str,
     query_embedding: list[float],
 ) -> OracleCorpusImage:
-    corpus_embedding_model = _corpus_embedding_model(
-        db,
-        corpus_set_version_id=corpus_set_version_id,
-    )
+    corpus_embedding_model = _corpus_embedding_model()
     if corpus_embedding_model != query_embedding_model:
         raise ApiError(
             ApiErrorCode.E_APP_SEARCH_FAILED,
@@ -1532,8 +1397,7 @@ def _pick_plate(
                 SELECT oci.id
                 FROM oracle_corpus_images oci
                 JOIN query_embedding qe ON true
-                WHERE oci.corpus_set_version_id = :corpus_set_version_id
-                  AND oci.embedding_model = :embedding_model
+                WHERE oci.embedding_model = :embedding_model
                   AND oci.embedding IS NOT NULL
                   AND oci.width <= 4096
                   AND oci.height <= 4096
@@ -1542,7 +1406,6 @@ def _pick_plate(
                 """
         ),
         {
-            "corpus_set_version_id": corpus_set_version_id,
             "embedding_model": query_embedding_model,
             "query_embedding": to_pgvector_literal(query_embedding),
         },
@@ -1642,29 +1505,7 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LL
         ],
         max_tokens=ORACLE_MAX_OUTPUT_TOKENS,
         reasoning_effort="none",
-        prompt_cache_key=ORACLE_PROMPT_VERSION,
-    )
-
-
-def _provider_request_hash(request: LLMRequest) -> str:
-    return stable_json_hash(
-        {
-            "version": "oracle-provider-request-v1",
-            "provider": ORACLE_PROVIDER,
-            "model_name": request.model_name,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "reasoning_effort": request.reasoning_effort,
-            "prompt_cache_key": request.prompt_cache_key,
-            "messages": [
-                {
-                    "role": message.role,
-                    "content": message.content,
-                    "cache_ttl": message.cache_ttl,
-                }
-                for message in request.messages
-            ],
-        }
+        prompt_cache_key=None,
     )
 
 

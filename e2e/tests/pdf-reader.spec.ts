@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type APIResponse, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
@@ -13,6 +13,7 @@ import {
   workspaceE2eDeviceId,
   workspacePaneButton,
 } from "./workspace";
+import { runE2eWorkerOnce } from "./worker";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -27,6 +28,13 @@ interface PdfReaderResumeState {
   page: number;
   page_progression: number | null;
   zoom: number | null;
+}
+
+interface MediaStatusSnapshot {
+  processing_status?: string;
+  retrieval_status?: string | null;
+  failure_stage?: string | null;
+  last_error_code?: string | null;
 }
 
 function readSeededPdfMedia(): SeededPdfMedia {
@@ -46,6 +54,82 @@ function readSeededPdfMedia(): SeededPdfMedia {
   return parsed;
 }
 
+function readMediaIdFromUrl(url: string): string {
+  const pathname = new URL(url).pathname;
+  const match = pathname.match(/^\/media\/([0-9a-f-]{36})$/i);
+  if (!match) {
+    throw new Error(`Expected media route after upload, got ${url}`);
+  }
+  return match[1];
+}
+
+async function readResponseText(response: APIResponse): Promise<string> {
+  try {
+    return await response.text();
+  } catch (error) {
+    return `unable to read response body: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+}
+
+async function waitForPdfMediaReady(page: Page, mediaId: string): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  let lastState = "not checked";
+  let workerIterations = 0;
+  let lastWorker = "not run";
+
+  while (Date.now() < deadline) {
+    const response = await page.request.get(`/api/media/${mediaId}`);
+    if (!response.ok()) {
+      lastState = `${response.status()}: ${await readResponseText(response)}`;
+      await page.waitForTimeout(250);
+      continue;
+    }
+
+    const payload = (await response.json()) as { data?: MediaStatusSnapshot };
+    const media = payload.data;
+    if (!media) {
+      lastState = JSON.stringify(payload).slice(0, 500);
+      await page.waitForTimeout(250);
+      continue;
+    }
+
+    lastState = JSON.stringify({
+      processing_status: media.processing_status,
+      retrieval_status: media.retrieval_status,
+      failure_stage: media.failure_stage,
+      last_error_code: media.last_error_code,
+    });
+
+    if (media.processing_status === "ready_for_reading") {
+      return;
+    }
+    if (media.processing_status === "failed") {
+      throw new Error(`PDF media ${mediaId} failed before highlight creation: ${lastState}`);
+    }
+
+    const workerResult = runE2eWorkerOnce({
+      mediaId,
+      extraEnv: {
+        WORKER_ALLOWED_JOB_KINDS: "ingest_media_source",
+      },
+    });
+    workerIterations += workerResult.processed ? 1 : 0;
+    lastWorker = JSON.stringify({
+      processed: workerResult.processed,
+      index: workerResult.index,
+      stderr: workerResult.stderr,
+    }).slice(0, 1_000);
+
+    await page.waitForTimeout(250);
+  }
+
+  throw new Error(
+    `Timed out waiting for PDF media ${mediaId} to become readable after ${workerIterations} worker iterations: ${lastState}; worker=${lastWorker}`,
+  );
+}
+
 async function putReaderState(
   page: Page,
   mediaId: string,
@@ -59,14 +143,7 @@ async function putReaderState(
     return;
   }
 
-  let responseBody = "";
-  try {
-    responseBody = await response.text();
-  } catch (error) {
-    responseBody = `unable to read response body: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-  }
+  const responseBody = await readResponseText(response);
   throw new Error(
     `PUT /api/media/${mediaId}/reader-state failed with ${response.status()}: ${responseBody}`,
   );
@@ -242,13 +319,12 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
-    const expectedMediaId = seeded.media_id;
     const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
     let createdHighlightId: string | null = null;
+    let uploadedMediaId: string | null = null;
     let productError: unknown = null;
     try {
       await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
-      await resetPdfReaderState(page, expectedMediaId);
       await page.getByRole("button", { name: "Add content" }).click();
       const addContentDialog = page.getByRole("dialog", { name: "Add content" });
       await expect(addContentDialog).toBeVisible();
@@ -256,14 +332,17 @@ test.describe("pdf reader", () => {
       await expect(fileInput).toBeAttached();
       await fileInput.setInputFiles(uploadFixturePath);
 
-      await expect(page).toHaveURL(new RegExp(`/media/${expectedMediaId}`), {
+      await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i, {
         timeout: 30_000,
       });
+      uploadedMediaId = readMediaIdFromUrl(page.url());
+      expect(uploadedMediaId).not.toBe(seeded.media_id);
+      await waitForPdfMediaReady(page, uploadedMediaId);
       await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
       await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after upload redirect to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
-      await gotoSinglePaneWorkspace(page, deviceId, `/media/${expectedMediaId}`);
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${uploadedMediaId}`);
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -278,7 +357,7 @@ test.describe("pdf reader", () => {
       // Use the API to keep this focused on persistence and quote-to-chat behavior.
       const nonce = Date.now() % 100_000;
       const exact = `e2e-persist-chat-${nonce}`;
-      const createHighlight = await page.request.post(`/api/media/${expectedMediaId}/pdf-highlights`, {
+      const createHighlight = await page.request.post(`/api/media/${uploadedMediaId}/pdf-highlights`, {
         data: {
           page_number: 2,
           exact,
@@ -298,8 +377,17 @@ test.describe("pdf reader", () => {
         },
         headers: stateChangingApiHeaders(),
       });
-      expect(createHighlight.ok()).toBe(true);
-      createdHighlightId = (await createHighlight.json()).data.id as string;
+      const createHighlightBody = await readResponseText(createHighlight);
+      expect(
+        createHighlight.ok(),
+        `POST /api/media/${uploadedMediaId}/pdf-highlights failed with ${createHighlight.status()}: ${createHighlightBody.slice(
+          0,
+          1_000,
+        )}`,
+      ).toBe(true);
+      createdHighlightId = (
+        JSON.parse(createHighlightBody) as { data: { id: string } }
+      ).data.id;
 
       await page.reload();
       const persistedHighlight = await page.request.get(`/api/highlights/${createdHighlightId}`);
@@ -340,6 +428,17 @@ test.describe("pdf reader", () => {
             page.request,
             `/api/highlights/${createdHighlightId}`,
             `Highlight ${createdHighlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (uploadedMediaId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/media/${uploadedMediaId}`,
+            `Uploaded PDF media ${uploadedMediaId}`,
           );
         } catch (error) {
           cleanupErrors.push(error);

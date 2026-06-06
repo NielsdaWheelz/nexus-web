@@ -462,7 +462,6 @@ def register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> N
     direct_db.register_cleanup("podcast_episode_chapters", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcript_request_audits", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
-    direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcription_jobs", "media_id", media_id)
     direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
 

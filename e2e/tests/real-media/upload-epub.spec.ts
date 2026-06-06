@@ -40,9 +40,8 @@ test("@real-media real EPUB opens from upload-backed media and projects evidence
     artifactPath,
     filename: "moby-dick-old-real-media-fresh.epub",
     mimeType: "application/epub+zip",
-    expectedSha256: FRESH_REAL_MEDIA_FIXTURES.epubMobyDickOld.sha256,
+    expectedSizeBytes: FRESH_REAL_MEDIA_FIXTURES.epubMobyDickOld.sizeBytes,
     seededMediaId: seed.fixtures.epub.media_id,
-    seededSha256: seed.fixtures.epub.artifact_sha256,
     artifactSalt: "upload-epub",
   });
   const mediaId = upload.media_id;

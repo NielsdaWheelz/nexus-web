@@ -395,14 +395,6 @@ class DirectSessionManager:
                         {"value": value},
                     )
                     session.execute(
-                        text("DELETE FROM source_snapshots WHERE media_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM content_index_runs WHERE media_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
                         text("DELETE FROM contributor_credits WHERE media_id = :value"),
                         {"value": value},
                     )

@@ -21,21 +21,8 @@ export async function deleteE2eResource(
 }
 
 async function deleteNoteBlockResource(request: APIRequestContext, path: string) {
-  const current = await request.get(path, { timeout: 5_000 });
-  if (current.status() === 404) {
-    return current;
-  }
-  if (!current.ok()) {
-    return current;
-  }
-  const payload = (await current.json()) as { data?: { revision?: number } };
-  const revision = payload.data?.revision;
-  if (typeof revision !== "number" || !Number.isFinite(revision)) {
-    throw new Error(`Note block cleanup missing revision: ${path}`);
-  }
   return request.delete(path, {
     timeout: 5_000,
-    data: { base_revision: revision },
     headers: stateChangingApiHeaders(),
   });
 }

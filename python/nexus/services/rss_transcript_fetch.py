@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -20,12 +19,11 @@ logger = get_logger(__name__)
 _TRANSCRIPT_TIMEOUT_SECONDS = 15.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
 
-# Real-media crew-4 transcript fixture identity. The same fixture file
-# (nasa-hwhap-crew4-transcript.txt) is also validated in
+# Real-media crew-4 transcript fixture size. The same fixture file
+# (nasa-hwhap-crew4-transcript.txt) is also size-checked in
 # nexus/services/podcasts/deepgram_adapter.py; keep these two in sync if the
 # fixture content changes.
 _CREW4_FIXTURE_BYTES = 753
-_CREW4_FIXTURE_SHA256 = "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
 
 _SOURCE_TYPE_PRIORITY = {
     "vtt": 0,
@@ -170,13 +168,10 @@ def _fetch_real_media_fixture_transcript(
         )
 
     payload = content.encode("utf-8")
-    if (
-        len(payload) != _CREW4_FIXTURE_BYTES
-        or hashlib.sha256(payload).hexdigest() != _CREW4_FIXTURE_SHA256
-    ):
+    if len(payload) != _CREW4_FIXTURE_BYTES:
         return _failure(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            "RSS transcript fixture hash mismatch",
+            "RSS transcript fixture size mismatch",
         )
 
     segments = parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
@@ -194,7 +189,6 @@ def _fetch_real_media_fixture_transcript(
         "provider_fixture": {
             "path": str(path),
             "byte_length": len(payload),
-            "sha256": _CREW4_FIXTURE_SHA256,
             "source_url": expected_url,
         },
     }

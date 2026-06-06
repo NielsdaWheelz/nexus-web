@@ -12,7 +12,6 @@ export interface ReaderNavigationSection {
   href_fragment: string | null;
   anchor_id: string | null;
   char_count: number | null;
-  source_version?: string | null;
 }
 
 export interface ReaderNavigationTocNode {
@@ -24,7 +23,6 @@ export interface ReaderNavigationTocNode {
   level: number | null;
   depth: number | null;
   section_id: string | null;
-  source_version?: string | null;
   children: ReaderNavigationTocNode[];
 }
 
@@ -35,14 +33,12 @@ export interface ReaderNavigationLocation {
   href: string | null;
   fragment_idx: number | null;
   section_id: string | null;
-  source_version?: string | null;
 }
 
 export interface MediaNavigationResponse {
   data: {
     media_id: string;
     kind: "epub" | "web_article";
-    source_version?: string | null;
     sections: ReaderNavigationSection[];
     toc_nodes: ReaderNavigationTocNode[];
     landmarks: ReaderNavigationLocation[];

@@ -78,7 +78,6 @@ test("@real-media captured web article opens reader text and evidence highlight"
 
     writeRealMediaTrace(testInfo, "real-web-captured-article-trace.json", {
       fixture_id: "web-nasa-water-on-moon",
-      artifact_sha256: seed.fixtures.web.artifact_sha256,
       media_id: mediaId,
       query,
       search_api_url: search.api_url,

@@ -15,8 +15,6 @@ import MediaPaneBody from "./MediaPaneBody";
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   mediaKind: "pdf" as "pdf" | "web_article" | "epub",
-  retrievalStatus: "ready" as "ready" | "indexing" | "failed",
-  retrievalStatusReason: null as string | null,
   includeToc: false,
   isMobileViewport: false,
   readerFocusMode: "off" as
@@ -40,10 +38,9 @@ const paneShellMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/client", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/lib/api/client")>(
-      "@/lib/api/client",
-    );
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
   return {
     ...actual,
     apiFetch: (...args: unknown[]) => testState.apiFetch(...args),
@@ -185,9 +182,7 @@ function mediaResponse() {
     title: "Reader fixture",
     canonical_source_url: null,
     processing_status: "ready_for_reading",
-    retrieval_status: testState.retrievalStatus,
-    retrieval_status_reason: testState.retrievalStatusReason,
-    source_version: "source:v1",
+    retrieval_status: "ready",
     contributors: [],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -208,7 +203,6 @@ function fragmentResponse() {
       id: "fragment-1",
       html_sanitized: "<p>Readable text.</p>",
       canonical_text: "",
-      source_version: "source:v1",
     },
   ];
 }
@@ -227,7 +221,6 @@ function navigationTocNodes() {
       level: 1,
       depth: 0,
       section_id: "section-1",
-      source_version: "source:v1",
       children: [],
     },
   ];
@@ -283,11 +276,9 @@ async function getContentsSurfaceBody(
   return body;
 }
 
-function renderMediaPane(
-  options: {
-    secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  } = {},
-) {
+function renderMediaPane(options: {
+  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+} = {}) {
   const href = "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
@@ -342,8 +333,6 @@ describe("MediaPaneBody pane sizing", () => {
   beforeEach(() => {
     testState.apiFetch.mockReset();
     testState.includeToc = false;
-    testState.retrievalStatus = "ready";
-    testState.retrievalStatusReason = null;
     testState.isMobileViewport = false;
     testState.readerFocusMode = "off";
     paneShellMocks.usePaneChromeOverride.mockReset();
@@ -363,7 +352,6 @@ describe("MediaPaneBody pane sizing", () => {
         return jsonResponse({
           media_id: "media-1",
           kind: testState.mediaKind,
-          source_version: "source:v1",
           sections: [
             {
               section_id: "section-1",
@@ -379,7 +367,6 @@ describe("MediaPaneBody pane sizing", () => {
               href_fragment: null,
               anchor_id: null,
               char_count: 0,
-              source_version: "source:v1",
             },
           ],
           toc_nodes: navigationTocNodes(),
@@ -404,7 +391,6 @@ describe("MediaPaneBody pane sizing", () => {
           canonical_text: "",
           char_count: 0,
           word_count: 2,
-          source_version: "source:v1",
           created_at: "2026-01-01T00:00:00Z",
         });
       }
@@ -449,6 +435,7 @@ describe("MediaPaneBody pane sizing", () => {
           }),
         );
       });
+
     },
   );
 
@@ -474,40 +461,7 @@ describe("MediaPaneBody pane sizing", () => {
         }),
       );
     });
-  });
 
-  it("renders password-protected failed PDFs outside the PDF reader", async () => {
-    testState.mediaKind = "pdf";
-    testState.apiFetch.mockImplementation(async (input: unknown) => {
-      const path = pathOf(input);
-      if (path === "/api/media/media-1") {
-        const media = mediaResponse();
-        return jsonResponse({
-          ...media,
-          processing_status: "failed",
-          last_error_code: "E_PDF_PASSWORD_REQUIRED",
-          capabilities: {
-            ...media.capabilities,
-            can_read: false,
-            can_highlight: false,
-            can_quote: false,
-            can_search: false,
-            can_download_file: true,
-          },
-        });
-      }
-      if (path === "/api/media/media-1/highlights") {
-        return jsonResponse({ highlights: [] });
-      }
-      throw new Error(`Unexpected API call: ${path}`);
-    });
-
-    renderMediaPane();
-
-    expect(
-      await screen.findByText("This PDF is password-protected"),
-    ).toBeInTheDocument();
-    expect(screen.queryByTestId("pdf-reader")).not.toBeInTheDocument();
   });
 
   it.each(["epub", "web_article"] as const)(
@@ -531,19 +485,6 @@ describe("MediaPaneBody pane sizing", () => {
         ([input]) => pathOf(input) === "/api/media/media-1/fragments",
       ),
     ).toHaveLength(1);
-  });
-
-  it("renders readable web article content while retrieval indexing is not ready", async () => {
-    testState.mediaKind = "web_article";
-    testState.retrievalStatus = "indexing";
-    testState.retrievalStatusReason = "Building the search index.";
-    renderMediaPane();
-
-    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
-    expect(screen.getByTestId("retrieval-readiness")).toHaveTextContent(
-      "Search index: indexing",
-    );
-    expect(screen.getByText("Building the search index.")).toBeInTheDocument();
   });
 
   it("publishes one-node web article contents independent of highlights", async () => {
@@ -570,8 +511,7 @@ describe("MediaPaneBody pane sizing", () => {
     async (kind) => {
       testState.mediaKind = kind;
       testState.includeToc = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
+      const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
       await getContentsSurfaceBody(onSetPaneSecondary);
 
       await renderLatestToolbar();

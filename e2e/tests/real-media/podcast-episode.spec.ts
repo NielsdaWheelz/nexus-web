@@ -83,7 +83,6 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
 
     writeRealMediaTrace(testInfo, "real-podcast-transcript-trace.json", {
       fixture_id: "podcast-nasa-hwhap-crew4-transcript",
-      artifact_sha256: seed.fixtures.podcast.artifact_sha256,
       media_id: mediaId,
       query,
       search_api_url: search.api_url,

@@ -10,6 +10,7 @@
  */
 
 import { isRecord } from "@/lib/validation";
+import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import {
   hasOnlyKeys,
   isOptionalString,
@@ -272,6 +273,8 @@ function isChatToolStatus(value: unknown): value is ChatToolStatus {
 function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   if (
     !isRecord(data) ||
+    !hasOnlyKeys(data, ["assistant_message_id", "entries"]) ||
+    hasLegacyArtifactIdentityKey(data) ||
     typeof data.assistant_message_id !== "string" ||
     !Array.isArray(data.entries)
   ) {
@@ -287,6 +290,12 @@ function parseCitationIndexEntry(
   entry: unknown,
 ): SSECitationIndexEvent["data"]["entries"][number] {
   if (!isRecord(entry)) {
+    throw new Error("Invalid SSE payload for citation_index");
+  }
+  if (
+    !hasOnlyKeys(entry, ["n", "retrieval_id", "tool_call_id", "ordinal", "result"]) ||
+    hasLegacyArtifactIdentityKey(entry)
+  ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
   const n = entry.n;

@@ -17,7 +17,6 @@ describe("ReaderContentsNav", () => {
             level: 1,
             depth: 0,
             section_id: "section-1",
-            source_version: "source:v1",
             navigable: true,
             children: [],
           },

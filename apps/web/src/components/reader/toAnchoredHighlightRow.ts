@@ -10,7 +10,6 @@ type HighlightMetadata = Pick<
   Highlight,
   | "id"
   | "exact"
-  | "source_version"
   | "color"
   | "linked_note_blocks"
   | "created_at"

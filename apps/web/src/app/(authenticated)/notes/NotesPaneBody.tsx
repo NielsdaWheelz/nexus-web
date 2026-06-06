@@ -48,7 +48,6 @@ export default function NotesPaneBody() {
           id: page.id,
           title: page.title,
           description: page.description,
-          revision: page.revision,
           updatedAt: page.updatedAt,
         },
         ...current,

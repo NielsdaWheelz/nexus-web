@@ -117,7 +117,6 @@ def _retrieval_candidate_ledger_to_out(
         selection_reason=row.selection_reason,
         result_ref=cast(Any, row.result_ref),
         locator=cast(Any, row.locator),
-        source_version=row.source_version,
         created_at=row.created_at,
     )
 

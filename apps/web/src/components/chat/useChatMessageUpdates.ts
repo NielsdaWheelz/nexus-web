@@ -58,7 +58,6 @@ function retrievalFromSearchCitation(
     exact_snippet: citation.snippet,
     retrieval_status: citation.selected ? "selected" : "retrieved",
     included_in_prompt: false,
-    source_version: citation.source_version ?? null,
   };
 }
 
@@ -89,7 +88,6 @@ function retrievalFromWebCitation(
     exact_snippet: citation.snippet,
     retrieval_status: "web_result",
     included_in_prompt: false,
-    source_version: citation.source_version,
   };
 }
 
@@ -120,7 +118,6 @@ function messageDocumentWithText(
   const existingBlocks = message.message_document?.blocks ?? [];
   return {
     type: "message_document",
-    version: message.message_document?.version ?? 1,
     blocks: [
       ...(content.trim().length > 0
         ? [
@@ -144,7 +141,6 @@ function messageDocumentWithRetrievals(
   const existingBlocks = message.message_document?.blocks ?? [];
   return {
     type: "message_document",
-    version: message.message_document?.version ?? 1,
     blocks: [
       ...existingBlocks.filter(
         (block) =>

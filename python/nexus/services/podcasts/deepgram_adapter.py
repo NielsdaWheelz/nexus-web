@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,12 +18,11 @@ logger = get_logger(__name__)
 
 _DEEPGRAM_LISTEN_PATH = "/v1/listen"
 
-# Real-media crew-4 transcript fixture identity. The same fixture file
-# (nasa-hwhap-crew4-transcript.txt) is also validated in
+# Real-media crew-4 transcript fixture size. The same fixture file
+# (nasa-hwhap-crew4-transcript.txt) is also size-checked in
 # nexus/services/rss_transcript_fetch.py; keep these two in sync if the
 # fixture content changes.
 _CREW4_FIXTURE_BYTES = 753
-_CREW4_FIXTURE_SHA256 = "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
 
 TerminalTranscriptionErrorCode = Literal[
     "E_TRANSCRIPT_UNAVAILABLE",
@@ -131,13 +129,10 @@ class DeepgramClient:
             )
 
         payload = content.encode("utf-8")
-        if (
-            len(payload) != _CREW4_FIXTURE_BYTES
-            or hashlib.sha256(payload).hexdigest() != _CREW4_FIXTURE_SHA256
-        ):
+        if len(payload) != _CREW4_FIXTURE_BYTES:
             return _transcription_failure_result(
                 ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "Podcast transcript fixture hash mismatch",
+                "Podcast transcript fixture size mismatch",
             )
 
         from nexus.services.rss_transcript_fetch import parse_plain_text_transcript
@@ -154,7 +149,6 @@ class DeepgramClient:
             provider_fixture={
                 "path": str(path),
                 "byte_length": len(payload),
-                "sha256": _CREW4_FIXTURE_SHA256,
                 "audio_url": audio_url,
             },
         )
