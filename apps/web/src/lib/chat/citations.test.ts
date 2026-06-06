@@ -16,7 +16,6 @@ const validWebCitation = {
   url: "https://example.com",
   deep_link: "https://example.com",
   snippet: "Result snippet",
-  source_version: "web_search:test:v1",
   context_ref: { type: "web_result", id: "web-1" },
   media_id: null,
   media_kind: null,
@@ -33,7 +32,6 @@ const validSearchCitation = {
   title: "Source",
   source_label: "Fragment",
   snippet: "Matched text",
-  source_version: "fragment:fragment-1:v1",
   deep_link: "/media/media-1#fragment-fragment-1",
   context_ref: { type: "fragment", id: "fragment-1" },
   locator: {
@@ -125,7 +123,6 @@ describe("citation guards", () => {
           title: "No results",
           source_label: null,
           snippet: "",
-          source_version: "app_search_status:v1",
           deep_link: "",
           context_ref: { type: "status", id: "no_results" },
           media_id: null,

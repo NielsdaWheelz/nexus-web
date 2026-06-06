@@ -17,14 +17,13 @@ describe("HighlightNoteEditor persistence", () => {
         createBlockId: string,
         bodyPmJson: Record<string, unknown>
       ) => {
-      if (onSave.mock.calls.length === 1) {
-        await firstSave.promise;
-      }
+        if (onSave.mock.calls.length === 1) {
+          await firstSave.promise;
+        }
         return {
           note_block_id: createBlockId,
           body_pm_json: bodyPmJson,
           body_text: "",
-          revision: onSave.mock.calls.length + 1,
         };
       }
     );
@@ -37,7 +36,6 @@ describe("HighlightNoteEditor persistence", () => {
             note_block_id: "note-1",
             body_pm_json: paragraphFromText("").toJSON() as Record<string, unknown>,
             body_text: "",
-            revision: 1,
           }}
           editable
           onSave={onSave}
@@ -59,8 +57,7 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("first").toJSON(),
-      1
+      paragraphFromText("first").toJSON()
     );
 
     await user.keyboard("second");
@@ -79,8 +76,7 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("firstsecond").toJSON(),
-      2
+      paragraphFromText("firstsecond").toJSON()
     );
   });
 
@@ -94,14 +90,13 @@ describe("HighlightNoteEditor persistence", () => {
         createBlockId: string,
         bodyPmJson: Record<string, unknown>
       ) => {
-      if (onSave.mock.calls.length === 1) {
-        await firstSave.promise;
-      }
+        if (onSave.mock.calls.length === 1) {
+          await firstSave.promise;
+        }
         return {
           note_block_id: createBlockId,
           body_pm_json: bodyPmJson,
           body_text: "",
-          revision: onSave.mock.calls.length,
         };
       }
     );
@@ -132,8 +127,7 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       null,
       draftBlockId,
-      paragraphFromText("first").toJSON(),
-      null
+      paragraphFromText("first").toJSON()
     );
 
     await user.keyboard("second");
@@ -152,8 +146,7 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       draftBlockId,
       draftBlockId,
-      paragraphFromText("firstsecond").toJSON(),
-      1
+      paragraphFromText("firstsecond").toJSON()
     );
   });
 
@@ -169,7 +162,6 @@ describe("HighlightNoteEditor persistence", () => {
         note_block_id: createBlockId,
         body_pm_json: bodyPmJson,
         body_text: "first",
-        revision: 1,
       })
     );
     const onDelete = vi.fn(async () => undefined);
@@ -204,7 +196,6 @@ describe("HighlightNoteEditor persistence", () => {
             note_block_id: draftBlockId,
             body_pm_json: paragraphFromText("first").toJSON() as Record<string, unknown>,
             body_text: "first",
-            revision: 1,
           }}
           editable
           onSave={onSave}
@@ -227,8 +218,7 @@ describe("HighlightNoteEditor persistence", () => {
       "highlight-1",
       draftBlockId,
       draftBlockId,
-      paragraphFromText("firstsecond").toJSON(),
-      1
+      paragraphFromText("firstsecond").toJSON()
     );
   });
 });

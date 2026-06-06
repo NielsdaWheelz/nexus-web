@@ -35,29 +35,23 @@ from nexus.schemas.media import (
 from nexus.services.billing import get_transcription_usage
 from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.content_indexing import (
-    compute_embedding_config_hash,
     mark_content_index_failed,
     rebuild_transcript_content_index,
-)
-from nexus.services.media_processing_state import (
-    mark_extraction_started_by_id,
-    mark_failed_by_id,
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
-    transcript_embedding_dimensions,
 )
 from nexus.services.transcript_segments import (
     TranscriptSegmentInput,
     normalize_transcript_segments,
 )
-from nexus.services.transcripts.versions import (
+from nexus.services.transcripts.current import (
     TranscriptRequestReason,
     ensure_media_transcript_state_row,
     set_media_transcript_state,
-    write_transcript_version,
+    write_current_transcript,
 )
 
 from .deepgram_adapter import (
@@ -86,7 +80,6 @@ class TranscriptionRunResult:
     job_status: str | None = None
     error_code: str | None = None
     segment_count: int | None = None
-    transcript_version_id: str | None = None
     provider_fixture: dict[str, Any] | None = None
 
 
@@ -97,63 +90,33 @@ class SemanticRepairResult:
     status: Literal["skipped", "failed", "completed"]
     reason: str | None = None
     error_code: str | None = None
-    transcript_version_id: str | None = None
     chunk_count: int | None = None
 
 
 def _semantic_index_requires_repair(
     db: Session,
     *,
-    transcript_version_id: UUID,
+    media_id: UUID,
 ) -> bool:
     """Whether active transcript evidence is absent or stale."""
     embedding_model = current_transcript_embedding_model()
-    embedding_version = embedding_model
     embedding_provider = current_transcript_embedding_provider()
-    embedding_config_hash = compute_embedding_config_hash(
-        embedding_provider, embedding_model, transcript_embedding_dimensions()
-    )
     row = db.execute(
         text(
             """
             SELECT
                 mcis.status,
-                ss.metadata ->> 'transcript_version_id',
                 mcis.active_embedding_provider,
-                mcis.active_embedding_model,
-                mcis.active_embedding_version,
-                mcis.active_embedding_config_hash,
-                active_run.id IS NOT NULL AS has_active_ready_run
-            FROM podcast_transcript_versions ptv
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = ptv.media_id
-            LEFT JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
-            LEFT JOIN source_snapshots ss ON ss.id = (
-                SELECT id
-                FROM source_snapshots
-                WHERE index_run_id = active_run.id
-                  AND source_kind = 'transcript'
-                ORDER BY created_at DESC
-                LIMIT 1
-            )
-            WHERE ptv.id = :transcript_version_id
+                mcis.active_embedding_model
+            FROM media_content_index_states mcis
+            WHERE mcis.media_id = :media_id
             """
         ),
-        {"transcript_version_id": transcript_version_id},
+        {"media_id": media_id},
     ).fetchone()
     if row is None:
         return True
-    return (
-        row[0] != "ready"
-        or row[6] is not True
-        or row[1] != str(transcript_version_id)
-        or row[2] != embedding_provider
-        or row[3] != embedding_model
-        or row[4] != embedding_version
-        or row[5] != embedding_config_hash
-    )
+    return row[0] != "ready" or row[1] != embedding_provider or row[2] != embedding_model
 
 
 def request_podcast_transcript_for_viewer(
@@ -211,12 +174,7 @@ def request_podcast_transcript_for_viewer(
                     SELECT mts.semantic_status
                     FROM media_transcript_states mts
                     WHERE mts.media_id = m.id
-                ) AS semantic_status,
-                (
-                    SELECT ptv.id
-                    FROM podcast_transcript_versions ptv
-                    WHERE ptv.media_id = m.id AND ptv.is_active
-                ) AS active_version_id
+                ) AS semantic_status
             FROM media m
             WHERE m.id = :media_id
             """
@@ -233,7 +191,6 @@ def request_podcast_transcript_for_viewer(
     transcript_state = str(media_row[5] or "").strip() or None
     transcript_coverage = str(media_row[6] or "").strip() or None
     semantic_status = str(media_row[7] or "").strip() or "none"
-    active_version_id = media_row[8]
 
     if media_kind != "podcast_episode":
         raise InvalidRequestError(
@@ -281,10 +238,9 @@ def request_podcast_transcript_for_viewer(
     if (
         already_ready
         and not semantic_needs_repair
-        and active_version_id is not None
         and _semantic_index_requires_repair(
             db,
-            transcript_version_id=active_version_id,
+            media_id=media_id,
         )
     ):
         semantic_needs_repair = True
@@ -948,13 +904,27 @@ def mark_podcast_transcription_failure(
         transcript_state = "failed_provider"
 
     if mark_media_failed:
-        mark_failed_by_id(
-            db,
-            media_id=media_id,
-            stage="transcribe",
-            error_code=error_code,
-            error_message=error_message[:1000],
-            now=now,
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'failed',
+                    failure_stage = 'transcribe',
+                    last_error_code = :error_code,
+                    last_error_message = :error_message,
+                    processing_completed_at = NULL,
+                    failed_at = :now,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": error_code,
+                "error_message": error_message[:1000],
+                "now": now,
+            },
         )
     db.execute(
         text(
@@ -1190,10 +1160,26 @@ def run_podcast_transcription_now(
         return TranscriptionRunResult(status="failed", error_code=ApiErrorCode.E_INVALID_KIND.value)
 
     if mark_media_ready or mark_media_failed:
-        mark_extraction_started_by_id(
-            db,
-            media_id=media_id,
-            now=claim_now,
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'extracting',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_started_at = :now,
+                    processing_completed_at = NULL,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "now": claim_now,
+            },
         )
     set_media_transcript_state(
         db,
@@ -1259,17 +1245,15 @@ def run_podcast_transcription_now(
         diagnostic_error_code = None
 
     if transcription_status == "completed" and transcript_segments:
-        result = write_transcript_version(
+        write_current_transcript(
             db,
             media_id=media_id,
-            created_by_user_id=requested_by_user_id,
             request_reason=cast(TranscriptRequestReason, request_reason),
             transcript_coverage="full",
             transcript_segments=transcript_segments,
             mark_media_ready=mark_media_ready,
             now=now,
         )
-        transcript_version_id = result.transcript_version_id
         db.execute(
             text(
                 """
@@ -1296,7 +1280,6 @@ def run_podcast_transcription_now(
         return TranscriptionRunResult(
             status="completed",
             segment_count=len(transcript_segments),
-            transcript_version_id=str(transcript_version_id),
             provider_fixture=transcription_result.provider_fixture,
         )
 
@@ -1340,9 +1323,6 @@ def repair_podcast_transcript_semantic_index_now(
 
     embedding_model = current_transcript_embedding_model()
     embedding_provider = current_transcript_embedding_provider()
-    embedding_config_hash = compute_embedding_config_hash(
-        embedding_provider, embedding_model, transcript_embedding_dimensions()
-    )
 
     claim_row = db.execute(
         text(
@@ -1358,8 +1338,8 @@ def repair_podcast_transcript_semantic_index_now(
               AND mts.transcript_coverage IN ('partial', 'full')
               AND EXISTS (
                   SELECT 1
-                  FROM podcast_transcript_versions ptv
-                  WHERE ptv.media_id = mts.media_id AND ptv.is_active
+                  FROM podcast_transcript_segments pts
+                  WHERE pts.media_id = mts.media_id
               )
               AND (
                   mts.semantic_status IN ('pending', 'failed')
@@ -1369,34 +1349,15 @@ def repair_podcast_transcript_semantic_index_now(
                           NOT EXISTS (
                               SELECT 1
                               FROM media_content_index_states mcis
-                              JOIN content_index_runs active_run
-                                ON active_run.id = mcis.active_run_id
-                               AND active_run.state = 'ready'
-                               AND active_run.deactivated_at IS NULL
-                              JOIN source_snapshots ss ON ss.index_run_id = active_run.id
                               WHERE mcis.media_id = mts.media_id
                                 AND mcis.status = 'ready'
                                 AND mcis.active_embedding_provider = :embedding_provider
                                 AND mcis.active_embedding_model = :embedding_model
-                                AND mcis.active_embedding_version = :embedding_version
-                                AND mcis.active_embedding_config_hash = :embedding_config_hash
-                                AND ss.source_kind = 'transcript'
-                                AND ss.metadata ->> 'transcript_version_id'
-                                    = (
-                                        SELECT ptv.id
-                                        FROM podcast_transcript_versions ptv
-                                        WHERE ptv.media_id = mts.media_id
-                                          AND ptv.is_active
-                                    )::text
                           )
                       )
                   )
               )
-            RETURNING (
-                SELECT ptv.id
-                FROM podcast_transcript_versions ptv
-                WHERE ptv.media_id = mts.media_id AND ptv.is_active
-            ) AS active_version_id, mts.transcript_state, mts.transcript_coverage
+            RETURNING mts.transcript_state, mts.transcript_coverage
             """
         ),
         {
@@ -1404,27 +1365,24 @@ def repair_podcast_transcript_semantic_index_now(
             "request_reason": normalized_reason,
             "embedding_provider": embedding_provider,
             "embedding_model": embedding_model,
-            "embedding_version": embedding_model,
-            "embedding_config_hash": embedding_config_hash,
             "now": now,
         },
     ).fetchone()
     if claim_row is None:
         return SemanticRepairResult(status="skipped", reason="not_repairable")
 
-    transcript_version_id = claim_row[0]
-    transcript_state = str(claim_row[1] or "ready")
-    transcript_coverage = str(claim_row[2] or "full")
+    transcript_state = str(claim_row[0] or "ready")
+    transcript_coverage = str(claim_row[1] or "full")
     segment_rows = db.execute(
         text(
             """
             SELECT canonical_text, t_start_ms, t_end_ms, speaker_label
             FROM podcast_transcript_segments
-            WHERE transcript_version_id = :transcript_version_id
+            WHERE media_id = :media_id
             ORDER BY segment_idx ASC
             """
         ),
-        {"transcript_version_id": transcript_version_id},
+        {"media_id": media_id},
     ).fetchall()
 
     # Rows arrive ordered by segment_idx ASC; enumerate over the kept rows restores
@@ -1467,7 +1425,6 @@ def repair_podcast_transcript_semantic_index_now(
         rebuild_transcript_content_index(
             db,
             media_id=media_id,
-            transcript_version_id=transcript_version_id,
             transcript_segments=transcript_segments,
             reason=normalized_reason,
         )
@@ -1483,14 +1440,12 @@ def repair_podcast_transcript_semantic_index_now(
         )
         return SemanticRepairResult(
             status="completed",
-            transcript_version_id=str(transcript_version_id),
             chunk_count=len(transcript_segments),
         )
     except Exception as exc:  # justify-ignore-error: semantic repair boundary; mark content index failure and surface in state
         logger.exception(
             "podcast_semantic_repair_failed",
             media_id=str(media_id),
-            transcript_version_id=str(transcript_version_id),
             request_id=request_id,
             error=str(exc),
         )
@@ -1602,18 +1557,13 @@ def _reset_media_transcript_state_for_source_attempt(
     request_reason: str,
     now: datetime,
 ) -> None:
-    # Clear the active transcript so readers (which resolve the active version by
-    # WHERE is_active) show nothing until re-transcription installs a new version.
+    # Clear the current transcript so readers show nothing until re-transcription
+    # installs replacement current rows.
     db.execute(
-        text(
-            """
-            UPDATE podcast_transcript_versions
-            SET is_active = false, updated_at = :updated_at
-            WHERE media_id = :media_id AND is_active
-            """
-        ),
-        {"media_id": media_id, "updated_at": now},
+        text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
+        {"media_id": media_id},
     )
+    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
     set_media_transcript_state(
         db,
         media_id=media_id,

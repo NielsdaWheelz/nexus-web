@@ -11,7 +11,6 @@ external storage seam ``tests.support.storage.FakeStorageClient`` patched in at
 ``nexus.services.oracle_plates.get_storage_client``.
 """
 
-import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -21,13 +20,12 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from nexus.db.models import OracleCorpusImage, OracleCorpusSetVersion
+from nexus.db.models import OracleCorpusImage
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.oracle_plates import (
     get_oracle_plate_bytes,
     oracle_plate_url,
 )
-from nexus.services.semantic_chunks import current_transcript_embedding_model
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
@@ -75,7 +73,6 @@ class _FakeStorage:
 @dataclass
 class _FakeImage:
     storage_key: str
-    sha256: str
     byte_size: int
     content_type: str
 
@@ -88,25 +85,23 @@ class _FakeImage:
 @pytest.mark.unit
 def test_get_oracle_plate_bytes_returns_data_and_etag():
     data = b"\xff\xd8\xff" + b"plate"
-    sha = hashlib.sha256(data).hexdigest()
+    image_id = uuid4()
     image = _FakeImage(
-        storage_key="oracle/plates/" + sha + ".jpg",
-        sha256=sha,
+        storage_key="oracle/plates/test-plate.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
     )
 
     result = get_oracle_plate_bytes(
         session_factory=_session_factory_for(image),
-        image_id=uuid4(),
+        image_id=image_id,
         storage_client=_FakeStorage(data),
     )
 
     assert result.data == data
     assert result.content_type == "image/jpeg"
     assert result.byte_size == len(data)
-    assert result.sha256 == sha
-    assert result.etag == f'"{sha}"'
+    assert result.etag == f'"oracle-plate-{image_id}"'
 
 
 @pytest.mark.unit
@@ -124,15 +119,13 @@ def test_get_oracle_plate_bytes_unknown_id_raises_not_found():
 @pytest.mark.unit
 def test_get_oracle_plate_bytes_integrity_mismatch_raises_storage_error():
     data = b"\xff\xd8\xff" + b"plate"
-    sha = hashlib.sha256(data).hexdigest()
     image = _FakeImage(
-        storage_key="oracle/plates/" + sha + ".jpg",
-        sha256=sha,
+        storage_key="oracle/plates/test-plate.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
     )
 
-    # Storage yields different bytes than the persisted sha256/byte_size claims.
+    # Storage yields different bytes than the persisted byte-size claim.
     with pytest.raises(ApiError) as exc_info:
         get_oracle_plate_bytes(
             session_factory=_session_factory_for(image),
@@ -146,10 +139,8 @@ def test_get_oracle_plate_bytes_integrity_mismatch_raises_storage_error():
 @pytest.mark.unit
 def test_get_oracle_plate_bytes_releases_session_before_read():
     data = b"\xff\xd8\xff" + b"plate"
-    sha = hashlib.sha256(data).hexdigest()
     image = SimpleNamespace(
-        storage_key="oracle/plates/" + sha + ".jpg",
-        sha256=sha,
+        storage_key="oracle/plates/test-plate.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
     )
@@ -168,12 +159,10 @@ def test_get_oracle_plate_bytes_releases_session_before_read():
 
 
 @pytest.mark.unit
-def test_get_oracle_plate_bytes_rejects_invalid_metadata_before_read():
+def test_get_oracle_plate_bytes_rejects_invalid_storage_key_before_read():
     data = b"\xff\xd8\xff" + b"plate"
-    sha = hashlib.sha256(data).hexdigest()
     image = SimpleNamespace(
-        storage_key="oracle/plates/not-the-digest.jpg",
-        sha256=sha,
+        storage_key="media/plates/not-the-digest.jpg",
         byte_size=len(data),
         content_type="image/jpeg",
     )
@@ -205,28 +194,12 @@ def _seed_oracle_plate(
     db: Session,
     *,
     data: bytes,
-    sha256: str,
     content_type: str = "image/jpeg",
-) -> tuple[UUID, UUID, str]:
-    """Commit one corpus version + one OracleCorpusImage row.
-
-    Returns ``(corpus_set_version_id, image_id, storage_key)``. The image's
-    storage metadata (storage_key/content_type/byte_size/sha256) is consistent
-    with the bytes the caller will place in the fake storage client.
-    """
-    version = OracleCorpusSetVersion(
-        id=uuid4(),
-        version=f"oracle-plate-route-{uuid4()}",
-        label="Oracle plate route test corpus",
-        embedding_model=current_transcript_embedding_model(),
-    )
-    db.add(version)
-    db.flush()
-
-    storage_key = f"oracle/plates/{sha256}.jpg"
+) -> tuple[UUID, str]:
+    """Commit one current OracleCorpusImage row."""
+    storage_key = f"oracle/plates/test-plate-{uuid4().hex[:12]}.jpg"
     image = OracleCorpusImage(
         id=uuid4(),
-        corpus_set_version_id=version.id,
         source_repository="test",
         source_url=f"https://example.com/oracle-plate-{uuid4()}.jpg",
         artist="Test Engraver",
@@ -235,7 +208,6 @@ def _seed_oracle_plate(
         attribution_text="Test Engraver, The Test Plate, test collection.",
         width=800,
         height=1200,
-        sha256=sha256,
         storage_key=storage_key,
         content_type=content_type,
         byte_size=len(data),
@@ -244,29 +216,22 @@ def _seed_oracle_plate(
     db.add(image)
     db.flush()
     image_id = image.id
-    version_id = version.id
     db.commit()
-    return version_id, image_id, storage_key
+    return image_id, storage_key
 
 
-def _register_plate_cleanup(direct_db: DirectSessionManager, version_id: UUID) -> None:
-    # LIFO cleanup: register the parent version first so it is deleted LAST,
-    # after its child image rows (FK: oracle_corpus_images -> versions).
-    direct_db.register_cleanup("oracle_corpus_set_versions", "id", version_id)
-    direct_db.register_cleanup("oracle_corpus_images", "corpus_set_version_id", version_id)
+def _register_plate_cleanup(direct_db: DirectSessionManager, image_id: UUID) -> None:
+    direct_db.register_cleanup("oracle_corpus_images", "id", image_id)
 
 
 @pytest.mark.integration
 def test_route_returns_image_with_immutable_cache_and_etag(client, direct_db: DirectSessionManager):
     data = b"\xff\xd8\xff" + b"\x00" * 64
-    sha256 = hashlib.sha256(data).hexdigest()
     content_type = "image/jpeg"
 
     with direct_db.session() as session:
-        version_id, image_id, storage_key = _seed_oracle_plate(
-            session, data=data, sha256=sha256, content_type=content_type
-        )
-    _register_plate_cleanup(direct_db, version_id)
+        image_id, storage_key = _seed_oracle_plate(session, data=data, content_type=content_type)
+    _register_plate_cleanup(direct_db, image_id)
 
     fake = FakeStorageClient()
     fake.put_object(storage_key, data, content_type)
@@ -283,7 +248,7 @@ def test_route_returns_image_with_immutable_cache_and_etag(client, direct_db: Di
     assert resp.status_code == 200, resp.text
     assert resp.content == data
     assert resp.headers["Cache-Control"] == "public, max-age=31536000, immutable"
-    assert resp.headers["ETag"] == f'"{sha256}"'
+    assert resp.headers["ETag"] == f'"oracle-plate-{image_id}"'
     assert resp.headers.get("x-content-type-options") == "nosniff"
     assert resp.headers["content-type"].startswith(content_type)
     assert resp.headers.get("content-length") == str(len(data))
@@ -292,14 +257,11 @@ def test_route_returns_image_with_immutable_cache_and_etag(client, direct_db: Di
 @pytest.mark.integration
 def test_route_conditional_get_returns_304(client, direct_db: DirectSessionManager):
     data = b"\xff\xd8\xff" + b"\x00" * 64
-    sha256 = hashlib.sha256(data).hexdigest()
     content_type = "image/jpeg"
 
     with direct_db.session() as session:
-        version_id, image_id, _storage_key = _seed_oracle_plate(
-            session, data=data, sha256=sha256, content_type=content_type
-        )
-    _register_plate_cleanup(direct_db, version_id)
+        image_id, _storage_key = _seed_oracle_plate(session, data=data, content_type=content_type)
+    _register_plate_cleanup(direct_db, image_id)
 
     with patch(
         "nexus.services.oracle_plates.get_storage_client",
@@ -307,30 +269,26 @@ def test_route_conditional_get_returns_304(client, direct_db: DirectSessionManag
     ):
         resp = client.get(
             f"/oracle/plates/{image_id}",
-            headers={"If-None-Match": f'"{sha256}"'},
+            headers={"If-None-Match": f'"oracle-plate-{image_id}"'},
         )
 
     assert resp.status_code == 304, resp.text
     assert resp.content == b""
-    assert resp.headers["ETag"] == f'"{sha256}"'
+    assert resp.headers["ETag"] == f'"oracle-plate-{image_id}"'
 
 
 @pytest.mark.integration
 def test_route_integrity_mismatch_returns_5xx(client, direct_db: DirectSessionManager):
     data = b"\xff\xd8\xff" + b"\x00" * 64
-    sha256 = hashlib.sha256(data).hexdigest()
     content_type = "image/jpeg"
 
     with direct_db.session() as session:
-        version_id, image_id, storage_key = _seed_oracle_plate(
-            session, data=data, sha256=sha256, content_type=content_type
-        )
-    _register_plate_cleanup(direct_db, version_id)
+        image_id, storage_key = _seed_oracle_plate(session, data=data, content_type=content_type)
+    _register_plate_cleanup(direct_db, image_id)
 
-    # Different bytes of the SAME length under the same storage_key, so
-    # read_object_checked's sha256-mismatch branch fires (not the size ceiling).
-    tampered = b"\x00\x11\x22" + b"\xff" * 64
-    assert len(tampered) == len(data)
+    # Current plate integrity is byte-size based; no content hash is persisted.
+    tampered = b"\x00\x11\x22"
+    assert len(tampered) != len(data)
     fake = FakeStorageClient()
     fake.put_object(storage_key, tampered, content_type)
 

@@ -40,7 +40,6 @@ def _register_youtube_media_cleanup(
     direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
-    direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -150,7 +149,6 @@ class TestIngestYoutubeVideo:
                 text(
                     """
                     SELECT
-                        (SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id),
                         (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
                         (SELECT COUNT(*) FROM content_chunks WHERE media_id = :media_id),
                         (SELECT COUNT(*) FROM evidence_spans WHERE media_id = :media_id)
@@ -158,10 +156,9 @@ class TestIngestYoutubeVideo:
                 ),
                 {"media_id": media_id},
             ).one()
-        assert artifact_counts[0] == 1
-        assert artifact_counts[1] == 2
-        assert artifact_counts[2] > 0
-        assert artifact_counts[3] == artifact_counts[2]
+        assert artifact_counts[0] == 2
+        assert artifact_counts[1] > 0
+        assert artifact_counts[2] == artifact_counts[1]
 
     def test_transcript_unavailable_is_playback_only_and_terminal(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -344,9 +341,8 @@ class TestIngestYoutubeVideo:
     def test_reingest_replace_strategy_deletes_anchored_highlight_and_replaces_fragments(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
-        # Characterization test pinning the destructive `fragment_strategy="replace"`
-        # side of write_transcript_version (the YouTube-only branch in
-        # nexus/services/transcripts/versions.py): a YouTube re-ingest deletes the
+        # Characterization test pinning the destructive current transcript replacement
+        # side of `write_current_transcript`: a YouTube re-ingest deletes the
         # media's pre-existing highlights (via the highlight_fragment_anchors join)
         # and replaces its fragments wholesale. The "preserve_anchors" counterpart is
         # pinned in test_podcasts.py
@@ -415,7 +411,7 @@ class TestIngestYoutubeVideo:
 
         # A YouTube source refresh resets the media back to active processing,
         # which defeats the already_ready skip guard so the second run
-        # re-transcribes through write_transcript_version.
+        # re-transcribes through write_current_transcript.
         with direct_db.session() as session:
             session.execute(
                 text(

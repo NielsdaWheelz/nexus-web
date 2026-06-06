@@ -78,7 +78,6 @@ class MediaOut(BaseModel):
     transcript_coverage: str | None = None
     retrieval_status: str | None = None
     retrieval_status_reason: str | None = None
-    source_version: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
@@ -128,7 +127,6 @@ class FragmentOut(BaseModel):
     t_start_ms: int | None = None
     t_end_ms: int | None = None
     speaker_label: str | None = None
-    source_version: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -406,7 +404,6 @@ class MediaEvidencePdfQuadOut(BaseModel):
 class MediaEvidencePdfGeometryOut(BaseModel):
     """PDF geometry payload produced from stored evidence selector geometry."""
 
-    version: int = Field(ge=1)
     coordinate_space: Literal["pdf_points"]
     page_width: FiniteFloat = Field(gt=0)
     page_height: FiniteFloat = Field(gt=0)
@@ -425,7 +422,6 @@ class MediaEvidencePdfHighlightOut(BaseModel):
     evidence_span_id: UUID
     page_number: int = Field(ge=1)
     page_label: str | None = None
-    source_fingerprint: str | None = None
     text_quote: MediaEvidenceTextQuoteOut
     geometry: MediaEvidencePdfGeometryOut | None = None
 
@@ -473,7 +469,6 @@ class MediaEvidenceOut(BaseModel):
     media_id: UUID
     citation_label: str
     span_text: str
-    source_version: str
     resolver: MediaEvidenceResolverOut
 
     model_config = ConfigDict(extra="forbid")
@@ -503,7 +498,6 @@ class ReaderNavigationSectionOut(BaseModel):
     href_fragment: str | None = None
     anchor_id: str | None = None
     char_count: int | None = None
-    source_version: str | None = None
 
 
 class ReaderNavigationTocNodeOut(BaseModel):
@@ -517,7 +511,6 @@ class ReaderNavigationTocNodeOut(BaseModel):
     level: int | None = None
     depth: int | None = None
     section_id: str | None = None
-    source_version: str | None = None
     children: list["ReaderNavigationTocNodeOut"]
 
 
@@ -530,7 +523,6 @@ class ReaderNavigationLocationOut(BaseModel):
     href: str | None = None
     fragment_idx: int | None = None
     section_id: str | None = None
-    source_version: str | None = None
 
 
 class MediaNavigationOut(BaseModel):
@@ -538,7 +530,6 @@ class MediaNavigationOut(BaseModel):
 
     media_id: UUID
     kind: Literal["epub", "web_article"]
-    source_version: str | None = None
     sections: list[ReaderNavigationSectionOut]
     toc_nodes: list[ReaderNavigationTocNodeOut]
     landmarks: list[ReaderNavigationLocationOut]
@@ -563,5 +554,4 @@ class EpubSectionOut(BaseModel):
     canonical_text: str
     char_count: int
     word_count: int
-    source_version: str | None = None
     created_at: datetime

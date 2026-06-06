@@ -138,7 +138,6 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
     snippet_suffix: str | None = None
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES | None = None
     included_in_prompt: bool | None = None
-    source_version: str | None = None
     created_at: datetime | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -152,9 +151,6 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
             raise ValueError("context_ref.type must match result_type")
         if self.result_ref.type != self.result_type:
             raise ValueError("result_ref.type must match result_type")
-        result_source_version = getattr(self.result_ref, "source_version", None)
-        if self.source_version != result_source_version:
-            raise ValueError("source_version must match result_ref.source_version")
         result_locator = getattr(self.result_ref, "locator", None)
         if result_locator is None:
             if self.locator is not None:
@@ -180,7 +176,6 @@ MessageDocumentBlock = Annotated[
 
 class MessageDocument(BaseModel):
     type: Literal["message_document"] = "message_document"
-    version: Literal[1] = 1
     blocks: list[MessageDocumentBlock] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
@@ -234,7 +229,6 @@ class MessageRetrievalOut(BaseModel):
     locator: RetrievalLocator | None = None
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES = "retrieved"
     included_in_prompt: bool = False
-    source_version: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -248,9 +242,6 @@ class MessageRetrievalOut(BaseModel):
             raise ValueError("context_ref.type must match result_type")
         if self.result_ref.type != self.result_type:
             raise ValueError("result_ref.type must match result_type")
-        result_source_version = getattr(self.result_ref, "source_version", None)
-        if self.source_version != result_source_version:
-            raise ValueError("source_version must match result_ref.source_version")
         result_locator = getattr(self.result_ref, "locator", None)
         if result_locator is None:
             if self.locator is not None:
@@ -410,7 +401,6 @@ class MessageRetrievalCandidateLedgerOut(BaseModel):
     selection_reason: str
     result_ref: RetrievalResultRef
     locator: RetrievalLocator | None = None
-    source_version: str | None = None
     created_at: datetime
 
 

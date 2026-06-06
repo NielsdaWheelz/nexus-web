@@ -42,7 +42,6 @@ class UserApiKeyOut(BaseModel):
     id: UUID | None = None
     provider: str
     provider_display_name: str
-    fingerprint: str | None = None
     key_fingerprint: str | None = None
     status: KeyProviderStateStatus
     created_at: datetime | None = None

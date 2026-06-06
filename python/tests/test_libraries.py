@@ -787,16 +787,14 @@ class TestRemoveMediaFromLibrary:
                         asset_key,
                         storage_path,
                         content_type,
-                        size_bytes,
-                        sha256
+                        size_bytes
                     ) VALUES (
                         :media_id,
                         'cover.jpg',
                         'cover',
                         :storage_path,
                         'image/jpeg',
-                        3,
-                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                        3
                     )
                 """),
                 {"media_id": media_id, "storage_path": resource_path},
@@ -4476,8 +4474,8 @@ def _create_pdf_media_for_library(
             session.execute(
                 text("""
                     INSERT INTO pdf_page_text_spans
-                    (media_id, page_number, start_offset, end_offset, text_extract_version)
-                    VALUES (:mid, :pn, :so, :eo, 1)
+                    (media_id, page_number, start_offset, end_offset)
+                    VALUES (:mid, :pn, :so, :eo)
                 """),
                 {"mid": media_id, "pn": i + 1, "so": start, "eo": end},
             )

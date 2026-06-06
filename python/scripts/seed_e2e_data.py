@@ -64,7 +64,7 @@ from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.transcript_segments import normalize_transcript_segments
-from nexus.services.transcripts.versions import write_transcript_version
+from nexus.services.transcripts.current import write_current_transcript
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
@@ -823,7 +823,6 @@ def _index_seeded_fragment(db, *, media_id: UUID, fragment: Fragment, source_url
         db,
         media_id=media_id,
         source_kind="web_article",
-        artifact_ref=source_url,
         fragments=[fragment],
         reason="e2e_seed",
     )
@@ -976,14 +975,12 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         if len(transcript_segments) != len(YOUTUBE_TRANSCRIPT_SEGMENTS):
             raise RuntimeError("YouTube transcript E2E fixture contains invalid segments")
 
-        write_result = write_transcript_version(
+        write_result = write_current_transcript(
             db,
             media_id=transcript_media_id,
-            created_by_user_id=user_id,
             request_reason="episode_open",
             transcript_coverage="full",
             transcript_segments=transcript_segments,
-            fragment_strategy="replace",
             now=now,
         )
         if write_result.semantic_status != "ready":
@@ -1379,7 +1376,6 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             db,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=READER_OVERVIEW_RULER_SOURCE_URL,
             fragments=seeded_fragments,
             reason="e2e_seed",
         )

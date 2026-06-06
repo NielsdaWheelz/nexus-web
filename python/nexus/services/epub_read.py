@@ -108,7 +108,6 @@ def get_epub_navigation_for_viewer(
                        n.source,
                        n.ordinal,
                        char_length(f.canonical_text) AS fragment_chars,
-                       f_source.source_version,
                        row_number() OVER (
                            PARTITION BY n.fragment_idx
                            ORDER BY n.ordinal
@@ -117,19 +116,6 @@ def get_epub_navigation_for_viewer(
                 JOIN fragments f
                   ON f.media_id = n.media_id
                  AND f.idx = n.fragment_idx
-                LEFT JOIN media_content_index_states mcis
-                  ON mcis.media_id = n.media_id
-                LEFT JOIN LATERAL (
-                    SELECT ss.source_version
-                    FROM content_blocks cb
-                    JOIN source_snapshots ss
-                      ON ss.id = cb.source_snapshot_id
-                    WHERE cb.media_id = n.media_id
-                      AND cb.index_run_id = mcis.active_run_id
-                      AND cb.locator->>'fragment_id' = f.id::text
-                    ORDER BY cb.block_idx ASC
-                    LIMIT 1
-                ) f_source ON TRUE
                 WHERE n.media_id = :mid
             )
             SELECT location_id,
@@ -141,8 +127,7 @@ def get_epub_navigation_for_viewer(
                    source_node_id,
                    source,
                    ordinal,
-                   CASE WHEN fragment_row = 1 THEN fragment_chars ELSE 0 END,
-                   source_version
+                   CASE WHEN fragment_row = 1 THEN fragment_chars ELSE 0 END
             FROM nav
             ORDER BY ordinal ASC
         """),
@@ -163,7 +148,6 @@ def get_epub_navigation_for_viewer(
             href_fragment=row[5],
             anchor_id=row[5],
             char_count=row[9],
-            source_version=row[10],
         )
         for row in section_rows
     ]
@@ -196,13 +180,9 @@ def get_epub_navigation_for_viewer(
         else:
             nodes_by_id[parent_id].children.append(node)
 
-    source_version = next(
-        (section.source_version for section in sections if section.source_version), None
-    )
     return MediaNavigationOut(
         media_id=media_id,
         kind="epub",
-        source_version=source_version,
         sections=sections,
         toc_nodes=roots,
         landmarks=[
@@ -258,31 +238,17 @@ def get_epub_section_for_viewer(
                        f.id AS fragment_id,
                        f.html_sanitized,
                        f.canonical_text,
-                       f_source.source_version,
                        f.created_at
                 FROM epub_nav_locations n
                 JOIN fragments f
                   ON f.media_id = n.media_id
                  AND f.idx = n.fragment_idx
-                LEFT JOIN media_content_index_states mcis
-                  ON mcis.media_id = n.media_id
-                LEFT JOIN LATERAL (
-                    SELECT ss.source_version
-                    FROM content_blocks cb
-                    JOIN source_snapshots ss
-                      ON ss.id = cb.source_snapshot_id
-                    WHERE cb.media_id = n.media_id
-                      AND cb.index_run_id = mcis.active_run_id
-                      AND cb.locator->>'fragment_id' = f.id::text
-                    ORDER BY cb.block_idx ASC
-                    LIMIT 1
-                ) f_source ON TRUE
                 WHERE n.media_id = :mid
             )
             SELECT location_id, label, fragment_id, fragment_idx, href_path,
                    href_fragment, source_node_id, source, ordinal,
                    prev_section_id, next_section_id,
-                   html_sanitized, canonical_text, source_version, created_at
+                   html_sanitized, canonical_text, created_at
             FROM ordered_sections
             WHERE location_id = :section_id
         """),
@@ -311,6 +277,5 @@ def get_epub_section_for_viewer(
         canonical_text=canonical_text,
         char_count=len(canonical_text),
         word_count=_compute_word_count(canonical_text),
-        source_version=row[13],
-        created_at=row[14],
+        created_at=row[13],
     )

@@ -4,7 +4,6 @@ Covers normalization, page-span construction, scanned/image-only,
 password-protected, and parser exception mapping.
 """
 
-import hashlib
 from uuid import uuid4
 
 import pytest
@@ -186,7 +185,6 @@ class TestPdfExtractionArtifacts:
         assert result.page_count == 3
         assert result.has_text is True
         assert len(result.plain_text) > 0
-        assert result.source_fingerprint == f"sha256:{hashlib.sha256(pdf_bytes).hexdigest()}"
         assert all(span.page_width and span.page_width > 0 for span in result.page_spans)
         assert all(span.page_height and span.page_height > 0 for span in result.page_spans)
         assert all(span.page_rotation_degrees == 0 for span in result.page_spans)
@@ -234,7 +232,6 @@ class TestPdfExtractionArtifacts:
         assert isinstance(result, PdfExtractionResult)
         assert result.page_count >= 1
         assert result.has_text is False
-        assert result.source_fingerprint == f"sha256:{hashlib.sha256(pdf_bytes).hexdigest()}"
 
         refreshed = db_session.get(Media, media.id)
         assert refreshed.page_count >= 1

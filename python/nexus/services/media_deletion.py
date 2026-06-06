@@ -421,10 +421,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         {"media_id": media_id},
     )
     db.execute(
-        text("DELETE FROM podcast_transcript_versions WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
         text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
         {"media_id": media_id},
     )

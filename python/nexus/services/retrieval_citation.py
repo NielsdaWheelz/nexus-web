@@ -1,8 +1,8 @@
 """Citation materialization + the one validated `message_retrievals` writer.
 
 Turns a ``SearchResultOut`` (from ``search.get_search_result``) into a
-``RetrievalCitation`` whose ``result_ref``/``locator``/``source_version`` pass
-the strict retrieval validators, and inserts it as a ``message_retrievals`` row.
+``RetrievalCitation`` whose ``result_ref``/``locator`` pass the strict retrieval
+validators, and inserts it as a ``message_retrievals`` row.
 
 This is the single owner of "make a citable retrieval row": ``app_search``,
 attached ``<resources>``, and ``read_resource`` evidence all go through it, so
@@ -37,7 +37,6 @@ STRICT_LOCATOR_RESULT_TYPES = frozenset(
         "evidence_span",
     }
 )
-STRICT_SOURCE_VERSION_RESULT_TYPES = STRICT_LOCATOR_RESULT_TYPES | {"page"}
 
 
 @dataclass(slots=True)
@@ -54,7 +53,6 @@ class RetrievalCitation:
     locator: dict[str, Any] | None
     context_ref: dict[str, Any]
     evidence_span_id: str | None
-    source_version: str | None
     media_id: str | None
     media_kind: str | None
     score: float | None
@@ -74,7 +72,6 @@ class RetrievalCitation:
             "snippet": self.snippet,
             "deep_link": self.deep_link,
             "context_ref": self.context_ref,
-            "source_version": self.source_version,
             "locator": self.locator,
             "media_id": self.media_id,
             "media_kind": self.media_kind,
@@ -97,7 +94,6 @@ class RetrievalCitation:
                 "citation_label": self.citation_label,
                 "evidence_span_id": self.evidence_span_id,
                 "evidence_span_ids": self.result_ref.get("evidence_span_ids", []),
-                "source_version": self.source_version,
                 "locator": self.locator,
                 "media_id": self.media_id,
                 "media_kind": self.media_kind,
@@ -106,7 +102,6 @@ class RetrievalCitation:
             return {
                 **common,
                 "citation_label": self.citation_label,
-                "source_version": self.source_version,
                 "locator": self.locator,
                 "media_id": self.media_id,
                 "media_kind": self.media_kind,
@@ -120,7 +115,6 @@ class RetrievalCitation:
             return {
                 **common,
                 "description": self.result_ref.get("description"),
-                "source_version": self.source_version,
             }
         if self.result_type == "note_block":
             return {
@@ -129,7 +123,6 @@ class RetrievalCitation:
                 "page_title": self.result_ref["page_title"],
                 "body_text": self.result_ref["body_text"],
                 "highlight_excerpt": self.result_ref.get("highlight_excerpt"),
-                "source_version": self.source_version,
                 "locator": self.locator,
             }
         if self.result_type == "highlight":
@@ -138,7 +131,6 @@ class RetrievalCitation:
                 "color": self.result_ref["color"],
                 "exact": self.result_ref["exact"],
                 "citation_label": self.citation_label,
-                "source_version": self.source_version,
                 "locator": self.locator,
                 "media_id": self.media_id,
                 "media_kind": self.media_kind,
@@ -148,7 +140,6 @@ class RetrievalCitation:
                 **common,
                 "conversation_id": self.result_ref["conversation_id"],
                 "seq": self.result_ref["seq"],
-                "source_version": self.source_version,
                 "locator": self.locator,
             }
         if self.result_type == "evidence_span":
@@ -164,7 +155,6 @@ class RetrievalCitation:
                 "citation_label": self.citation_label or "",
                 "context_ref": self.context_ref,
                 "evidence_span_id": self.evidence_span_id or self.source_id,
-                "source_version": self.source_version,
                 "locator": self.locator,
                 "media_id": self.media_id or self.result_ref.get("media_id"),
                 "media_kind": self.media_kind,
@@ -182,7 +172,6 @@ class RetrievalCitation:
                 "snippet": self.snippet,
                 "deep_link": self.deep_link,
                 "context_ref": self.context_ref,
-                "source_version": None,
                 "locator": None,
                 "media_id": None,
                 "media_kind": None,
@@ -222,7 +211,6 @@ def citation_from_search_result(
         locator=_locator_from_search_payload(payload),
         context_ref=context_ref,
         evidence_span_id=evidence_span_id,
-        source_version=_source_version_from_search_payload(payload),
         media_id=payload.get("media_id"),
         media_kind=payload.get("media_kind"),
         score=float(payload["score"]) if payload.get("score") is not None else None,
@@ -256,30 +244,11 @@ def _locator_from_search_payload(payload: Mapping[str, Any]) -> dict[str, Any] |
     return None
 
 
-def _source_version_from_search_payload(payload: Mapping[str, Any]) -> str | None:
-    source_version = payload.get("source_version")
-    if isinstance(source_version, str) and source_version.strip():
-        return source_version
-    result_type = str(payload.get("type") or "")
-    if result_type in STRICT_SOURCE_VERSION_RESULT_TYPES:
-        raise ValueError(f"{result_type} search result is missing source_version")
-    return None
-
-
 def strict_citation_locator(citation: RetrievalCitation) -> dict[str, Any] | None:
     locator = retrieval_locator_json(citation.locator)
     if locator is None and citation.result_type in STRICT_LOCATOR_RESULT_TYPES:
         raise ValueError(f"{citation.result_type} citation is missing locator")
     return locator
-
-
-def strict_citation_source_version(citation: RetrievalCitation) -> str | None:
-    source_version = citation.source_version
-    if isinstance(source_version, str) and source_version.strip():
-        return source_version
-    if citation.result_type in STRICT_SOURCE_VERSION_RESULT_TYPES:
-        raise ValueError(f"{citation.result_type} citation is missing source_version")
-    return None
 
 
 _SELECT_RETRIEVAL = text(
@@ -291,13 +260,13 @@ _INSERT_RETRIEVAL = text(
         tool_call_id, ordinal, result_type, source_id, media_id, evidence_span_id,
         scope, context_ref, result_ref, deep_link, score, selected, source_title,
         section_label, exact_snippet, locator, retrieval_status, included_in_prompt,
-        citation_ordinal, source_version
+        citation_ordinal
     )
     VALUES (
         :tool_call_id, :ordinal, :result_type, :source_id, :media_id, :evidence_span_id,
         :scope, :context_ref, :result_ref, :deep_link, :score, :selected, :source_title,
         :section_label, :exact_snippet, :locator, :retrieval_status, :included_in_prompt,
-        :citation_ordinal, :source_version
+        :citation_ordinal
     )
     RETURNING id
     """
@@ -315,7 +284,7 @@ _UPDATE_RETRIEVAL = text(
         source_title = :source_title, section_label = :section_label, exact_snippet = :exact_snippet,
         snippet_prefix = NULL, snippet_suffix = NULL, locator = :locator,
         retrieval_status = :retrieval_status, included_in_prompt = :included_in_prompt,
-        citation_ordinal = COALESCE(:citation_ordinal, citation_ordinal), source_version = :source_version
+        citation_ordinal = COALESCE(:citation_ordinal, citation_ordinal)
     WHERE id = :retrieval_id
     """
 ).bindparams(
@@ -362,7 +331,6 @@ def insert_retrieval_row(
         "retrieval_status": retrieval_status,
         "included_in_prompt": included_in_prompt,
         "citation_ordinal": citation_ordinal,
-        "source_version": strict_citation_source_version(citation),
     }
     existing = db.execute(
         _SELECT_RETRIEVAL, {"tool_call_id": tool_call_id, "ordinal": ordinal}

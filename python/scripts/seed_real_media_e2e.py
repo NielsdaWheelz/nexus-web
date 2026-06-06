@@ -2,14 +2,13 @@
 
 The seed uses the same upload, capture, URL, durable source-attempt worker,
 transcript indexing, storage, and embedding paths exercised by the backend
-real-media tests. It writes only ids, hashes, and short expected needles to
+real-media tests. It writes only ids and short expected needles to
 e2e/.seed/real-media.json.
 """
 
 from __future__ import annotations
 
 # ruff: noqa: E402
-import hashlib
 import json
 import os
 import time
@@ -59,7 +58,6 @@ NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
 
 class ExpectedSeedFixture(TypedDict):
     path: Path
-    sha256: str
     query: str
     needle: str
     kind: str
@@ -72,7 +70,6 @@ class ExpectedSeedFixture(TypedDict):
 EXPECTED_SEED_FIXTURES: dict[str, ExpectedSeedFixture] = {
     "pdf": {
         "path": FIXTURES_DIR / "pdf" / "attention.pdf",
-        "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
         "query": "attention",
         "needle": "attention",
         "kind": "pdf",
@@ -83,7 +80,6 @@ EXPECTED_SEED_FIXTURES: dict[str, ExpectedSeedFixture] = {
     },
     "epub": {
         "path": FIXTURES_DIR / "epub" / "moby-dick-epub3.epub",
-        "sha256": "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556",
         "query": "whale",
         "needle": "whale",
         "kind": "epub",
@@ -94,7 +90,6 @@ EXPECTED_SEED_FIXTURES: dict[str, ExpectedSeedFixture] = {
     },
     "scanned_pdf": {
         "path": REAL_MEDIA_FIXTURES_DIR / "frz-1784-01-03-scanned.pdf",
-        "sha256": "14b6a1729b9047a3738f23b818eac6faee80ff5a2d82731c208775a3b33a0c75",
         "query": "Freiburger",
         "needle": "ocr_required",
         "kind": "pdf",
@@ -105,39 +100,39 @@ EXPECTED_SEED_FIXTURES: dict[str, ExpectedSeedFixture] = {
     },
     "web": {
         "path": REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html",
-        "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
         "query": "SOFIA",
         "needle": "SOFIA mission",
         "kind": "web_article",
         "index_status": "ready",
         "storage": False,
+        "size_bytes": 1_019,
     },
     "web_url": {
         "path": REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html",
-        "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
         "query": "SOFIA",
         "needle": "SOFIA mission",
         "kind": "web_article",
         "index_status": "ready",
         "storage": False,
+        "size_bytes": 1_019,
     },
     "video": {
         "path": REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt",
-        "sha256": "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237",
         "query": "International Space Station",
         "needle": "International Space Station",
         "kind": "video",
         "index_status": "ready",
         "storage": False,
+        "size_bytes": 9_805,
     },
     "podcast": {
         "path": REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt",
-        "sha256": "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953",
         "query": "International Space Station",
         "needle": "International Space Station",
         "kind": "podcast_episode",
         "index_status": "ready",
         "storage": False,
+        "size_bytes": 753,
     },
 }
 
@@ -172,8 +167,6 @@ def main() -> None:
 
             pdf_bytes = (FIXTURES_DIR / "pdf" / "attention.pdf").read_bytes()
             assert len(pdf_bytes) == 2_215_244
-            pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-            assert pdf_sha256 == "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697"
             pdf_media_id = _upload_seed_file_media(
                 client,
                 headers,
@@ -191,11 +184,6 @@ def main() -> None:
                 REAL_MEDIA_FIXTURES_DIR / "frz-1784-01-03-scanned.pdf"
             ).read_bytes()
             assert len(scanned_pdf_bytes) == 827_443
-            scanned_pdf_sha256 = hashlib.sha256(scanned_pdf_bytes).hexdigest()
-            assert (
-                scanned_pdf_sha256
-                == "14b6a1729b9047a3738f23b818eac6faee80ff5a2d82731c208775a3b33a0c75"
-            )
             scanned_pdf_media_id = _upload_seed_file_media(
                 client,
                 headers,
@@ -214,8 +202,6 @@ def main() -> None:
 
             epub_bytes = (FIXTURES_DIR / "epub" / "moby-dick-epub3.epub").read_bytes()
             assert len(epub_bytes) == 815_946
-            epub_sha256 = hashlib.sha256(epub_bytes).hexdigest()
-            assert epub_sha256 == "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556"
             epub_media_id = _upload_seed_file_media(
                 client,
                 headers,
@@ -233,8 +219,7 @@ def main() -> None:
                     raise RuntimeError(f"EPUB seed ingest failed: {epub_result}")
 
             web_bytes = (REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html").read_bytes()
-            web_sha256 = hashlib.sha256(web_bytes).hexdigest()
-            assert web_sha256 == "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a"
+            assert len(web_bytes) == 1_019
             web_media_id = capture_nasa_water_article(client, direct_db, headers)
 
             web_url_response = client.post(
@@ -298,10 +283,7 @@ def main() -> None:
             caption_bytes = (
                 REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
             ).read_bytes()
-            caption_sha256 = hashlib.sha256(caption_bytes).hexdigest()
-            assert (
-                caption_sha256 == "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
-            )
+            assert len(caption_bytes) == 9_805
             video_media_id, _video_result = create_nasa_captioned_video(
                 client, direct_db, headers, user_id
             )
@@ -309,10 +291,7 @@ def main() -> None:
             podcast_bytes = (
                 REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt"
             ).read_bytes()
-            podcast_sha256 = hashlib.sha256(podcast_bytes).hexdigest()
-            assert (
-                podcast_sha256 == "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
-            )
+            assert len(podcast_bytes) == 753
             podcast_media_id, _podcast_id, _podcast_result = create_nasa_podcast_episode(
                 client, direct_db, headers, user_id
             )
@@ -324,43 +303,36 @@ def main() -> None:
                     "fixtures": {
                         "pdf": {
                             "media_id": str(pdf_media_id),
-                            "artifact_sha256": pdf_sha256,
                             "query": "attention",
                             "needle": "attention",
                         },
                         "epub": {
                             "media_id": str(epub_media_id),
-                            "artifact_sha256": epub_sha256,
                             "query": "whale",
                             "needle": "whale",
                         },
                         "scanned_pdf": {
                             "media_id": str(scanned_pdf_media_id),
-                            "artifact_sha256": scanned_pdf_sha256,
                             "query": "Freiburger",
                             "needle": "ocr_required",
                         },
                         "web": {
                             "media_id": str(web_media_id),
-                            "artifact_sha256": web_sha256,
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                         },
                         "web_url": {
                             "media_id": str(web_url_media_id),
-                            "artifact_sha256": web_sha256,
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                         },
                         "video": {
                             "media_id": str(video_media_id),
-                            "artifact_sha256": caption_sha256,
                             "query": "International Space Station",
                             "needle": "International Space Station",
                         },
                         "podcast": {
                             "media_id": str(podcast_media_id),
-                            "artifact_sha256": podcast_sha256,
                             "query": "International Space Station",
                             "needle": "International Space Station",
                         },
@@ -421,16 +393,17 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
             return False
         media_ids: dict[str, UUID] = {}
         for name, fixture in fixtures.items():
-            if set(fixture) != {"media_id", "artifact_sha256", "query", "needle"}:
+            if set(fixture) != {"media_id", "query", "needle"}:
                 return False
             expected = EXPECTED_SEED_FIXTURES[name]
-            if fixture["artifact_sha256"] != expected["sha256"]:
-                return False
             if fixture["query"] != expected["query"] or fixture["needle"] != expected["needle"]:
                 return False
-            expected_hash = hashlib.sha256(Path(expected["path"]).read_bytes()).hexdigest()
-            if expected_hash != expected["sha256"]:
-                raise RuntimeError(f"Fixture hash changed for {expected['path']}")
+            expected_path = Path(expected["path"])
+            expected_size = expected.get("size_bytes")
+            if not expected_path.exists():
+                return False
+            if expected_size is not None and expected_path.stat().st_size != expected_size:
+                raise RuntimeError(f"Fixture size changed for {expected_path}")
             media_ids[name] = UUID(str(fixture["media_id"]))
         if len(set(media_ids.values())) != len(media_ids):
             return False
@@ -483,16 +456,10 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                                 m.kind,
                                 m.created_by_user_id,
                                 m.processing_status,
-                                m.file_sha256,
                                 mf.storage_path,
                                 mf.content_type,
                                 mf.size_bytes,
                                 mcis.status,
-                                mcis.active_run_id,
-                                mcis.latest_run_id,
-                                active_run.state AS active_run_state,
-                                active_run.deactivated_at AS active_run_deactivated_at,
-                                latest_run.state AS latest_run_state,
                                 EXISTS(
                                     SELECT 1
                                     FROM library_entries le
@@ -507,41 +474,29 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                                 ) AS has_default_intrinsic,
                                 (
                                     SELECT count(*)
-                                    FROM source_snapshots ss
-                                    WHERE ss.media_id = m.id
-                                      AND ss.index_run_id = mcis.latest_run_id
-                                ) AS source_snapshot_count,
-                                (
-                                    SELECT count(*)
                                     FROM content_chunks cc
                                     WHERE cc.media_id = m.id
-                                      AND cc.index_run_id = mcis.active_run_id
                                 ) AS chunk_count,
                                 (
                                     SELECT count(*)
                                     FROM evidence_spans es
                                     WHERE es.media_id = m.id
-                                      AND es.index_run_id = mcis.active_run_id
                                 ) AS evidence_count,
                                 (
                                     SELECT count(*)
                                     FROM content_embeddings ce
                                     JOIN content_chunks cc ON cc.id = ce.chunk_id
                                     WHERE cc.media_id = m.id
-                                      AND cc.index_run_id = mcis.active_run_id
                                 ) AS embedding_count,
                                 (
                                     SELECT count(*)
                                     FROM content_chunks cc
                                     WHERE cc.media_id = m.id
-                                      AND cc.index_run_id = mcis.active_run_id
                                       AND cc.chunk_text ILIKE :needle
                                 ) AS needle_chunk_count
                             FROM media m
                             LEFT JOIN media_file mf ON mf.media_id = m.id
                             LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                            LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                            LEFT JOIN content_index_runs latest_run ON latest_run.id = mcis.latest_run_id
                             WHERE m.id = :media_id
                             """
                         ),
@@ -567,14 +522,8 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                     return False
                 if row["status"] != expected["index_status"]:
                     return False
-                if row["latest_run_id"] is None or int(row["source_snapshot_count"] or 0) == 0:
-                    return False
 
                 if expected["index_status"] == "ready":
-                    if row["active_run_id"] is None or row["active_run_id"] != row["latest_run_id"]:
-                        return False
-                    if row["active_run_state"] != "ready" or row["active_run_deactivated_at"]:
-                        return False
                     if int(row["chunk_count"] or 0) == 0:
                         return False
                     if int(row["evidence_count"] or 0) == 0:
@@ -584,10 +533,6 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                     if int(row["needle_chunk_count"] or 0) == 0:
                         return False
                 elif expected["index_status"] == "ocr_required":
-                    if row["latest_run_state"] != "ocr_required":
-                        return False
-                    if row["active_run_id"] is not None:
-                        return False
                     if int(row["chunk_count"] or 0) != 0:
                         return False
                     if int(row["evidence_count"] or 0) != 0:
@@ -599,8 +544,6 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                     if expected_content_type is None or expected_size_bytes is None:
                         return False
                     if not row["storage_path"]:
-                        return False
-                    if row["file_sha256"] != expected["sha256"]:
                         return False
                     if row["content_type"] != expected_content_type:
                         return False

@@ -82,7 +82,6 @@ describe("MediaNavigationResponse", () => {
       data: {
         media_id: "media-1",
         kind: "web_article",
-        source_version: "web_article:fragments:abc",
         sections: [],
         toc_nodes: [],
         landmarks: [],

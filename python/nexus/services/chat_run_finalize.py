@@ -14,7 +14,6 @@ from nexus.errors import ApiErrorCode
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, append_run_event
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
-from nexus.services.chat_run_prompt_tracking import prompt_assembly_metadata
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
@@ -177,7 +176,6 @@ def finalize_run(
         existing_llm = db.get(MessageLLM, assistant_message.id)
         target = existing_llm or MessageLLM(message_id=assistant_message.id)
         tokens = usage_tokens(usage)
-        stable_prefix_hash = prompt_assembly_metadata(db, run_id=run.id)
         target.provider = model.provider
         target.model_name = model.model_name
         target.input_tokens = tokens["input_tokens"]
@@ -192,7 +190,6 @@ def finalize_run(
         target.latency_ms = latency_ms
         target.error_class = error_code if assistant_status == "error" else None
         target.provider_request_id = provider_request_id
-        target.stable_prefix_hash = stable_prefix_hash
         target.provider_usage = usage_provider_json(usage)
         if existing_llm is None:
             db.add(target)

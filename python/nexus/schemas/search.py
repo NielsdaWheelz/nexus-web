@@ -64,7 +64,6 @@ class SearchResultContextRefOut(BaseModel):
     type: SEARCH_RESULT_TYPES
     id: UUID | str
     evidence_span_ids: list[UUID] = Field(default_factory=list)
-    source_version: str | None = Field(default=None, min_length=1)
     locator: RetrievalLocator | None = None
 
     @model_serializer
@@ -74,8 +73,6 @@ class SearchResultContextRefOut(BaseModel):
             payload["evidence_span_ids"] = [
                 str(evidence_span_id) for evidence_span_id in self.evidence_span_ids
             ]
-        if self.source_version is not None:
-            payload["source_version"] = self.source_version
         if self.locator is not None:
             payload["locator"] = self.locator.model_dump(mode="json", exclude_none=True)
         return payload
@@ -136,7 +133,6 @@ class SearchResultContentChunkOut(SearchResultBaseOut):
     type: Literal["content_chunk"]
     id: UUID
     source_kind: str
-    source_version: str = Field(min_length=1)
     evidence_span_ids: list[UUID] = Field(default_factory=list)
     source: SearchResultSourceOut
     citation_label: str
@@ -154,7 +150,6 @@ class SearchResultFragmentOut(SearchResultBaseOut):
     type: Literal["fragment"]
     id: UUID
     source: SearchResultSourceOut
-    source_version: str = Field(min_length=1)
     citation_label: str | None = None
     locator: RetrievalLocator
 
@@ -182,7 +177,6 @@ class SearchResultNoteBlockOut(SearchResultBaseOut):
     page_title: str
     body_text: str
     highlight_excerpt: str | None = None
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
 
     @model_validator(mode="after")
@@ -199,7 +193,6 @@ class SearchResultHighlightOut(SearchResultBaseOut):
     color: str
     exact: str
     source: SearchResultSourceOut
-    source_version: str = Field(min_length=1)
     citation_label: str | None = None
     locator: RetrievalLocator
 
@@ -215,7 +208,6 @@ class SearchResultPageOut(SearchResultBaseOut):
     type: Literal["page"]
     id: UUID
     description: str | None = None
-    source_version: str = Field(min_length=1)
 
 
 class SearchResultMessageOut(SearchResultBaseOut):
@@ -225,7 +217,6 @@ class SearchResultMessageOut(SearchResultBaseOut):
     id: UUID
     conversation_id: UUID
     seq: int
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
 
     @model_validator(mode="after")
@@ -241,7 +232,6 @@ class SearchResultEvidenceSpanOut(SearchResultBaseOut):
     id: UUID
     source: SearchResultSourceOut
     evidence_span_id: UUID
-    source_version: str = Field(min_length=1)
     citation_label: str
     locator: RetrievalLocator
 
@@ -274,7 +264,6 @@ class SearchResultWebOut(SearchResultBaseOut):
     rank: int | None = None
     provider: str | None = None
     provider_request_id: str | None = None
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     selected: bool
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any, Literal
 from uuid import UUID
 
@@ -22,7 +21,6 @@ from nexus.services.semantic_chunks import (
     transcript_embedding_dimensions,
 )
 
-OBJECT_SEARCH_INDEX_VERSION = 1
 OBJECT_SEARCH_MIN_SEMANTIC_SIMILARITY = 0.50
 
 
@@ -114,7 +112,6 @@ def search_objects(
         "object_type": object_type,
         "query": query_text,
         "contains_query": f"%{query_text}%",
-        "index_version": OBJECT_SEARCH_INDEX_VERSION,
         "limit": limit,
     }
     semantic_ctes = ""
@@ -143,11 +140,12 @@ def search_objects(
                     ose.search_document_id,
                     (1 - (ose.embedding <=> qe.embedding)) AS semantic_score
                 FROM object_search_embeddings ose
-                JOIN eligible_documents osd ON osd.id = ose.search_document_id
+                JOIN eligible_documents osd
+                  ON osd.id = ose.search_document_id
+                 AND osd.index_status = 'ready'
                 JOIN query_embedding qe ON true
                 WHERE ose.embedding_model = :embedding_model
                   AND ose.embedding_dimensions = :embedding_dimensions
-                  AND ose.index_version = :index_version
                   AND ose.deleted_at IS NULL
                   AND ose.embedding IS NOT NULL
                 ORDER BY ose.embedding <=> qe.embedding ASC, ose.search_document_id ASC
@@ -171,7 +169,6 @@ def search_objects(
                 FROM object_search_documents osd
                 WHERE osd.user_id = :viewer_id
                   AND osd.object_type = :object_type
-                  AND osd.index_version = :index_version
                   AND osd.deleted_at IS NULL
                   {scope_filter}
             )
@@ -224,7 +221,6 @@ def delete_document(db: Session, viewer_id: UUID, *, object_type: str, object_id
             ObjectSearchDocument.user_id == viewer_id,
             ObjectSearchDocument.object_type == object_type,
             ObjectSearchDocument.object_id == object_id,
-            ObjectSearchDocument.index_version == OBJECT_SEARCH_INDEX_VERSION,
         )
     )
     if document is None:
@@ -250,20 +246,6 @@ def _upsert_document(
 ) -> None:
     title_text = title_text[:300] or "Untitled"
     search_text = search_text.strip() or title_text
-    content_hash = hashlib.sha256(
-        "\0".join(
-            [
-                object_type,
-                str(object_id),
-                parent_object_type or "",
-                str(parent_object_id or ""),
-                title_text,
-                body_text,
-                search_text,
-                route_path,
-            ]
-        ).encode("utf-8")
-    ).hexdigest()
     document = None
     for pending in db.new:
         if not isinstance(pending, ObjectSearchDocument):
@@ -272,7 +254,6 @@ def _upsert_document(
             pending.user_id == viewer_id
             and pending.object_type == object_type
             and pending.object_id == object_id
-            and pending.index_version == OBJECT_SEARCH_INDEX_VERSION
         ):
             document = pending
             break
@@ -282,7 +263,6 @@ def _upsert_document(
                 ObjectSearchDocument.user_id == viewer_id,
                 ObjectSearchDocument.object_type == object_type,
                 ObjectSearchDocument.object_id == object_id,
-                ObjectSearchDocument.index_version == OBJECT_SEARCH_INDEX_VERSION,
             )
         )
     if document is None:
@@ -297,22 +277,31 @@ def _upsert_document(
                 body_text=body_text,
                 search_text=search_text,
                 route_path=route_path,
-                content_hash=content_hash,
-                index_version=OBJECT_SEARCH_INDEX_VERSION,
                 index_status="pending_embedding",
             )
         )
         return
 
-    if document.content_hash != content_hash:
+    if (
+        document.parent_object_type != parent_object_type
+        or document.parent_object_id != parent_object_id
+        or document.title_text != title_text
+        or document.body_text != body_text
+        or document.search_text != search_text
+        or document.route_path != route_path
+    ):
         document.index_status = "pending_embedding"
+        db.execute(
+            delete(ObjectSearchEmbedding).where(
+                ObjectSearchEmbedding.search_document_id == document.id
+            )
+        )
     document.parent_object_type = parent_object_type
     document.parent_object_id = parent_object_id
     document.title_text = title_text
     document.body_text = body_text
     document.search_text = search_text
     document.route_path = route_path
-    document.content_hash = content_hash
     document.deleted_at = None
     document.updated_at = func.now()
 

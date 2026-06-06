@@ -1,12 +1,11 @@
 """Seed the oracle corpus from local JSON manifests.
 
 Reads scripts/oracle/manifest_works.json and manifest_plates.json,
-resolves Wikimedia file-page URLs to upload CDN URLs, and writes rows
-into oracle_corpus_set_versions, oracle_corpus_works, oracle_corpus_passages,
-and oracle_corpus_images.
+resolves Wikimedia file-page URLs to upload CDN URLs, and writes current rows
+into oracle_corpus_works, oracle_corpus_passages, and oracle_corpus_images.
 
-Corpus releases are immutable: if the version already exists, choose a new
-ORACLE_CORPUS_VERSION instead of mutating it in place.
+The script seeds the single current Oracle corpus. Existing current rows are a
+data-repair concern, not a reason to create another corpus.
 
 The build now downloads, validates, and uploads each plate's bytes into R2
 object storage, so it requires the R2 storage env (R2_S3_API_ORIGIN,
@@ -17,9 +16,8 @@ Run: `cd python && uv run python ../scripts/oracle/build_corpus.py`
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
+import re
 import sys
 import time
 import urllib.parse
@@ -33,7 +31,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from nexus.db.models import (
     OracleCorpusImage,
     OracleCorpusPassage,
-    OracleCorpusSetVersion,
     OracleCorpusWork,
 )
 from nexus.db.session import get_session_factory
@@ -49,15 +46,12 @@ from nexus.services.semantic_chunks import (
     to_pgvector_literal,
 )
 from nexus.storage.client import StorageClientBase, get_storage_client
-from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
+from nexus.storage.paths import ext_for_content_type
 
 MANIFEST_DIR = Path(__file__).resolve().parent
 WORKS_PATH = MANIFEST_DIR / "manifest_works.json"
 PLATES_PATH = MANIFEST_DIR / "manifest_plates.json"
 WIKI_API_URL = "https://commons.wikimedia.org/w/api.php"
-CORPUS_VERSION = os.environ.get("ORACLE_CORPUS_VERSION", "black-forest-oracle-v1")
-CORPUS_LABEL = os.environ.get("ORACLE_CORPUS_LABEL", "Black Forest Oracle v1")
-
 
 def _resolve_wikimedia_image(client: httpx.Client, file_page_url: str) -> tuple[str, int, int]:
     """Resolve a `commons.wikimedia.org/wiki/File:Name.jpg` URL to (cdn_url, width, height)."""
@@ -109,28 +103,7 @@ def _plate_image_metadata(
     return _resolve_wikimedia_image(client, entry["source_url"])
 
 
-def _ensure_corpus_set_version(db: Any) -> Any:
-    existing = db.execute(
-        select(OracleCorpusSetVersion).where(OracleCorpusSetVersion.version == CORPUS_VERSION)
-    ).scalar_one_or_none()
-    embedding_model = current_transcript_embedding_model()
-    if existing is not None:
-        raise SystemExit(
-            f"Oracle corpus version {CORPUS_VERSION!r} already exists. "
-            "Corpus releases are immutable; set ORACLE_CORPUS_VERSION to a new value."
-        )
-
-    version = OracleCorpusSetVersion(
-        version=CORPUS_VERSION,
-        label=CORPUS_LABEL,
-        embedding_model=embedding_model,
-    )
-    db.add(version)
-    db.flush()
-    return version
-
-
-def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, Any]]) -> None:
+def _seed_works(db: Any, manifest: list[dict[str, Any]]) -> None:
     passage_texts = [
         " ".join([passage["canonical_text"], *[str(tag) for tag in passage["tags"]]])
         for entry in manifest
@@ -141,14 +114,10 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
     for entry in manifest:
         slug = entry["slug"]
         existing = db.execute(
-            select(OracleCorpusWork).where(
-                OracleCorpusWork.corpus_set_version_id == corpus_set_version_id,
-                OracleCorpusWork.slug == slug,
-            )
+            select(OracleCorpusWork).where(OracleCorpusWork.slug == slug)
         ).scalar_one_or_none()
         if existing is None:
             work = OracleCorpusWork(
-                corpus_set_version_id=corpus_set_version_id,
                 slug=slug,
                 title=entry["title"],
                 author=entry["author"],
@@ -161,13 +130,12 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
             db.flush()
         else:
             raise SystemExit(
-                f"Oracle corpus work {slug!r} already exists in {CORPUS_VERSION!r}; "
-                "choose a new corpus version instead of mutating a release."
+                f"Oracle current corpus work {slug!r} already exists; "
+                "clear current corpus rows before reseeding."
             )
         for passage in entry["passages"]:
             existing_passage = db.execute(
                 select(OracleCorpusPassage).where(
-                    OracleCorpusPassage.corpus_set_version_id == corpus_set_version_id,
                     OracleCorpusPassage.work_id == work.id,
                     OracleCorpusPassage.passage_index == passage["passage_index"],
                 )
@@ -177,7 +145,6 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
                     text(
                         """
                         INSERT INTO oracle_corpus_passages (
-                            corpus_set_version_id,
                             work_id,
                             passage_index,
                             canonical_text,
@@ -189,7 +156,6 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
                             embedding
                         )
                         VALUES (
-                            :corpus_set_version_id,
                             :work_id,
                             :passage_index,
                             :canonical_text,
@@ -207,13 +173,12 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
                         bindparam("tags", type_=JSONB),
                     ),
                     {
-                        "corpus_set_version_id": corpus_set_version_id,
                         "work_id": work.id,
                         "passage_index": passage["passage_index"],
                         "canonical_text": passage["canonical_text"],
                         "locator_label": passage["locator_label"],
                         "locator": _passage_locator(passage),
-                        "source": _passage_source(entry, passage),
+                        "source": _passage_source(entry),
                         "tags": passage["tags"],
                         "embedding_model": embedding_model,
                         "embedding": to_pgvector_literal(
@@ -225,7 +190,7 @@ def _seed_works(db: Any, corpus_set_version_id: Any, manifest: list[dict[str, An
             else:
                 raise SystemExit(
                     f"Oracle corpus passage {slug!r}:{passage['passage_index']} already exists "
-                    f"in {CORPUS_VERSION!r}; choose a new corpus version."
+                    "in the current corpus."
                 )
     db.commit()
 
@@ -234,7 +199,6 @@ def _seed_plates(
     db: Any,
     client: httpx.Client,
     storage: StorageClientBase,
-    corpus_set_version_id: Any,
     manifest: list[dict[str, Any]],
 ) -> None:
     resolved_entries: list[dict[str, Any]] = []
@@ -250,8 +214,7 @@ def _seed_plates(
             )
             continue
         validated = fetch_validated_image(resolved, client)
-        ext = ext_for_content_type(validated.content_type)
-        storage_key = build_oracle_plate_storage_path(validated.sha256, ext)
+        storage_key = _plate_storage_key(entry, content_type=validated.content_type)
         if storage.head_object(storage_key) is None:
             storage.put_object(storage_key, validated.data, validated.content_type)
         time.sleep(0.2)  # be polite to Wikimedia
@@ -266,7 +229,6 @@ def _seed_plates(
                 "storage_key": storage_key,
                 "content_type": validated.content_type,
                 "byte_size": len(validated.data),
-                "sha256": validated.sha256,
             }
         )
 
@@ -278,17 +240,13 @@ def _seed_plates(
     )
     for entry, embedding in zip(resolved_entries, image_embeddings, strict=True):
         existing = db.execute(
-            select(OracleCorpusImage).where(
-                OracleCorpusImage.corpus_set_version_id == corpus_set_version_id,
-                OracleCorpusImage.source_url == entry["resolved_source_url"],
-            )
+            select(OracleCorpusImage).where(OracleCorpusImage.source_url == entry["resolved_source_url"])
         ).scalar_one_or_none()
         if existing is None:
             db.execute(
                 text(
                     """
                     INSERT INTO oracle_corpus_images (
-                        corpus_set_version_id,
                         source_repository,
                         source_page_url,
                         source_url,
@@ -302,13 +260,11 @@ def _seed_plates(
                         storage_key,
                         content_type,
                         byte_size,
-                        sha256,
                         tags,
                         embedding_model,
                         embedding
                     )
                     VALUES (
-                        :corpus_set_version_id,
                         :source_repository,
                         :source_page_url,
                         :source_url,
@@ -322,7 +278,6 @@ def _seed_plates(
                         :storage_key,
                         :content_type,
                         :byte_size,
-                        :sha256,
                         :tags,
                         :embedding_model,
                         CAST(:embedding AS vector(256))
@@ -330,7 +285,6 @@ def _seed_plates(
                     """
                 ).bindparams(bindparam("tags", type_=JSONB)),
                 {
-                    "corpus_set_version_id": corpus_set_version_id,
                     "source_repository": entry["source_repository"],
                     "source_page_url": entry["source_page_url"],
                     "source_url": entry["resolved_source_url"],
@@ -344,7 +298,6 @@ def _seed_plates(
                     "storage_key": entry["storage_key"],
                     "content_type": entry["content_type"],
                     "byte_size": entry["byte_size"],
-                    "sha256": entry["sha256"],
                     "tags": entry["tags"],
                     "embedding_model": embedding_model,
                     "embedding": to_pgvector_literal(embedding),
@@ -353,10 +306,22 @@ def _seed_plates(
         else:
             raise SystemExit(
                 f"Oracle corpus plate {entry['resolved_source_url']!r} already exists in "
-                f"{CORPUS_VERSION!r}; "
-                "choose a new corpus version instead of mutating a release."
+                "the current corpus."
             )
     db.commit()
+
+
+def _plate_storage_key(entry: dict[str, Any], *, content_type: str) -> str:
+    ext = ext_for_content_type(content_type)
+    parsed = urllib.parse.urlparse(str(entry["source_url"]))
+    source_name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+    if source_name.startswith("File:"):
+        source_name = source_name.removeprefix("File:")
+    stem = source_name.rsplit(".", 1)[0] or str(entry["work_title"])
+    slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")
+    if not slug:
+        raise RuntimeError(f"Could not derive Oracle plate storage key for {entry['source_url']}")
+    return f"oracle/plates/{slug}.{ext}"
 
 
 def _passage_locator(passage: dict[str, Any]) -> dict[str, Any]:
@@ -370,11 +335,9 @@ def _passage_locator(passage: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _passage_source(work: dict[str, Any], passage: dict[str, Any]) -> dict[str, Any]:
-    citation_key = _citation_key(work, passage)
+def _passage_source(work: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "public_domain_work",
-        "citation_key": citation_key,
         "repository": work["source_repository"],
         "url": work["source_url"],
         "work_slug": work["slug"],
@@ -383,19 +346,6 @@ def _passage_source(work: dict[str, Any], passage: dict[str, Any]) -> dict[str, 
         "edition_label": work["edition_label"],
         "year": work.get("year"),
     }
-
-
-def _citation_key(work: dict[str, Any], passage: dict[str, Any]) -> str:
-    payload = {
-        "type": "oracle_corpus_passage",
-        "corpus_version": CORPUS_VERSION,
-        "work_slug": work["slug"],
-        "passage_index": int(passage["passage_index"]),
-        "text_sha256": hashlib.sha256(passage["canonical_text"].encode("utf-8")).hexdigest(),
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def _manifest_counts(
@@ -407,12 +357,12 @@ def _manifest_counts(
 
 def _validate_corpus_counts(
     db: Any,
-    corpus_set_version_id: Any,
     *,
     expected_works: int,
     expected_passages: int,
     expected_images: int,
 ) -> None:
+    embedding_model = current_transcript_embedding_model()
     counts = (
         db.execute(
             select(
@@ -421,13 +371,13 @@ def _validate_corpus_counts(
                 func.count(func.distinct(OracleCorpusImage.id)).label("image_count"),
                 func.count(func.distinct(OracleCorpusPassage.id))
                 .filter(
-                    OracleCorpusPassage.embedding_model == OracleCorpusSetVersion.embedding_model,
+                    OracleCorpusPassage.embedding_model == embedding_model,
                     OracleCorpusPassage.embedding.is_not(None),
                 )
                 .label("passage_embedding_count"),
                 func.count(func.distinct(OracleCorpusImage.id))
                 .filter(
-                    OracleCorpusImage.embedding_model == OracleCorpusSetVersion.embedding_model,
+                    OracleCorpusImage.embedding_model == embedding_model,
                     OracleCorpusImage.embedding.is_not(None),
                 )
                 .label("image_embedding_count"),
@@ -438,20 +388,9 @@ def _validate_corpus_counts(
                 )
                 .label("safe_image_count"),
             )
-            .select_from(OracleCorpusSetVersion)
-            .outerjoin(
-                OracleCorpusWork,
-                OracleCorpusWork.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .outerjoin(
-                OracleCorpusPassage,
-                OracleCorpusPassage.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .outerjoin(
-                OracleCorpusImage,
-                OracleCorpusImage.corpus_set_version_id == OracleCorpusSetVersion.id,
-            )
-            .where(OracleCorpusSetVersion.id == corpus_set_version_id)
+            .select_from(OracleCorpusWork)
+            .outerjoin(OracleCorpusPassage, OracleCorpusPassage.work_id == OracleCorpusWork.id)
+            .outerjoin(OracleCorpusImage, text("true"))
         )
         .mappings()
         .one()
@@ -476,9 +415,7 @@ def _validate_corpus_counts(
     if safe_image_count < expected_images:
         missing.append(f"safe_images={safe_image_count}/{expected_images}")
     if missing:
-        raise SystemExit(
-            f"Oracle corpus seed incomplete for {CORPUS_VERSION}: {', '.join(missing)}"
-        )
+        raise SystemExit(f"Oracle current corpus seed incomplete: {', '.join(missing)}")
 
 
 def main() -> None:
@@ -497,12 +434,10 @@ def main() -> None:
         headers={"User-Agent": "nexus-oracle-seed/0.1 (https://nexus.example)"}
     ) as client:
         with session_factory() as db:
-            corpus_set_version = _ensure_corpus_set_version(db)
-            _seed_works(db, corpus_set_version.id, works)
-            _seed_plates(db, client, storage, corpus_set_version.id, plates)
+            _seed_works(db, works)
+            _seed_plates(db, client, storage, plates)
             _validate_corpus_counts(
                 db,
-                corpus_set_version.id,
                 expected_works=expected_works,
                 expected_passages=expected_passages,
                 expected_images=expected_images,

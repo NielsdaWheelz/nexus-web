@@ -129,8 +129,6 @@ import {
 } from "@/lib/media/readerNavigation";
 import {
   canReadMediaDocument,
-  shouldLoadInitialMediaFragments,
-  shouldLoadWebArticleFragments,
   type DocumentProcessingStatus,
 } from "@/lib/media/documentReadiness";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
@@ -178,7 +176,12 @@ import {
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, ListTree, RefreshCw } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ListTree,
+  RefreshCw,
+} from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -202,7 +205,6 @@ export interface Media extends MediaProcessingSnapshot {
   canonical_source_url: string | null;
   retrieval_status?: string | null;
   retrieval_status_reason?: string | null;
-  source_version?: string | null;
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
@@ -269,6 +271,17 @@ function metadataRetryTerminalState(
   return null;
 }
 
+function shouldLoadInitialFragments(media: Media): boolean {
+  return (
+    media.kind !== "epub" &&
+    media.kind !== "pdf" &&
+    media.kind !== "web_article" &&
+    (media.kind !== "podcast_episode" && media.kind !== "video"
+      ? true
+      : Boolean(media.capabilities?.can_read))
+  );
+}
+
 interface SelectionState {
   fragmentId: string;
   startOffset: number;
@@ -282,7 +295,6 @@ interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
   canonicalText: string;
-  sourceVersion: string | null;
 }
 
 interface EpubSectionContent {
@@ -301,7 +313,6 @@ interface EpubSectionContent {
   canonical_text: string;
   char_count: number;
   word_count: number;
-  source_version?: string | null;
   created_at: string;
 }
 
@@ -384,6 +395,7 @@ function textQuoteField(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+
 function isUserScrollKey(event: KeyboardEvent): boolean {
   return (
     event.key === "ArrowDown" ||
@@ -422,10 +434,11 @@ export default function MediaPaneBody() {
   const requestedFragmentId =
     target?.kind === "fragment"
       ? target.value
-      : paneSearchParams.get("fragment")?.trim() || null;
+      : (paneSearchParams.get("fragment")?.trim() || null);
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
-  const requestedEvidenceId = target?.kind === "evidence" ? target.value : null;
+  const requestedEvidenceId =
+    target?.kind === "evidence" ? target.value : null;
   const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
   const requestedReaderLoc =
     target?.kind === "loc"
@@ -517,9 +530,7 @@ export default function MediaPaneBody() {
     useState(0);
   const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
     useState(false);
-  useSetPaneTitle(
-    loading ? null : (buildCompactMediaPaneTitle(media) ?? "Media"),
-  );
+  useSetPaneTitle(loading ? null : buildCompactMediaPaneTitle(media) ?? "Media");
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
@@ -543,9 +554,7 @@ export default function MediaPaneBody() {
   );
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
-  const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
-    null,
-  );
+  const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(null);
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
@@ -778,7 +787,11 @@ export default function MediaPaneBody() {
     media?.kind === "podcast_episode" || media?.kind === "video";
   const transcriptState = media?.transcript_state ?? null;
   const transcriptCoverage = media?.transcript_coverage ?? null;
-  const canRead = media ? canReadMediaDocument(media) : false;
+  const canRead = media
+    ? isTranscriptMedia
+      ? Boolean(media.capabilities?.can_read)
+      : canReadMediaDocument(media)
+    : false;
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
@@ -912,7 +925,6 @@ export default function MediaPaneBody() {
         fragmentId: activeEpubSection.fragment_id,
         htmlSanitized: activeEpubSection.html_sanitized,
         canonicalText: activeEpubSection.canonical_text,
-        sourceVersion: activeEpubSection.source_version ?? null,
       };
     }
     const frag = isTranscriptMedia
@@ -927,7 +939,6 @@ export default function MediaPaneBody() {
         fragmentId: frag.id,
         htmlSanitized: frag.html_sanitized,
         canonicalText: frag.canonical_text,
-        sourceVersion: frag.source_version ?? null,
       };
     }
     return null;
@@ -1065,13 +1076,10 @@ export default function MediaPaneBody() {
   // Data Fetching — initial load
   // ==========================================================================
 
-  const initialMediaResource = useResource<
-    {
-      media: Media;
-      fragments: Fragment[];
-    },
-    { id: string }
-  >({
+  const initialMediaResource = useResource<{
+    media: Media;
+    fragments: Fragment[];
+  }, { id: string }>({
     descriptor: mediaResource,
     params: { id },
     load: async (params, signal) => {
@@ -1080,7 +1088,7 @@ export default function MediaPaneBody() {
         { signal },
       );
       const nextMedia = mediaResp.data;
-      if (!shouldLoadInitialMediaFragments(nextMedia)) {
+      if (!shouldLoadInitialFragments(nextMedia)) {
         return { media: nextMedia, fragments: [] };
       }
 
@@ -1165,13 +1173,8 @@ export default function MediaPaneBody() {
     [id],
   );
 
-  const {
-    snapshot: processingSnapshot,
-    connectionState: processingConnectionState,
-  } = useMediaProcessingStatus(
-    media?.id ?? null,
-    media?.processing_status ?? "",
-  );
+  const { snapshot: processingSnapshot, connectionState: processingConnectionState } =
+    useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
 
   useEffect(() => {
     if (!processingSnapshot) return;
@@ -1180,12 +1183,14 @@ export default function MediaPaneBody() {
 
   const webFragmentsResource = useResource<Fragment[]>({
     cacheKey:
-      media && shouldLoadWebArticleFragments(media, fragments.length)
-        ? mediaFragmentsResource.cacheKey({ id: media.id })
+      media?.kind === "web_article" &&
+      media.capabilities?.can_read === true &&
+      fragments.length === 0
+        ? media.id
         : null,
     load: async (signal) => {
       const resp = await apiFetch<{ data: Fragment[] }>(
-        mediaFragmentsResource.clientPath({ id: media!.id }),
+        `/api/media/${media!.id}/fragments`,
         { signal },
       );
       return resp.data;
@@ -1205,9 +1210,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const mediaResp = await apiFetch<{ data: Media }>(
-        `/api/media/${media.id}`,
-      );
+      const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
       const nextMedia = mediaResp.data;
       setMedia(nextMedia);
 
@@ -1246,8 +1249,7 @@ export default function MediaPaneBody() {
   const pollMetadataRetryState = useCallback(async () => {
     try {
       await refreshMetadataRetryState();
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
+    } catch {
       setMetadataRetryPollsRemaining((remaining) => Math.max(remaining - 1, 0));
     }
   }, [refreshMetadataRetryState]);
@@ -1379,7 +1381,13 @@ export default function MediaPaneBody() {
     clearFocus();
     setHighlights([]);
     clearRetainedSelection(false);
-  }, [activeSectionId, clearFocus, clearRetainedSelection, id, isEpub]);
+  }, [
+    activeSectionId,
+    clearFocus,
+    clearRetainedSelection,
+    id,
+    isEpub,
+  ]);
 
   useEffect(() => {
     if (epubSectionResource.status === "loading") {
@@ -1472,7 +1480,13 @@ export default function MediaPaneBody() {
       origin: "manual",
     });
     setActiveWebSectionId(section.section_id);
-  }, [activeRequestedReaderLoc, feedback, media?.kind, setTarget, webSections]);
+  }, [
+    activeRequestedReaderLoc,
+    feedback,
+    media?.kind,
+    setTarget,
+    webSections,
+  ]);
 
   useEffect(() => {
     scrollRestoreAppliedRef.current = false;
@@ -1557,7 +1571,10 @@ export default function MediaPaneBody() {
       // Hash/pulse target drives the scroll; resume is suppressed for this load.
       return;
     }
-    if (initialReaderResumeStateLoading || !readerLayoutReady) {
+    if (
+      initialReaderResumeStateLoading ||
+      !readerLayoutReady
+    ) {
       return;
     }
     if (isMismatchDisabled) {
@@ -2764,7 +2781,9 @@ export default function MediaPaneBody() {
           });
         return createdHighlight;
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return null;
+        if (handleUnauthenticatedApiError(err)) {
+          return null;
+        }
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
           try {
             const requestVersion = ++highlightVersionRef.current;
@@ -2788,7 +2807,9 @@ export default function MediaPaneBody() {
             clearRetainedSelection(true);
             return existing ?? null;
           } catch (refreshErr) {
-            if (handleUnauthenticatedApiError(refreshErr)) return null;
+            if (handleUnauthenticatedApiError(refreshErr)) {
+              return null;
+            }
             console.error(
               "Failed to refresh highlights after conflict:",
               refreshErr,
@@ -2838,7 +2859,12 @@ export default function MediaPaneBody() {
       setHighlights([]);
       clearRetainedSelection(false);
     },
-    [cancelRestoreSession, clearFocus, clearRetainedSelection, clearTarget],
+    [
+      cancelRestoreSession,
+      clearFocus,
+      clearRetainedSelection,
+      clearTarget,
+    ],
   );
 
   // ==========================================================================
@@ -2920,7 +2946,9 @@ export default function MediaPaneBody() {
         cancelEditBounds();
         clearRetainedSelection(true);
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
+        if (handleUnauthenticatedApiError(err)) {
+          return;
+        }
         console.error("Failed to update bounds:", err);
         feedback.show({
           severity: "error",
@@ -2978,9 +3006,7 @@ export default function MediaPaneBody() {
 
   const handleColorChange = useCallback(
     async (highlightId: string, color: HighlightColor) => {
-      await applyHighlightMutation(() =>
-        updateHighlight(highlightId, { color }),
-      );
+      await applyHighlightMutation(() => updateHighlight(highlightId, { color }));
     },
     [applyHighlightMutation],
   );
@@ -3015,14 +3041,12 @@ export default function MediaPaneBody() {
       noteBlockId: string | null,
       createBlockId: string,
       bodyPmJson: Record<string, unknown>,
-      baseRevision: number | null,
     ) => {
       const linkedNoteBlock = await saveHighlightNote(
         highlightId,
         noteBlockId,
         createBlockId,
         bodyPmJson,
-        baseRevision,
       );
       applyToAllHighlightSlots((list) =>
         patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
@@ -3035,10 +3059,9 @@ export default function MediaPaneBody() {
   const handleNoteDelete = useCallback(
     async (
       noteBlockId: string,
-      baseRevision: number,
       shouldApply: () => boolean,
     ) => {
-      await deleteHighlightNote(noteBlockId, baseRevision);
+      await deleteHighlightNote(noteBlockId);
       if (shouldApply()) {
         applyToAllHighlightSlots((list) =>
           removeHighlightLinkedNoteBlock(list, noteBlockId),
@@ -3116,8 +3139,7 @@ export default function MediaPaneBody() {
           ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
           : null,
         readerSelection: highlightId
-          ? (pendingQuoteSelection ??
-            readerSelectionForHighlightId(highlightId))
+          ? (pendingQuoteSelection ?? readerSelectionForHighlightId(highlightId))
           : null,
       });
       setPendingQuoteUri(null);
@@ -3285,14 +3307,6 @@ export default function MediaPaneBody() {
 
   const webTextDocumentContentState = (() => {
     if (fragments.length === 0) {
-      if (webFragmentsResource.status === "error") {
-        return {
-          status: "error" as const,
-          message: toFeedback(webFragmentsResource.error, {
-            fallback: "Failed to load document content.",
-          }).title,
-        };
-      }
       return {
         status: "empty" as const,
         message: "No content available for this media.",
@@ -3375,7 +3389,12 @@ export default function MediaPaneBody() {
         primaryWidth: { kind: "workspace" },
       });
     };
-  }, [isMobileViewport, isPdf, pdfIntrinsicWidthPx, setPaneLayout]);
+  }, [
+    isMobileViewport,
+    isPdf,
+    pdfIntrinsicWidthPx,
+    setPaneLayout,
+  ]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
   // Shift+Esc returns focus mode to off.
@@ -3423,7 +3442,12 @@ export default function MediaPaneBody() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [clearTarget, readerProfile.focus_mode, saveReaderProfile, targetStatus]);
+  }, [
+    clearTarget,
+    readerProfile.focus_mode,
+    saveReaderProfile,
+    targetStatus,
+  ]);
 
   // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
   useEffect(() => {
@@ -3722,7 +3746,7 @@ export default function MediaPaneBody() {
           <Pill tone="warning">Reconnecting...</Pill>
         ) : null}
         {media &&
-        canReadMediaDocument(media) &&
+        media.processing_status === "ready_for_reading" &&
         media.failure_stage === "metadata" ? (
           media.capabilities?.can_retry_metadata ? (
             <button
@@ -3820,7 +3844,8 @@ export default function MediaPaneBody() {
       readerOptions.push({
         id: "show-highlights",
         label: "Show highlights",
-        onSelect: () => requestSecondarySurface?.("reader-highlights"),
+        onSelect: () =>
+          requestSecondarySurface?.("reader-highlights"),
       });
     }
 
@@ -3837,9 +3862,7 @@ export default function MediaPaneBody() {
       readerOptions.push({
         id: "reader-theme-dark",
         label:
-          readerProfile.theme === "dark"
-            ? "Dark theme (current)"
-            : "Dark theme",
+          readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
         disabled: readerProfile.theme === "dark",
         onSelect: () => updateTheme("dark"),
       });
@@ -4078,7 +4101,9 @@ export default function MediaPaneBody() {
           role="toolbar"
           aria-label="Article controls"
         >
-          <div className={styles.mediaToolbarRow}>{contentsToolbarButton}</div>
+          <div className={styles.mediaToolbarRow}>
+            {contentsToolbarButton}
+          </div>
         </div>
       ) : null,
     [
@@ -4218,9 +4243,7 @@ export default function MediaPaneBody() {
         highlight,
         highlight.anchor,
         isTranscriptMedia
-          ? (fragments.find(
-              (item) => item.id === highlight.anchor.fragment_id,
-            ) ?? null)
+          ? (fragments.find((item) => item.id === highlight.anchor.fragment_id) ?? null)
           : null,
       ),
     );
@@ -4288,7 +4311,9 @@ export default function MediaPaneBody() {
     const start = activeTextStartOffset / totalTextLength;
     const end =
       (activeTextStartOffset +
-        (activeContent ? canonicalCpLength(activeContent.canonicalText) : 0)) /
+        (activeContent
+          ? canonicalCpLength(activeContent.canonicalText)
+          : 0)) /
       totalTextLength;
     return { start, end };
   }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
@@ -4332,8 +4357,6 @@ export default function MediaPaneBody() {
             ...selector,
           },
           snippet: highlight.exact,
-          sourceVersion:
-            highlight.source_version ?? `highlight:${highlight.id}`,
           highlightBehavior: "pulse",
           focusBehavior: "scroll_into_view",
         });
@@ -4354,8 +4377,6 @@ export default function MediaPaneBody() {
               text_quote_selector: selector,
             },
             snippet: highlight.exact,
-            sourceVersion:
-              highlight.source_version ?? `highlight:${highlight.id}`,
             highlightBehavior: "pulse",
             focusBehavior: "scroll_into_view",
           }
@@ -4371,8 +4392,6 @@ export default function MediaPaneBody() {
               text_quote_selector: selector,
             },
             snippet: highlight.exact,
-            sourceVersion:
-              highlight.source_version ?? `highlight:${highlight.id}`,
             highlightBehavior: "pulse",
             focusBehavior: "scroll_into_view",
           };
@@ -4550,9 +4569,7 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const readerSecondarySurfaces = useMemo<
-    PaneSecondarySurfacePublication[]
-  >(() => {
+  const readerSecondarySurfaces = useMemo<PaneSecondarySurfacePublication[]>(() => {
     const surfaces: PaneSecondarySurfacePublication[] = [];
     if (showHighlightsPane) {
       surfaces.push({
@@ -4959,6 +4976,7 @@ export default function MediaPaneBody() {
             />
           )}
         </div>
+
       </div>
 
       {!isPdf &&
@@ -4985,8 +5003,7 @@ export default function MediaPaneBody() {
               media?.capabilities?.can_quote
                 ? async () => {
                     const highlight = await handleCreateHighlight("yellow");
-                    if (highlight)
-                      quoteHighlightToExtantChat(highlight.id, highlight);
+                    if (highlight) quoteHighlightToExtantChat(highlight.id, highlight);
                   }
                 : undefined
             }

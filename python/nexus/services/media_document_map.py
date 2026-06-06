@@ -43,7 +43,6 @@ class DocumentMapSection:
     read_uri: str  # fragment:<id> | page_range:<media>:<a>-<b>
     preview: str
     ordinal: int = 0
-    source_version: str | None = None
     fragment_id: UUID | None = None
     page_start: int | None = None
     page_end: int | None = None
@@ -103,8 +102,6 @@ def get_media_document_map_for_viewer(
         str(row[3]) if row[3] is not None else None,
         str(row[4]) if row[4] is not None else None,
     ):
-        return None
-    if kind in ("podcast_episode", "video") and _active_transcript_version(db, media_id) is None:
         return None
     if kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
@@ -211,9 +208,6 @@ def load_media_document_summary(
             word_count=int(metrics[0] or 0) if metrics is not None else None,
         )
     if kind in ("podcast_episode", "video"):
-        version_id = _active_transcript_version(db, media_id)
-        if version_id is None:
-            return None
         metrics = db.execute(
             text(
                 """
@@ -225,10 +219,10 @@ def load_media_document_summary(
                            END
                        ), 0) AS word_count
                 FROM fragments
-                WHERE media_id = :id AND transcript_version_id = :version_id
+                WHERE media_id = :id
                 """
             ),
-            {"id": media_id, "version_id": version_id},
+            {"id": media_id},
         ).fetchone()
         if metrics is None:
             return None
@@ -268,12 +262,9 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
             return None
         body = str(row[2] or "")
     elif kind in ("web_article", "epub"):
-        body = _join_fragments(db, media_id, transcript_version_id=None)
+        body = _join_fragments(db, media_id)
     elif kind in ("podcast_episode", "video"):
-        version_id = _active_transcript_version(db, media_id)
-        if version_id is None:
-            return None
-        body = _join_fragments(db, media_id, transcript_version_id=version_id)
+        body = _join_fragments(db, media_id)
     else:
         raise AssertionError(f"Unhandled media kind for full read: {kind}")
     return DocumentRead(media_id=media_id, kind=kind, title=title, body=body, char_count=len(body))
@@ -339,7 +330,6 @@ def _heading_sections(
                 section_kind="heading",
                 read_uri=f"fragment:{nav_section.fragment_id}",
                 preview=previews.get(nav_section.fragment_id, ""),
-                source_version=nav_section.source_version,
                 fragment_id=nav_section.fragment_id,
             )
         )
@@ -396,9 +386,6 @@ def _page_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
 
 
 def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection]:
-    version_id = _active_transcript_version(db, media_id)
-    if version_id is None:
-        return []
     chapters: list[tuple[str, int, int | None]] = [
         (str(row[0]), int(row[1]), int(row[2]) if row[2] is not None else None)
         for row in db.execute(
@@ -418,11 +405,11 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection
             """
             SELECT id, canonical_text, t_start_ms, t_end_ms
             FROM fragments
-            WHERE media_id = :id AND transcript_version_id = :version_id
+            WHERE media_id = :id
             ORDER BY t_start_ms ASC NULLS LAST, idx ASC
             """
         ),
-        {"id": media_id, "version_id": version_id},
+        {"id": media_id},
     ).fetchall()
     sections: list[DocumentMapSection] = []
     for row in fragments:
@@ -446,36 +433,18 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[DocumentMapSection
 # --- shared helpers --------------------------------------------------------------
 
 
-def _active_transcript_version(db: Session, media_id: UUID) -> UUID | None:
-    return db.scalar(
+def _join_fragments(db: Session, media_id: UUID) -> str:
+    rows = db.execute(
         text(
             """
-            SELECT id
-            FROM podcast_transcript_versions
-            WHERE media_id = :id AND is_active
+            SELECT canonical_text
+            FROM fragments
+            WHERE media_id = :id
+            ORDER BY t_start_ms ASC NULLS LAST, idx ASC
             """
         ),
         {"id": media_id},
-    )
-
-
-def _join_fragments(db: Session, media_id: UUID, *, transcript_version_id: UUID | None) -> str:
-    if transcript_version_id is None:
-        rows = db.execute(
-            text("SELECT canonical_text FROM fragments WHERE media_id = :id ORDER BY idx ASC"),
-            {"id": media_id},
-        ).fetchall()
-    else:
-        rows = db.execute(
-            text(
-                """
-                SELECT canonical_text FROM fragments
-                WHERE media_id = :id AND transcript_version_id = :version_id
-                ORDER BY t_start_ms ASC NULLS LAST, idx ASC
-                """
-            ),
-            {"id": media_id, "version_id": transcript_version_id},
-        ).fetchall()
+    ).fetchall()
     return "\n\n".join(str(row[0] or "") for row in rows)
 
 

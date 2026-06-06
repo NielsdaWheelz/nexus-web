@@ -1,8 +1,8 @@
-"""Image proxy service: in-memory LRU cache + ETag/conditional-GET over the validation core.
+"""Image proxy service: in-memory LRU cache + conditional-GET over the validation core.
 
 Owns only the proxy-specific concerns:
 - In-memory LRU cache with byte budget, keyed by normalized URL
-- ETag computation and conditional-GET (If-None-Match) handling
+- Opaque ETag generation and conditional-GET (If-None-Match) handling
 
 SSRF/redirect/decode validation lives in nexus.services.image_validation.
 
@@ -12,10 +12,10 @@ Current endpoint contract:
 - 64 entry cache with 128MB byte budget
 """
 
-import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
+from time import time_ns
 
 from nexus.logging import get_logger
 from nexus.services.image_validation import (
@@ -152,9 +152,8 @@ def get_cache() -> ImageCache:
 
 
 def compute_etag(data: bytes) -> str:
-    """Compute ETag from image data as quoted SHA256."""
-    hash_hex = hashlib.sha256(data).hexdigest()
-    return f'"{hash_hex}"'
+    """Build an opaque cache validator without deriving identity from image bytes."""
+    return f'"img-{len(data)}-{time_ns()}"'
 
 
 def etags_match(if_none_match: str, cached_etag: str) -> bool:

@@ -351,7 +351,7 @@ class TestCreatePdfHighlight:
             row = session.execute(
                 text("""
                     SELECT plain_text_match_status, plain_text_start_offset,
-                           plain_text_end_offset, geometry_fingerprint
+                           plain_text_end_offset
                     FROM highlight_pdf_anchors
                     WHERE highlight_id = :id
                 """),
@@ -361,7 +361,6 @@ class TestCreatePdfHighlight:
             assert row[0] == "unique"
             assert row[1] is not None
             assert row[2] is not None
-            assert row[3] is not None and len(row[3]) == 64
 
 
 # ---------------------------------------------------------------------------
@@ -985,12 +984,10 @@ class TestGenericPdfHighlightCoverage:
         linked_notes = get_resp.json()["data"]["linked_note_blocks"]
         assert linked_notes[0]["note_block_id"] == note_id
         assert linked_notes[0]["body_text"] == "My note"
-        assert linked_notes[0]["revision"] == note_resp.json()["data"]["revision"]
+        assert "revision" not in linked_notes[0]
 
-        del_note = auth_client.request(
-            "DELETE",
+        del_note = auth_client.delete(
             f"/notes/blocks/{note_id}",
             headers=auth_headers(user_id),
-            json={"base_revision": note_resp.json()["data"]["revision"]},
         )
         assert del_note.status_code == 204

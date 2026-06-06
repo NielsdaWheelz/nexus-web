@@ -46,14 +46,12 @@ export type RetrievalLocator =
   | {
       type: "audio_time_range" | "video_time_range";
       media_id: string;
-      transcript_version_id?: string | null;
       t_start_ms: number;
       t_end_ms: number;
     }
   | {
       type: "transcript_time_range";
       media_id: string;
-      transcript_version_id?: string | null;
       t_start_ms: number;
       t_end_ms: number;
       text_quote_selector?: QuoteSelector | null;
@@ -180,14 +178,12 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         hasOnlyKeys(value, [
           "type",
           "media_id",
-          "transcript_version_id",
           "t_start_ms",
           "t_end_ms",
           "text_quote_selector",
         ]) &&
         typeof value.media_id === "string" &&
         isValidTimeRange(value) &&
-        isOptionalString(value.transcript_version_id) &&
         isOptionalQuoteSelector(value.text_quote_selector)
       );
     case "audio_time_range":
@@ -196,13 +192,11 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         hasOnlyKeys(value, [
           "type",
           "media_id",
-          "transcript_version_id",
           "t_start_ms",
           "t_end_ms",
         ]) &&
         typeof value.media_id === "string" &&
-        isValidTimeRange(value) &&
-        isOptionalString(value.transcript_version_id)
+        isValidTimeRange(value)
       );
     case "note_block_offsets":
       return (

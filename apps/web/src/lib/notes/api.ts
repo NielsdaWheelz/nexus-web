@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/api/client";
 import { noteBlockResource, notePagesResource } from "@/lib/api/resource";
+import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { todayLocalDate } from "@/lib/localDate";
 import type { ObjectRef } from "@/lib/objectRefs";
 import { isRecord } from "@/lib/validation";
@@ -33,7 +34,6 @@ export interface NoteBlock {
   bodyMarkdown: string;
   bodyText: string;
   collapsed: boolean;
-  revision: number;
   children: NoteBlock[];
   createdAt?: string;
   updatedAt?: string;
@@ -43,7 +43,6 @@ export interface NotePageSummary {
   id: string;
   title: string;
   description: string | null;
-  revision: number;
   updatedAt?: string;
 }
 
@@ -79,21 +78,14 @@ export interface SaveNotePageDocumentBlock {
   blockKind: NoteBlockKind;
   bodyPmJson: Record<string, unknown>;
   collapsed: boolean;
-  baseRevision: number | null;
-}
-
-export interface SaveNotePageDocumentDeletedBlock {
-  id: string;
-  baseRevision: number;
 }
 
 export interface SaveNotePageDocumentInput {
   clientMutationId: string;
-  basePageRevision: number;
   focusBlockId?: string | null;
   topLevelParentBlockId?: string | null;
   blocks: SaveNotePageDocumentBlock[];
-  deletedBlocks: SaveNotePageDocumentDeletedBlock[];
+  deletedBlocks: string[];
 }
 
 export interface SaveNotePageDocumentResult {
@@ -124,6 +116,7 @@ function normalizeBlockKind(value: unknown): NoteBlockKind {
 }
 
 export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
+  assertNoTopLevelLegacyArtifactIdentityKey(raw, "note block");
   return {
     id: String(raw.id ?? ""),
     pageId: String(raw.pageId ?? raw.page_id ?? ""),
@@ -144,7 +137,6 @@ export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
     bodyMarkdown: String(raw.bodyMarkdown ?? raw.body_markdown ?? ""),
     bodyText: String(raw.bodyText ?? raw.body_text ?? ""),
     collapsed: Boolean(raw.collapsed),
-    revision: requiredNumber(raw.revision, "note block revision"),
     children: Array.isArray(raw.children)
       ? raw.children.map((child) =>
           normalizeBlock(requiredRecord(child, "note block child"))
@@ -166,6 +158,7 @@ export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
 }
 
 export function normalizePageSummary(raw: Record<string, unknown>): NotePageSummary {
+  assertNoTopLevelLegacyArtifactIdentityKey(raw, "note page");
   return {
     id: String(raw.id ?? ""),
     title: String(raw.title ?? "Untitled"),
@@ -173,7 +166,6 @@ export function normalizePageSummary(raw: Record<string, unknown>): NotePageSumm
       typeof raw.description === "string" && raw.description.trim()
         ? raw.description
         : null,
-    revision: requiredNumber(raw.revision, "note page revision"),
     updatedAt:
       typeof raw.updatedAt === "string"
         ? raw.updatedAt
@@ -192,15 +184,6 @@ function normalizePage(raw: Record<string, unknown>): NotePage {
         )
       : [],
   };
-}
-
-function requiredNumber(value: unknown, label: string): number {
-  const numberValue =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(numberValue)) {
-    throw new Error(`Notes API response is missing ${label}`);
-  }
-  return numberValue;
 }
 
 function requiredString(value: unknown, label: string): string {
@@ -294,7 +277,6 @@ export async function saveNotePageDocument(
       method: "PATCH",
       body: JSON.stringify({
         client_mutation_id: input.clientMutationId,
-        base_page_revision: input.basePageRevision,
         focus_block_id: input.focusBlockId ?? null,
         top_level_parent_block_id: input.topLevelParentBlockId ?? null,
         blocks: input.blocks.map((block) => ({
@@ -305,12 +287,8 @@ export async function saveNotePageDocument(
           block_kind: block.blockKind,
           body_pm_json: block.bodyPmJson,
           collapsed: block.collapsed,
-          base_revision: block.baseRevision ?? null,
         })),
-        deleted_blocks: input.deletedBlocks.map((block) => ({
-          id: block.id,
-          base_revision: block.baseRevision,
-        })),
+        deleted_blocks: input.deletedBlocks,
       }),
     }
   );
@@ -365,7 +343,6 @@ export async function createNoteBlock(input: {
 export async function updateNoteBlock(
   blockId: string,
   updates: {
-    baseRevision: number;
     bodyPmJson?: Record<string, unknown>;
     blockKind?: NoteBlockKind;
     collapsed?: boolean;
@@ -374,7 +351,6 @@ export async function updateNoteBlock(
   const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
     method: "PATCH",
     body: JSON.stringify({
-      base_revision: updates.baseRevision,
       body_pm_json: updates.bodyPmJson,
       block_kind: updates.blockKind,
       collapsed: updates.collapsed,
@@ -383,12 +359,8 @@ export async function updateNoteBlock(
   return normalizeBlock(requiredRecord(response.data, "note block"));
 }
 
-export async function deleteNoteBlock(
-  blockId: string,
-  input: { baseRevision: number }
-): Promise<void> {
+export async function deleteNoteBlock(blockId: string): Promise<void> {
   await apiFetch(`/api/notes/blocks/${blockId}`, {
     method: "DELETE",
-    body: JSON.stringify({ base_revision: input.baseRevision }),
   });
 }

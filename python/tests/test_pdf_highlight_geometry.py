@@ -1,4 +1,4 @@
-"""Pure unit tests for PDF geometry canonicalization, fingerprints, and sort keys."""
+"""Pure unit tests for PDF geometry canonicalization, duplicate locks, and sort keys."""
 
 from decimal import Decimal
 from uuid import uuid4
@@ -6,7 +6,6 @@ from uuid import uuid4
 import pytest
 
 from nexus.services.pdf_highlight_geometry import (
-    GEOMETRY_VERSION,
     GeometryValidationError,
     canonicalize_geometry,
     derive_duplicate_lock_key,
@@ -21,20 +20,19 @@ def _quad(x1, y1, x2, y2, x3, y3, x4, y4):
 
 
 class TestCanonicalizeGeometry:
-    """Geometry canonicalization fingerprints equivalent inputs deterministically."""
+    """Geometry canonicalization normalizes equivalent inputs deterministically."""
 
-    def test_equivalent_inputs_produce_same_fingerprint(self):
+    def test_equivalent_inputs_produce_same_canonical_quads(self):
         q1 = [_quad(10.0001, 20.0001, 30.0001, 20.0001, 30.0001, 32.0001, 10.0001, 32.0001)]
         q2 = [_quad(10.0004, 20.0004, 30.0004, 20.0004, 30.0004, 32.0004, 10.0004, 32.0004)]
 
         r1 = canonicalize_geometry(1, q1)
         r2 = canonicalize_geometry(1, q2)
 
-        assert r1.fingerprint == r2.fingerprint
-        assert r1.geometry_version == GEOMETRY_VERSION == 1
+        assert r1.page_number == r2.page_number == 1
         assert r1.quads == r2.quads
 
-    def test_different_quad_order_same_fingerprint(self):
+    def test_different_quad_order_same_canonical_quads(self):
         """Equivalent quad inputs are order-invariant."""
         q_top = _quad(10, 10, 30, 10, 30, 20, 10, 20)
         q_bot = _quad(10, 50, 30, 50, 30, 60, 10, 60)
@@ -42,17 +40,16 @@ class TestCanonicalizeGeometry:
         r1 = canonicalize_geometry(1, [q_top, q_bot])
         r2 = canonicalize_geometry(1, [q_bot, q_top])
 
-        assert r1.fingerprint == r2.fingerprint
         assert r1.quads == r2.quads
 
-    def test_different_vertex_order_same_fingerprint(self):
+    def test_different_vertex_order_same_canonical_quads(self):
         q1 = [_quad(10, 20, 30, 20, 30, 40, 10, 40)]
         q2 = [_quad(30, 40, 10, 40, 10, 20, 30, 20)]  # reversed vertices
 
         r1 = canonicalize_geometry(1, q1)
         r2 = canonicalize_geometry(1, q2)
 
-        assert r1.fingerprint == r2.fingerprint
+        assert r1.quads == r2.quads
 
     def test_quantization_precision(self):
         q = [_quad(10.00049, 20.00049, 30.00049, 20.00049, 30.00049, 32.00049, 10.00049, 32.00049)]
@@ -62,15 +59,15 @@ class TestCanonicalizeGeometry:
         assert cq.x1 == Decimal("10.000")
         assert cq.y1 == Decimal("20.000")
 
-    def test_material_geometry_change_produces_different_fingerprint(self):
-        """Material geometry changes produce different fingerprints."""
+    def test_material_geometry_change_produces_different_canonical_quads(self):
+        """Material geometry changes produce different canonical quads."""
         q1 = [_quad(10, 20, 30, 20, 30, 40, 10, 40)]
         q2 = [_quad(10, 20, 50, 20, 50, 40, 10, 40)]
 
         r1 = canonicalize_geometry(1, q1)
         r2 = canonicalize_geometry(1, q2)
 
-        assert r1.fingerprint != r2.fingerprint
+        assert r1.quads != r2.quads
 
 
 class TestDeterministicSortKeys:
@@ -124,19 +121,14 @@ class TestDegeneracyRejection:
             canonicalize_geometry(0, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
 
 
-class TestFingerprintStability:
-    """Geometry fingerprints are stable SHA-256 hex values."""
+class TestCanonicalGeometryStability:
+    """Canonical geometry is stable across runs."""
 
-    def test_fingerprint_is_64_char_hex(self):
-        r = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
-        assert len(r.fingerprint) == 64
-        assert all(c in "0123456789abcdef" for c in r.fingerprint)
-
-    def test_fingerprint_stable_across_runs(self):
+    def test_canonical_geometry_stable_across_runs(self):
         q = [_quad(10, 20, 30, 20, 30, 40, 10, 40)]
         r1 = canonicalize_geometry(1, q)
         r2 = canonicalize_geometry(1, q)
-        assert r1.fingerprint == r2.fingerprint
+        assert r1 == r2
 
 
 class TestDuplicateLockKey:
@@ -144,24 +136,28 @@ class TestDuplicateLockKey:
 
     def test_deterministic(self):
         uid, mid = uuid4(), uuid4()
-        k1 = derive_duplicate_lock_key(uid, mid, 1, 1, "abc123")
-        k2 = derive_duplicate_lock_key(uid, mid, 1, 1, "abc123")
+        canonical = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
+        k1 = derive_duplicate_lock_key(uid, mid, canonical.page_number, canonical.quads)
+        k2 = derive_duplicate_lock_key(uid, mid, canonical.page_number, canonical.quads)
         assert k1 == k2
 
     def test_different_user_different_key(self):
         mid = uuid4()
-        k1 = derive_duplicate_lock_key(uuid4(), mid, 1, 1, "abc123")
-        k2 = derive_duplicate_lock_key(uuid4(), mid, 1, 1, "abc123")
+        canonical = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
+        k1 = derive_duplicate_lock_key(uuid4(), mid, canonical.page_number, canonical.quads)
+        k2 = derive_duplicate_lock_key(uuid4(), mid, canonical.page_number, canonical.quads)
         assert k1 != k2
 
     def test_different_media_different_key(self):
         uid = uuid4()
-        k1 = derive_duplicate_lock_key(uid, uuid4(), 1, 1, "abc123")
-        k2 = derive_duplicate_lock_key(uid, uuid4(), 1, 1, "abc123")
+        canonical = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
+        k1 = derive_duplicate_lock_key(uid, uuid4(), canonical.page_number, canonical.quads)
+        k2 = derive_duplicate_lock_key(uid, uuid4(), canonical.page_number, canonical.quads)
         assert k1 != k2
 
     def test_key_is_int(self):
-        k = derive_duplicate_lock_key(uuid4(), uuid4(), 1, 1, "abc")
+        canonical = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
+        k = derive_duplicate_lock_key(uuid4(), uuid4(), canonical.page_number, canonical.quads)
         assert isinstance(k, int)
 
 

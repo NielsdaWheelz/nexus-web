@@ -7,7 +7,6 @@ behind parser-agnostic typed outcomes.
 Does NOT own lifecycle transitions or background-job dispatch.
 """
 
-import hashlib
 import re
 import time
 from dataclasses import dataclass, field
@@ -25,9 +24,6 @@ from nexus.logging import get_logger
 from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
-
-TEXT_EXTRACT_VERSION = 1
-
 
 # ---------------------------------------------------------------------------
 # Parser-agnostic typed outcomes
@@ -53,9 +49,7 @@ class PdfExtractionResult:
     plain_text: str = ""
     page_spans: list[PdfPageSpan] = field(default_factory=list)
     has_text: bool = False
-    source_fingerprint: str | None = None
     source_byte_length: int = 0
-    text_extract_version: int = TEXT_EXTRACT_VERSION
     extraction_method: str = "digital_text"
     ocr_engine: str | None = None
     ocr_engine_version: str | None = None
@@ -217,8 +211,6 @@ def _extract_with_pymupdf(
             terminal=True,
         )
 
-    source_fingerprint = f"sha256:{hashlib.sha256(pdf_bytes).hexdigest()}"
-
     # Read document metadata
     raw_meta = doc.metadata or {}
     pdf_title = (raw_meta.get("title") or "").strip() or None
@@ -283,7 +275,6 @@ def _extract_with_pymupdf(
                     page_rotations,
                 ),
                 has_text=False,
-                source_fingerprint=source_fingerprint,
                 source_byte_length=len(pdf_bytes),
                 pdf_title=pdf_title,
                 pdf_author=pdf_author,
@@ -305,7 +296,6 @@ def _extract_with_pymupdf(
             plain_text=normalized,
             page_spans=page_spans,
             has_text=True,
-            source_fingerprint=source_fingerprint,
             source_byte_length=len(pdf_bytes),
             pdf_title=pdf_title,
             pdf_author=pdf_author,
@@ -532,7 +522,6 @@ def extract_pdf_artifacts(
                     page_number=span.page_number,
                     start_offset=span.start_offset,
                     end_offset=span.end_offset,
-                    text_extract_version=TEXT_EXTRACT_VERSION,
                     page_label=span.page_label,
                     page_width=span.page_width,
                     page_height=span.page_height,
@@ -557,8 +546,8 @@ def extract_pdf_artifacts(
 def invalidate_pdf_quote_match_metadata(db: Session, media_id: UUID) -> int:
     """Reset PDF quote-match metadata for all highlights on a media.
 
-    Sets plain_text_match_status='pending', clears offsets/version,
-    and clears prefix/suffix on the parent highlights row.
+    Sets plain_text_match_status='pending', clears offsets, and clears
+    prefix/suffix on the parent highlights row.
     Preserves geometry and exact text.
 
     Returns the count of invalidated highlight_pdf_anchors rows.
@@ -567,7 +556,6 @@ def invalidate_pdf_quote_match_metadata(db: Session, media_id: UUID) -> int:
         text("""
             UPDATE highlight_pdf_anchors
             SET plain_text_match_status = 'pending',
-                plain_text_match_version = NULL,
                 plain_text_start_offset = NULL,
                 plain_text_end_offset = NULL
             WHERE media_id = :media_id

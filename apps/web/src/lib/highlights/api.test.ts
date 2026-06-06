@@ -37,7 +37,6 @@ function highlight(
       body_pm_json: { type: "paragraph" },
       body_markdown: noteId,
       body_text: noteId,
-      revision: 1,
     })),
   };
 }
@@ -50,7 +49,6 @@ describe("media highlight note summary helpers", () => {
       body_pm_json: { type: "paragraph", content: [{ type: "text", text: "updated" }] },
       body_markdown: "updated",
       body_text: "updated",
-      revision: 2,
     });
 
     expect(next).not.toBe(original);
@@ -63,7 +61,6 @@ describe("media highlight note summary helpers", () => {
         },
         body_markdown: "updated",
         body_text: "updated",
-        revision: 2,
       },
     ]);
     expect(next[1]).toBe(original[1]);
@@ -76,7 +73,6 @@ describe("media highlight note summary helpers", () => {
       body_pm_json: { type: "paragraph" },
       body_markdown: "created",
       body_text: "created",
-      revision: 1,
     });
 
     expect(next[0]?.linked_note_blocks?.map((note) => note.note_block_id)).toEqual([

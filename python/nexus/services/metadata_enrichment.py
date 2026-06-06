@@ -158,11 +158,7 @@ def get_content_sample(db: Session, media: Media) -> str:
             FROM content_chunks cc
             JOIN media_content_index_states mcis
               ON mcis.media_id = cc.media_id
-             AND mcis.active_run_id = cc.index_run_id
-            JOIN content_index_runs cir
-              ON cir.id = cc.index_run_id
-             AND cir.state = 'ready'
-             AND cir.deactivated_at IS NULL
+             AND mcis.status = 'ready'
             WHERE cc.media_id = :media_id
               AND btrim(cc.chunk_text) <> ''
             ORDER BY cc.chunk_idx ASC
@@ -183,11 +179,7 @@ def get_content_sample(db: Session, media: Media) -> str:
             FROM content_blocks cb
             JOIN media_content_index_states mcis
               ON mcis.media_id = cb.media_id
-             AND mcis.active_run_id = cb.index_run_id
-            JOIN content_index_runs cir
-              ON cir.id = cb.index_run_id
-             AND cir.state = 'ready'
-             AND cir.deactivated_at IS NULL
+             AND mcis.status = 'ready'
             WHERE cb.media_id = :media_id
               AND btrim(cb.canonical_text) <> ''
             ORDER BY cb.block_idx ASC

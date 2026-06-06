@@ -276,7 +276,6 @@ class TestExtensionSessions:
             assert media.title == "private-report.pdf"
             assert media.requested_url == "https://example.com/private/report.pdf"
             assert media.canonical_source_url == "https://example.com/private/report.pdf"
-            assert media.file_sha256 is not None
             assert media.media_file is not None
             assert media.media_file.content_type == "application/pdf"
             assert media.media_file.size_bytes == len(PDF_CONTENT)

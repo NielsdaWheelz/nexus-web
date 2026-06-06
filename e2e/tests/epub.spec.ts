@@ -43,7 +43,6 @@ interface HighlightOut {
   linked_note_blocks?: Array<{
     note_block_id: string;
     body_text: string;
-    revision: number;
   }>;
 }
 
@@ -61,13 +60,6 @@ function paragraphPmJsonFromText(text: string) {
   return text
     ? { type: "paragraph", content: [{ type: "text", text }] }
     : { type: "paragraph" };
-}
-
-async function noteBlockRevision(page: Page, noteBlockId: string): Promise<number> {
-  const response = await page.request.get(`/api/notes/blocks/${noteBlockId}`);
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as { data: { revision: number } };
-  return payload.data.revision;
 }
 
 async function upsertHighlightNote(
@@ -109,10 +101,8 @@ async function upsertHighlightNote(
   }
 
   const [primaryNoteBlockId, ...duplicateNoteBlockIds] = noteBlockIds;
-  const primaryRevision = await noteBlockRevision(page, primaryNoteBlockId);
   const updateResponse = await page.request.patch(`/api/notes/blocks/${primaryNoteBlockId}`, {
     data: {
-      base_revision: primaryRevision,
       body_pm_json: paragraphPmJsonFromText(body),
     },
     headers: stateChangingApiHeaders(),
@@ -120,9 +110,7 @@ async function upsertHighlightNote(
   expect(updateResponse.ok()).toBeTruthy();
 
   for (const noteBlockId of duplicateNoteBlockIds) {
-    const revision = await noteBlockRevision(page, noteBlockId);
     const deleteResponse = await page.request.delete(`/api/notes/blocks/${noteBlockId}`, {
-      data: { base_revision: revision },
       headers: stateChangingApiHeaders(),
     });
     expect(deleteResponse.ok()).toBeTruthy();

@@ -16,7 +16,6 @@ Exit codes from Node script:
     12 - Readability extraction failed
 """
 
-import hashlib
 import json
 import os
 import signal
@@ -247,12 +246,10 @@ def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestR
         )
 
     payload = content_html.encode("utf-8")
-    if len(payload) != 1_019 or hashlib.sha256(payload).hexdigest() != (
-        "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a"
-    ):
+    if len(payload) != 1_019:
         return IngestError(
             error_code=ApiErrorCode.E_INGEST_FAILED,
-            message="Web article fixture hash mismatch",
+            message="Web article fixture size mismatch",
         )
 
     return IngestResult(
@@ -267,7 +264,6 @@ def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestR
         provider_fixture={
             "path": str(path),
             "byte_length": len(payload),
-            "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
             "source_url": requested_url,
         },
     )

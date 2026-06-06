@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -492,9 +491,8 @@ def _normalize_optional_opml_url(url: str | None) -> str | None:
     return normalize_url_for_display(url)
 
 
-def _stable_opml_provider_podcast_id(normalized_feed_url: str) -> str:
-    digest = hashlib.sha1(normalized_feed_url.encode("utf-8")).hexdigest()
-    return f"opml-{digest}"
+def _opml_provider_podcast_id(normalized_feed_url: str) -> str:
+    return f"opml-feed-url={normalized_feed_url}"
 
 
 def _build_opml_subscribe_request(
@@ -534,8 +532,7 @@ def _build_opml_subscribe_request(
     )
 
     return PodcastSubscribeRequest(
-        provider_podcast_id=provider_podcast_id
-        or _stable_opml_provider_podcast_id(normalized_feed_url),
+        provider_podcast_id=provider_podcast_id or _opml_provider_podcast_id(normalized_feed_url),
         title=provider_title or opml_title or normalized_feed_url,
         contributors=[
             {

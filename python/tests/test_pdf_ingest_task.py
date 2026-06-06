@@ -127,7 +127,7 @@ class TestIngestPdfTask:
         state = db_session.execute(
             text(
                 """
-                SELECT status, active_run_id, latest_run_id
+                SELECT status
                 FROM media_content_index_states
                 WHERE media_id = :mid
                 """
@@ -135,21 +135,6 @@ class TestIngestPdfTask:
             {"mid": mid},
         ).one()
         assert state[0] == "ready"
-        assert state[1] == state[2]
-
-        snapshot = db_session.execute(
-            text(
-                """
-                SELECT artifact_kind, content_type, metadata
-                FROM source_snapshots
-                WHERE media_id = :mid
-                """
-            ),
-            {"mid": mid},
-        ).one()
-        assert snapshot[0] == "pdf_text"
-        assert snapshot[1] == "text/plain"
-        assert snapshot[2]["source_fingerprint"].startswith("sha256:")
 
         blocks = db_session.execute(
             text(
@@ -167,7 +152,6 @@ class TestIngestPdfTask:
         assert "Evidence indexing p1" in blocks[0][2]
         locator = blocks[0][3]
         selector = blocks[0][4]
-        assert locator["source_fingerprint"] == snapshot[2]["source_fingerprint"]
         assert locator["page_number"] == 1
         assert locator["physical_page_number"] == 1
         assert locator["page_text_start_offset"] == 0
@@ -305,9 +289,8 @@ class TestIngestPdfTask:
         state = db_session.execute(
             text(
                 """
-                SELECT mcis.status, mcis.status_reason, cir.state
+                SELECT mcis.status, mcis.status_reason
                 FROM media_content_index_states mcis
-                JOIN content_index_runs cir ON cir.id = mcis.latest_run_id
                 WHERE mcis.media_id = :mid
                 """
             ),
@@ -315,7 +298,6 @@ class TestIngestPdfTask:
         ).one()
         assert state[0] == "ocr_required"
         assert state[1] == "ocr_required"
-        assert state[2] == "ocr_required"
 
         block = db_session.execute(
             text(

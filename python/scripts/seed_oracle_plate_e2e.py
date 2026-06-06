@@ -7,9 +7,8 @@ prove the oracle-plate owned-asset cutover end to end (spec §16 "E2E CSP"):
 1) Ensures the bundled hermetic fixture plate exists in object storage by calling
    ``nexus.oracle.seed_objects.ensure_oracle_seed_objects`` (the same helper the
    prod boot path uses), so ``/api/oracle/plates/{id}`` can serve real bytes.
-2) Ensures a minimal Oracle corpus version + one corpus image whose
-   ``storage_key`` is the fixture's content-addressed key (sha256/byte_size/
-   content_type taken from ``nexus.oracle.seed_objects``).
+2) Ensures one corpus image whose ``storage_key`` is the fixture's stable
+   current key (byte_size/content_type taken from ``nexus.oracle.seed_objects``).
 3) Ensures one ``complete`` reading owned by the E2E user, with ``image_id`` set,
    so ``/oracle/{reading_id}`` first-paints the plate ``<Image>`` without running
    the model / SSE stream.
@@ -51,25 +50,19 @@ for key in (
 
 from nexus.db.models import (
     OracleCorpusImage,
-    OracleCorpusSetVersion,
     OracleReading,
 )
 from nexus.db.session import create_session_factory
 from nexus.oracle.seed_objects import (
     FIXTURE_BYTES,
     FIXTURE_CONTENT_TYPE,
-    FIXTURE_SHA256,
     FIXTURE_STORAGE_KEY,
     ensure_oracle_seed_objects,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.oracle_plates import oracle_plate_url
-from nexus.services.semantic_chunks import current_transcript_embedding_model
 from nexus.storage.client import get_storage_client
 
-# Deterministic identifiers keep the seed idempotent across reseeds.
-CORPUS_VERSION = "oracle-e2e-owned-plate"
-CORPUS_LABEL = "Oracle E2E owned-plate corpus"
 PLATE_ARTIST = "E2E Engraver"
 PLATE_WORK_TITLE = "The Owned Plate"
 PLATE_YEAR = "1860"
@@ -159,33 +152,13 @@ def _release_stale_e2e_user_email(db: Session, user_id: UUID, email: str) -> Non
     db.commit()
 
 
-def _ensure_corpus_version(db: Session) -> UUID:
-    version = db.scalar(
-        select(OracleCorpusSetVersion).where(OracleCorpusSetVersion.version == CORPUS_VERSION)
-    )
-    if version is not None:
-        return version.id
-    version = OracleCorpusSetVersion(
-        version=CORPUS_VERSION,
-        label=CORPUS_LABEL,
-        embedding_model=current_transcript_embedding_model(),
-    )
-    db.add(version)
-    db.flush()
-    return version.id
-
-
-def _ensure_corpus_image(db: Session, *, corpus_set_version_id: UUID) -> UUID:
+def _ensure_corpus_image(db: Session) -> UUID:
     image = db.scalar(
-        select(OracleCorpusImage).where(
-            OracleCorpusImage.corpus_set_version_id == corpus_set_version_id,
-            OracleCorpusImage.storage_key == FIXTURE_STORAGE_KEY,
-        )
+        select(OracleCorpusImage).where(OracleCorpusImage.storage_key == FIXTURE_STORAGE_KEY)
     )
     if image is not None:
         return image.id
     image = OracleCorpusImage(
-        corpus_set_version_id=corpus_set_version_id,
         source_repository="e2e-fixture",
         source_url="https://example.com/oracle-e2e-owned-plate.jpg",
         artist=PLATE_ARTIST,
@@ -197,7 +170,6 @@ def _ensure_corpus_image(db: Session, *, corpus_set_version_id: UUID) -> UUID:
         storage_key=FIXTURE_STORAGE_KEY,
         content_type=FIXTURE_CONTENT_TYPE,
         byte_size=FIXTURE_BYTES,
-        sha256=FIXTURE_SHA256,
         tags=["forest", "lamp"],
     )
     db.add(image)
@@ -209,7 +181,6 @@ def _ensure_complete_reading(
     db: Session,
     *,
     user_id: UUID,
-    corpus_set_version_id: UUID,
     image_id: UUID,
 ) -> UUID:
     """Insert (or reuse) one complete reading pinned to the owned-plate image."""
@@ -239,7 +210,6 @@ def _ensure_complete_reading(
     now = datetime.now(UTC)
     reading = OracleReading(
         user_id=user_id,
-        corpus_set_version_id=corpus_set_version_id,
         folio_number=next_folio,
         folio_motto=READING_FOLIO_MOTTO,
         folio_motto_gloss=READING_FOLIO_MOTTO_GLOSS,
@@ -247,7 +217,6 @@ def _ensure_complete_reading(
         argument_text=READING_ARGUMENT,
         question_text=READING_QUESTION,
         status="complete",
-        prompt_version="oracle-v3",
         image_id=image_id,
         started_at=now,
         completed_at=now,
@@ -303,13 +272,11 @@ def main() -> None:
     with session_factory() as db:
         _release_stale_e2e_user_email(db, user_id, E2E_USER_EMAIL)
         ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
-        corpus_set_version_id = _ensure_corpus_version(db)
-        image_id = _ensure_corpus_image(db, corpus_set_version_id=corpus_set_version_id)
+        image_id = _ensure_corpus_image(db)
         db.commit()
         reading_id = _ensure_complete_reading(
             db,
             user_id=user_id,
-            corpus_set_version_id=corpus_set_version_id,
             image_id=image_id,
         )
 

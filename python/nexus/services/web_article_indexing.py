@@ -34,7 +34,6 @@ def index_web_article_evidence(
             db,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment_id}",
             fragments=fragments,
             reason=reason,
             language=language,

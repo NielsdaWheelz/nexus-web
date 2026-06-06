@@ -76,7 +76,6 @@ export interface PdfHighlightOut {
     page_number: number;
     quads: PdfHighlightQuad[];
   };
-  source_version?: string;
   color: HighlightColor;
   exact: string;
   prefix: string;
@@ -91,7 +90,6 @@ export interface PdfHighlightOut {
     body_pm_json?: Record<string, unknown>;
     body_markdown?: string;
     body_text: string;
-    revision: number;
   }[];
 }
 

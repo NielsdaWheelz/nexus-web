@@ -1,12 +1,11 @@
-"""Pure deterministic PDF geometry canonicalization, fingerprinting, and sort-key derivation.
+"""Pure deterministic PDF geometry canonicalization, sort keys, and lock identity.
 
-Current geometry_version=1 contract:
+Current geometry contract:
 - Canonical page-space points (CropBox top-left origin, x-right/y-down, unrotated)
 - Axis-aligned bounding rectangle canonicalization per quad
 - 0.001 pt quantization (round-half-away-from-zero)
 - Deterministic sort order: top ASC, left ASC, bottom ASC, right ASC, original index ASC
-- SHA-256 lowercase hex geometry_fingerprint over canonical identity bytes
-- Stable namespaced int64 advisory-lock key derivation (no Python hash())
+- Stable namespaced int64 advisory-lock key derivation from canonical quads (no Python hash())
 
 Import boundary: stdlib only. No DB, logging, or service imports.
 """
@@ -17,12 +16,11 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
-GEOMETRY_VERSION = 1
 QUANTIZE_PRECISION = Decimal("0.001")
 MAX_QUADS = 512
 MAX_EXACT_CODEPOINTS = 2000
 
-_LOCK_NAMESPACE = b"pdf_dup_lock_v1:"
+_LOCK_NAMESPACE = b"pdf_dup_lock:"
 
 
 class GeometryValidationError(Exception):
@@ -70,10 +68,8 @@ class CanonicalQuad:
 class CanonicalGeometry:
     """Fully canonicalized PDF highlight geometry."""
 
-    geometry_version: int
     page_number: int
     quads: tuple[CanonicalQuad, ...]
-    fingerprint: str
     sort_top: Decimal
     sort_left: Decimal
     rect_count: int
@@ -131,18 +127,14 @@ def _quad_sort_key(quad: CanonicalQuad, original_idx: int) -> tuple:
     return (quad.top, quad.left, quad.bottom, quad.right, original_idx)
 
 
-def _canonical_identity_bytes(
-    geometry_version: int,
-    page_number: int,
-    quads: tuple[CanonicalQuad, ...],
-) -> bytes:
-    """Deterministic canonical byte serialization for fingerprinting.
+def _canonical_identity_bytes(page_number: int, quads: tuple[CanonicalQuad, ...]) -> bytes:
+    """Deterministic canonical byte serialization for lock identity.
 
-    Format: version(4B) + page(4B) + quad_count(4B) + [8 coords * 8B each per quad]
+    Format: page(4B) + quad_count(4B) + [8 coords * 8B each per quad]
     All integers are big-endian. Coordinates are IEEE 754 double.
     """
     parts = [
-        struct.pack(">III", geometry_version, page_number, len(quads)),
+        struct.pack(">II", page_number, len(quads)),
     ]
     for q in quads:
         parts.append(
@@ -165,14 +157,14 @@ def canonicalize_geometry(
     page_number: int,
     quads_input: list[dict],
 ) -> CanonicalGeometry:
-    """Canonicalize raw quad input into the current geometry_version=1 shape.
+    """Canonicalize raw quad input into the current geometry shape.
 
     Args:
         page_number: 1-based page number (caller validates against page_count).
         quads_input: List of dicts with x1..x4, y1..y4 float keys.
 
     Returns:
-        CanonicalGeometry with deterministic fingerprint and sort keys.
+        CanonicalGeometry with deterministic quads and sort keys.
 
     Raises:
         GeometryValidationError: For invalid/degenerate input.
@@ -208,16 +200,11 @@ def canonicalize_geometry(
     canonical_quads_with_idx.sort(key=lambda pair: _quad_sort_key(pair[0], pair[1]))
     sorted_quads = tuple(cq for cq, _ in canonical_quads_with_idx)
 
-    identity_bytes = _canonical_identity_bytes(GEOMETRY_VERSION, page_number, sorted_quads)
-    fingerprint = hashlib.sha256(identity_bytes).hexdigest()
-
     first = sorted_quads[0]
 
     return CanonicalGeometry(
-        geometry_version=GEOMETRY_VERSION,
         page_number=page_number,
         quads=sorted_quads,
-        fingerprint=fingerprint,
         sort_top=first.top,
         sort_left=first.left,
         rect_count=len(sorted_quads),
@@ -228,8 +215,7 @@ def derive_duplicate_lock_key(
     user_id: UUID,
     media_id: UUID,
     page_number: int,
-    geometry_version: int,
-    geometry_fingerprint: str,
+    quads: tuple[CanonicalQuad, ...],
 ) -> int:
     """Derive a stable namespaced int64 advisory-lock key for duplicate detection.
 
@@ -240,8 +226,7 @@ def derive_duplicate_lock_key(
         _LOCK_NAMESPACE
         + user_id.bytes
         + media_id.bytes
-        + struct.pack(">II", page_number, geometry_version)
-        + geometry_fingerprint.encode("ascii")
+        + _canonical_identity_bytes(page_number, quads)
     )
     digest = hashlib.sha256(identity).digest()
     raw = struct.unpack(">q", digest[:8])[0]

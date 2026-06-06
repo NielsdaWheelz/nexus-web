@@ -383,10 +383,9 @@ def _insert_ready_podcast_with_semantic_backlog(
     *,
     semantic_status: str,
     updated_seconds_ago: int,
-) -> tuple[UUID, UUID]:
+) -> UUID:
     media_id = uuid4()
     user_id = uuid4()
-    version_id = uuid4()
     updated_at = datetime.now(UTC) - timedelta(seconds=updated_seconds_ago)
 
     db.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -416,40 +415,6 @@ def _insert_ready_podcast_with_semantic_backlog(
             """
         ),
         {
-            "media_id": media_id,
-            "user_id": user_id,
-            "updated_at": updated_at,
-        },
-    )
-    db.execute(
-        text(
-            """
-            INSERT INTO podcast_transcript_versions (
-                id,
-                media_id,
-                version_no,
-                transcript_coverage,
-                is_active,
-                request_reason,
-                created_by_user_id,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :version_id,
-                :media_id,
-                1,
-                'full',
-                true,
-                'search',
-                :user_id,
-                :updated_at,
-                :updated_at
-            )
-            """
-        ),
-        {
-            "version_id": version_id,
             "media_id": media_id,
             "user_id": user_id,
             "updated_at": updated_at,
@@ -491,7 +456,6 @@ def _insert_ready_podcast_with_semantic_backlog(
         text(
             """
             INSERT INTO podcast_transcript_segments (
-                transcript_version_id,
                 media_id,
                 segment_idx,
                 canonical_text,
@@ -502,7 +466,6 @@ def _insert_ready_podcast_with_semantic_backlog(
             )
             VALUES
                 (
-                    :version_id,
                     :media_id,
                     0,
                     'semantic repair segment one',
@@ -512,7 +475,6 @@ def _insert_ready_podcast_with_semantic_backlog(
                     :updated_at
                 ),
                 (
-                    :version_id,
                     :media_id,
                     1,
                     'semantic repair segment two',
@@ -524,13 +486,12 @@ def _insert_ready_podcast_with_semantic_backlog(
             """
         ),
         {
-            "version_id": version_id,
             "media_id": media_id,
             "updated_at": updated_at,
         },
     )
     db.flush()
-    return media_id, version_id
+    return media_id
 
 
 def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str) -> UUID:
@@ -602,10 +563,9 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
                     media_id,
                     page_number,
                     start_offset,
-                    end_offset,
-                    text_extract_version
+                    end_offset
                 )
-                VALUES (:media_id, 1, 0, 34, 1)
+                VALUES (:media_id, 1, 0, 34)
                 """
             ),
             {"media_id": media_id},
@@ -623,58 +583,22 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
     return media_id
 
 
-def _mark_content_index_state_stale_indexing(db: Session, *, media_id: UUID) -> UUID:
+def _mark_content_index_state_stale_indexing(db: Session, *, media_id: UUID) -> None:
     started_at = datetime.now(UTC) - timedelta(hours=2)
-    run_id = db.execute(
-        text(
-            """
-            INSERT INTO content_index_runs (
-                media_id,
-                state,
-                source_version,
-                extractor_version,
-                chunker_version,
-                embedding_provider,
-                embedding_model,
-                embedding_version,
-                embedding_config_hash,
-                started_at,
-                created_at
-            )
-            VALUES (
-                :media_id,
-                'indexing',
-                'stale_source_v1',
-                'stale_extractor_v1',
-                'stale_chunker_v1',
-                'test',
-                'stale_model',
-                'stale_model',
-                'stale_config_hash',
-                :started_at,
-                :started_at
-            )
-            RETURNING id
-            """
-        ),
-        {"media_id": media_id, "started_at": started_at},
-    ).scalar_one()
     db.execute(
         text(
             """
             UPDATE media_content_index_states
             SET
-                latest_run_id = :run_id,
                 status = 'indexing',
                 status_reason = 'stale indexing test',
                 updated_at = :started_at
             WHERE media_id = :media_id
             """
         ),
-        {"media_id": media_id, "run_id": run_id, "started_at": started_at},
+        {"media_id": media_id, "started_at": started_at},
     )
     db.flush()
-    return run_id
 
 
 def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Session):
@@ -888,7 +812,7 @@ def test_reconciler_repairs_pending_document_content_index(db_session: Session, 
             """
             SELECT mcis.status, count(cc.id)
             FROM media_content_index_states mcis
-            JOIN content_chunks cc ON cc.index_run_id = mcis.active_run_id
+            JOIN content_chunks cc ON cc.media_id = mcis.media_id
             WHERE mcis.media_id = :media_id
             GROUP BY mcis.status
             """
@@ -902,7 +826,7 @@ def test_reconciler_repairs_pending_document_content_index(db_session: Session, 
 
 def test_reconciler_recovers_stale_indexing_document_content_index(db_session: Session):
     media_id = _insert_ready_document_with_pending_content_index(db_session, kind="web_article")
-    stale_run_id = _mark_content_index_state_stale_indexing(db_session, media_id=media_id)
+    _mark_content_index_state_stale_indexing(db_session, media_id=media_id)
 
     with (
         patch(
@@ -933,24 +857,17 @@ def test_reconciler_recovers_stale_indexing_document_content_index(db_session: S
             """
             SELECT
                 mcis.status,
-                mcis.active_run_id,
-                stale_run.state,
-                stale_run.failure_code,
                 active_chunk.chunk_text
             FROM media_content_index_states mcis
-            JOIN content_index_runs stale_run ON stale_run.id = :stale_run_id
-            JOIN content_chunks active_chunk ON active_chunk.index_run_id = mcis.active_run_id
+            JOIN content_chunks active_chunk ON active_chunk.media_id = mcis.media_id
             WHERE mcis.media_id = :media_id
             """
         ),
-        {"media_id": media_id, "stale_run_id": stale_run_id},
+        {"media_id": media_id},
     ).fetchall()
     assert rows, f"expected repaired content index for media_id={media_id}"
     assert rows[0][0] == "ready"
-    assert rows[0][1] != stale_run_id
-    assert rows[0][2] == "failed"
-    assert rows[0][3] == "E_INGEST_TIMEOUT"
-    assert rows[0][4] == "Sample evidence repair needle."
+    assert rows[0][1] == "Sample evidence repair needle."
 
 
 def test_reconciler_fails_stale_pdf_after_max_recovery_attempts(db_session: Session):
@@ -1064,7 +981,7 @@ def test_reconciler_fail_close_repairs_podcast_transcript_state_and_quota(db_ses
 def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcripts(
     db_session: Session,
 ):
-    media_id, version_id = _insert_ready_podcast_with_semantic_backlog(
+    media_id = _insert_ready_podcast_with_semantic_backlog(
         db_session,
         semantic_status="pending",
         updated_seconds_ago=3600,
@@ -1119,14 +1036,12 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
             SELECT DISTINCT ce.embedding_model
             FROM content_chunks cc
             JOIN content_embeddings ce ON ce.chunk_id = cc.id
-            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
             WHERE cc.media_id = :media_id
               AND cc.source_kind = 'transcript'
-              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
             ORDER BY ce.embedding_model
             """
         ),
-        {"media_id": media_id, "transcript_version_id": str(version_id)},
+        {"media_id": media_id},
     ).fetchall()
     assert model_row == [(current_transcript_embedding_model(),)], (
         "semantic repair must fully replace superseded embeddings with current runtime model"
@@ -1136,7 +1051,7 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
 def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
     db_session: Session,
 ):
-    media_id, version_id = _insert_ready_podcast_with_semantic_backlog(
+    media_id = _insert_ready_podcast_with_semantic_backlog(
         db_session,
         semantic_status="ready",
         updated_seconds_ago=10_000_000,
@@ -1193,107 +1108,22 @@ def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
             SELECT DISTINCT ce.embedding_model
             FROM content_chunks cc
             JOIN content_embeddings ce ON ce.chunk_id = cc.id
-            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
             WHERE cc.media_id = :media_id
               AND cc.source_kind = 'transcript'
-              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
             ORDER BY ce.embedding_model
             """
         ),
-        {"media_id": media_id, "transcript_version_id": str(version_id)},
+        {"media_id": media_id},
     ).fetchall()
     assert model_row == [(current_transcript_embedding_model(),)], (
         "auto-repair for stale ready rows must converge to the active embedding model"
     )
 
 
-def test_reconciler_repairs_ready_semantic_rows_when_active_run_is_deactivated(
-    db_session: Session,
-):
-    from nexus.services.content_indexing import rebuild_transcript_content_index
-    from nexus.services.transcript_segments import TranscriptSegmentInput
-
-    media_id, version_id = _insert_ready_podcast_with_semantic_backlog(
-        db_session,
-        semantic_status="ready",
-        updated_seconds_ago=10_000_000,
-    )
-    rebuild_transcript_content_index(
-        db_session,
-        media_id=media_id,
-        transcript_version_id=version_id,
-        transcript_segments=[
-            TranscriptSegmentInput(
-                segment_idx=0,
-                canonical_text="semantic repair segment one",
-                t_start_ms=0,
-                t_end_ms=1300,
-                speaker_label="Host",
-            ),
-            TranscriptSegmentInput(
-                segment_idx=1,
-                canonical_text="semantic repair segment two",
-                t_start_ms=1500,
-                t_end_ms=2900,
-                speaker_label="Guest",
-            ),
-        ],
-        reason="test_deactivated_ready_run",
-    )
-    old_run_id = db_session.execute(
-        text(
-            """
-            SELECT active_run_id
-            FROM media_content_index_states
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one()
-    db_session.execute(
-        text("UPDATE content_index_runs SET deactivated_at = now() WHERE id = :run_id"),
-        {"run_id": old_run_id},
-    )
-    db_session.commit()
-
-    with (
-        patch(
-            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
-            return_value=_recovery_settings(
-                stale_seconds=10_000_000,
-                max_attempts=3,
-                semantic_batch_limit=5000,
-                semantic_retry_failed_seconds=300,
-            ),
-        ),
-        patch(
-            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
-            return_value=task_session_factory(db_session),
-        ),
-    ):
-        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
-
-        result = reconcile_stale_ingest_media_job()
-
-    assert result["semantic_scanned"] >= 1, result
-    assert result["semantic_repaired"] >= 1, result
-    new_run_id = db_session.execute(
-        text(
-            """
-            SELECT active_run_id
-            FROM media_content_index_states
-            WHERE media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one()
-    assert new_run_id != old_run_id
-
-
 def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
     db_session: Session,
 ):
-    media_id, version_id = _insert_ready_podcast_with_semantic_backlog(
+    media_id = _insert_ready_podcast_with_semantic_backlog(
         db_session,
         semantic_status="failed",
         updated_seconds_ago=7200,
@@ -1344,15 +1174,13 @@ def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
         text(
             """
             SELECT COUNT(*)
-            FROM content_chunks cc
-            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
-            WHERE cc.media_id = :media_id
-              AND cc.source_kind = 'transcript'
-              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
+            FROM content_chunks
+            WHERE media_id = :media_id
+              AND source_kind = 'transcript'
             """
         ),
-        {"media_id": media_id, "transcript_version_id": str(version_id)},
+        {"media_id": media_id},
     ).scalar()
     assert int(chunk_count or 0) == 2, (
-        "semantic repair retry must regenerate a complete chunk set for the active transcript version"
+        "semantic repair retry must regenerate a complete chunk set for the current transcript"
     )

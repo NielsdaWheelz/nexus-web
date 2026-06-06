@@ -28,7 +28,7 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
-def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_config(
+def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_model(
     db_session,
 ):
     from nexus.services.content_indexing import rebuild_transcript_content_index
@@ -38,7 +38,6 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
 
     user_id = uuid4()
     media_id = uuid4()
-    version_id = uuid4()
     transcript_segments = [
         TranscriptSegmentInput(
             segment_idx=0,
@@ -57,30 +56,13 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
             VALUES (
                 :media_id,
                 'podcast_episode',
-                'Stale Semantic Config',
+                'Stale Semantic Model',
                 'ready_for_reading',
                 :user_id
             )
             """
         ),
         {"media_id": media_id, "user_id": user_id},
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO podcast_transcript_versions (
-                id,
-                media_id,
-                version_no,
-                transcript_coverage,
-                is_active,
-                request_reason,
-                created_by_user_id
-            )
-            VALUES (:version_id, :media_id, 1, 'full', true, 'search', :user_id)
-            """
-        ),
-        {"version_id": version_id, "media_id": media_id, "user_id": user_id},
     )
     db_session.execute(
         text(
@@ -101,7 +83,6 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
         text(
             """
             INSERT INTO podcast_transcript_segments (
-                transcript_version_id,
                 media_id,
                 segment_idx,
                 canonical_text,
@@ -110,22 +91,20 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
                 speaker_label
             )
             VALUES (
-                :version_id,
                 :media_id,
                 0,
-                'Direct semantic repair should detect stale embedding config.',
+                'Direct semantic repair should detect stale embedding model.',
                 0,
                 1800,
                 'Host'
             )
             """
         ),
-        {"version_id": version_id, "media_id": media_id},
+        {"media_id": media_id},
     )
     rebuild_transcript_content_index(
         db_session,
         media_id=media_id,
-        transcript_version_id=version_id,
         transcript_segments=transcript_segments,
         reason="test_initial_semantic_index",
     )
@@ -133,7 +112,7 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
         text(
             """
             UPDATE media_content_index_states
-            SET active_embedding_config_hash = 'stale_config_hash'
+            SET active_embedding_model = 'stale_model'
             WHERE media_id = :media_id
             """
         ),
@@ -148,7 +127,7 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
 
     assert result.status == "completed", (
         "direct semantic repair must rebuild ready transcript rows with stale "
-        f"embedding config, got: {result}"
+        f"embedding model, got: {result}"
     )
     state_row = db_session.execute(
         text(
@@ -163,17 +142,17 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_c
     assert state_row[0] == "ready"
     assert state_row[1] is None
 
-    active_config_hash = db_session.execute(
+    active_embedding_model = db_session.execute(
         text(
             """
-            SELECT active_embedding_config_hash
+            SELECT active_embedding_model
             FROM media_content_index_states
             WHERE media_id = :media_id
             """
         ),
         {"media_id": media_id},
     ).scalar_one()
-    assert active_config_hash != "stale_config_hash"
+    assert active_embedding_model != "stale_model"
 
 
 class TestPodcastUxHardening:
@@ -2823,54 +2802,11 @@ class TestPodcastTranscriptRequestAdmission:
     ) -> UUID:
         """Create active transcript artifacts and force non-ready semantic status."""
         now = datetime.now(UTC)
-        version_id = uuid4()
         with direct_db.session() as session:
-            created_by_user_id = session.execute(
-                text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
-                {"media_id": media_id},
-            ).scalar()
-            assert created_by_user_id is not None
-
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcript_versions (
-                        id,
-                        media_id,
-                        version_no,
-                        transcript_coverage,
-                        is_active,
-                        request_reason,
-                        created_by_user_id,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        :id,
-                        :media_id,
-                        1,
-                        'full',
-                        true,
-                        'search',
-                        :created_by_user_id,
-                        :created_at,
-                        :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": version_id,
-                    "media_id": media_id,
-                    "created_by_user_id": created_by_user_id,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
             session.execute(
                 text(
                     """
                     INSERT INTO podcast_transcript_segments (
-                        transcript_version_id,
                         media_id,
                         segment_idx,
                         canonical_text,
@@ -2881,7 +2817,6 @@ class TestPodcastTranscriptRequestAdmission:
                     )
                     VALUES
                         (
-                            :version_id,
                             :media_id,
                             0,
                             'semantic backlog segment one',
@@ -2891,7 +2826,6 @@ class TestPodcastTranscriptRequestAdmission:
                             :created_at
                         ),
                         (
-                            :version_id,
                             :media_id,
                             1,
                             'semantic backlog segment two',
@@ -2903,7 +2837,6 @@ class TestPodcastTranscriptRequestAdmission:
                     """
                 ),
                 {
-                    "version_id": version_id,
                     "media_id": media_id,
                     "created_at": now,
                 },
@@ -2948,7 +2881,7 @@ class TestPodcastTranscriptRequestAdmission:
                 },
             )
             session.commit()
-        return version_id
+        return media_id
 
     def test_sync_is_metadata_first_and_does_not_spend_quota_when_over_limit(
         self, auth_client, monkeypatch, direct_db
@@ -6286,21 +6219,9 @@ class TestPodcastApiSurface:
             transcript_state = session.execute(
                 text(
                     """
-                    SELECT transcript_state, transcript_coverage
+                    SELECT transcript_state, transcript_coverage, last_request_reason
                     FROM media_transcript_states
                     WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            version_row = session.execute(
-                text(
-                    """
-                    SELECT request_reason, transcript_coverage
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id
-                    ORDER BY version_no DESC
-                    LIMIT 1
                     """
                 ),
                 {"media_id": media_id},
@@ -6340,11 +6261,8 @@ class TestPodcastApiSurface:
             ).fetchone()
 
         assert media_status == "ready_for_reading"
-        assert transcript_state == ("ready", "full"), (
+        assert transcript_state == ("ready", "full", "rss_feed"), (
             f"expected RSS VTT transcript to make episode readable with full coverage, got {transcript_state}"
-        )
-        assert version_row == ("rss_feed", "full"), (
-            "expected RSS transcript persistence to version with request_reason='rss_feed'"
         )
         assert fragment_count == 1
         assert segment_count == 1
@@ -6474,13 +6392,13 @@ upgrade now
                 ),
                 {"media_id": media_id},
             ).fetchone()
-            first_version_count = session.execute(
-                text("SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id"),
+            first_segment_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
                 {"media_id": media_id},
             ).scalar()
 
         assert first_state == ("not_requested", "none")
-        assert first_version_count == 0
+        assert first_segment_count == 0
 
         state["rss_enabled"] = True
         refresh_response = auth_client.post(
@@ -6510,18 +6428,12 @@ upgrade now
                 text("SELECT processing_status FROM media WHERE id = :media_id"),
                 {"media_id": media_id},
             ).scalar()
-            version_row = session.execute(
+            transcript_reason = session.execute(
                 text(
-                    """
-                    SELECT request_reason
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id
-                    ORDER BY version_no DESC
-                    LIMIT 1
-                    """
+                    "SELECT last_request_reason FROM media_transcript_states WHERE media_id = :media_id"
                 ),
                 {"media_id": media_id},
-            ).fetchone()
+            ).scalar()
             job_count = session.execute(
                 text("SELECT COUNT(*) FROM podcast_transcription_jobs WHERE media_id = :media_id"),
                 {"media_id": media_id},
@@ -6531,7 +6443,7 @@ upgrade now
             f"expected re-sync to upgrade not_requested episode when RSS transcript appears, got {upgraded_state}"
         )
         assert media_status == "ready_for_reading"
-        assert version_row == ("rss_feed",)
+        assert transcript_reason == "rss_feed"
         assert job_count == 0
 
     def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
@@ -8807,30 +8719,24 @@ class TestPodcastShowNotesAndBatchCutover:
             queue_candidate_media_id = media_ids[2]
             skipped_after_exhaustion_media_id = media_ids[3]
 
+            from nexus.services.transcripts.current import write_current_transcript
+
             now = datetime.now(UTC)
-            session.execute(
-                text(
-                    """
-                    UPDATE media
-                    SET processing_status = 'ready_for_reading', updated_at = :now
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": ready_media_id, "now": now},
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE media_transcript_states
-                    SET
-                        transcript_state = 'ready',
-                        transcript_coverage = 'full',
-                        semantic_status = 'ready',
-                        updated_at = :now
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": ready_media_id, "now": now},
+            write_current_transcript(
+                session,
+                media_id=ready_media_id,
+                request_reason="search",
+                transcript_coverage="full",
+                transcript_segments=[
+                    TranscriptSegmentInput(
+                        segment_idx=0,
+                        canonical_text="ready batch transcript segment",
+                        t_start_ms=0,
+                        t_end_ms=500,
+                        speaker_label="Host",
+                    )
+                ],
+                now=now,
             )
             session.execute(
                 text(
@@ -8845,13 +8751,28 @@ class TestPodcastShowNotesAndBatchCutover:
             session.execute(
                 text(
                     """
-                    UPDATE media_transcript_states
-                    SET
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        updated_at,
+                        created_at
+                    )
+                    VALUES (
+                        :media_id,
+                        'queued',
+                        'none',
+                        'none',
+                        :now,
+                        :now
+                    )
+                    ON CONFLICT (media_id)
+                    DO UPDATE SET
                         transcript_state = 'queued',
                         transcript_coverage = 'none',
                         semantic_status = 'none',
                         updated_at = :now
-                    WHERE media_id = :media_id
                     """
                 ),
                 {"media_id": queued_media_id, "now": now},
@@ -9133,11 +9054,6 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         mts.transcript_state,
                         mts.transcript_coverage,
                         mts.semantic_status,
-                        (
-                            SELECT ptv.id
-                            FROM podcast_transcript_versions ptv
-                            WHERE ptv.media_id = mts.media_id AND ptv.is_active
-                        ),
                         m.processing_status
                     FROM media_transcript_states mts
                     JOIN media m ON m.id = mts.media_id
@@ -9147,45 +9063,37 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 {"media_id": media_id},
             ).fetchone()
             assert final_state is not None
-            active_version_id = final_state[3]
 
-            version_count = session.execute(
-                text("SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            ).scalar()
             segment_count = session.execute(
                 text(
                     """
                     SELECT COUNT(*)
                     FROM podcast_transcript_segments
-                    WHERE transcript_version_id = :transcript_version_id
+                    WHERE media_id = :media_id
                     """
                 ),
-                {"transcript_version_id": active_version_id},
+                {"media_id": media_id},
             ).scalar()
             chunk_count = session.execute(
                 text(
                     """
                     SELECT COUNT(*)
-                    FROM content_chunks cc
-                    JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
-                    WHERE cc.source_kind = 'transcript'
-                      AND ss.metadata->>'transcript_version_id' = :transcript_version_id
+                    FROM content_chunks
+                    WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
                     """
                 ),
-                {"transcript_version_id": str(active_version_id)},
+                {"media_id": media_id},
             ).scalar()
 
         assert final_state[0] == "ready"
         assert final_state[1] == "full"
         assert final_state[2] == "ready"
-        assert final_state[3] is not None
-        assert final_state[4] == "ready_for_reading"
-        assert version_count == 1
+        assert final_state[3] == "ready_for_reading"
         assert segment_count == 2
         assert chunk_count == 2
 
-    def test_retranscription_creates_new_version_without_deleting_old_highlight_anchor(
+    def test_retranscription_replaces_current_transcript_and_removes_old_fragment_highlight(
         self, auth_client, monkeypatch, direct_db
     ):
         seeded = self._seed_metadata_only_episode(
@@ -9287,45 +9195,48 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert all("alpha transcript line" not in row["canonical_text"] for row in fragments_v2)
 
         with direct_db.session() as session:
-            version_rows = session.execute(
+            transcript_row = session.execute(
                 text(
                     """
-                    SELECT id, version_no, is_active
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id
-                    ORDER BY version_no ASC
+                    SELECT
+                        (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM fragments WHERE media_id = :media_id),
+                        (SELECT string_agg(canonical_text, '|' ORDER BY segment_idx)
+                         FROM podcast_transcript_segments WHERE media_id = :media_id)
                     """
                 ),
                 {"media_id": media_id},
-            ).fetchall()
-            assert len(version_rows) == 2
-            first_version_id = version_rows[0][0]
-            assert version_rows[0][1] == 1
-            assert version_rows[0][2] is False
-            assert version_rows[1][1] == 2
-            assert version_rows[1][2] is True
+            ).one()
 
             original_fragment_row = session.execute(
                 text(
                     """
-                    SELECT id, transcript_version_id
+                    SELECT id
                     FROM fragments
                     WHERE id = :fragment_id
                     """
                 ),
                 {"fragment_id": first_fragment_id},
             ).fetchone()
-            assert original_fragment_row is not None
-            assert original_fragment_row[1] == first_version_id
+            highlight_anchor_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM highlight_fragment_anchors
+                    WHERE highlight_id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).scalar()
+        assert transcript_row == (2, 2, "beta transcript line|beta follow up")
+        assert original_fragment_row is None
+        assert highlight_anchor_count == 0
 
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}",
             headers=auth_headers(user_id),
         )
-        assert highlight_detail.status_code == 200
-        anchor = highlight_detail.json()["data"]["anchor"]
-        assert anchor["type"] == "fragment_offsets"
-        assert anchor["fragment_id"] == str(first_fragment_id)
+        assert highlight_detail.status_code == 404
 
     def test_highlight_offset_updates_fragment_anchor_offsets(
         self, auth_client, monkeypatch, direct_db
@@ -9649,19 +9560,12 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             f"after_first={queue_rows_after_retry} after_second={queue_rows_after_second_retry}"
         )
 
-    def test_write_transcript_version_is_the_single_versioning_writer_invariant(
+    def test_write_current_transcript_replaces_prior_rows(
         self, auth_client, monkeypatch, direct_db
     ):
-        """Slice 1 keystone: the PUBLIC writer write_transcript_version pins the
-        version-sequence invariants on the normal path:
-          (a) version_no is contiguous (1, then 2);
-          (b) exactly one row is is_active afterward and it is the latest (v2);
-              the prior version (v1) is is_active=false;
-          (c) no spurious failure is raised on the normal path.
-        """
-        from nexus.services.transcripts.versions import (
-            TranscriptWriteResult,
-            write_transcript_version,
+        from nexus.services.transcripts.current import (
+            CurrentTranscriptWriteResult,
+            write_current_transcript,
         )
 
         seeded = self._seed_metadata_only_episode(
@@ -9669,14 +9573,12 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             monkeypatch=monkeypatch,
             direct_db=direct_db,
         )
-        user_id = seeded["user_id"]
         media_id = seeded["media_id"]
 
         with direct_db.session() as session:
-            first_result = write_transcript_version(
+            first_result = write_current_transcript(
                 session,
                 media_id=media_id,
-                created_by_user_id=user_id,
                 request_reason="episode_open",
                 transcript_coverage="full",
                 transcript_segments=[
@@ -9684,7 +9586,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         segment_idx=0,
                         t_start_ms=0,
                         t_end_ms=900,
-                        canonical_text="writer invariant one",
+                        canonical_text="writer current one",
                         speaker_label=None,
                     ),
                 ],
@@ -9693,10 +9595,9 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             session.commit()
 
         with direct_db.session() as session:
-            second_result = write_transcript_version(
+            second_result = write_current_transcript(
                 session,
                 media_id=media_id,
-                created_by_user_id=user_id,
                 request_reason="search",
                 transcript_coverage="full",
                 transcript_segments=[
@@ -9704,7 +9605,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                         segment_idx=0,
                         t_start_ms=0,
                         t_end_ms=1000,
-                        canonical_text="writer invariant two",
+                        canonical_text="writer current two",
                         speaker_label=None,
                     ),
                 ],
@@ -9712,88 +9613,43 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             )
             session.commit()
 
-        # (c) the normal path returns a result without raising.
-        assert isinstance(first_result, TranscriptWriteResult)
-        assert isinstance(second_result, TranscriptWriteResult)
-
-        # (a) version_no is contiguous: first call -> 1, second call -> 2.
-        assert first_result.version_no == 1
-        assert second_result.version_no == 2
-
-        with direct_db.session() as session:
-            version_rows = session.execute(
+            row = session.execute(
                 text(
                     """
-                    SELECT version_no, is_active
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id
-                    ORDER BY version_no ASC
+                    SELECT
+                        (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM fragments WHERE media_id = :media_id),
+                        (SELECT string_agg(canonical_text, '|' ORDER BY segment_idx)
+                         FROM podcast_transcript_segments WHERE media_id = :media_id),
+                        (SELECT transcript_state FROM media_transcript_states WHERE media_id = :media_id)
                     """
                 ),
                 {"media_id": media_id},
-            ).fetchall()
-            active_count = session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id AND is_active
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
-            latest_active_version_no = session.execute(
-                text(
-                    """
-                    SELECT version_no
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id AND is_active
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
+            ).one()
 
-        # (a) exactly two contiguous versions exist.
-        assert [row[0] for row in version_rows] == [1, 2]
-        # (b) exactly one active row, and it is the latest (v2); v1 is inactive.
-        assert int(active_count) == 1
-        assert int(latest_active_version_no) == 2
-        assert version_rows[0] == (1, False)
-        assert version_rows[1] == (2, True)
+        assert isinstance(first_result, CurrentTranscriptWriteResult)
+        assert isinstance(second_result, CurrentTranscriptWriteResult)
+        assert first_result.segment_count == 1
+        assert second_result.segment_count == 1
+        assert row == (1, 1, "writer current two", "ready")
 
-    def test_concurrent_write_transcript_version_serializes_without_lost_transcript(
+    def test_concurrent_write_current_transcript_serializes_to_one_current_transcript(
         self, auth_client, monkeypatch, direct_db
     ):
-        """Slice 1 keystone race: two CONCURRENT write_transcript_version calls on the
-        SAME media_id both succeed under the advisory lock — neither raises, the two
-        allocated version_no values are contiguous {1, 2}, exactly one row stays
-        is_active, and BOTH committed transcripts persist (no lost transcript).
-
-        This pins the happy-path lock-serialization that the existing tests leave
-        unproven: the sequential keystone never overlaps, and the conflict-translation
-        test deliberately bypasses the lock with raw-SQL seeding. Here both workers run
-        the REAL writer on independent connections and commit inside the worker, so the
-        pg_advisory_xact_lock('transcript-version:{media_id}') must serialize them.
-        """
-        from nexus.services.transcripts.versions import write_transcript_version
+        from nexus.services.transcripts.current import write_current_transcript
 
         seeded = self._seed_metadata_only_episode(
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
         )
-        user_id = seeded["user_id"]
         media_id = seeded["media_id"]
-
-        results_lock = threading.Lock()
-        returned_version_nos: list[int] = []
 
         def write_one(index: int) -> None:
             with direct_db.session() as session:
-                result = write_transcript_version(
+                write_current_transcript(
                     session,
                     media_id=media_id,
-                    created_by_user_id=user_id,
                     request_reason="episode_open",
                     transcript_coverage="full",
                     transcript_segments=[
@@ -9801,182 +9657,31 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                             segment_idx=0,
                             t_start_ms=0,
                             t_end_ms=900,
-                            canonical_text=f"concurrent writer {index}",
+                            canonical_text=f"concurrent current writer {index}",
                             speaker_label=None,
                         ),
                     ],
                     now=datetime.now(UTC),
                 )
                 session.commit()
-            with results_lock:
-                returned_version_nos.append(result.version_no)
 
         errors = _run_concurrent_workers(2, write_one)
-
-        # No worker raised: not E_RETRY_INVALID_STATE, not E_TRANSCRIPTION_FAILED, not
-        # an IntegrityError — the lock made both writes succeed.
-        assert not errors, f"concurrent transcript-version writers failed: {errors}"
-
-        # Both returned version_no are contiguous {1, 2} (order is nondeterministic).
-        assert set(returned_version_nos) == {1, 2}, (
-            f"concurrent writers must allocate contiguous versions, got {returned_version_nos}"
-        )
+        assert not errors, f"concurrent current transcript writers failed: {errors}"
 
         with direct_db.session() as session:
-            persisted_version_nos = [
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT version_no
-                        FROM podcast_transcript_versions
-                        WHERE media_id = :media_id
-                        ORDER BY version_no ASC
-                        """
-                    ),
-                    {"media_id": media_id},
-                ).fetchall()
-            ]
-            active_count = session.execute(
+            counts = session.execute(
                 text(
                     """
-                    SELECT COUNT(*)
-                    FROM podcast_transcript_versions
-                    WHERE media_id = :media_id AND is_active
+                    SELECT
+                        (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM fragments WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM media_content_index_states WHERE media_id = :media_id)
                     """
                 ),
                 {"media_id": media_id},
-            ).scalar_one()
-            distinct_transcripts = session.execute(
-                text(
-                    """
-                    SELECT COUNT(DISTINCT transcript_version_id)
-                    FROM podcast_transcript_segments
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar_one()
+            ).one()
 
-        # Exactly two contiguous version rows persisted.
-        assert persisted_version_nos == [1, 2], (
-            f"expected two contiguous committed versions, got {persisted_version_nos}"
-        )
-        # Exactly one active row survives.
-        assert int(active_count) == 1, (
-            f"exactly one transcript version must remain active, got {active_count}"
-        )
-        # Both transcripts persisted: each version owns its own segments, so neither
-        # committed transcript was lost or overwritten by the other writer.
-        assert int(distinct_transcripts) == 2, (
-            "both committed transcripts must persist (one segment set per version), "
-            f"got {distinct_transcripts}"
-        )
-
-    def test_write_transcript_version_translates_unique_index_conflict_to_retry(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        """Slice 1 belt-and-suspenders: when a concurrent transaction has already
-        inserted the active row the writer is about to allocate, the partial unique
-        index uix_podcast_transcript_versions_media_active (and the
-        uq_podcast_transcript_versions_media_no unique on (media_id, version_no))
-        reject the writer's INSERT. The raw IntegrityError must be translated into a
-        typed, retryable ApiError(E_RETRY_INVALID_STATE) — NOT a raw IntegrityError
-        and NOT E_TRANSCRIPTION_FAILED.
-
-        The advisory lock serializes two writer calls, so the only way to reach the
-        index conflict is a concurrent transaction whose uncommitted active version
-        row is invisible to the writer's MAX(version_no) allocation but present at
-        INSERT time. A background session inserts version_no=1 (is_active=true)
-        without committing; the writer (running on a separate, advisory-locked
-        session) deactivates nothing it can see, allocates version_no=1, and its
-        INSERT collides with the still-pending duplicate. This pins the translation
-        via the PUBLIC seam only (the colliding row is seeded with raw SQL; no
-        private symbol of versions.py is monkeypatched).
-        """
-        from nexus.services.transcripts.versions import write_transcript_version
-
-        seeded = self._seed_metadata_only_episode(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-        )
-        user_id = seeded["user_id"]
-        media_id = seeded["media_id"]
-
-        colliding_row_inserted = threading.Event()
-        background_errors: list[Exception] = []
-
-        def _insert_colliding_active_version() -> None:
-            try:
-                with direct_db.session() as session:
-                    session.execute(
-                        text(
-                            """
-                            INSERT INTO podcast_transcript_versions (
-                                id, media_id, version_no, transcript_coverage,
-                                is_active, request_reason, created_by_user_id,
-                                created_at, updated_at
-                            )
-                            VALUES (
-                                :id, :media_id, 1, 'full', true, 'episode_open',
-                                :created_by_user_id, :now, :now
-                            )
-                            """
-                        ),
-                        {
-                            "id": uuid4(),
-                            "media_id": media_id,
-                            "created_by_user_id": user_id,
-                            "now": datetime.now(UTC),
-                        },
-                    )
-                    # Hold the row uncommitted so the writer's INSERT collides on the
-                    # pending unique key, then let the writer observe the conflict and
-                    # commit to surface a real IntegrityError.
-                    colliding_row_inserted.set()
-                    time.sleep(1.0)
-                    session.commit()
-            except Exception as exc:  # pragma: no cover - surfaced via assertion below
-                background_errors.append(exc)
-                colliding_row_inserted.set()
-
-        background_thread = threading.Thread(target=_insert_colliding_active_version, daemon=True)
-        background_thread.start()
-        try:
-            assert colliding_row_inserted.wait(timeout=5), (
-                "background session must insert the colliding active version row"
-            )
-
-            with direct_db.session() as session:  # noqa: SIM117
-                with pytest.raises(ApiError) as exc_info:
-                    write_transcript_version(
-                        session,
-                        media_id=media_id,
-                        created_by_user_id=user_id,
-                        request_reason="search",
-                        transcript_coverage="full",
-                        transcript_segments=[
-                            TranscriptSegmentInput(
-                                segment_idx=0,
-                                t_start_ms=0,
-                                t_end_ms=900,
-                                canonical_text="retry conflict",
-                                speaker_label=None,
-                            ),
-                        ],
-                        now=datetime.now(UTC),
-                    )
-                session.rollback()
-        finally:
-            background_thread.join(timeout=8)
-
-        assert not background_errors, f"background seeding failed: {background_errors}"
-        assert exc_info.value.code == ApiErrorCode.E_RETRY_INVALID_STATE, (
-            "a lost transcript-version race must translate to a retryable typed error, "
-            f"got {exc_info.value.code}"
-        )
-        assert exc_info.value.code != ApiErrorCode.E_TRANSCRIPTION_FAILED
+        assert counts == (1, 1, 1)
 
 
 # =============================================================================

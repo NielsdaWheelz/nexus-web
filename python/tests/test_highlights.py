@@ -845,7 +845,6 @@ class TestLinkedHighlightNotes:
         update_note_resp = auth_client.patch(
             f"/notes/blocks/{note['id']}",
             json={
-                "base_revision": note["revision"],
                 "body_pm_json": {
                     "type": "paragraph",
                     "content": [{"type": "text", "text": "Updated note"}],
@@ -860,7 +859,6 @@ class TestLinkedHighlightNotes:
             "DELETE",
             f"/notes/blocks/{note['id']}",
             headers=auth_headers(user_id),
-            json={"base_revision": update_note_resp.json()["data"]["revision"]},
         )
         assert delete_note_resp.status_code == 204
 

@@ -40,7 +40,6 @@ class _EpubAssetMetadata:
     storage_path: str
     content_type: str
     size_bytes: int
-    sha256: str
 
 
 def get_epub_asset_for_viewer(
@@ -64,7 +63,6 @@ def get_epub_asset_for_viewer(
         data = read_object_checked(
             storage_client or get_storage_client(),
             asset_metadata.storage_path,
-            expected_sha256=asset_metadata.sha256,
             expected_size=asset_metadata.size_bytes,
         )
     except StorageError as exc:
@@ -83,8 +81,7 @@ def get_epub_asset_for_viewer(
     return EpubAssetOut(
         data=data,
         content_type=asset_metadata.content_type,
-        # Reader EPUB assets are content-addressed and immutable.
-        cache_control="private, max-age=86400, immutable",
+        cache_control="private, max-age=86400",
         content_security_policy=content_security_policy,
     )
 
@@ -118,7 +115,7 @@ def _get_epub_asset_metadata_for_viewer(
         db.execute(
             text(
                 """
-                SELECT storage_path, content_type, size_bytes, sha256
+                SELECT storage_path, content_type, size_bytes
                 FROM epub_resources
                 WHERE media_id = :media_id
                   AND asset_key = :asset_key
@@ -140,5 +137,4 @@ def _get_epub_asset_metadata_for_viewer(
         storage_path=str(row["storage_path"]),
         content_type=content_type,
         size_bytes=int(row["size_bytes"]),
-        sha256=str(row["sha256"]),
     )

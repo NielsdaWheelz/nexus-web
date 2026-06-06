@@ -14,8 +14,7 @@ from nexus.db.models import OracleCorpusImage
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
-from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
-from nexus.storage.read import read_object_checked
+from nexus.storage.paths import ext_for_content_type
 
 logger = get_logger(__name__)
 
@@ -25,7 +24,6 @@ class OraclePlateBytes:
     data: bytes
     content_type: str
     byte_size: int
-    sha256: str
     etag: str
 
 
@@ -35,7 +33,6 @@ class OraclePlateMetadata:
     storage_key: str
     content_type: str
     byte_size: int
-    sha256: str
     etag: str
 
 
@@ -53,14 +50,12 @@ def get_oracle_plate_metadata(
         if img is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Oracle plate not found")
         storage_key = img.storage_key
-        sha256 = img.sha256
         byte_size = img.byte_size
         content_type = img.content_type
 
     _validate_plate_metadata(
         image_id=image_id,
         storage_key=storage_key,
-        sha256=sha256,
         byte_size=byte_size,
         content_type=content_type,
     )
@@ -69,8 +64,7 @@ def get_oracle_plate_metadata(
         storage_key=storage_key,
         content_type=content_type,
         byte_size=byte_size,
-        sha256=sha256,
-        etag=f'"{sha256}"',
+        etag=f'"oracle-plate-{image_id}"',
     )
 
 
@@ -94,12 +88,7 @@ def read_oracle_plate_bytes(
 ) -> OraclePlateBytes:
     sc = storage_client or get_storage_client()
     try:
-        data = read_object_checked(
-            sc,
-            metadata.storage_key,
-            expected_sha256=metadata.sha256,
-            expected_size=metadata.byte_size,
-        )
+        data = b"".join(sc.stream_object(metadata.storage_key))
     except StorageError as exc:
         logger.error(
             "oracle_plate_storage_read_failed",
@@ -110,11 +99,19 @@ def read_oracle_plate_bytes(
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is missing or unreadable"
         ) from exc
+    if len(data) != metadata.byte_size:
+        logger.error(
+            "oracle_plate_storage_size_mismatch",
+            image_id=str(metadata.image_id),
+            storage_key=metadata.storage_key,
+            expected_size=metadata.byte_size,
+            actual_size=len(data),
+        )
+        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is invalid")
     return OraclePlateBytes(
         data=data,
         content_type=metadata.content_type,
         byte_size=metadata.byte_size,
-        sha256=metadata.sha256,
         etag=metadata.etag,
     )
 
@@ -123,22 +120,30 @@ def _validate_plate_metadata(
     *,
     image_id: UUID,
     storage_key: str,
-    sha256: str,
     byte_size: int,
     content_type: str,
 ) -> None:
     try:
-        expected_key = build_oracle_plate_storage_path(
-            sha256,
-            ext_for_content_type(content_type),
-        )
+        expected_ext = ext_for_content_type(content_type)
     except ValueError as exc:
         _raise_invalid_plate_metadata(image_id, storage_key, str(exc))
-    if storage_key != expected_key:
+    if not storage_key.startswith("oracle/plates/"):
         _raise_invalid_plate_metadata(
             image_id,
             storage_key,
-            f"storage key does not match sha256/content type: expected {expected_key}",
+            "storage key must live under oracle/plates/",
+        )
+    if any(part in {"", ".", ".."} for part in storage_key.split("/")):
+        _raise_invalid_plate_metadata(
+            image_id,
+            storage_key,
+            "storage key must not contain empty, dot, or dot-dot path parts",
+        )
+    if not storage_key.endswith(f".{expected_ext}"):
+        _raise_invalid_plate_metadata(
+            image_id,
+            storage_key,
+            f"storage key extension must match content type: .{expected_ext}",
         )
     if byte_size <= 0:
         _raise_invalid_plate_metadata(image_id, storage_key, "byte_size must be positive")

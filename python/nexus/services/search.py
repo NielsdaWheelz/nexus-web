@@ -138,46 +138,6 @@ TYPE_WEIGHTS = {
 MAX_SNIPPET_LENGTH = 300
 
 
-def _active_fragment_content_block_exists_sql(
-    fragment_alias: str,
-    index_state_alias: str,
-) -> str:
-    return f"""
-        EXISTS (
-            SELECT 1
-            FROM content_blocks cb
-            WHERE cb.media_id = {fragment_alias}.media_id
-              AND cb.index_run_id = {index_state_alias}.active_run_id
-              AND (
-                  cb.locator->>'fragment_id' = {fragment_alias}.id::text
-                  OR (
-                      cb.locator->>'kind' = 'transcript_time_text'
-                      AND {fragment_alias}.t_start_ms IS NOT NULL
-                      AND {fragment_alias}.t_end_ms IS NOT NULL
-                      AND CAST(cb.locator->>'t_start_ms' AS integer) < {fragment_alias}.t_end_ms
-                      AND CAST(cb.locator->>'t_end_ms' AS integer) > {fragment_alias}.t_start_ms
-                  )
-              )
-        )
-    """
-
-
-def _active_pdf_page_content_block_exists_sql(
-    pdf_anchor_alias: str,
-    index_state_alias: str,
-) -> str:
-    return f"""
-        EXISTS (
-            SELECT 1
-            FROM content_blocks cb
-            WHERE cb.media_id = {pdf_anchor_alias}.media_id
-              AND cb.index_run_id = {index_state_alias}.active_run_id
-              AND cb.locator->>'kind' = 'pdf_text'
-              AND CAST(cb.locator->>'page_number' AS integer) = {pdf_anchor_alias}.page_number
-        )
-    """
-
-
 @dataclass(slots=True)
 class _SearchScore:
     raw: float
@@ -213,7 +173,6 @@ class _RankedNoteBlockResult:
     body_text: str
     score: _SearchScore
     highlight_excerpt: str | None = None
-    source_version: str | None = None
     locator: dict[str, Any] | None = None
     result_type: Literal["note_block"] = "note_block"
 
@@ -226,7 +185,6 @@ class _RankedHighlightResult:
     color: str
     source: SearchResultSourceOut
     score: _SearchScore
-    source_version: str | None = None
     citation_label: str | None = None
     locator: dict[str, Any] | None = None
     result_type: Literal["highlight"] = "highlight"
@@ -239,7 +197,6 @@ class _RankedPageResult:
     description: str | None
     snippet: str
     score: _SearchScore
-    source_version: str | None = None
     result_type: Literal["page"] = "page"
 
 
@@ -250,7 +207,6 @@ class _RankedMessageResult:
     conversation_id: UUID
     seq: int
     score: _SearchScore
-    source_version: str | None = None
     locator: dict[str, Any] | None = None
     result_type: Literal["message"] = "message"
 
@@ -260,7 +216,6 @@ class _RankedContentChunkResult:
     id: UUID
     snippet: str
     source_kind: str
-    source_version: str
     evidence_span_ids: list[UUID]
     citation_label: str
     locator: dict[str, Any]
@@ -274,7 +229,6 @@ class _RankedContentChunkResult:
 class _RankedEvidenceSpanResult:
     id: UUID
     snippet: str
-    source_version: str
     citation_label: str
     locator: dict[str, Any]
     source: SearchResultSourceOut
@@ -289,7 +243,6 @@ class _RankedFragmentResult:
     snippet: str
     source: SearchResultSourceOut
     score: _SearchScore
-    source_version: str | None = None
     citation_label: str | None = None
     locator: dict[str, Any] | None = None
     result_type: Literal["fragment"] = "fragment"
@@ -329,7 +282,6 @@ class _RankedWebResult:
     provider: str | None
     provider_request_id: str | None
     snippet: str
-    source_version: str
     locator: dict[str, Any]
     selected: bool
     score: _SearchScore
@@ -994,18 +946,12 @@ def get_search_result(
                     mcc.contributor_credits,
                     cc.chunk_text,
                     cc.source_kind,
-                    cc.primary_evidence_span_id,
-                    cc.index_run_id,
-                    active_run.source_version
+                    cc.primary_evidence_span_id
                 FROM content_chunks cc
                 JOIN media m ON m.id = cc.media_id
                 JOIN visible_media vm ON vm.media_id = cc.media_id
                 JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                    AND mcis.active_run_id = cc.index_run_id
                     AND mcis.status = 'ready'
-                JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                    AND active_run.state = 'ready'
-                    AND active_run.deactivated_at IS NULL
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE cc.id = :id
                 """
@@ -1021,7 +967,6 @@ def get_search_result(
             viewer_id=viewer_id,
             media_id=row[1],
             evidence_span_id=row[8],
-            index_run_id=row[9],
         )
         _require_resolved_evidence(resolution)
         return _result_to_out(
@@ -1029,7 +974,6 @@ def get_search_result(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[6] or "")),
                 source_kind=str(row[7]),
-                source_version=str(resolution.get("source_version") or row[10] or ""),
                 evidence_span_ids=[row[8]],
                 citation_label=str(resolution["citation_label"]),
                 locator=_locator_from_resolved_evidence(
@@ -1055,7 +999,6 @@ def get_search_result(
                     f.id,
                     f.idx,
                     f.canonical_text,
-                    f.transcript_version_id,
                     f.t_start_ms,
                     f.t_end_ms,
                     nav.location_id AS section_id,
@@ -1063,8 +1006,7 @@ def get_search_result(
                     m.kind,
                     m.title,
                     m.published_date,
-                    mcc.contributor_credits,
-                    active_run.source_version
+                    mcc.contributor_credits
                 FROM fragments f
                 JOIN media m ON m.id = f.media_id
                 JOIN visible_media vm ON vm.media_id = f.media_id
@@ -1076,16 +1018,10 @@ def get_search_result(
                     ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                     LIMIT 1
                 ) nav ON true
-                JOIN media_content_index_states mcis
-                  ON mcis.media_id = f.media_id
-                 AND mcis.status = 'ready'
-                JOIN content_index_runs active_run
-                  ON active_run.id = mcis.active_run_id
-                 AND active_run.state = 'ready'
-                 AND active_run.deactivated_at IS NULL
+                LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
+                    AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE f.id = :id
-                  AND {_active_fragment_content_block_exists_sql("f", "mcis")}
                 """
             ),
             {"viewer_id": viewer_id, "id": fragment_id},
@@ -1093,17 +1029,16 @@ def get_search_result(
         if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         locator = _direct_fragment_locator(
-            media_id=row[7],
-            media_kind=str(row[8] or ""),
+            media_id=row[6],
+            media_kind=str(row[7] or ""),
             fragment_id=row[0],
             text_value=str(row[2] or ""),
             start_offset=0,
             end_offset=len(str(row[2] or "")),
             exact=str(row[2] or ""),
-            transcript_version_id=row[3],
-            t_start_ms=int(row[4]) if row[4] is not None else None,
-            t_end_ms=int(row[5]) if row[5] is not None else None,
-            section_id=str(row[6]) if row[6] is not None else None,
+            t_start_ms=int(row[3]) if row[3] is not None else None,
+            t_end_ms=int(row[4]) if row[4] is not None else None,
+            section_id=str(row[5]) if row[5] is not None else None,
         )
         if locator is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
@@ -1112,9 +1047,8 @@ def get_search_result(
                 id=row[0],
                 idx=int(row[1]),
                 snippet=_truncate_snippet(str(row[2] or "")),
-                source=_build_search_source(row[7], row[8], row[9], row[11], row[10]),
+                source=_build_search_source(row[6], row[7], row[8], row[10], row[9]),
                 score=score,
-                source_version=str(row[12] or f"fragment:{row[0]}"),
                 citation_label=f"fragment {int(row[1]) + 1}",
                 locator=locator,
             )
@@ -1125,7 +1059,7 @@ def get_search_result(
         row = db.execute(
             text(
                 """
-                SELECT id, title, description, revision
+                SELECT id, title, description
                 FROM pages
                 WHERE id = :id
                   AND user_id = :viewer_id
@@ -1142,7 +1076,6 @@ def get_search_result(
                 description=row[2],
                 snippet=_truncate_snippet(str(row[2] or row[1])),
                 score=score,
-                source_version=f"page:{row[0]}:revision:{int(row[3])}",
             )
         )
 
@@ -1151,7 +1084,7 @@ def get_search_result(
         row = db.execute(
             text(
                 """
-                SELECT nb.id, nb.page_id, p.title, nb.body_text, nb.revision
+                SELECT nb.id, nb.page_id, p.title, nb.body_text
                 FROM note_blocks nb
                 JOIN pages p ON p.id = nb.page_id
                 WHERE nb.id = :id
@@ -1172,7 +1105,6 @@ def get_search_result(
                 page_title=row[2],
                 body_text=row[3],
                 score=score,
-                source_version=f"note_block:{row[0]}:revision:{int(row[4])}",
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
@@ -1211,12 +1143,10 @@ def get_search_result(
                     hfa.start_offset,
                     hfa.end_offset,
                     f.canonical_text,
-                    f.transcript_version_id,
                     f.t_start_ms,
                     f.t_end_ms,
                     hpa.page_number,
-                    pdf_quads.quads,
-                    active_run.source_version
+                    pdf_quads.quads
                 FROM highlights h
                 JOIN media m ON m.id = h.anchor_media_id
                 JOIN visible_media vm ON vm.media_id = h.anchor_media_id
@@ -1238,10 +1168,6 @@ def get_search_result(
                 ) pdf_quads ON true
                 JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
                     AND mcis.status = 'ready'
-                JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                    AND active_run.state = 'ready'
-                    AND active_run.deactivated_at IS NULL
-                    AND NULLIF(btrim(active_run.source_version), '') IS NOT NULL
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE h.id = :id
                   AND h.anchor_media_id IS NOT NULL
@@ -1250,21 +1176,19 @@ def get_search_result(
                             h.anchor_kind = 'fragment_offsets'
                             AND EXISTS (
                                 SELECT 1
-                                FROM highlight_fragment_anchors hfa_current
-                                JOIN fragments f_current ON f_current.id = hfa_current.fragment_id
-                                WHERE hfa_current.highlight_id = h.id
-                                  AND f_current.media_id = h.anchor_media_id
-                                  AND {_active_fragment_content_block_exists_sql("f_current", "mcis")}
+                                FROM highlight_fragment_anchors hfa
+                                JOIN fragments f ON f.id = hfa.fragment_id
+                                WHERE hfa.highlight_id = h.id
+                                  AND f.media_id = h.anchor_media_id
                             )
                         )
                         OR (
                             h.anchor_kind = 'pdf_page_geometry'
                             AND EXISTS (
                                 SELECT 1
-                                FROM highlight_pdf_anchors hpa_current
-                                WHERE hpa_current.highlight_id = h.id
-                                  AND hpa_current.media_id = h.anchor_media_id
-                                  AND {_active_pdf_page_content_block_exists_sql("hpa_current", "mcis")}
+                                FROM highlight_pdf_anchors hpa
+                                WHERE hpa.highlight_id = h.id
+                                  AND hpa.media_id = h.anchor_media_id
                             )
                         )
                   )
@@ -1295,18 +1219,17 @@ def get_search_result(
                 exact=str(row[1] or ""),
                 prefix=str(row[2] or ""),
                 suffix=str(row[3] or ""),
-                transcript_version_id=row[15],
-                t_start_ms=int(row[16]) if row[16] is not None else None,
-                t_end_ms=int(row[17]) if row[17] is not None else None,
+                t_start_ms=int(row[15]) if row[15] is not None else None,
+                t_end_ms=int(row[16]) if row[16] is not None else None,
             )
-        elif row[10] == "pdf_page_geometry" and row[18] is not None:
+        elif row[10] == "pdf_page_geometry" and row[17] is not None:
             try:
                 locator = retrieval_locator_json(
                     {
                         "type": "pdf_page_geometry",
                         "media_id": str(row[5]),
-                        "page_number": int(row[18]),
-                        "quads": row[19] if isinstance(row[19], list) else [],
+                        "page_number": int(row[17]),
+                        "quads": row[18] if isinstance(row[18], list) else [],
                         "exact": str(row[1] or ""),
                         "prefix": str(row[2] or ""),
                         "suffix": str(row[3] or ""),
@@ -1329,7 +1252,6 @@ def get_search_result(
                 color=str(row[4] or "yellow"),
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=score,
-                source_version=_required_source_version("highlight", row[20]),
                 citation_label=f"highlight {str(row[0])[:8]}",
                 locator=locator,
             )
@@ -1361,7 +1283,6 @@ def get_search_result(
                 conversation_id=row[1],
                 seq=row[2],
                 score=score,
-                source_version=f"message:{row[0]}",
                 locator=retrieval_locator_json(
                     {
                         "type": "message_offsets",
@@ -1426,7 +1347,6 @@ def get_search_result(
                     NULLIF(mr.result_ref->>'provider', ''),
                     NULLIF(mr.result_ref->>'provider_request_id', ''),
                     COALESCE(NULLIF(mr.exact_snippet, ''), mr.result_ref->>'snippet', ''),
-                    COALESCE(NULLIF(mr.source_version, ''), mr.result_ref->>'source_version'),
                     mr.locator,
                     mr.result_ref,
                     mr.selected
@@ -1442,9 +1362,9 @@ def get_search_result(
             ),
             {"viewer_id": viewer_id, "id": retrieval_id},
         ).first()
-        if row is None or not row[4] or not row[13]:
+        if row is None or not row[4]:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        result_ref = _web_result_ref_json(row[15])
+        result_ref = _web_result_ref_json(row[14])
         return _result_to_out(
             _RankedWebResult(
                 id=str(row[0]),
@@ -1460,9 +1380,8 @@ def get_search_result(
                 provider=result_ref.get("provider"),
                 provider_request_id=result_ref.get("provider_request_id"),
                 snippet=_truncate_snippet(str(row[12] or "")),
-                source_version=str(result_ref["source_version"]),
                 locator=result_ref["locator"],
-                selected=bool(row[16]),
+                selected=bool(row[15]),
                 score=score,
             )
         )
@@ -1478,23 +1397,12 @@ def get_search_result(
                     es.media_id,
                     es.span_text,
                     es.citation_label,
-                    ss.source_version,
                     m.kind,
                     m.title,
                     m.published_date,
-                    mcc.contributor_credits,
-                    es.index_run_id
+                    mcc.contributor_credits
                 FROM evidence_spans es
                 JOIN media m ON m.id = es.media_id
-                JOIN media_content_index_states mcis
-                  ON mcis.media_id = es.media_id
-                 AND mcis.active_run_id = es.index_run_id
-                 AND mcis.status = 'ready'
-                JOIN content_index_runs active_run
-                  ON active_run.id = mcis.active_run_id
-                 AND active_run.state = 'ready'
-                 AND active_run.deactivated_at IS NULL
-                LEFT JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
                 """
@@ -1508,21 +1416,19 @@ def get_search_result(
             viewer_id=viewer_id,
             media_id=row[1],
             evidence_span_id=row[0],
-            index_run_id=row[9],
         )
         _require_resolved_evidence(resolution)
         return _result_to_out(
             _RankedEvidenceSpanResult(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[2] or "")),
-                source_version=str(row[4] or resolution.get("source_version") or ""),
                 citation_label=str(row[3] or resolution.get("citation_label") or ""),
                 locator=_locator_from_resolved_evidence(
                     resolution,
                     media_id=row[1],
-                    media_kind=str(row[5]),
+                    media_kind=str(row[4]),
                 ),
-                source=_build_search_source(row[1], row[5], row[6], row[8], row[7]),
+                source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
                 score=score,
             )
         )
@@ -2013,7 +1919,6 @@ def _search_content_chunks(
             embedding_model
         )
         params["query_embedding_model"] = embedding_model
-        params["query_embedding_version"] = embedding_model
 
     if scope_type == "all":
         pass
@@ -2067,24 +1972,16 @@ def _search_content_chunks(
                         ) AS snippet,
                         cc.source_kind,
                         cc.primary_evidence_span_id,
-                        cc.index_run_id,
-                        active_run.source_version,
                         cc.summary_locator,
                         cc.created_at,
                         cc.chunk_text_tsv,
                         mcis.active_embedding_provider,
-                        mcis.active_embedding_model,
-                        mcis.active_embedding_version,
-                        mcis.active_embedding_config_hash
+                        mcis.active_embedding_model
                     FROM content_chunks cc
                     JOIN media m ON m.id = cc.media_id
                     JOIN visible_media vm ON vm.media_id = cc.media_id
                     JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                        AND mcis.active_run_id = cc.index_run_id
                         AND mcis.status = 'ready'
-                    JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                        AND active_run.state = 'ready'
-                        AND active_run.deactivated_at IS NULL
                     LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                     WHERE TRUE
                     {scope_filter}
@@ -2097,13 +1994,10 @@ def _search_content_chunks(
                     JOIN content_embeddings ce ON ce.chunk_id = ec.id
                         AND ce.embedding_provider = ec.active_embedding_provider
                         AND ce.embedding_model = ec.active_embedding_model
-                        AND ce.embedding_version = ec.active_embedding_version
-                        AND ce.embedding_config_hash = ec.active_embedding_config_hash
                         AND ce.embedding_dimensions = {embedding_dims}
                     JOIN query_embedding qe ON true
                     WHERE ec.active_embedding_provider = :query_embedding_provider
                       AND ec.active_embedding_model = :query_embedding_model
-                      AND ec.active_embedding_version = :query_embedding_version
                     ORDER BY ce.embedding_vector <=> qe.embedding ASC, ec.id ASC
                     LIMIT :ann_limit
                 ),
@@ -2133,8 +2027,6 @@ def _search_content_chunks(
                         ec.snippet,
                         ec.source_kind,
                         ec.primary_evidence_span_id,
-                        ec.index_run_id,
-                        ec.source_version,
                         ec.summary_locator,
                         ec.created_at,
                         CASE
@@ -2149,12 +2041,9 @@ def _search_content_chunks(
                     LEFT JOIN content_embeddings ce ON ce.chunk_id = ec.id
                         AND ce.embedding_provider = ec.active_embedding_provider
                         AND ce.embedding_model = ec.active_embedding_model
-                        AND ce.embedding_version = ec.active_embedding_version
-                        AND ce.embedding_config_hash = ec.active_embedding_config_hash
                         AND ce.embedding_dimensions = {embedding_dims}
                         AND ec.active_embedding_provider = :query_embedding_provider
                         AND ec.active_embedding_model = :query_embedding_model
-                        AND ec.active_embedding_version = :query_embedding_version
                 )
             SELECT
                 id,
@@ -2167,8 +2056,6 @@ def _search_content_chunks(
                 snippet,
                 source_kind,
                 primary_evidence_span_id,
-                index_run_id,
-                source_version,
                 summary_locator,
                 (
                     (0.45 * CASE WHEN lexical_score > 0.0 THEN 1.0 ELSE 0.0 END)
@@ -2210,8 +2097,6 @@ def _search_content_chunks(
                         ) ELSE left(cc.chunk_text, 300) END AS snippet,
                         cc.source_kind,
                         cc.primary_evidence_span_id,
-                        cc.index_run_id,
-                        active_run.source_version,
                         cc.summary_locator,
                         cc.created_at,
                         CASE WHEN :has_query THEN
@@ -2221,11 +2106,7 @@ def _search_content_chunks(
                     JOIN media m ON m.id = cc.media_id
                     JOIN visible_media vm ON vm.media_id = cc.media_id
                     JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                        AND mcis.active_run_id = cc.index_run_id
                         AND mcis.status = 'ready'
-                    JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                        AND active_run.state = 'ready'
-                        AND active_run.deactivated_at IS NULL
                     LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                     WHERE
                         (:has_query IS FALSE OR cc.chunk_text_tsv @@ websearch_to_tsquery('english', :query))
@@ -2246,8 +2127,6 @@ def _search_content_chunks(
                 snippet,
                 source_kind,
                 primary_evidence_span_id,
-                index_run_id,
-                source_version,
                 summary_locator,
                 (
                     (0.20 * GREATEST(lexical_score, 0.0))
@@ -2274,7 +2153,6 @@ def _search_content_chunks(
                 viewer_id=viewer_id,
                 media_id=row[1],
                 evidence_span_id=row[9],
-                index_run_id=row[10],
             )
         except NotFoundError:
             continue
@@ -2293,7 +2171,6 @@ def _search_content_chunks(
                 id=row[0],
                 snippet=snippet,
                 source_kind=str(row[8]),
-                source_version=str(resolution.get("source_version") or row[11] or ""),
                 evidence_span_ids=evidence_span_ids,
                 citation_label=str(resolution["citation_label"]),
                 locator=_locator_from_resolved_evidence(
@@ -2303,7 +2180,7 @@ def _search_content_chunks(
                 ),
                 resolver=dict(resolution["resolver"]),
                 source=_build_search_source(row[1], row[2], row[3], row[5], row[4]),
-                score=_build_search_score(row[13]),
+                score=_build_search_score(row[11]),
             )
         )
     return results
@@ -2567,27 +2444,8 @@ def _search_pages(
         scope_id=scope_id,
         limit=limit,
     )
-    revisions: dict[UUID, int] = {}
-    if rows:
-        revisions = {
-            row["id"]: int(row["revision"])
-            for row in db.execute(
-                text(
-                    """
-                    SELECT id, revision
-                    FROM pages
-                    WHERE user_id = :viewer_id
-                      AND id = ANY(:page_ids)
-                    """
-                ),
-                {"viewer_id": viewer_id, "page_ids": [row["object_id"] for row in rows]},
-            ).mappings()
-        }
     results: list[InternalSearchResult] = []
     for row in rows:
-        revision = revisions.get(row["object_id"])
-        if revision is None:
-            continue
         results.append(
             _RankedPageResult(
                 id=row["object_id"],
@@ -2595,7 +2453,6 @@ def _search_pages(
                 description=row["body_text"] or None,
                 snippet=_truncate_snippet(str(row["snippet"] or row["title_text"])),
                 score=_build_search_score(row["score"]),
-                source_version=f"page:{row['object_id']}:revision:{revision}",
             )
         )
     return results
@@ -2653,29 +2510,10 @@ def _search_note_blocks(
                 row["note_block_id"],
                 _truncate_snippet(str(row["exact"] or "")),
             )
-    revisions: dict[UUID, int] = {}
-    if note_ids:
-        revisions = {
-            row["id"]: int(row["revision"])
-            for row in db.execute(
-                text(
-                    """
-                    SELECT id, revision
-                    FROM note_blocks
-                    WHERE user_id = :viewer_id
-                      AND id = ANY(:note_ids)
-                    """
-                ),
-                {"viewer_id": viewer_id, "note_ids": note_ids},
-            ).mappings()
-        }
     results: list[InternalSearchResult] = []
     for row in rows:
         body_text = str(row["body_text"] or "")
         if not body_text:
-            continue
-        revision = revisions.get(row["object_id"])
-        if revision is None:
             continue
         locator = retrieval_locator_json(
             {
@@ -2695,7 +2533,6 @@ def _search_note_blocks(
                 body_text=body_text,
                 score=_build_search_score(row["score"]),
                 highlight_excerpt=highlight_excerpts.get(row["object_id"]),
-                source_version=f"note_block:{row['object_id']}:revision:{revision}",
                 locator=locator,
             )
         )
@@ -2740,7 +2577,6 @@ def _search_fragments(
                 f.id,
                 f.idx,
                 f.canonical_text,
-                f.transcript_version_id,
                 f.t_start_ms,
                 f.t_end_ms,
                 nav.location_id AS section_id,
@@ -2749,7 +2585,6 @@ def _search_fragments(
                 m.title,
                 m.published_date,
                 mcc.contributor_credits,
-                active_run.source_version,
                 ts_rank_cd(
                     to_tsvector('english', f.canonical_text),
                     websearch_to_tsquery('english', :query)
@@ -2771,16 +2606,10 @@ def _search_fragments(
                 ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                 LIMIT 1
             ) nav ON true
-            JOIN media_content_index_states mcis
-              ON mcis.media_id = f.media_id
-             AND mcis.status = 'ready'
-            JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
+            LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
+                AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', f.canonical_text) @@ websearch_to_tsquery('english', :query)
-              AND {_active_fragment_content_block_exists_sql("f", "mcis")}
             {scope_filter}
             ORDER BY score DESC, f.idx ASC, f.id ASC
             LIMIT :limit
@@ -2791,17 +2620,16 @@ def _search_fragments(
     results: list[InternalSearchResult] = []
     for row in rows:
         locator = _direct_fragment_locator(
-            media_id=row[7],
-            media_kind=str(row[8] or ""),
+            media_id=row[6],
+            media_kind=str(row[7] or ""),
             fragment_id=row[0],
             text_value=str(row[2] or ""),
             start_offset=0,
             end_offset=len(str(row[2] or "")),
             exact=str(row[2] or ""),
-            transcript_version_id=row[3],
-            t_start_ms=int(row[4]) if row[4] is not None else None,
-            t_end_ms=int(row[5]) if row[5] is not None else None,
-            section_id=str(row[6]) if row[6] is not None else None,
+            t_start_ms=int(row[3]) if row[3] is not None else None,
+            t_end_ms=int(row[4]) if row[4] is not None else None,
+            section_id=str(row[5]) if row[5] is not None else None,
         )
         if locator is None:
             continue
@@ -2809,10 +2637,9 @@ def _search_fragments(
             _RankedFragmentResult(
                 id=row[0],
                 idx=int(row[1]),
-                snippet=_truncate_snippet(str(row[14] or row[2] or "")),
-                source=_build_search_source(row[7], row[8], row[9], row[11], row[10]),
-                score=_build_search_score(row[13]),
-                source_version=str(row[12] or f"fragment:{row[0]}"),
+                snippet=_truncate_snippet(str(row[12] or row[2] or "")),
+                source=_build_search_source(row[6], row[7], row[8], row[10], row[9]),
+                score=_build_search_score(row[11]),
                 citation_label=f"fragment {int(row[1]) + 1}",
                 locator=locator,
             )
@@ -2880,12 +2707,10 @@ def _search_highlights(
                 hfa.start_offset,
                 hfa.end_offset,
                 f.canonical_text,
-                f.transcript_version_id,
                 f.t_start_ms,
                 f.t_end_ms,
                 hpa.page_number,
                 pdf_quads.quads,
-                active_run.source_version,
                 ts_rank_cd(
                     to_tsvector(
                         'english',
@@ -2920,10 +2745,6 @@ def _search_highlights(
             ) pdf_quads ON true
             JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
                 AND mcis.status = 'ready'
-            JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                AND active_run.state = 'ready'
-                AND active_run.deactivated_at IS NULL
-                AND NULLIF(btrim(active_run.source_version), '') IS NOT NULL
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector(
                     'english',
@@ -2935,21 +2756,19 @@ def _search_highlights(
                         h.anchor_kind = 'fragment_offsets'
                         AND EXISTS (
                             SELECT 1
-                            FROM highlight_fragment_anchors hfa_current
-                            JOIN fragments f_current ON f_current.id = hfa_current.fragment_id
-                            WHERE hfa_current.highlight_id = h.id
-                              AND f_current.media_id = h.anchor_media_id
-                              AND {_active_fragment_content_block_exists_sql("f_current", "mcis")}
+                            FROM highlight_fragment_anchors hfa
+                            JOIN fragments f ON f.id = hfa.fragment_id
+                            WHERE hfa.highlight_id = h.id
+                              AND f.media_id = h.anchor_media_id
                         )
                     )
                     OR (
                         h.anchor_kind = 'pdf_page_geometry'
                         AND EXISTS (
                             SELECT 1
-                            FROM highlight_pdf_anchors hpa_current
-                            WHERE hpa_current.highlight_id = h.id
-                              AND hpa_current.media_id = h.anchor_media_id
-                              AND {_active_pdf_page_content_block_exists_sql("hpa_current", "mcis")}
+                            FROM highlight_pdf_anchors hpa
+                            WHERE hpa.highlight_id = h.id
+                              AND hpa.media_id = h.anchor_media_id
                         )
                     )
               )
@@ -2984,18 +2803,17 @@ def _search_highlights(
                 exact=str(row[1] or ""),
                 prefix=str(row[2] or ""),
                 suffix=str(row[3] or ""),
-                transcript_version_id=row[15],
-                t_start_ms=int(row[16]) if row[16] is not None else None,
-                t_end_ms=int(row[17]) if row[17] is not None else None,
+                t_start_ms=int(row[15]) if row[15] is not None else None,
+                t_end_ms=int(row[16]) if row[16] is not None else None,
             )
-        elif row[10] == "pdf_page_geometry" and row[18] is not None:
+        elif row[10] == "pdf_page_geometry" and row[17] is not None:
             try:
                 locator = retrieval_locator_json(
                     {
                         "type": "pdf_page_geometry",
                         "media_id": str(row[5]),
-                        "page_number": int(row[18]),
-                        "quads": row[19] if isinstance(row[19], list) else [],
+                        "page_number": int(row[17]),
+                        "quads": row[18] if isinstance(row[18], list) else [],
                         "exact": str(row[1] or ""),
                         "prefix": str(row[2] or ""),
                         "suffix": str(row[3] or ""),
@@ -3014,11 +2832,10 @@ def _search_highlights(
             _RankedHighlightResult(
                 id=row[0],
                 exact=str(row[1] or ""),
-                snippet=_truncate_snippet(str(row[22] or row[1] or "")),
+                snippet=_truncate_snippet(str(row[20] or row[1] or "")),
                 color=str(row[4] or "yellow"),
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
-                score=_build_search_score(row[21]),
-                source_version=_required_source_version("highlight", row[20]),
+                score=_build_search_score(row[19]),
                 citation_label=f"highlight {str(row[0])[:8]}",
                 locator=locator,
             )
@@ -3096,7 +2913,6 @@ def _search_messages(
             conversation_id=row[1],
             seq=row[2],
             score=_build_search_score(row[4]),
-            source_version=f"message:{row[0]}",
             locator=retrieval_locator_json(
                 {
                     "type": "message_offsets",
@@ -3217,12 +3033,10 @@ def _search_evidence_spans(
                 es.media_id,
                 es.span_text,
                 es.citation_label,
-                ss.source_version,
                 m.kind,
                 m.title,
                 m.published_date,
                 mcc.contributor_credits,
-                es.index_run_id,
                 ts_rank_cd(
                     to_tsvector('english', es.span_text),
                     websearch_to_tsquery('english', :query)
@@ -3236,15 +3050,6 @@ def _search_evidence_spans(
             FROM evidence_spans es
             JOIN visible_media vm ON vm.media_id = es.media_id
             JOIN media m ON m.id = es.media_id
-            JOIN media_content_index_states mcis
-              ON mcis.media_id = es.media_id
-             AND mcis.active_run_id = es.index_run_id
-             AND mcis.status = 'ready'
-            JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
-            LEFT JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', es.span_text)
                   @@ websearch_to_tsquery('english', :query)
@@ -3263,7 +3068,6 @@ def _search_evidence_spans(
                 viewer_id=viewer_id,
                 media_id=row[1],
                 evidence_span_id=row[0],
-                index_run_id=row[9],
             )
             _require_resolved_evidence(resolution)
         except NotFoundError:
@@ -3271,17 +3075,16 @@ def _search_evidence_spans(
         locator = _locator_from_resolved_evidence(
             resolution,
             media_id=row[1],
-            media_kind=str(row[5]),
+            media_kind=str(row[4]),
         )
         results.append(
             _RankedEvidenceSpanResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[11] or row[2] or "")),
-                source_version=str(row[4] or resolution.get("source_version") or ""),
+                snippet=_truncate_snippet(str(row[9] or row[2] or "")),
                 citation_label=str(row[3] or resolution.get("citation_label") or ""),
                 locator=locator,
-                source=_build_search_source(row[1], row[5], row[6], row[8], row[7]),
-                score=_build_search_score(row[10]),
+                source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
+                score=_build_search_score(row[8]),
             )
         )
     return results
@@ -3351,7 +3154,6 @@ def _search_web_results(
                         NULLIF(mr.result_ref->>'provider', '') AS provider,
                         NULLIF(mr.result_ref->>'provider_request_id', '') AS provider_request_id,
                         COALESCE(NULLIF(mr.exact_snippet, ''), mr.result_ref->>'snippet', '') AS exact_snippet,
-                        COALESCE(NULLIF(mr.source_version, ''), mr.result_ref->>'source_version') AS source_version,
                         mr.locator,
                         mr.selected,
                         mr.result_ref AS raw_result_ref,
@@ -3390,7 +3192,6 @@ def _search_web_results(
                 provider,
                 provider_request_id,
                 exact_snippet,
-                source_version,
                 locator,
                 selected,
                 raw_result_ref,
@@ -3408,7 +3209,6 @@ def _search_web_results(
             WHERE to_tsvector('english', search_text)
                   @@ websearch_to_tsquery('english', :query)
               AND url IS NOT NULL
-              AND source_version IS NOT NULL
             ORDER BY score DESC, id ASC
             LIMIT :limit
             """
@@ -3418,7 +3218,7 @@ def _search_web_results(
 
     results: list[InternalSearchResult] = []
     for row in rows:
-        result_ref = _web_result_ref_json(row[16])
+        result_ref = _web_result_ref_json(row[15])
         results.append(
             _RankedWebResult(
                 id=str(row[0]),
@@ -3433,11 +3233,10 @@ def _search_web_results(
                 rank=result_ref.get("rank"),
                 provider=result_ref.get("provider"),
                 provider_request_id=result_ref.get("provider_request_id"),
-                snippet=_truncate_snippet(str(row[18] or row[12] or "")),
-                source_version=str(result_ref["source_version"]),
+                snippet=_truncate_snippet(str(row[17] or row[12] or "")),
                 locator=_required_locator("web_result", result_ref["locator"]),
-                selected=bool(row[15]),
-                score=_build_search_score(row[17]),
+                selected=bool(row[14]),
+                score=_build_search_score(row[16]),
             )
         )
     return results
@@ -3577,7 +3376,6 @@ def _direct_fragment_locator(
     exact: str,
     prefix: str = "",
     suffix: str = "",
-    transcript_version_id: UUID | None = None,
     t_start_ms: int | None = None,
     t_end_ms: int | None = None,
     section_id: str | None = None,
@@ -3588,7 +3386,6 @@ def _direct_fragment_locator(
         locator = {
             "type": "transcript_time_range",
             "media_id": str(media_id),
-            "transcript_version_id": str(transcript_version_id) if transcript_version_id else None,
             "t_start_ms": t_start_ms,
             "t_end_ms": t_end_ms,
             "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
@@ -3743,12 +3540,6 @@ def _result_deep_link(result: InternalSearchResult) -> str:
     if isinstance(result, _RankedWebResult):
         return result.url
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")
-
-
-def _required_source_version(result_type: str, source_version: str | None) -> str:
-    if isinstance(source_version, str) and source_version.strip():
-        return source_version
-    raise AssertionError(f"{result_type} search result is missing source_version")
 
 
 def _required_locator(
@@ -3921,7 +3712,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
         return SearchResultContentChunkOut(
             type="content_chunk",
             source_kind=result.source_kind,
-            source_version=result.source_version,
             evidence_span_ids=result.evidence_span_ids,
             citation_label=result.citation_label,
             locator=_required_locator("content_chunk", result.locator),
@@ -3933,7 +3723,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
         return SearchResultEvidenceSpanOut(
             type="evidence_span",
             evidence_span_id=result.id,
-            source_version=result.source_version,
             citation_label=result.citation_label,
             locator=_required_locator("evidence_span", result.locator),
             source=result.source,
@@ -3944,7 +3733,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
         return SearchResultFragmentOut(
             type="fragment",
             source=result.source,
-            source_version=_required_source_version("fragment", result.source_version),
             citation_label=result.citation_label,
             locator=_required_locator("fragment", result.locator),
             **base_payload,
@@ -3954,7 +3742,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
         return SearchResultPageOut(
             type="page",
             description=result.description,
-            source_version=_required_source_version("page", result.source_version),
             **base_payload,
         )
 
@@ -3965,7 +3752,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             page_title=result.page_title,
             body_text=result.body_text,
             highlight_excerpt=result.highlight_excerpt,
-            source_version=_required_source_version("note_block", result.source_version),
             locator=_required_locator("note_block", result.locator),
             **base_payload,
         )
@@ -3976,7 +3762,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             color=result.color,
             exact=result.exact,
             source=result.source,
-            source_version=_required_source_version("highlight", result.source_version),
             citation_label=result.citation_label,
             locator=_required_locator("highlight", result.locator),
             **base_payload,
@@ -3987,7 +3772,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             type="message",
             conversation_id=result.conversation_id,
             seq=result.seq,
-            source_version=_required_source_version("message", result.source_version),
             locator=_required_locator("message", result.locator),
             **base_payload,
         )
@@ -4012,7 +3796,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             rank=result.rank,
             provider=result.provider,
             provider_request_id=result.provider_request_id,
-            source_version=_required_source_version("web_result", result.source_version),
             locator=_required_locator("web_result", result.locator),
             selected=result.selected,
             **base_payload,

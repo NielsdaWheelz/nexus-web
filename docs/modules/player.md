@@ -26,6 +26,5 @@ panes (`MediaPaneBody`, `TranscriptPlaybackPanel`, `PodcastDetailPaneBody`).
 Playback never fetches feeds or writes transcripts. On sync, the podcast module persists the
 episode + its `external_playback_url` and (when `auto_queue` is enabled) calls
 `playback_queue.append_subscription_media_if_enabled`. The player then resolves and streams
-that source and records listening state. The transcript shown alongside playback is the active
-transcript version (resolved by `WHERE is_active`; see [podcast.md](podcast.md)), rendered
-from media fragments — the player does not own transcript state.
+that source and records listening state. The transcript shown alongside playback is the
+current transcript rendered from media fragments; the player does not own transcript state.

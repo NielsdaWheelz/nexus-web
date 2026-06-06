@@ -9,7 +9,6 @@ Reuses existing sanitization/canonicalization/fragment-block primitives.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 import posixpath
@@ -653,7 +652,6 @@ def extract_epub_artifacts(
                     storage_path=storage_path,
                     content_type=ae.content_type,
                     size_bytes=len(ae.content),
-                    sha256=hashlib.sha256(ae.content).hexdigest(),
                     fallback_item_id=ae.fallback_id,
                     properties=ae.properties,
                     created_at=now,
@@ -684,7 +682,6 @@ def extract_epub_artifacts(
             db,
             media_id=media_id,
             source_kind="epub",
-            artifact_ref=media_file.storage_path,
             fragments=fragments,
             reason="epub_ingest",
             language=media.language,
@@ -1326,10 +1323,13 @@ def _derive_asset_key(epub_path: str, existing: dict[str, str]) -> str:
     if key not in existing.values():
         return key
 
-    # collision: add hash suffix
-    h = hashlib.sha256(epub_path.encode()).hexdigest()[:8]
     base, ext = posixpath.splitext(key)
-    return f"{base}_{h}{ext}"
+    suffix = 2
+    while True:
+        candidate = f"{base}_{suffix}{ext}"
+        if candidate not in existing.values():
+            return candidate
+        suffix += 1
 
 
 def _manifest_item_for_href(
@@ -1973,8 +1973,7 @@ def _section_location_id(
 def _truncate_section_id(value: str) -> str:
     if len(value) <= 255:
         return value
-    digest = hashlib.sha256(value.encode()).hexdigest()[:16]
-    return f"{value[:238]}~{digest}"
+    return value[:255]
 
 
 def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
@@ -2022,8 +2021,7 @@ def _ensure_sibling_unique(raw: str, seen: dict[str, int]) -> str:
 def _enforce_id_length(node_id: str) -> str:
     if len(node_id) <= 255:
         return node_id
-    h = hashlib.sha256(node_id.encode()).hexdigest()[:16]
-    return node_id[:238] + "~" + h
+    return node_id[:255]
 
 
 def _text_content(el: ET.Element) -> str:

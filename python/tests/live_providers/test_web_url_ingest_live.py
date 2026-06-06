@@ -110,7 +110,6 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     replacement_trace = assert_reingest_replacement_trace(
         direct_db,
         media_id=media_id,
-        old_run_id=UUID(initial_evidence_trace["active_run_id"]),
         old_chunk_id=UUID(initial_search_trace["result_id"]),
         old_evidence_span_id=UUID(initial_search_trace["evidence_span_id"]),
     )

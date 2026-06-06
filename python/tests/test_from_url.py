@@ -2424,7 +2424,7 @@ class TestBrowserFileCapture:
             row = session.execute(
                 text("""
                     SELECT m.processing_status, m.failure_stage, m.last_error_code,
-                           m.file_sha256, mf.media_id, msa.status, msa.error_code
+                           mf.media_id, msa.status, msa.error_code
                     FROM media m
                     JOIN media_source_attempts msa ON msa.media_id = m.id
                     LEFT JOIN media_file mf ON mf.media_id = m.id
@@ -2437,7 +2437,6 @@ class TestBrowserFileCapture:
             "failed",
             "upload",
             ApiErrorCode.E_INVALID_FILE_TYPE.value,
-            None,
             None,
             "failed",
             ApiErrorCode.E_INVALID_FILE_TYPE.value,
@@ -2982,7 +2981,7 @@ class TestFromUrlRemoteFiles:
         assert storage.put_paths == []
         assert storage.deleted_paths == []
 
-    def test_duplicate_remote_pdf_url_reuses_existing_media_after_worker_hashes_bytes(
+    def test_same_bytes_remote_pdf_urls_materialize_separate_media(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -3033,8 +3032,8 @@ class TestFromUrlRemoteFiles:
         assert second_data["idempotency_outcome"] == "created"
 
         second_result = _run_source_attempt_for_media(direct_db, second_media_id)
-        assert second_result["status"] == "deduped"
-        assert second_result["media_id"] == str(media_id)
+        assert second_result["status"] == "success"
+        assert second_result["media_id"] == str(second_media_id)
         second_final_path = build_storage_path(second_media_id, "pdf")
 
         with direct_db.session() as session:
@@ -3042,17 +3041,13 @@ class TestFromUrlRemoteFiles:
                 text("""
                     SELECT COUNT(*)
                     FROM media
-                    WHERE created_by_user_id = :user_id
+                    WHERE id = ANY(:media_ids)
+                      AND created_by_user_id = :user_id
                       AND kind = 'pdf'
-                      AND file_sha256 IS NOT NULL
                 """),
-                {"user_id": user_id},
+                {"user_id": user_id, "media_ids": [media_id, second_media_id]},
             ).scalar_one()
-            loser_exists = session.execute(
-                text("SELECT EXISTS (SELECT 1 FROM media WHERE id = :media_id)"),
-                {"media_id": second_media_id},
-            ).scalar_one()
-            moved_attempt = session.execute(
+            second_attempt = session.execute(
                 text(
                     """
                     SELECT media_id, status
@@ -3062,12 +3057,11 @@ class TestFromUrlRemoteFiles:
                 )
             ).fetchone()
 
-        assert count == 1
-        assert loser_exists is False
-        assert moved_attempt == (media_id, "succeeded")
+        assert count == 2
+        assert second_attempt == (second_media_id, "succeeded")
         assert storage.get_object(first_final_path) == PDF_CONTENT
-        assert storage.get_object(second_final_path) is None
-        assert storage.deleted_paths == [second_final_path]
+        assert storage.get_object(second_final_path) == PDF_CONTENT
+        assert storage.deleted_paths == []
 
 
 # =============================================================================

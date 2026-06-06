@@ -41,7 +41,6 @@ class PendingWriteOutcome:
     """
 
     match_status: str  # always "pending"
-    match_version: None  # always None
     start_offset: None  # always None
     end_offset: None  # always None
     prefix: str  # always ""
@@ -50,7 +49,6 @@ class PendingWriteOutcome:
 
 _PENDING_OUTCOME = PendingWriteOutcome(
     match_status="pending",
-    match_version=None,
     start_offset=None,
     end_offset=None,
     prefix="",
@@ -124,7 +122,6 @@ def match_result_to_persistence_fields(result: MatchResult) -> dict:
     """Convert a MatchResult to dict of fields for highlight_pdf_anchors persistence."""
     return {
         "plain_text_match_status": result.status.value,
-        "plain_text_match_version": result.match_version,
         "plain_text_start_offset": result.start_offset,
         "plain_text_end_offset": result.end_offset,
     }
