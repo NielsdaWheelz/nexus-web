@@ -1,13 +1,13 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createDefaultWorkspaceState,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
-  mergeRestoredWorkspaceWithDeepLink,
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
   WorkspaceStoreProvider,
@@ -66,26 +66,54 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+// Only the capture PUT is allowed: restore is server-side now, so a client GET to
+// /api/me/workspace-session is a regression and must fail the test loudly (AC-2/R4).
 function mockWorkspaceSession() {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input), window.location.origin);
-
     if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
       return jsonResponse({ data: null });
     }
-    if (url.pathname === "/api/me/workspace-session") {
-      return jsonResponse({
-        data: { own: null, most_recent_elsewhere: null },
-      });
-    }
-
-    throw new Error(`Unexpected fetch call: ${url.pathname}`);
+    throw new Error(`Unexpected fetch call: ${url.pathname} (${init?.method ?? "GET"})`);
   });
 }
 
 function StoreProbe({ onStore }: { onStore: (store: WorkspaceStore) => void }) {
   onStore(useWorkspaceStore());
   return null;
+}
+
+// Render the provider seeded with a server-restored state (the cutover path: the store
+// starts from initialState, no client restore round-trip). Captures every rendered state so
+// a test can assert the FIRST commit already has the settled pane set (AC-1, no flash).
+function renderSeeded(initialState: WorkspaceState, path: string) {
+  window.history.replaceState({}, "", path);
+  const fetchSpy = mockWorkspaceSession();
+  const snapshots: WorkspaceState[] = [];
+  let store: WorkspaceStore | null = null;
+  render(
+    <WorkspaceStoreProvider
+      workspacePrimaryMetrics={workspacePrimaryMetrics}
+      initialState={initialState}
+    >
+      <StoreProbe
+        onStore={(nextStore) => {
+          snapshots.push(nextStore.state);
+          store = nextStore;
+        }}
+      />
+    </WorkspaceStoreProvider>,
+  );
+  return {
+    fetchSpy,
+    snapshots,
+    workspace: () => {
+      if (!store) {
+        throw new Error("Workspace store has not mounted yet");
+      }
+      return store;
+    },
+  };
 }
 
 async function mountWorkspaceStore(path = "/libraries") {
@@ -97,7 +125,7 @@ async function mountWorkspaceStore(path = "/libraries") {
   render(
     <WorkspaceStoreProvider
       workspacePrimaryMetrics={workspacePrimaryMetrics}
-      initialHref={path}
+      initialState={createDefaultWorkspaceState(path, workspacePrimaryMetrics)}
     >
       <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
     </WorkspaceStoreProvider>,
@@ -138,123 +166,6 @@ function titleRecord(
     resourceKey: resolvePaneRouteIdentity(href).resourceKey,
   };
 }
-
-describe("mergeRestoredWorkspaceWithDeepLink", () => {
-  const restored = workspaceState({
-    activePrimaryPaneId: "pane-saved-libraries",
-    primaryPanes: [
-      pane("pane-saved-libraries", "/libraries"),
-      pane("pane-saved-notes", "/notes", { primaryWidthPx: 480 }),
-    ],
-  });
-
-  it("keeps a neutral /libraries open as pure saved-session restore", () => {
-    const deepLink = workspaceState({
-      activePrimaryPaneId: "pane-url-libraries",
-      primaryPanes: [pane("pane-url-libraries", "/libraries")],
-    });
-
-    expect(
-      mergeRestoredWorkspaceWithDeepLink(
-        restored,
-        deepLink,
-        workspacePrimaryMetrics,
-      ),
-    ).toBe(restored);
-  });
-
-  it("rekeys a neutral single-pane same-resource restore to preserve first-paint hydration", () => {
-    const singlePaneRestore = workspaceState({
-      activePrimaryPaneId: "pane-saved-libraries",
-      primaryPanes: [
-        pane("pane-saved-libraries", "/libraries", {
-          primaryWidthPx: 640,
-          history: { back: ["/browse"], forward: [] },
-        }),
-      ],
-    });
-    const deepLink = workspaceState({
-      activePrimaryPaneId: "pane-url-libraries",
-      primaryPanes: [pane("pane-url-libraries", "/libraries")],
-    });
-
-    const merged = mergeRestoredWorkspaceWithDeepLink(
-      singlePaneRestore,
-      deepLink,
-      workspacePrimaryMetrics,
-    );
-
-    expect(merged.activePrimaryPaneId).toBe("pane-url-libraries");
-    expect(primaryPanes(merged)).toEqual([
-      expect.objectContaining({
-        id: "pane-url-libraries",
-        href: "/libraries",
-        primaryWidthPx: 640,
-        history: { back: ["/browse"], forward: [] },
-      }),
-    ]);
-  });
-
-  it("adds an explicit deep link as the active pane instead of letting restore override it", () => {
-    const deepLink = workspaceState({
-      activePrimaryPaneId: "pane-url-media",
-      primaryPanes: [
-        pane("pane-url-media", "/media/media-123", { primaryWidthPx: 1280 }),
-      ],
-    });
-
-    const merged = mergeRestoredWorkspaceWithDeepLink(
-      restored,
-      deepLink,
-      workspacePrimaryMetrics,
-    );
-
-    expect(primaryPanes(merged).map((item) => item.href)).toEqual([
-      "/libraries",
-      "/notes",
-      "/media/media-123",
-    ]);
-    expect(merged.activePrimaryPaneId).toBe("pane-url-media");
-  });
-
-  it("reuses and activates the saved pane for same-resource deep links", () => {
-    const savedWithMedia = workspaceState({
-      activePrimaryPaneId: "pane-saved-libraries",
-      primaryPanes: [
-        ...primaryPanes(restored),
-        pane("pane-saved-media", "/media/media-123", {
-          primaryWidthPx: 960,
-          visibility: "minimized",
-          history: { back: ["/libraries"], forward: ["/media/media-999"] },
-        }),
-      ],
-    });
-    const deepLink = workspaceState({
-      activePrimaryPaneId: "pane-url-media",
-      primaryPanes: [
-        pane("pane-url-media", "/media/media-123?loc=chapter-2", {
-          primaryWidthPx: 1280,
-        }),
-      ],
-    });
-
-    const merged = mergeRestoredWorkspaceWithDeepLink(
-      savedWithMedia,
-      deepLink,
-      workspacePrimaryMetrics,
-    );
-
-    expect(primaryPanes(merged)).toHaveLength(3);
-    expect(merged.activePrimaryPaneId).toBe("pane-saved-media");
-    expect(primaryPanes(merged).find((item) => item.id === "pane-saved-media")).toMatchObject({
-      href: "/media/media-123?loc=chapter-2",
-      visibility: "visible",
-      primaryWidthPx: 960,
-      attachedSecondaryPaneId: null,
-      history: { back: ["/libraries"], forward: ["/media/media-999"] },
-    });
-  });
-});
 
 describe("WorkspaceStoreProvider", () => {
   beforeEach(() => {
@@ -997,194 +908,92 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("deep-links into a stored multi-pane session and focuses the requested pane", async () => {
-    window.history.replaceState({}, "", "/conversations/conversation-1");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input), window.location.origin);
-      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
-        return jsonResponse({ data: null });
-      }
-      if (url.pathname === "/api/me/workspace-session") {
-        return jsonResponse({
-          data: {
-            own: {
-              state: workspaceState({
-                activePrimaryPaneId: "pane-libraries",
-                primaryPanes: [
-                  pane("pane-libraries", "/libraries"),
-                  pane("pane-conversation", "/conversations/conversation-1"),
-                  pane("pane-notes", "/notes"),
-                ],
-              }),
-            },
-            most_recent_elsewhere: null,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+  it("seeds the server-restored pane set on the first commit, no flash, no round-trip (AC-1/AC-2)", () => {
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-conversation",
+      primaryPanes: [
+        pane("pane-libraries", "/libraries"),
+        pane("pane-conversation", "/conversations/conversation-1"),
+        pane("pane-notes", "/notes"),
+      ],
     });
-
-    let store: WorkspaceStore | null = null;
-    render(
-      <WorkspaceStoreProvider
-        workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref={`${window.location.pathname}${window.location.search}`}
-      >
-        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
-      </WorkspaceStoreProvider>,
+    const { snapshots, fetchSpy, workspace } = renderSeeded(
+      initialState,
+      "/conversations/conversation-1",
     );
-    const workspace = () => {
-      if (!store) {
-        throw new Error("Workspace store has not mounted yet");
-      }
-      return store;
-    };
 
-    await waitFor(() => {
-      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
-        "/libraries",
-        "/conversations/conversation-1",
-        "/notes",
-      ]);
-      expect(activeHref(workspace())).toBe("/conversations/conversation-1");
-    });
-    expect(window.location.search).not.toContain("wsv");
-    expect(window.location.search).not.toContain("ws=");
+    // The very FIRST rendered state already has all three panes — no 1→N swap.
+    expect(primaryPanes(snapshots[0]!).map((item) => item.href)).toEqual([
+      "/libraries",
+      "/conversations/conversation-1",
+      "/notes",
+    ]);
+    expect(snapshots.every((state) => primaryPanes(state).length === 3)).toBe(true);
+    expect(activeHref(workspace())).toBe("/conversations/conversation-1");
+    // No restore round-trip: every fetch (if any) is the capture PUT, never a GET.
+    expect(
+      fetchSpy.mock.calls.every(([, init]) => init?.method === "PUT"),
+    ).toBe(true);
     flushWorkspaceSession();
   });
 
-  it("does not recapture restored sessions or rerestore after metric changes", async () => {
-    window.history.replaceState({}, "", "/conversations/conversation-1");
-    const sessionCalls: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input), window.location.origin);
-      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
-        sessionCalls.push("PUT");
-        return jsonResponse({ data: null });
-      }
-      if (url.pathname === "/api/me/workspace-session") {
-        sessionCalls.push("GET");
-        return jsonResponse({
-          data: {
-            own: {
-              state: workspaceState({
-                activePrimaryPaneId: "pane-libraries",
-                primaryPanes: [
-                  pane("pane-libraries", "/libraries"),
-                  pane("pane-conversation", "/conversations/conversation-1"),
-                  pane("pane-notes", "/notes"),
-                ],
-              }),
-            },
-            most_recent_elsewhere: null,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${url.pathname}`);
+  it("never fetches the workspace session on load, even across metric changes", () => {
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-conversation",
+      primaryPanes: [
+        pane("pane-libraries", "/libraries"),
+        pane("pane-conversation", "/conversations/conversation-1"),
+      ],
     });
-
+    window.history.replaceState({}, "", "/conversations/conversation-1");
+    const fetchSpy = mockWorkspaceSession();
     let store: WorkspaceStore | null = null;
     const { rerender } = render(
       <WorkspaceStoreProvider
         workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref={`${window.location.pathname}${window.location.search}`}
+        initialState={initialState}
       >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
     );
-    const workspace = () => {
-      if (!store) {
-        throw new Error("Workspace store has not mounted yet");
-      }
-      return store;
-    };
-
-    await waitFor(() => {
-      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
-        "/libraries",
-        "/conversations/conversation-1",
-        "/notes",
-      ]);
-    });
-    expect(sessionCalls).toEqual(["GET"]);
-
     rerender(
       <WorkspaceStoreProvider
         workspacePrimaryMetrics={{ primaryMinWidthPx: 720, primaryDefaultWidthPx: 720 }}
-        initialHref={`${window.location.pathname}${window.location.search}`}
+        initialState={initialState}
       >
         <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
       </WorkspaceStoreProvider>,
     );
 
-    await waitFor(() => {
-      expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
-        "/libraries",
-        "/conversations/conversation-1",
-        "/notes",
-      ]);
-      expect(activeHref(workspace())).toBe("/conversations/conversation-1");
-    });
+    expect(store).not.toBeNull();
+    expect(primaryPanes(store!.state).map((item) => item.href)).toEqual([
+      "/libraries",
+      "/conversations/conversation-1",
+    ]);
+    expect(fetchSpy.mock.calls.every(([, init]) => init?.method === "PUT")).toBe(true);
     flushWorkspaceSession();
-    expect(sessionCalls).toEqual(["GET"]);
   });
 
-  it("captures pane changes after the workspace restore phase is armed", async () => {
-    window.history.replaceState({}, "", "/libraries");
-    const savedStates: WorkspaceState[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input), window.location.origin);
-      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
-        const body = JSON.parse(String(init.body)) as { state: WorkspaceState };
-        savedStates.push(body.state);
-        return jsonResponse({ data: null });
-      }
-      if (url.pathname === "/api/me/workspace-session") {
-        return jsonResponse({
-          data: {
-            own: {
-              state: workspaceState({
-                activePrimaryPaneId: "pane-libraries",
-                primaryPanes: [pane("pane-libraries", "/libraries")],
-              }),
-            },
-            most_recent_elsewhere: null,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${url.pathname}`);
-    });
-
-    let store: WorkspaceStore | null = null;
-    render(
-      <WorkspaceStoreProvider
-        workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref={`${window.location.pathname}${window.location.search}`}
-      >
-        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
-      </WorkspaceStoreProvider>,
+  it("captures pane changes with a device-id-free PUT body (R2)", async () => {
+    const { fetchSpy, workspace } = renderSeeded(
+      workspaceState({ primaryPanes: [pane("pane-libraries", "/libraries")] }),
+      "/libraries",
     );
-    const workspace = () => {
-      if (!store) {
-        throw new Error("Workspace store has not mounted yet");
-      }
-      return store;
-    };
-
-    await waitFor(() => {
-      expect(primaryPanes(workspace().state)).toHaveLength(1);
-    });
 
     act(() => {
       workspace().openPane({ href: "/libraries/library-1" });
     });
-
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
     flushWorkspaceSession();
 
-    expect(savedStates.at(-1)?.primaryPaneOrder).toHaveLength(2);
+    const putCall = fetchSpy.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(putCall).toBeDefined();
+    const body = JSON.parse(String(putCall![1]?.body));
+    expect(Object.keys(body)).toEqual(["state"]);
+    expect(body).not.toHaveProperty("device_id");
+    expect(body.state.primaryPaneOrder).toHaveLength(2);
   });
 
   it("projects the active pane href to the address bar via replaceState, never pushState", async () => {
@@ -1200,82 +1009,47 @@ describe("WorkspaceStoreProvider", () => {
       expect(window.location.pathname).toBe("/conversations/conversation-1");
       expect(window.location.search).toBe("?run=run-1");
     });
-    expect(window.location.search).not.toContain("wsv");
-    expect(window.location.search).not.toContain("ws=");
     expect(pushStateSpy).not.toHaveBeenCalled();
     flushWorkspaceSession();
   });
 
-  it("holds the state→URL projection until session restore wins, then projects the restored href", async () => {
-    window.history.replaceState({}, "", "/libraries");
-
-    // Defer the workspace-session GET behind a promise we resolve by hand so the
-    // pre-restore window is deterministic. The saved session restores an ACTIVE
-    // pane at a DIFFERENT href than initialHref, so projection and restore would
-    // disagree if projection ran before restore-ready.
-    let resolveSession: (() => void) | null = null;
-    const sessionResolved = new Promise<void>((resolve) => {
-      resolveSession = resolve;
+  it("projects the seeded active pane href onto a bare-landing address bar", async () => {
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-notes",
+      primaryPanes: [pane("pane-libraries", "/libraries"), pane("pane-notes", "/notes")],
     });
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input), window.location.origin);
-      if (url.pathname === "/api/me/workspace-session" && init?.method === "PUT") {
-        return jsonResponse({ data: null });
-      }
-      if (url.pathname === "/api/me/workspace-session") {
-        await sessionResolved;
-        return jsonResponse({
-          data: {
-            own: {
-              state: workspaceState({
-                activePrimaryPaneId: "pane-saved-notes",
-                primaryPanes: [pane("pane-saved-notes", "/notes")],
-              }),
-            },
-            most_recent_elsewhere: null,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${url.pathname}`);
-    });
+    const { workspace } = renderSeeded(initialState, "/libraries");
 
-    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
-
-    render(
-      <WorkspaceStoreProvider
-        workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref="/libraries"
-      >
-        <StoreProbe onStore={() => {}} />
-      </WorkspaceStoreProvider>,
-    );
-
-    // (a) While the GET is still pending, projection is held: it must never push
-    // the restored href (or any default href) onto the address bar.
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/libraries");
-    });
-    expect(
-      replaceStateSpy.mock.calls.some(([, , url]) => url === "/notes"),
-    ).toBe(false);
-
-    // Resolve the GET so restore wins the race over the initial state.
-    await act(async () => {
-      resolveSession?.();
-      await sessionResolved;
-    });
-
-    // (b) After restore, projection runs once and projects the restored href.
     await waitFor(() => {
       expect(window.location.pathname).toBe("/notes");
     });
-    const notesProjections = replaceStateSpy.mock.calls.filter(
-      ([, , url]) => url === "/notes",
-    );
-    expect(notesProjections).toHaveLength(1);
-    expect(notesProjections[0]).toEqual([null, "", "/notes"]);
+    expect(activeHref(workspace())).toBe("/notes");
     flushWorkspaceSession();
   });
+
+  it("folds a client-only URL hash into the active pane without disturbing the restored layout", async () => {
+    // The hash never reaches the server, so the seeded active pane carries no hash; the
+    // mount-time fold must add it to the active pane (same resource → pane preserved) and
+    // leave the rest of the restored multi-pane layout untouched.
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        pane("pane-libraries", "/libraries"),
+        pane("pane-media", "/media/media-1"),
+      ],
+    });
+    const { workspace } = renderSeeded(initialState, "/media/media-1#loc=chapter-2");
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/media/media-1#loc=chapter-2");
+    });
+    expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
+      "/libraries",
+      "/media/media-1#loc=chapter-2",
+    ]);
+    flushWorkspaceSession();
+  });
+
 });
 
 describe("resolveWorkspacePaneTitle", () => {

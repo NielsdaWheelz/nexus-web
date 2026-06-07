@@ -1,0 +1,13 @@
+.rail {
+  width: var(--navbar-width);
+  height: 100%;
+  flex-shrink: 0;
+  border-right: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+@media (max-width: 768px) {
+  .rail {
+    display: none;
+  }
+}

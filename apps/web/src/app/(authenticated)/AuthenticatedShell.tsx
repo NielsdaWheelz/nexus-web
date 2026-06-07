@@ -17,7 +17,8 @@ import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { getWorkspacePrimaryPanes, type WorkspaceState } from "@/lib/workspace/schema";
+import { resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import {
   BootstrapHydrationProvider,
@@ -28,14 +29,14 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell({
-  initialHref,
   readerProfile,
   renderEnvironment,
+  initialState,
   resources,
 }: {
-  initialHref: string;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
+  initialState: WorkspaceState;
   resources: DehydratedResources;
 }) {
   return (
@@ -47,7 +48,7 @@ export default function AuthenticatedShell({
         <BootstrapHydrationProvider value={resources}>
           <KeybindingsProvider>
             <ReaderProvider initialProfile={readerProfile}>
-              <AuthenticatedWorkspace initialHref={initialHref} />
+              <AuthenticatedWorkspace initialState={initialState} />
             </ReaderProvider>
           </KeybindingsProvider>
         </BootstrapHydrationProvider>
@@ -56,26 +57,35 @@ export default function AuthenticatedShell({
   );
 }
 
-function AuthenticatedWorkspace({ initialHref }: { initialHref: string }) {
+function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState }) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
-  // Warm the initial pane's chunk as soon as the shell mounts so its download
-  // overlaps hydration instead of waiting for WorkspaceHost's Suspense to commit
-  // (D-7). resolvePaneRouteModel is the same resolver the store uses, so this
-  // targets exactly the pane that is about to render.
+  // Warm every restored visible pane's chunk as soon as the shell mounts so the downloads
+  // overlap hydration instead of waiting for each WorkspaceHost Suspense to commit (D-7).
+  // resolvePaneRouteModel is the same resolver the store uses, so this targets exactly the
+  // panes about to render.
   useEffect(() => {
-    const { id } = resolvePaneRouteModel(initialHref);
-    if (id !== "unsupported") {
+    const ids = new Set<PaneRouteId>();
+    for (const pane of getWorkspacePrimaryPanes(initialState)) {
+      if (pane.visibility !== "visible") {
+        continue;
+      }
+      const { id } = resolvePaneRouteModel(pane.href);
+      if (id !== "unsupported") {
+        ids.add(id);
+      }
+    }
+    for (const id of ids) {
       preloadPane(id);
     }
-  }, [initialHref]);
+  }, [initialState]);
 
   return (
     <>
       {probe}
       <WorkspaceStoreProvider
         workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialHref={initialHref}
+        initialState={initialState}
       >
         <MobileChromeProvider>
           <CommandPalette />

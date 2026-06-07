@@ -1,5 +1,5 @@
-"use client";
-
+// Pure workspace-state shape + sanitize/construct helpers (no React/DOM), so the server
+// data root and the client store build identical state. Isomorphic — no "use client".
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";

@@ -2,7 +2,7 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
-	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons audit \
+	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
@@ -66,6 +66,7 @@ help:
 	@echo "  make build-android      - Build Android debug and instrumentation APKs"
 	@echo "  make build-android-release - Build signed Android release APK"
 	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
+	@echo "  make check-bundle       - Build front and gate authenticated First Load JS budget"
 	@echo "  make verify-android     - Android lint + debug/test APK build"
 	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
@@ -311,6 +312,14 @@ build-android-release:
 
 build-icons:
 	node scripts/build-icons.mjs
+
+# Gate authenticated First Load JS against the bundle budget (spec S0/AC-5/R5).
+# Builds the frontend, then measures gzipped First Load JS from the produced
+# .next/app-build-manifest.json. Self-contained so it can run standalone; CI
+# uses it in build-front in place of a bare `make build` (no double build).
+check-bundle:
+	make build
+	cd apps/web && node scripts/check-bundle.mjs
 
 audit:
 	cd python && uv sync --all-extras --locked

@@ -1,5 +1,5 @@
-"use client";
-
+// Pure pane-width math (no React/DOM), so the server data root and the client store
+// share one clamp. Isomorphic — no "use client".
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 export function getDefaultPaneWidthPx(

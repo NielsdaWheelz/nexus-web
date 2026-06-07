@@ -10,8 +10,10 @@ import {
 } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
-import type { ReaderProfile } from "@/lib/reader/types";
-import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import {
+  estimatePrimaryWidthPx,
+  type WorkspacePrimaryMetrics,
+} from "@/lib/workspace/paneSizing";
 
 const probeBaseStyle: CSSProperties = {
   position: "fixed",
@@ -28,14 +30,6 @@ const probeBaseStyle: CSSProperties = {
   fontSize: "var(--reader-font-size-px, var(--text-md))",
   lineHeight: "var(--reader-line-height, var(--leading-normal))",
 };
-
-// First-paint seed mirroring the probe box below: column_width_ch glyphs at
-// ~0.5em advance + --space-4 (1rem) inline padding on both sides. The live probe
-// refines this to the measured width before paint (useLayoutEffect), so the
-// approximation never causes a visible jump.
-function estimatePrimaryWidthPx(profile: ReaderProfile): number {
-  return Math.ceil(profile.column_width_ch * profile.font_size_px * 0.5 + 2 * 16);
-}
 
 export function useWorkspacePrimaryMetrics(): {
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;

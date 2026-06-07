@@ -45,6 +45,7 @@ from nexus.api.routes.reader import router as reader_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
+from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 from nexus.api.routes.vault import router as vault_router
 from nexus.config import get_settings
@@ -59,6 +60,7 @@ def create_api_router() -> APIRouter:
     api_router = APIRouter()
     api_router.include_router(health_router)
     api_router.include_router(me_router)
+    api_router.include_router(telemetry_router)
     api_router.include_router(extension_sessions_router)
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(libraries_router)

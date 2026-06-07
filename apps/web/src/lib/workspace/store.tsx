@@ -16,15 +16,20 @@ import {
   createDefaultWorkspaceState,
   createEmptyPaneHistory,
   createPaneId,
-  createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPane,
   getWorkspacePrimaryPanes,
   normalizePaneTitle,
-  trimWorkspacePaneHistory,
-  type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
+import {
+  applyPaneHrefTransition,
+  createWorkspaceState,
+  ensureActivePaneId,
+  getAttachedSecondaryPane,
+  trimAndEnsureActivePaneId,
+  type PaneNavigationMode,
+} from "@/lib/workspace/workspaceRestore";
 import {
   clampPaneWidth,
   getDefaultPaneWidthPx,
@@ -61,10 +66,7 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 
-type PaneNavigationMode = "replace" | "push";
-
 type WorkspaceAction =
-  | { type: "hydrate"; state: WorkspaceState }
   | { type: "activate_pane"; paneId: string }
   | {
       type: "open_pane";
@@ -100,251 +102,12 @@ type WorkspaceAction =
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
 
-function getAttachedSecondaryPane(
-  state: WorkspaceState,
-  primaryPane: WorkspacePrimaryPaneState,
-): WorkspaceAttachedSecondaryPaneState | null {
-  return primaryPane.attachedSecondaryPaneId
-    ? state.secondaryPanesById[primaryPane.attachedSecondaryPaneId] ?? null
-    : null;
-}
-
-function createWorkspaceState(input: {
-  previousState: WorkspaceState;
-  primaryPanes: WorkspacePrimaryPaneState[];
-  activePrimaryPaneId: string;
-  secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
-}): WorkspaceState {
-  const sourceSecondaryPanesById =
-    input.secondaryPanesById ?? input.previousState.secondaryPanesById;
-  const secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState> = {};
-  const primaryPanes = input.primaryPanes.map((pane) => {
-    if (!pane.attachedSecondaryPaneId) {
-      return pane;
-    }
-    const secondaryPane = sourceSecondaryPanesById[pane.attachedSecondaryPaneId];
-    if (!secondaryPane || secondaryPane.parentPrimaryPaneId !== pane.id) {
-      return { ...pane, attachedSecondaryPaneId: null };
-    }
-    secondaryPanesById[secondaryPane.id] = secondaryPane;
-    return pane;
-  });
-
-  return createWorkspaceStateFromPrimaryPanes({
-    activePrimaryPaneId: input.activePrimaryPaneId,
-    primaryPanes,
-    secondaryPanesById,
-  });
-}
-
-function ensureActivePaneId(
-  state: WorkspaceState,
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-): WorkspaceState {
-  const panes = getWorkspacePrimaryPanes(state);
-  if (!panes.length) {
-    return createDefaultWorkspaceState(
-      WORKSPACE_DEFAULT_FALLBACK_HREF,
-      workspacePrimaryMetrics,
-    );
-  }
-  if (
-    panes.some(
-      (p) => p.id === state.activePrimaryPaneId && p.visibility === "visible",
-    )
-  ) {
-    return state;
-  }
-  const firstVisiblePane = panes.find((p) => p.visibility === "visible");
-  if (firstVisiblePane) {
-    return { ...state, activePrimaryPaneId: firstVisiblePane.id };
-  }
-  return createDefaultWorkspaceState(
-    WORKSPACE_DEFAULT_FALLBACK_HREF,
-    workspacePrimaryMetrics,
-  );
-}
-
-function trimAndEnsureActivePaneId(
-  state: WorkspaceState,
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-): WorkspaceState {
-  return ensureActivePaneId(
-    trimWorkspacePaneHistory(state),
-    workspacePrimaryMetrics,
-  );
-}
-
-function applyPaneHrefTransition(
-  pane: WorkspacePrimaryPaneState,
-  href: string,
-  mode: PaneNavigationMode,
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-  attachedSecondaryPane: WorkspaceAttachedSecondaryPaneState | null,
-): WorkspacePrimaryPaneState {
-  if (pane.href === href) {
-    return pane;
-  }
-  const preserveResource = hasSamePaneResource(pane.href, href);
-  const attachedSecondaryPaneId =
-    preserveResource &&
-    attachedSecondaryPane &&
-    paneRouteAllowsSecondaryGroup(href, attachedSecondaryPane.groupId)
-      ? attachedSecondaryPane.id
-      : null;
-  return {
-    ...pane,
-    href,
-    primaryWidthPx: resolvePaneTransitionWidth(
-      pane.primaryWidthPx,
-      preserveResource,
-      workspacePrimaryMetrics,
-    ),
-    attachedSecondaryPaneId,
-    history:
-      mode === "push"
-        ? { back: [...pane.history.back, pane.href], forward: [] }
-        : pane.history,
-  };
-}
-
-function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
-  const panes = getWorkspacePrimaryPanes(state);
-  if (panes.length !== 1) {
-    return false;
-  }
-  const pane = panes[0];
-  return (
-    pane?.visibility === "visible" &&
-    state.activePrimaryPaneId === pane.id &&
-    pane.href === WORKSPACE_DEFAULT_FALLBACK_HREF &&
-    pane.attachedSecondaryPaneId === null
-  );
-}
-
-function rekeySinglePaneRestoreToDeepLink(
-  restored: WorkspaceState,
-  deepLinkIntent: WorkspaceState,
-): WorkspaceState | null {
-  const restoredPanes = getWorkspacePrimaryPanes(restored);
-  const deepLinkPanes = getWorkspacePrimaryPanes(deepLinkIntent);
-  if (restoredPanes.length !== 1 || deepLinkPanes.length !== 1) {
-    return null;
-  }
-
-  const restoredPane = restoredPanes[0];
-  const deepLinkPane = deepLinkPanes[0];
-  if (
-    !restoredPane ||
-    !deepLinkPane ||
-    restored.activePrimaryPaneId !== restoredPane.id ||
-    deepLinkIntent.activePrimaryPaneId !== deepLinkPane.id ||
-    restoredPane.visibility !== "visible" ||
-    deepLinkPane.visibility !== "visible" ||
-    !hasSamePaneResource(restoredPane.href, deepLinkPane.href)
-  ) {
-    return null;
-  }
-
-  const secondaryPanesById = Object.fromEntries(
-    Object.entries(restored.secondaryPanesById).map(([id, secondary]) => [
-      id,
-      secondary.parentPrimaryPaneId === restoredPane.id
-        ? { ...secondary, parentPrimaryPaneId: deepLinkPane.id }
-        : secondary,
-    ])
-  );
-  return createWorkspaceStateFromPrimaryPanes({
-    activePrimaryPaneId: deepLinkPane.id,
-    primaryPanes: [{ ...restoredPane, id: deepLinkPane.id }],
-    secondaryPanesById,
-  });
-}
-
-export function mergeRestoredWorkspaceWithDeepLink(
-  restored: WorkspaceState,
-  deepLinkIntent: WorkspaceState,
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-): WorkspaceState {
-  if (isNeutralWorkspaceRestoreIntent(deepLinkIntent)) {
-    return rekeySinglePaneRestoreToDeepLink(restored, deepLinkIntent) ?? restored;
-  }
-
-  const restoredPanes = getWorkspacePrimaryPanes(restored);
-  const deepLinkPanes = getWorkspacePrimaryPanes(deepLinkIntent);
-  const requestedPane = deepLinkPanes.find(
-    (pane) =>
-      pane.id === deepLinkIntent.activePrimaryPaneId &&
-      pane.visibility === "visible",
-  );
-  if (!requestedPane) {
-    return restored;
-  }
-
-  const existingPane = restoredPanes.find((pane) =>
-    hasSamePaneResource(pane.href, requestedPane.href)
-  );
-  if (existingPane) {
-    const panes = restoredPanes.map((pane) => {
-      if (pane.id !== existingPane.id) {
-        return pane;
-      }
-      const transitioned = applyPaneHrefTransition(
-        pane,
-        requestedPane.href,
-        "replace",
-        workspacePrimaryMetrics,
-        getAttachedSecondaryPane(restored, pane),
-      );
-      return {
-        ...transitioned,
-        visibility: "visible" as const,
-      };
-    });
-    return trimAndEnsureActivePaneId(
-      createWorkspaceState({
-        previousState: restored,
-        primaryPanes: panes,
-        activePrimaryPaneId: existingPane.id,
-      }),
-      workspacePrimaryMetrics,
-    );
-  }
-
-  const requestedPaneId = restoredPanes.some((pane) => pane.id === requestedPane.id)
-    ? createPaneId()
-    : requestedPane.id;
-  const paneToAppend: WorkspacePrimaryPaneState = {
-    ...requestedPane,
-    id: requestedPaneId,
-    visibility: "visible",
-    attachedSecondaryPaneId: null,
-  };
-  const retainedPaneCount = Math.max(0, MAX_PANES - 1);
-  const panes =
-    restoredPanes.length >= MAX_PANES
-      ? restoredPanes.slice(Math.max(0, restoredPanes.length - retainedPaneCount))
-      : restoredPanes;
-
-  return trimAndEnsureActivePaneId(
-    createWorkspaceState({
-      previousState: restored,
-      activePrimaryPaneId: requestedPaneId,
-      primaryPanes: [...panes, paneToAppend],
-    }),
-    workspacePrimaryMetrics,
-  );
-}
-
 function workspaceReducer(
   state: WorkspaceState,
   action: WorkspaceAction,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
 ): WorkspaceState {
   switch (action.type) {
-    case "hydrate":
-      return trimAndEnsureActivePaneId(action.state, workspacePrimaryMetrics);
-
     case "activate_pane": {
       const panes = getWorkspacePrimaryPanes(state);
       if (
@@ -955,50 +718,32 @@ const WorkspaceStoreContext = createContext<WorkspaceHostStoreValue | null>(null
 export function WorkspaceStoreProvider({
   children,
   workspacePrimaryMetrics,
-  initialHref,
+  initialState,
 }: {
   children: React.ReactNode;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
-  initialHref: string;
+  initialState: WorkspaceState;
 }) {
   const [mounted, setMounted] = useState(false);
+  // Seed from the server-restored state (the data root already merged the saved session
+  // with the deep-link intent), so the first render shows the right panes — no post-mount
+  // restore, no flash. Column widths reconcile at render in WorkspaceHost (resolveEffectivePaneSizing).
   const [state, dispatch] = useReducer(
     (current: WorkspaceState, action: WorkspaceAction) =>
       workspaceReducer(current, action, workspacePrimaryMetrics),
-    null,
-    () => createDefaultWorkspaceState(initialHref, workspacePrimaryMetrics)
+    initialState
   );
   const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<
     Map<string, WorkspacePaneTitleRecord>
   >(() => new Map());
   const readyRef = useRef(false);
-  const urlHydratedRef = useRef(false);
+  const hashFoldedRef = useRef(false);
   const pendingTitleHintByResourceKeyRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
 
-  const applyRestoredState = useCallback(
-    (restored: WorkspaceState, deepLinkIntent: WorkspaceState) => {
-      const merged = mergeRestoredWorkspaceWithDeepLink(
-        restored,
-        deepLinkIntent,
-        workspacePrimaryMetrics,
-      );
-      dispatch({
-        type: "hydrate",
-        state: merged,
-      });
-      return merged;
-    },
-    [workspacePrimaryMetrics]
-  );
-  useWorkspaceSession(
-    state,
-    mounted,
-    applyRestoredState,
-    workspacePrimaryMetrics,
-  );
+  useWorkspaceSession(state, mounted);
 
   const publishPaneTitleHint = useCallback(
     (paneId: string, href: string, titleHint: string | undefined) => {
@@ -1027,26 +772,27 @@ export function WorkspaceStoreProvider({
   );
 
   // --- Mark mounted; fold in a client-only URL hash ---
-  // The initial pane href came from the server (pathname+search). The URL hash
-  // never reaches the server, so if the deep link carried one, apply it now —
-  // client-side, after first paint — so it survives the state→URL projection and
-  // reaches the reader target.
+  // The server seeded the restored layout from pathname+search; the URL hash never
+  // reaches the server. If the deep link carried one, navigate the active pane to the
+  // full href (same resource → preserves the pane, just adds the hash) so it survives
+  // the state→URL projection and reaches the reader target — without disturbing the
+  // restored layout.
   useEffect(() => {
-    if (urlHydratedRef.current) {
+    if (hashFoldedRef.current) {
       return;
     }
-    urlHydratedRef.current = true;
+    hashFoldedRef.current = true;
     setMounted(true);
     if (window.location.hash) {
       dispatch({
-        type: "hydrate",
-        state: createDefaultWorkspaceState(
-          `${window.location.pathname}${window.location.search}${window.location.hash}`,
-          workspacePrimaryMetrics,
-        ),
+        type: "navigate_pane",
+        paneId: stateRef.current.activePrimaryPaneId,
+        href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        activate: true,
+        mode: "replace",
       });
     }
-  }, [workspacePrimaryMetrics]);
+  }, []);
 
   // --- Event listeners: open-pane events ---
   useEffect(() => {

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callFastAPI } from "@/lib/api/server";
+import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { DEFAULT_READER_PROFILE } from "@/lib/reader/types";
+import {
+  createWorkspaceStateFromPrimaryPanes,
+  getWorkspacePrimaryPanes,
+  type WorkspacePrimaryPaneState,
+  type WorkspaceState,
+} from "@/lib/workspace/schema";
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 import { loadWorkspaceBootstrap } from "./bootstrap.server";
 
@@ -10,19 +17,29 @@ import { loadWorkspaceBootstrap } from "./bootstrap.server";
 // "server-only") can be exercised under the node test runner.
 vi.mock("server-only", () => ({}));
 
-// The single external boundary the server data root reads the request path
-// through. A settable header map drives headers().get(name); the tests set the
-// stamped request-path header before each call.
+// The two external request-scoped boundaries the server data root reads through:
+// headers() for the middleware-stamped request path, and cookies() for the
+// server-owned device id that keys the saved workspace session. Settable maps drive
+// both; the tests populate them before each call. A missing cookie returns undefined
+// (mirroring next/headers' RequestCookie | undefined contract).
 const requestHeaders = new Map<string, string>();
+const requestCookies = new Map<string, string>();
 vi.mock("next/headers", () => ({
   headers: vi.fn(async () => ({
     get: (name: string): string | null => requestHeaders.get(name) ?? null,
   })),
+  cookies: vi.fn(async () => ({
+    get: (name: string): { value: string } | undefined => {
+      const value = requestCookies.get(name);
+      return value === undefined ? undefined : { value };
+    },
+  })),
 }));
 
-// callFastAPI is the only network edge — both the bootstrap (reader profile) and
-// every pane loader fetch through it. A per-path script controls each outcome so
-// the tests assert the OBSERVABLE composition the panes' useResource will read.
+// callFastAPI is the only network edge — the bootstrap (reader profile + workspace
+// session) and every pane loader fetch through it. A per-path script controls each
+// outcome so the tests assert the OBSERVABLE composition the panes' useResource will
+// read.
 vi.mock("@/lib/api/server", () => ({
   callFastAPI: vi.fn(),
 }));
@@ -49,8 +66,70 @@ function respondWithFn(responder: Responder): void {
 // A reader-profile responder shared by the resource cases that don't care about it.
 const PROFILE_OK = { data: DEFAULT_READER_PROFILE };
 
+// Saved-session builders — the same primary()/workspace() helpers sessionSync.test.ts
+// uses, so the raw `own`/`most_recent_elsewhere` states the bootstrap sanitizes and
+// restores are built the way the client store actually persists them.
+const emptyHistory = () => ({ back: [], forward: [] });
+
+function primary(
+  id: string,
+  href: string,
+  input: Partial<
+    Pick<
+      WorkspacePrimaryPaneState,
+      "primaryWidthPx" | "visibility" | "history" | "attachedSecondaryPaneId"
+    >
+  > = {},
+): WorkspacePrimaryPaneState {
+  return {
+    id,
+    href,
+    primaryWidthPx: input.primaryWidthPx ?? 684,
+    visibility: input.visibility ?? "visible",
+    history: input.history ?? emptyHistory(),
+    attachedSecondaryPaneId: input.attachedSecondaryPaneId ?? null,
+  };
+}
+
+function workspace(input: {
+  activePrimaryPaneId?: string;
+  primaryPanes: WorkspacePrimaryPaneState[];
+}): WorkspaceState {
+  return createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: input.activePrimaryPaneId ?? input.primaryPanes[0]!.id,
+    primaryPanes: input.primaryPanes,
+  });
+}
+
+function sessionEnvelope(input: {
+  own?: WorkspaceState | null;
+  mostRecentElsewhere?: WorkspaceState | null;
+}): { data: { own: { state: unknown } | null; most_recent_elsewhere: { state: unknown } | null } } {
+  return {
+    data: {
+      own: input.own ? { state: input.own } : null,
+      most_recent_elsewhere: input.mostRecentElsewhere
+        ? { state: input.mostRecentElsewhere }
+        : null,
+    },
+  };
+}
+
+function visibleHrefs(state: WorkspaceState): string[] {
+  return getWorkspacePrimaryPanes(state)
+    .filter((pane) => pane.visibility === "visible")
+    .map((pane) => pane.href);
+}
+
+function activeHref(state: WorkspaceState): string | undefined {
+  return getWorkspacePrimaryPanes(state).find(
+    (pane) => pane.id === state.activePrimaryPaneId,
+  )?.href;
+}
+
 beforeEach(() => {
   requestHeaders.clear();
+  requestCookies.clear();
   mockCallFastAPI.mockReset();
 });
 
@@ -67,7 +146,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": librariesEnvelope,
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.initialHref).toBe("/libraries");
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
@@ -82,7 +161,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": librariesEnvelope,
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.initialHref).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
@@ -98,7 +177,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/media/abc/fragments": { data: [fragment] },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["abc"]).toEqual({ media, fragments: [fragment] });
     expect(mockCallFastAPI).toHaveBeenCalledWith(
@@ -115,7 +194,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/media/ep": { data: media },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["ep"]).toEqual({ media, fragments: [] });
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
@@ -136,7 +215,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/contributors/jane/works?limit=100": { data: { works: [work] } },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["author:jane"]).toEqual({
       contributor,
@@ -157,7 +236,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries/lib-1/entries": { data: [entry] },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["lib-1"]).toEqual({
       library,
@@ -183,7 +262,7 @@ describe("loadWorkspaceBootstrap", () => {
       },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["notes:pages"]).toEqual([
       {
@@ -207,7 +286,7 @@ describe("loadWorkspaceBootstrap", () => {
       },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["note-block:block-1"]).toEqual({
       blockId: "block-1",
@@ -226,7 +305,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/conversations?limit=50": conversationsEnvelope,
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources["conversations:list:initial"]).toEqual(
       conversationsEnvelope,
@@ -262,7 +341,7 @@ describe("loadWorkspaceBootstrap", () => {
         [path]: body,
       });
 
-      const result = await loadWorkspaceBootstrap();
+      const result = await loadWorkspaceBootstrap(false);
 
       expect(result.resources[key]).toEqual(body);
     }
@@ -276,7 +355,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": { data: [] },
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.readerProfile).toEqual(profile);
   });
@@ -290,7 +369,7 @@ describe("loadWorkspaceBootstrap", () => {
       return { data: [] };
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.readerProfile).toEqual(DEFAULT_READER_PROFILE);
   });
@@ -304,7 +383,7 @@ describe("loadWorkspaceBootstrap", () => {
       throw new Error("libraries 500");
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources).toEqual({});
   });
@@ -316,7 +395,7 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": { data: [] },
     });
 
-    await loadWorkspaceBootstrap();
+    await loadWorkspaceBootstrap(false);
 
     for (const [, options] of mockCallFastAPI.mock.calls) {
       expect(options).toEqual({ timeoutMs: 500 });
@@ -329,8 +408,215 @@ describe("loadWorkspaceBootstrap", () => {
       "/me/reader-profile": PROFILE_OK,
     });
 
-    const result = await loadWorkspaceBootstrap();
+    const result = await loadWorkspaceBootstrap(false);
 
     expect(result.resources).toEqual({});
+  });
+
+  it("restores this device's own saved session into initialState and seeds every visible pane (AC-4)", async () => {
+    // Device cookie present → the bootstrap fetches this device's saved session and
+    // restores its panes. A neutral deep-link (/libraries) lets the multi-pane layout
+    // pass through unchanged, so initialState reflects the restored panes and wave 2
+    // seeds BOTH visible panes' resources, not just the URL pane.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/123"),
+        primary("pane-libs", "/libraries"),
+      ],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    const librariesEnvelope = { data: [{ id: "lib-1" }] };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/libraries": librariesEnvelope,
+      "/media/123": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState).sort()).toEqual(
+      ["/libraries", "/media/123"].sort(),
+    );
+    // AC-4: both restored visible panes' resources are seeded under their cacheKeys.
+    expect(result.resources["123"]).toEqual({ media, fragments: [] });
+    expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+  });
+
+  it("retries the URL pane in wave 2 when its wave-1 seed failed, so the active pane is still seeded (AC-4)", async () => {
+    // The URL pane is seeded speculatively in wave 1, but that attempt can fail transiently
+    // (timeout/throw). Because the URL pane is also a restored visible pane, wave 2 must still
+    // attempt it — a single flaky first attempt must not cost the active pane its seed. Here the
+    // libraries loader throws on the wave-1 call and succeeds on the wave-2 retry.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-libs",
+      primaryPanes: [
+        primary("pane-libs", "/libraries"),
+        primary("pane-media", "/media/123"),
+      ],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    const librariesEnvelope = { data: [{ id: "lib-1" }] };
+    let librariesCalls = 0;
+    respondWithFn((path) => {
+      if (path === "/me/reader-profile") {
+        return PROFILE_OK;
+      }
+      if (path === "/me/workspace-session?device_id=dev-1") {
+        return sessionEnvelope({ own: ownState });
+      }
+      if (path === "/libraries") {
+        librariesCalls += 1;
+        if (librariesCalls === 1) {
+          throw new Error("libraries 504 (wave 1)");
+        }
+        return librariesEnvelope;
+      }
+      if (path === "/media/123") {
+        return { data: media };
+      }
+      throw new Error(`unmapped path: ${path}`);
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    // Wave 1 attempted /libraries (and failed); wave 2 retried it (success) — so the active
+    // pane's resource is seeded despite the flaky first attempt.
+    expect(librariesCalls).toBe(2);
+    expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+  });
+
+  it("falls back to most_recent_elsewhere when own is trivial/absent (AC-7)", async () => {
+    // own null, a non-trivial session from another device → that layout is restored.
+    // A neutral deep-link keeps the multi-pane elsewhere layout intact.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const elsewhere = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/789"),
+        primary("pane-libs", "/libraries"),
+      ],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: null,
+        mostRecentElsewhere: elsewhere,
+      }),
+      "/libraries": { data: [] },
+      "/media/789": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState).sort()).toEqual(
+      ["/libraries", "/media/789"].sort(),
+    );
+  });
+
+  it("ignores the saved session when no device cookie is present", async () => {
+    // No device cookie → no session fetch → initialState is the single URL pane.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/solo");
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/media/solo": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    const panes = getWorkspacePrimaryPanes(result.initialState);
+    expect(panes).toHaveLength(1);
+    expect(panes[0]?.href).toBe(result.initialHref);
+    expect(mockCallFastAPI).not.toHaveBeenCalledWith(
+      expect.stringContaining("/me/workspace-session"),
+      expect.anything(),
+    );
+  });
+
+  it("degrades to the deep-link pane when the session fetch throws (AC-10)", async () => {
+    // Device cookie set, but the workspace-session fetch fails → best-effort restore
+    // yields nothing and the deep-link pane stands; no crash.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/solo");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWithFn((path) => {
+      if (path === "/me/workspace-session?device_id=dev-1") {
+        throw new Error("session 504");
+      }
+      if (path === "/me/reader-profile") {
+        return PROFILE_OK;
+      }
+      if (path === "/media/solo") {
+        return { data: media };
+      }
+      throw new Error(`unmapped path: ${path}`);
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    const panes = getWorkspacePrimaryPanes(result.initialState);
+    expect(panes).toHaveLength(1);
+    expect(panes[0]?.href).toBe(result.initialHref);
+    expect(result.resources["solo"]).toEqual({ media, fragments: [] });
+  });
+
+  it("merges the deep-link pane into the restored layout", async () => {
+    // Restored layout does NOT contain the deep-link resource → the deep-link pane is
+    // appended and made active, alongside the restored pane. The restored session must
+    // be non-trivial to be selected (a lone /libraries pane is treated as trivial), so
+    // the saved layout is a single /conversations pane.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/xyz");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      primaryPanes: [primary("pane-convos", "/conversations")],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/conversations?limit=50": { data: [], page: { next_cursor: null } },
+      "/media/xyz": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState).sort()).toEqual(
+      ["/conversations", "/media/xyz"].sort(),
+    );
+    expect(activeHref(result.initialState)).toBe("/media/xyz");
+  });
+
+  it("filters Android-restricted panes from the restored session when androidShell is true", async () => {
+    // androidShell=true → Local Vault is dropped from the restored layout.
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-billing",
+      primaryPanes: [
+        primary("pane-vault", "/settings/local-vault"),
+        primary("pane-billing", "/settings/billing"),
+      ],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/libraries": { data: [] },
+      "/billing/account": { data: { billing_plan_tier: "free" } },
+    });
+
+    const result = await loadWorkspaceBootstrap(true);
+
+    const hrefs = getWorkspacePrimaryPanes(result.initialState).map(
+      (pane) => pane.href,
+    );
+    expect(hrefs).not.toContain("/settings/local-vault");
   });
 });

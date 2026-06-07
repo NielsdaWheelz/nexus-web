@@ -67,6 +67,42 @@ describe("updateSession", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("mints the device cookie on the first active request and forwards it to this request's SSR", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
+    );
+
+    // Sets the server-owned device cookie for future requests (httpOnly, SameSite=Lax)…
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("nx_device=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=lax");
+    // …and forwards it on THIS request's cookie header, so the SSR data root restores for it
+    // on the very first authenticated paint (no extra round-trip).
+    expect(response.headers.get("x-middleware-request-cookie")).toContain(
+      "nx_device="
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not re-mint the device cookie when one is already present", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: `${activeCookie()}; nx_device=existing-device-id` },
+      }),
+      NONCE
+    );
+
+    // No re-mint: an existing device id is left untouched.
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("stamps the request-path header with the pathname and querystring verbatim", async () => {
     const { updateSession } = await import("./middleware");
     const response = updateSession(

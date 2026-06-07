@@ -23,9 +23,11 @@ import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 // Bootstrap prefetch deadline — paint-adjacent, never paint-blocking (D-10/AC-10).
 // callFastAPI aborts the upstream at this deadline; a timed-out loader is omitted
 // and the client useResource fetches normally (D-8).
-export const PREFETCH_DEADLINE_MS = 500;
+const PREFETCH_DEADLINE_MS = 500;
 
-const opts = { timeoutMs: PREFETCH_DEADLINE_MS } as const;
+// The prefetch deadline as a callFastAPI options object — shared by every loader here and by
+// the server data root (bootstrap.server.ts), so the paint-adjacent budget has one owner.
+export const PREFETCH_OPTS = { timeoutMs: PREFETCH_DEADLINE_MS } as const;
 
 interface SeededResource {
   cacheKey: string;
@@ -55,7 +57,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     cacheKey: librariesResource.cacheKey({ refreshVersion: 0 }),
     data: await callFastAPI<unknown>(
       librariesResource.serverPath({ refreshVersion: 0 }),
-      opts,
+      PREFETCH_OPTS,
     ),
   }),
 
@@ -64,11 +66,11 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     const [library, entries] = await Promise.all([
       callFastAPI<{ data: unknown }>(
         libraryResource.serverPath(resourceParams),
-        opts,
+        PREFETCH_OPTS,
       ),
       callFastAPI<{ data: unknown }>(
         libraryEntriesResource.serverPath(resourceParams),
-        opts,
+        PREFETCH_OPTS,
       ),
     ]);
     return {
@@ -82,14 +84,14 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     const media = (
       await callFastAPI<{ data: { kind?: string; capabilities?: { can_read?: boolean } | null } }>(
         mediaResource.serverPath(resourceParams),
-        opts,
+        PREFETCH_OPTS,
       )
     ).data;
     const fragments = shouldLoadInitialMediaFragments(media)
       ? (
           await callFastAPI<{ data: unknown }>(
             mediaFragmentsResource.serverPath(resourceParams),
-            opts,
+            PREFETCH_OPTS,
           )
         ).data
       : [];
@@ -104,14 +106,14 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     const [contributorEnv, worksEnv] = await Promise.all([
       callFastAPI<{ data: { aliases?: unknown[]; external_ids?: unknown[] } }>(
         contributorResource.serverPath(contributorParams),
-        opts,
+        PREFETCH_OPTS,
       ),
       callFastAPI<{ data: { works?: unknown[] } }>(
         contributorWorksResource.serverPath({
           ...contributorParams,
           limit: 100,
         }),
-        opts,
+        PREFETCH_OPTS,
       ),
     ]);
     const contributor = contributorEnv.data;
@@ -131,7 +133,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
   note: async (params) => {
     const env = await callFastAPI<{ data: Record<string, unknown> }>(
       noteBlockResource.serverPath({ blockId: params.blockId }),
-      opts,
+      PREFETCH_OPTS,
     );
     return {
       cacheKey: noteBlockResource.cacheKey({ blockId: params.blockId }),
@@ -142,7 +144,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
   notes: async () => {
     const env = await callFastAPI<{ data: { pages?: Record<string, unknown>[] } }>(
       notePagesResource.serverPath({}),
-      opts,
+      PREFETCH_OPTS,
     );
     return {
       cacheKey: notePagesResource.cacheKey({}),
@@ -154,20 +156,20 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     cacheKey: conversationsInitialResource.cacheKey({}),
     data: await callFastAPI<unknown>(
       conversationsInitialResource.serverPath({}),
-      opts,
+      PREFETCH_OPTS,
     ),
   }),
 
   settingsAccount: async () => ({
     cacheKey: settingsAccountResource.cacheKey({}),
-    data: await callFastAPI<unknown>(settingsAccountResource.serverPath({}), opts),
+    data: await callFastAPI<unknown>(settingsAccountResource.serverPath({}), PREFETCH_OPTS),
   }),
 
   settingsKeys: async () => ({
     cacheKey: settingsKeysResource.cacheKey({ refreshVersion: 0 }),
     data: await callFastAPI<unknown>(
       settingsKeysResource.serverPath({ refreshVersion: 0 }),
-      opts,
+      PREFETCH_OPTS,
     ),
   }),
 
@@ -175,7 +177,7 @@ export const paneServerLoaders: Partial<Record<PaneRouteId, PaneServerLoader>> =
     cacheKey: billingAccountResource.cacheKey({ refreshVersion: 0 }),
     data: await callFastAPI<unknown>(
       billingAccountResource.serverPath({ refreshVersion: 0 }),
-      opts,
+      PREFETCH_OPTS,
     ),
   }),
 };

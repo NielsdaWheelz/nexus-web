@@ -220,8 +220,8 @@ jobs:
       - name: Install frontend dependencies
         run: cd apps/web && bun ci
 
-      - name: Build frontend
-        run: make build
+      - name: Build frontend and gate First Load JS budget
+        run: make check-bundle
 
   test-android:
     runs-on: ubuntu-latest

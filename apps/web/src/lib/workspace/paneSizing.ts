@@ -1,8 +1,18 @@
 import type { PaneWidthContract } from "@/lib/panes/paneRouteModel";
+import type { ReaderProfile } from "@/lib/reader/types";
 
 export interface WorkspacePrimaryMetrics {
   primaryMinWidthPx: number;
   primaryDefaultWidthPx: number;
+}
+
+// First-paint primary-column width estimate: column_width_ch glyphs at ~0.5em advance plus
+// --space-4 (1rem = 16px) inline padding on both sides. Shared by the client probe seed
+// (useWorkspacePrimaryMetrics) and the server data root, so server-restored and client
+// first-paint metrics match — the restored widths need no settle. The client probe refines
+// this to the measured width before paint.
+export function estimatePrimaryWidthPx(profile: ReaderProfile): number {
+  return Math.ceil(profile.column_width_ch * profile.font_size_px * 0.5 + 2 * 16);
 }
 
 export type PaneRuntimePrimaryWidth =

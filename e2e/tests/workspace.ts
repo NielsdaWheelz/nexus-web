@@ -3,16 +3,15 @@ import {
   type APIRequestContext,
   type Locator,
   type Page,
-  type Response,
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-// The app stores the device id under this key in localStorage. Pinning it lets
-// a test key its server-session capture + restore to an id it controls.
-export const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
+// The device id is a server-owned httpOnly cookie now; pinning it lets a test key its
+// server-session capture + restore (both server-side) to an id it controls.
+const DEVICE_COOKIE_NAME = "nx_device";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
@@ -117,34 +116,21 @@ export function singlePaneWorkspaceState(
   );
 }
 
-// Pin the device id before any navigation so capture + restore key off the id
-// the test controls. Runs as an init script, i.e. before any page load.
+// Pin the device id before any navigation. It's the server-owned httpOnly cookie now, so the
+// SSR data root restores for it and the BFF injects it into capture writes (the body's
+// device_id is ignored). Setting it present also stops middleware from minting a fresh one.
 export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
-  await page.addInitScript(
-    ([key, id]) => {
-      try {
-        localStorage.setItem(key, id);
-      } catch {
-        /* private mode / quota - ignored */
-      }
+  await page.context().addCookies([
+    {
+      name: DEVICE_COOKIE_NAME,
+      value: deviceId,
+      domain: "localhost",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: false,
     },
-    [INSTALLATION_ID_STORAGE_KEY, deviceId],
-  );
-  try {
-    await page.evaluate(
-      ([key, id]) => {
-        try {
-          localStorage.setItem(key, id);
-        } catch {
-          /* private mode / quota - ignored */
-        }
-      },
-      [INSTALLATION_ID_STORAGE_KEY, deviceId],
-    );
-  } catch {
-    // about:blank and early cross-origin documents may not expose localStorage.
-    // The init script above applies the id before the next app document runs.
-  }
+  ]);
 }
 
 async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
@@ -152,21 +138,6 @@ async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
     return;
   }
   await page.goto("about:blank");
-}
-
-function isWorkspaceSessionRestoreResponse(
-  response: Response,
-  deviceId: string,
-): boolean {
-  const request = response.request();
-  if (request.method() !== "GET") {
-    return false;
-  }
-  const url = new URL(response.url());
-  return (
-    url.pathname === WORKSPACE_SESSION_PATH &&
-    url.searchParams.get("device_id") === deviceId
-  );
 }
 
 export async function seedWorkspaceSession(
@@ -214,14 +185,9 @@ export async function gotoWithWorkspaceSession(
   await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
   await seedWorkspaceSession(page.request, deviceId, state);
-  const restoreResponse = page
-    .waitForResponse(
-      (response) => isWorkspaceSessionRestoreResponse(response, deviceId),
-      { timeout: 15_000 },
-    )
-    .catch(() => null);
+  // Restore is server-side now: the seeded session is read during SSR and streamed into the
+  // first paint, so there is no client GET to await — the caller asserts on the restored panes.
   await page.goto(path, { waitUntil: "domcontentloaded" });
-  await restoreResponse;
 }
 
 export function activeWorkspacePane(page: Page): Locator {

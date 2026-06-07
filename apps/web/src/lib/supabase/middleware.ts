@@ -14,6 +14,11 @@ import {
   readSupabaseSessionCookie,
 } from "@/lib/auth/session-cookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
+import {
+  DEVICE_COOKIE_NAME,
+  mintDeviceId,
+  readDeviceId,
+} from "@/lib/auth/deviceCookie";
 
 const NONCE_HEADER = "x-nonce";
 const CSP_REQUEST_HEADER = "content-security-policy";
@@ -99,6 +104,24 @@ export function updateSession(
   const passThrough = () =>
     NextResponse.next({ request: { headers: requestHeaders } });
 
+  // Mint the server-owned device cookie when absent, on an authenticated passthrough.
+  // The value is appended to the forwarded request cookies so THIS request's SSR
+  // restores the right workspace, and set on the response so future requests carry it.
+  const passThroughWithDeviceCookie = () => {
+    if (readDeviceId(request.cookies)) {
+      return passThrough();
+    }
+    const { value, options } = mintDeviceId();
+    const cookie = requestHeaders.get("cookie");
+    requestHeaders.set(
+      "cookie",
+      cookie ? `${cookie}; ${DEVICE_COOKIE_NAME}=${value}` : `${DEVICE_COOKIE_NAME}=${value}`
+    );
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.cookies.set(DEVICE_COOKIE_NAME, value, options);
+    return response;
+  };
+
   if (pathname === "/login") {
     const session = readSupabaseSessionCookie(request.cookies.getAll());
     if (
@@ -135,7 +158,7 @@ export function updateSession(
   const session = readSupabaseSessionCookie(request.cookies.getAll());
   switch (session.state) {
     case "active":
-      return passThrough();
+      return passThroughWithDeviceCookie();
     case "refreshable": {
       if (hasSessionEndedFeedback) {
         return clearAndRedirectToLogin(request, session.cookieNames, {

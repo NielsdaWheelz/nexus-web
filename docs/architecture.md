@@ -864,14 +864,47 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
   multi-pane canvas. State (`WorkspaceState`: primary panes with per-pane history,
   attached secondary tool panes, widths) lives in a React reducer+context store and
-  is persisted **per-user-per-device** to `workspace_sessions` (debounced PUT,
-  keepalive flush). A pane is identified by a `resourceKey` (`media:<id>` etc.) —
-  the de-dup, title-cache, and remount key. Routes resolve via a pure model
-  (`paneRouteModel.ts`) plus metadata table (`paneRouteTable.ts`) bound to React
-  bodies (`paneRenderRegistry.tsx`). Bodies talk to the shell only through
-  `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`, `useSetPaneTitle`,
-  `usePaneSecondary`). Secondary panes (reader tools, conversation context,
-  library tools) are runtime-published sidebars.
+  is persisted **per-user-per-device** to `workspace_sessions`. A pane is identified
+  by a `resourceKey` (`media:<id>` etc.) — the de-dup, title-cache, and remount key.
+  Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
+  (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
+  to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
+  `useSetPaneTitle`, `usePaneSecondary`). Secondary panes (reader tools, conversation
+  context, library tools) are runtime-published sidebars.
+- **First paint: stream, don't gate.** The `(authenticated)` layout runs only
+  **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
+  `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`; `WorkspaceBootstrapGate`
+  awaits the data root inside the boundary and streams the shell in. The first HTTP
+  flush is the chrome skeleton (nav-rail placeholder + pane region in `PaneLoadingState`)
+  — **data never gates TTFB**. The data root (`loadWorkspaceBootstrap`) is parallel and
+  restore-aware: two concurrent `Promise.all` waves — (1) reader profile + saved session
+  + the URL pane's speculative resource seed, then (2) the remaining restored visible
+  panes — returning `{ initialHref, readerProfile, initialState, resources }` (a
+  hydration cache keyed exactly as each pane's `useResource` reads it). Every fetch is
+  best-effort under a deadline; a timed-out seed degrades to the normal client fetch.
+- **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
+  httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
+  request-forwarded so this SSR sees it, response-set for future requests. The data root
+  reads it, fetches the saved workspace-session, and `selectRestoredState` /
+  `mergeRestoredWorkspaceWithDeepLink` merge it with the deep-link intent; the store
+  **seeds its reducer** with that `initialState`, so the first render already shows the
+  right panes (no `hydrate` dispatch on load). `useWorkspaceSession` keeps only **capture**
+  (debounced PUT) + **flush** (keepalive on page hide); the BFF `PUT /api/me/workspace-session`
+  injects the device id from the cookie — the client never reads or sends it. Identity
+  (which panes) is owned by the server; column **widths** reconcile on the client at render
+  via `resolveEffectivePaneSizing` — server width metrics derive from the reader profile
+  (shared `estimatePrimaryWidthPx`) so widths match first paint and need no settle. The
+  URL-hash fold navigates the active pane (preserving the restored layout) rather than
+  resetting state. The restore algebra lives in one isomorphic resolver
+  (`workspaceRestore.ts`, server-safe, shared by the bootstrap and the store reducer;
+  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`).
+- **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
+  `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
+  structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
+  (`make check-bundle`, ≤ 115 kB gz vs ~104 kB measured) runs in `build-front`. Kept
+  constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
+  server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
+  runtime `preloadPane` (warming all restored visible panes) stays the splitting mechanism.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/
