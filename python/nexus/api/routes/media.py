@@ -17,7 +17,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaLibrariesRequest
-from nexus.services import library_entries, media_source_ingest
+from nexus.services import library_entries, media_intelligence, media_source_ingest
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 
@@ -133,3 +133,16 @@ def refresh_media_source(
         idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return success_response(result)
+
+
+@router.post("/media/{media_id}/summarize", status_code=202)
+def summarize_media(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Build (or reuse) the per-media intelligence unit on demand."""
+    result = media_intelligence.ensure_media_unit_for_viewer(
+        db, viewer_id=viewer.user_id, media_id=media_id
+    )
+    return ok(result)

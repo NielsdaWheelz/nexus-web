@@ -109,7 +109,6 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
             "position": _next_position(db, library_id),
         },
     )
-    _invalidate_library_intelligence(db, library_id)
     return True
 
 
@@ -123,10 +122,7 @@ def delete_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
         ),
         {"lib": library_id, "tid": target.id},
     ).fetchone()
-    if deleted is not None:
-        _invalidate_library_intelligence(db, library_id)
-        return True
-    return False
+    return deleted is not None
 
 
 def delete_all_entries_for_media(db: Session, media_id: UUID) -> list[UUID]:
@@ -136,26 +132,15 @@ def delete_all_entries_for_media(db: Session, media_id: UUID) -> list[UUID]:
         text("DELETE FROM library_entries WHERE media_id = :media_id RETURNING library_id"),
         {"media_id": media_id},
     ).fetchall()
-    library_ids = [UUID(str(row[0])) for row in rows]
-    for library_id in library_ids:
-        _invalidate_library_intelligence(db, library_id)
-    return library_ids
+    return [UUID(str(row[0])) for row in rows]
 
 
 def delete_library_entries(db: Session, library_id: UUID) -> None:
     """Delete every entry in a library (library teardown)."""
-    result = db.execute(
+    db.execute(
         text("DELETE FROM library_entries WHERE library_id = :library_id"),
         {"library_id": library_id},
     )
-    if result.rowcount:
-        _invalidate_library_intelligence(db, library_id)
-
-
-def _invalidate_library_intelligence(db: Session, library_id: UUID) -> None:
-    from nexus.services.library_intelligence import invalidate_library_intelligence
-
-    invalidate_library_intelligence(db, library_id, reason="source_changed")
 
 
 def normalize_positions(db: Session, library_id: UUID) -> None:
@@ -686,8 +671,6 @@ def reorder_entries(
             """),
             {"entry_ids": requested_ids, "library_id": library_id},
         )
-        if requested_ids != existing_ids:
-            _invalidate_library_intelligence(db, library_id)
 
     return list_library_entries(
         db, viewer_id, library_id, limit=min(max(len(requested_ids), 1), 200), offset=0

@@ -1389,49 +1389,41 @@ class TestMigrationUpgradeDowngrade:
                 assert message_document["type"] == "message_document"
                 assert message_document["blocks"][0]["text"] == "find sources"
 
-                for seq, event_type in enumerate(("reference_added", "claim"), start=2):
-                    session.execute(
-                        text(
-                            """
-                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
-                            VALUES (
-                                :run_id,
-                                :seq,
-                                :event_type,
-                                jsonb_build_object('tool_name', 'app_search')
-                            )
-                            """
-                        ),
-                        {"run_id": run_id, "seq": seq, "event_type": event_type},
-                    )
+                # reference_added remains a valid event_type at head; the dead
+                # verifier values claim/claim_evidence were dropped from the CHECK
+                # by migration 0142.
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                        VALUES (
+                            :run_id, 2, 'reference_added',
+                            jsonb_build_object('tool_name', 'app_search')
+                        )
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
                 session.commit()
 
-                with pytest.raises(IntegrityError) as exc_info:
-                    session.execute(
-                        text(
-                            """
-                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
-                            VALUES (:run_id, 5, 'tool_result', '{}'::jsonb)
-                            """
-                        ),
-                        {"run_id": run_id},
-                    )
-                    session.commit()
-                session.rollback()
-                assert "ck_chat_run_events_event_type" in str(exc_info.value)
-                with pytest.raises(IntegrityError) as exc_info:
-                    session.execute(
-                        text(
-                            """
-                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
-                            VALUES (:run_id, 6, 'citation', '{}'::jsonb)
-                            """
-                        ),
-                        {"run_id": run_id},
-                    )
-                    session.commit()
-                session.rollback()
-                assert "ck_chat_run_events_event_type" in str(exc_info.value)
+                # claim / claim_evidence / tool_result / citation are all rejected
+                # at head (claim + claim_evidence dropped in 0142).
+                for seq, rejected in enumerate(
+                    ("tool_result", "citation", "claim", "claim_evidence"), start=5
+                ):
+                    with pytest.raises(IntegrityError) as exc_info:
+                        session.execute(
+                            text(
+                                """
+                                INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                                VALUES (:run_id, :seq, :event_type, '{}'::jsonb)
+                                """
+                            ),
+                            {"run_id": run_id, "seq": seq, "event_type": rejected},
+                        )
+                        session.commit()
+                    session.rollback()
+                    assert "ck_chat_run_events_event_type" in str(exc_info.value)
         finally:
             reset_test_schema()
             engine.dispose()
@@ -8846,3 +8838,324 @@ class TestDurableSourceIngestMigrations:
         assert "ix_external_provider_events_request_id" in indexes
         assert "ix_external_provider_events_source_attempt_id" in indexes
         assert "ix_external_provider_events_provider_status_created" in indexes
+
+
+class TestMediaIntelligenceUnitsMigration0141:
+    """Schema assertions for the 0141 per-media intelligence unit tables."""
+
+    def test_head_contains_media_summaries_and_claims(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            tables = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_name IN ('media_summaries', 'media_claims')
+                        """
+                    )
+                ).fetchall()
+            }
+            summary_constraints = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname, pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conrelid = 'media_summaries'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+            claim_columns = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_name = 'media_claims'
+                        """
+                    )
+                ).fetchall()
+            }
+            claim_constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'media_claims'::regclass
+                        """
+                    )
+                ).fetchall()
+            }
+
+        assert tables == {"media_summaries", "media_claims"}, (
+            "0141 must create both media_summaries and media_claims at head"
+        )
+        assert "uq_media_summaries_media" in summary_constraints
+        assert "ck_media_summaries_status" in summary_constraints
+        # evidence_span_id NOT NULL is the physical grounding-by-construction guard (AC-2).
+        assert claim_columns.get("evidence_span_id") == "NO", (
+            "media_claims.evidence_span_id must be NOT NULL"
+        )
+        assert "uq_media_claims_summary_ordinal" in claim_constraints
+        assert "ck_media_claims_ordinal_non_negative" in claim_constraints
+
+    def test_head_media_intelligence_fks_are_non_cascading(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            fks = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT confrelid::regclass::text AS referenced_table, confdeltype
+                        FROM pg_constraint
+                        WHERE conrelid = 'media_claims'::regclass
+                          AND contype = 'f'
+                        """
+                    )
+                ).fetchall()
+            }
+        # 'a' = NO ACTION (no ON DELETE CASCADE; cleanup is explicit, database.md).
+        for referenced_table in ("media", "media_summaries", "evidence_spans"):
+            assert fks.get(referenced_table) == "a", (
+                f"media_claims→{referenced_table} FK must be NO ACTION, got {fks}"
+            )
+
+    def test_0141_downgrade_is_blocked(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            assert run_alembic_command("upgrade 0141").returncode == 0
+            result = run_alembic_command("downgrade 0140")
+            combined = f"{result.stdout}\n{result.stderr}"
+            assert result.returncode != 0
+            assert "Hard cutover: 0141 is not reversible" in combined
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+
+class TestLibraryIntelligenceArtifactRewrite0142:
+    """Head-assertions for the 0142 stable-head + immutable-revisions rewrite."""
+
+    @pytest.fixture(scope="class")
+    def li_head_engine(self):
+        """A freshly head-migrated engine for this class.
+
+        The module-scoped ``migrated_engine`` is migrated once at module start, but
+        earlier classes call ``reset_test_schema()`` in their teardown (e.g. the
+        downgrade-blocked test), which drops the public schema for every test that
+        runs afterward. This class sits at the end of the file, so it owns its own
+        reset + upgrade to head rather than inheriting a contaminated schema.
+        """
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    # The deterministic-compiler subtables + old head dropped by 0142 (the
+    # source-set/version tables were already dropped in 0138).
+    _DROPPED_LI_TABLES = (
+        "library_intelligence_sections",
+        "library_intelligence_nodes",
+        "library_intelligence_claims",
+        "library_intelligence_evidence",
+        "library_intelligence_builds",
+        "library_intelligence_versions",
+        "library_source_set_versions",
+        "library_source_set_items",
+    )
+    _NEW_LI_TABLES = (
+        "library_intelligence_artifacts",
+        "library_intelligence_artifact_revisions",
+        "library_intelligence_revision_events",
+        "library_intelligence_citations",
+    )
+
+    def test_dropped_li_tables_are_gone_at_head(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            present = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = ANY(:names)
+                        """
+                    ),
+                    {"names": list(self._DROPPED_LI_TABLES)},
+                ).fetchall()
+            }
+        assert present == set(), f"dropped LI tables still present: {present}"
+
+    def test_new_head_revision_tables_present_at_head(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            present = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = ANY(:names)
+                        """
+                    ),
+                    {"names": list(self._NEW_LI_TABLES)},
+                ).fetchall()
+            }
+        assert present == set(self._NEW_LI_TABLES), f"missing new LI tables: {present}"
+
+    def test_old_artifact_shape_columns_are_gone(self, li_head_engine):
+        """The old versioned/status/generator artifact columns must not survive."""
+        with Session(li_head_engine) as session:
+            columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'library_intelligence_artifacts'
+                        """
+                    )
+                ).fetchall()
+            }
+        removed = {
+            "active_version_id",
+            "artifact_kind",
+            "status",
+            "generator_model_id",
+            "published_at",
+            "invalidated_at",
+            "invalid_reason",
+        }
+        assert removed.isdisjoint(columns), f"stale artifact columns survive: {columns & removed}"
+        assert {"current_revision_id", "user_id"}.issubset(columns), columns
+
+    def test_circular_current_revision_fk_present_and_nullable(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            fk = session.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conname = 'fk_li_artifacts_current_revision'"
+                )
+            ).scalar_one_or_none()
+            nullable = session.execute(
+                text(
+                    """
+                    SELECT is_nullable FROM information_schema.columns
+                    WHERE table_name = 'library_intelligence_artifacts'
+                      AND column_name = 'current_revision_id'
+                    """
+                )
+            ).scalar_one()
+        assert fk == "fk_li_artifacts_current_revision"
+        # Nullable until the first revision is promoted (circular FK, §11).
+        assert nullable == "YES", "current_revision_id must be nullable"
+
+    def test_li_head_and_revision_fks_are_non_cascading(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT conrelid::regclass::text AS tbl, confdeltype
+                    FROM pg_constraint
+                    WHERE contype = 'f'
+                      AND conrelid IN (
+                        'library_intelligence_artifacts'::regclass,
+                        'library_intelligence_artifact_revisions'::regclass,
+                        'library_intelligence_revision_events'::regclass,
+                        'library_intelligence_citations'::regclass
+                      )
+                    """
+                )
+            ).fetchall()
+        # 'a' = NO ACTION: no ON DELETE CASCADE anywhere in the LI graph (G6).
+        assert rows, "expected LI FKs to exist"
+        assert {row[1] for row in rows} == {"a"}, f"LI FKs must be NO ACTION; got {rows}"
+
+    def test_revision_events_check_and_unique(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            constraints = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'library_intelligence_revision_events'::regclass"
+                    )
+                ).fetchall()
+            }
+        assert "ck_li_revision_events_type" in constraints
+        assert "uq_li_revision_events_seq" in constraints
+
+    def test_chat_run_events_check_drops_claim_keeps_citation_index(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            constraint = session.execute(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conname = 'ck_chat_run_events_event_type'"
+                )
+            ).scalar_one()
+        assert "claim_evidence" not in constraint
+        assert "'claim'" not in constraint
+        assert "citation_index" in constraint
+        assert "reference_added" in constraint
+
+    def test_chat_runs_next_event_seq_column_and_check_are_gone(self, li_head_engine):
+        with Session(li_head_engine) as session:
+            columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'chat_runs'"
+                    )
+                ).fetchall()
+            }
+            check = session.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conname = 'ck_chat_runs_next_event_seq_positive'"
+                )
+            ).scalar_one_or_none()
+        assert "next_event_seq" not in columns
+        assert check is None, "the next_event_seq CHECK must be dropped with the column"
+
+    def test_support_status_enum_is_dropped(self, li_head_engine):
+        """The orphaned verifier-taxonomy PG enum is gone (finishes 0116)."""
+        with Session(li_head_engine) as session:
+            present = session.execute(
+                text("SELECT 1 FROM pg_type WHERE typname = 'assistant_claim_support_status'")
+            ).scalar_one_or_none()
+        assert present is None, "assistant_claim_support_status enum must be dropped"
+
+    def test_untouched_citation_stores_remain(self, li_head_engine):
+        """Anti-over-deletion: the four must-REMAIN stores survive the cutover (AC-11)."""
+        must_remain = (
+            "message_retrievals",
+            "conversation_references",
+            "oracle_reading_passages",
+            "object_links",
+        )
+        with Session(li_head_engine) as session:
+            present = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = ANY(:names)
+                        """
+                    ),
+                    {"names": list(must_remain)},
+                ).fetchall()
+            }
+        assert present == set(must_remain), f"a must-REMAIN store was deleted: {present}"

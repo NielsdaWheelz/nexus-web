@@ -7,7 +7,6 @@ and SSE event emission are all linear and explicit here.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ import httpx
 from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest, Turn
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -44,6 +44,7 @@ from nexus.schemas.oracle import (
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
 )
+from nexus.services import run_kit
 from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.semantic_chunks import (
@@ -52,6 +53,11 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     to_pgvector_literal,
     transcript_embedding_dimensions,
+)
+from nexus.services.structured_synthesis import (
+    StructuredSynthesisError,
+    SynthesisRequest,
+    run_structured_synthesis,
 )
 
 logger = get_logger(__name__)
@@ -531,7 +537,10 @@ def is_reading_terminal(db: Session, *, reading_id: UUID) -> bool:
     ).scalar_one_or_none()
     # A missing row (reading deleted mid-stream) is terminal — otherwise the SSE
     # tail would stream forever. assert_reading_owner proved it existed at open.
-    return status is None or status in ("complete", "failed")
+    # The terminal set has one owner (run_kit).
+    return status is None or status in run_kit.terminal_statuses(
+        run_kit.RunStreamKind.OracleReading
+    )
 
 
 def fail_reading_after_worker_exception(db: Session, *, reading_id: UUID) -> dict[str, Any]:
@@ -687,20 +696,24 @@ async def execute_reading(
         reading.status = "streaming"
         reading.started_at = db.scalar(select(func.now()))
         db.flush()
-        _append_event(
+        run_kit.append_event(
             db,
-            reading_id,
-            "meta",
-            {"question": question, "folio_number": folio_number},
+            stream=run_kit.oracle_reading_stream(reading),
+            event_type="meta",
+            payload={"question": question, "folio_number": folio_number},
         )
         db.commit()
 
         try:
-            response = await llm_router.generate(
-                ORACLE_PROVIDER,
-                request,
-                api_key,
-                timeout_s=ORACLE_LLM_TIMEOUT_SECONDS,
+            result = await run_structured_synthesis(
+                llm=llm_router,
+                request=SynthesisRequest(
+                    provider=ORACLE_PROVIDER,
+                    llm_request=request,
+                    api_key=api_key,
+                    timeout_s=ORACLE_LLM_TIMEOUT_SECONDS,
+                ),
+                schema=_OracleSynthesisOutput,
             )
         except LLMError as exc:
             error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
@@ -715,14 +728,20 @@ async def execute_reading(
                 raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
             _fail(db, reading, code=error_code)
             return {"status": "failed", "error_code": error_code}
-
-        parsed = _parse_llm_output(response.text, candidates=candidates)
-        if parsed is None:
+        except StructuredSynthesisError as exc:
             logger.warning(
                 "oracle.llm_unparseable",
                 reading_id=str(reading_id),
-                output_preview=response.text[:200],
+                reason=str(exc),
             )
+            reading = _get_reading_or_fail(db, reading_id)
+            _fail(db, reading, code="E_LLM_BAD_REQUEST")
+            return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+
+        usage = result.usage
+        parsed = _validate_oracle_output(result.value, candidates=candidates)
+        if parsed is None:
+            logger.warning("oracle.llm_unparseable", reading_id=str(reading_id))
             reading = _get_reading_or_fail(db, reading_id)
             _fail(
                 db,
@@ -754,22 +773,22 @@ async def execute_reading(
         reading.image_id = plate.id
         db.flush()
 
-        _append_event(
+        reading_stream = run_kit.oracle_reading_stream(reading)
+        run_kit.append_event(
             db,
-            reading_id,
-            "bind",
-            {
+            stream=reading_stream,
+            event_type="bind",
+            payload={
                 "folio_motto": motto,
                 "folio_motto_gloss": gloss,
                 "folio_theme": theme,
             },
         )
-        _append_event(db, reading_id, "argument", {"text": argument})
-        _append_event(
-            db,
-            reading_id,
-            "plate",
-            _oracle_image_payload(plate),
+        run_kit.append_event(
+            db, stream=reading_stream, event_type="argument", payload={"text": argument}
+        )
+        run_kit.append_event(
+            db, stream=reading_stream, event_type="plate", payload=_oracle_image_payload(plate)
         )
         db.commit()
 
@@ -790,11 +809,11 @@ async def execute_reading(
             )
             db.add(passage_row)
             db.flush()
-            _append_event(
+            run_kit.append_event(
                 db,
-                reading_id,
-                "passage",
-                {
+                stream=reading_stream,
+                event_type="passage",
+                payload={
                     "phase": phase,
                     "source_kind": candidate.source_kind,
                     "exact_snippet": candidate.exact_snippet,
@@ -806,9 +825,15 @@ async def execute_reading(
             )
             db.commit()
 
-        _append_event(db, reading_id, "delta", {"text": interpretation.strip()})
+        run_kit.append_event(
+            db,
+            stream=reading_stream,
+            event_type="delta",
+            payload={"text": interpretation.strip()},
+        )
         db.commit()
-        _append_event(db, reading_id, "omens", {"lines": omens})
+        omens_payload: run_kit.RunEventPayload = {"lines": list(omens)}
+        run_kit.append_event(db, stream=reading_stream, event_type="omens", payload=omens_payload)
         db.commit()
 
         reading = _get_reading_or_fail(db, reading_id)
@@ -816,22 +841,24 @@ async def execute_reading(
             status = reading.status
             db.commit()
             return {"status": status, "noop": True}
-        reading.status = "complete"
-        reading.completed_at = db.scalar(select(func.now()))
-        db.flush()
-        _append_event(db, reading_id, "done", {})
+        run_kit.mark_terminal(
+            db,
+            stream=run_kit.oracle_reading_stream(reading),
+            status="complete",
+            done_payload={},
+        )
         db.commit()
 
         if budget_reserved:
-            actual_tokens = _usage_total_tokens(response.usage) or estimated_tokens
+            actual_tokens = _usage_total_tokens(usage) or estimated_tokens
             rate_limiter.commit_token_budget(viewer_id, reading_id, actual_tokens)
             budget_reserved = False
 
         return {
             "status": "complete",
             "folio_number": folio_number,
-            "input_tokens": response.usage.input_tokens if response.usage else None,
-            "output_tokens": response.usage.output_tokens if response.usage else None,
+            "input_tokens": usage.input_tokens if usage else None,
+            "output_tokens": usage.output_tokens if usage else None,
         }
     finally:
         if budget_reserved:
@@ -971,38 +998,22 @@ def _oracle_failure_message(code: str) -> str:
     return ORACLE_UNEXPECTED_FAILURE_MESSAGE
 
 
-def _append_event(
-    db: Session,
-    reading_id: UUID,
-    event_type: str,
-    payload: dict[str, Any],
-) -> None:
-    next_seq = db.execute(
-        text(
-            "SELECT COALESCE(MAX(seq), 0) + 1 FROM oracle_reading_events "
-            "WHERE reading_id = :reading_id"
-        ),
-        {"reading_id": reading_id},
-    ).scalar_one()
-    db.add(
-        OracleReadingEvent(
-            reading_id=reading_id,
-            seq=int(next_seq),
-            event_type=event_type,
-            payload=payload,
-        )
-    )
-    db.flush()
-
-
 def _fail(db: Session, reading: OracleReading, *, code: str) -> None:
+    # Oracle's terminal-failure path closes the stream via the terminal status
+    # flag (is_reading_terminal), not a "done" event — so it emits "error" and
+    # sets failed_at directly rather than going through run_kit.mark_terminal.
     message = _oracle_failure_message(code)
     reading.status = "failed"
     reading.failed_at = db.scalar(select(func.now()))
     reading.error_code = code
     reading.error_message = message
     db.flush()
-    _append_event(db, reading.id, "error", {"code": code, "message": message})
+    run_kit.append_event(
+        db,
+        stream=run_kit.oracle_reading_stream(reading),
+        event_type="error",
+        payload={"code": code, "message": message},
+    )
     db.commit()
 
 
@@ -1512,88 +1523,87 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> LL
 # ---------- internal: LLM output parsing ------------------------------------
 
 
-def _parse_llm_output(
-    raw: str,
+class _OraclePassageOut(BaseModel):
+    """One passage selection in the raw Oracle JSON (structural typing only)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    phase: str
+    candidate_index: int
+    marginalia: str
+
+
+class _OracleSynthesisOutput(BaseModel):
+    """The raw Oracle LLM JSON shape; semantics validated by ``_validate_oracle_output``.
+
+    Structural typing only — ``strict`` + ``extra="forbid"`` mirror the old
+    per-field ``isinstance`` checks and exact-key-set rejection. All value
+    semantics (char limits, theme membership, three distinct passages, omen
+    count, output guards) live in ``_validate_oracle_output``.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    argument: str
+    folio_motto: str
+    folio_motto_gloss: str | None
+    folio_theme: str
+    passages: list[_OraclePassageOut]
+    interpretation: str
+    omens: list[str]
+
+
+def _validate_oracle_output(
+    parsed: _OracleSynthesisOutput,
     *,
     candidates: Sequence[_Candidate],
 ) -> tuple[str, str, str | None, str, dict[str, tuple[int, str]], str, list[str]] | None:
-    """Validate and unpack the LLM JSON.
+    """Apply Oracle's domain semantics to the structurally-typed output.
 
     Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
-    by_phase maps each phase to (candidate_index, marginalia). Returns None
-    on any shape failure — caller fails the reading with E_LLM_BAD_REQUEST.
+    by_phase maps each phase to (candidate_index, marginalia). Returns None on any
+    semantic failure — caller fails the reading with E_LLM_BAD_REQUEST.
     """
-    cleaned = raw.strip()
-    if not cleaned.startswith("{") or not cleaned.endswith("}"):
-        return None
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    if set(parsed.keys()) != {
-        "argument",
-        "folio_motto",
-        "folio_motto_gloss",
-        "folio_theme",
-        "passages",
-        "interpretation",
-        "omens",
-    }:
-        return None
+    argument = parsed.argument
+    motto = parsed.folio_motto.strip()
+    gloss = parsed.folio_motto_gloss
+    theme = parsed.folio_theme
+    interpretation = parsed.interpretation
 
-    argument = parsed.get("argument")
-    motto = parsed.get("folio_motto")
-    gloss = parsed.get("folio_motto_gloss")
-    theme = parsed.get("folio_theme")
-    interpretation = parsed.get("interpretation")
-    passages = parsed.get("passages")
-    omens = parsed.get("omens")
-
-    if not isinstance(argument, str) or not _valid_argument(argument):
+    if not _valid_argument(argument):
         return None
-    if not isinstance(motto, str):
-        return None
-    motto = motto.strip()
     if not (1 <= len(motto) <= 80) or "\n" in motto:
         return None
     if gloss is not None:
-        if not isinstance(gloss, str):
-            return None
         gloss = gloss.strip()
         if not (1 <= len(gloss) <= 120) or "\n" in gloss:
             return None
-    if not isinstance(theme, str) or theme not in ORACLE_THEMES:
+    if theme not in ORACLE_THEMES:
         return None
-    if not isinstance(interpretation, str) or not interpretation.strip():
+    if not interpretation.strip():
         return None
-    if not isinstance(passages, list) or len(passages) != 3:
+    if len(parsed.passages) != 3:
         return None
-    if not isinstance(omens, list) or len(omens) != 3:
+    if len(parsed.omens) != 3:
         return None
-    omen_lines = [line.strip() for line in omens if isinstance(line, str)]
-    if len(omen_lines) != 3 or any(not line for line in omen_lines):
+    omen_lines = [line.strip() for line in parsed.omens]
+    if any(not line for line in omen_lines):
         return None
 
     by_phase: dict[str, tuple[int, str]] = {}
     used_indices: set[int] = set()
     candidate_count = len(candidates)
-    for entry in passages:
-        if not isinstance(entry, dict):
-            return None
-        if set(entry.keys()) != {"phase", "candidate_index", "marginalia"}:
-            return None
-        phase = entry.get("phase")
-        idx = entry.get("candidate_index")
-        marginalia = entry.get("marginalia")
+    for entry in parsed.passages:
+        phase = entry.phase
+        idx = entry.candidate_index
+        marginalia = entry.marginalia
         if phase not in ORACLE_PHASES or phase in by_phase:
             return None
-        if not isinstance(idx, int) or idx < 0 or idx >= candidate_count:
+        if idx < 0 or idx >= candidate_count:
             return None
         if idx in used_indices:
             return None
-        if not isinstance(marginalia, str) or not marginalia.strip():
+        if not marginalia.strip():
             return None
         used_indices.add(idx)
         by_phase[phase] = (idx, marginalia.strip())

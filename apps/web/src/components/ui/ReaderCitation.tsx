@@ -76,9 +76,16 @@ export default function ReaderCitation({
   const externalHref = href?.startsWith("http://") || href?.startsWith("https://");
 
   const previewBody =
-    preview.title || preview.excerpt || (preview.meta && preview.meta.length > 0) || hasPreviewActions ? (
+    preview.title ||
+    preview.summary ||
+    preview.excerpt ||
+    (preview.meta && preview.meta.length > 0) ||
+    hasPreviewActions ? (
       <>
         {preview.title ? <div className={styles.previewTitle}>{truncateText(preview.title, 96)}</div> : null}
+        {preview.summary ? (
+          <div className={styles.previewSummary}>{truncateText(preview.summary, 140)}</div>
+        ) : null}
         {preview.excerpt ? (
           <div className={styles.previewExcerpt}>{preview.excerpt}</div>
         ) : null}

@@ -124,17 +124,6 @@ export default function LibrariesPaneBody() {
     }
   };
 
-  const handleOpenLibraryChat = useCallback(
-    (library: Library) => {
-      openInNewPane?.(
-        `/libraries/${library.id}`,
-        library.name,
-        "library-chat",
-      );
-    },
-    [openInNewPane],
-  );
-
   /* ---- Edit dialog handlers ---- */
 
   const openEditDialog = useCallback(async (library: Library) => {
@@ -327,7 +316,6 @@ export default function LibrariesPaneBody() {
                   }
                   options={libraryResourceOptions({
                     library,
-                    onOpenChat: () => handleOpenLibraryChat(library),
                     onViewIntelligence: () => {
                       openInNewPane?.(
                         `/libraries/${library.id}`,

@@ -1,5 +1,4 @@
-import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
-import type { MessageRetrieval } from "./types";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
 
 export interface ReaderSourceTarget {
   source: "message_retrieval";
@@ -8,11 +7,9 @@ export interface ReaderSourceTarget {
   snippet: string | null;
   highlight_behavior: "pulse";
   focus_behavior: "scroll_into_view";
-  status: string;
   label?: string;
   href?: string | null;
   evidence_span_id?: string | null;
-  evidence_id?: string;
 }
 
 export function hrefForReaderTarget(input: {
@@ -38,31 +35,4 @@ export function hrefForReaderTarget(input: {
     return `${base}#t-${locator.t_start_ms}`;
   }
   return base;
-}
-
-export function readerTargetFromRetrieval(
-  retrieval: MessageRetrieval,
-): ReaderSourceTarget | null {
-  if (!retrieval.media_id || !isRetrievalLocator(retrieval.locator ?? null)) {
-    return null;
-  }
-  return {
-    source: "message_retrieval",
-    media_id: retrieval.media_id,
-    locator: retrieval.locator!,
-    snippet: retrieval.exact_snippet ?? null,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
-    status: retrieval.retrieval_status ?? "retrieved",
-    label: retrieval.source_title ?? undefined,
-    href:
-      retrieval.deep_link ??
-      hrefForReaderTarget({
-        media_id: retrieval.media_id,
-        evidence_span_id: retrieval.evidence_span_id,
-        locator: retrieval.locator,
-      }),
-    evidence_span_id: retrieval.evidence_span_id ?? null,
-    evidence_id: retrieval.id,
-  };
 }

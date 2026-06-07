@@ -31,6 +31,7 @@ from nexus.services.stream_tokens import (
     mint_stream_token,
     verify_stream_token,
 )
+from nexus.stream_paths import is_stream_path
 from tests.factories import (
     create_test_conversation,
     create_test_message,
@@ -86,14 +87,12 @@ def _insert_terminal_run(
                 INSERT INTO chat_runs (
                     id, owner_user_id, conversation_id, user_message_id,
                     assistant_message_id, idempotency_key, payload_hash, status,
-                    model_id, reasoning, key_mode, completed_at,
-                    next_event_seq
+                    model_id, reasoning, key_mode, completed_at
                 )
                 VALUES (
                     :id, :owner_user_id, :conversation_id, :user_message_id,
                     :assistant_message_id, :idempotency_key, :payload_hash, :status,
-                    :model_id, 'none', 'auto', :completed_at,
-                    4
+                    :model_id, 'none', 'auto', :completed_at
                 )
                 """
             ),
@@ -722,5 +721,28 @@ class TestStreamAuthMiddlewareBoundary:
         )
 
         response = TestClient(app).get("/chat-runs/00000000-0000-0000-0000-000000000000/events")
+
+        assert response.status_code == 200
+
+    def test_library_intelligence_events_use_stream_token_auth_boundary(self):
+        assert is_stream_path("/stream/library-intelligence/00000000-0000-0000-0000-000000000000/events") is True
+
+        app = FastAPI()
+
+        @app.get("/stream/library-intelligence/{revision_id}/events")
+        def events(revision_id: str):
+            return {"revision_id": revision_id}
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=object(),
+            requires_internal_header=True,
+            internal_secret="secret",
+            bootstrap_callback=lambda user_id, email=None: user_id,
+        )
+
+        response = TestClient(app).get(
+            "/stream/library-intelligence/00000000-0000-0000-0000-000000000000/events"
+        )
 
         assert response.status_code == 200

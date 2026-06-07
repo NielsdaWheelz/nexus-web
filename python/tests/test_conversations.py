@@ -127,6 +127,63 @@ class TestCreateConversation:
             ).scalars()
             assert list(rows) == [f"media:{media_id}"]
 
+    def test_create_conversation_with_artifact_and_library_refs_in_one_tx(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC-4: chat-on-artifact attaches the artifact + library refs atomically."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            library_id = create_shared_library(session, user_id)
+            artifact_id = uuid4()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_intelligence_artifacts (id, library_id, user_id)
+                    VALUES (:id, :library_id, :user_id)
+                    """
+                ),
+                {"id": artifact_id, "library_id": library_id, "user_id": user_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_intelligence_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        artifact_uri = f"library_intelligence_artifact:{artifact_id}"
+        library_uri = f"library:{library_id}"
+        response = auth_client.post(
+            "/conversations",
+            headers=auth_headers(user_id),
+            json={"initial_references": [artifact_uri, library_uri]},
+        )
+
+        assert response.status_code == 201, response.text
+        conversation_id = UUID(response.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT resource_uri
+                    FROM conversation_references
+                    WHERE conversation_id = :conversation_id
+                    """
+                ),
+                {"conversation_id": conversation_id},
+            ).scalars()
+            # Both refs are inserted in one create-time transaction (AC-4). They
+            # share the transaction `created_at`, so relative row order is decided
+            # by the random `gen_random_uuid()` id tiebreak — assert membership,
+            # not a stable sequence.
+            assert set(rows) == {artifact_uri, library_uri}, (
+                "Both refs must be inserted in one create-time transaction (AC-4)"
+            )
+
     def test_create_conversation_invalid_initial_reference_rolls_back(
         self, auth_client, direct_db: DirectSessionManager
     ):

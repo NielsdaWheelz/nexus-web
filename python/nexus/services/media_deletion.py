@@ -14,7 +14,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
-from nexus.services import library_entries
+from nexus.services import library_entries, media_intelligence
 from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.default_library_closure import (
     count_default_references,
@@ -375,6 +375,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM highlights WHERE anchor_media_id = :media_id"),
         {"media_id": media_id},
     )
+    # Tear down the per-media intelligence unit through its sole owner before the
+    # content index removes this media's evidence_spans (media_claims FK them) and
+    # before the media row goes (both unit tables FK media, non-cascading).
+    media_intelligence.delete_media_unit(db, media_id=media_id)
     delete_media_content_index(db, media_id=media_id)
     db.execute(
         text("""

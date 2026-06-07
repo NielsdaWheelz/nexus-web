@@ -129,7 +129,7 @@ A revision is **immutable** once written. **No `parent_revision_id`** (no lineag
 | `media_id` | uuid → media, **unique** | one current unit per media |
 | `content_fingerprint` | text not null | current-content version (active `index_run_id` or chunk-set hash) → re-extract trigger + the artifact staleness signal |
 | `summary_md` | text not null | the per-doc abstract (also feeds `app_search` cards/reader/list) |
-| `model_id` | text not null | generator attribution |
+| `model_name` | text not null | generator attribution (model slug, matches `models.model_name`) |
 | `status` | text not null | `building` \| `ready` \| `failed` |
 | `created_at`/`updated_at` | timestamptz | |
 
@@ -215,7 +215,7 @@ run_media_unit_build(db, *, media_id) -> None          # worker: structured_synt
 ### 6.5 `services/library_intelligence` (rewritten, slim — sole writer of the head, revisions, + `library_intelligence_citations`)
 ```
 get_artifact(db, *, viewer_id, library_id) -> ArtifactView          # head + current-revision content + computed status (§5.4)
-generate_artifact(db, *, viewer_id, library_id, request_token) -> RevisionRef   # 202; creates a draft revision; request-token idempotent
+generate_artifact(db, *, viewer_id, library_id, idempotency_key) -> RevisionRef   # 202; creates a draft revision; idempotency-key idempotent
 run_artifact_generation(db, *, revision_id) -> None                 # worker: resolve targets→media, ensure_media_unit each,
                                                                     # structured_synthesis reduce over units → prose + citations,
                                                                     # write covered_targets, then PROMOTE (below)
@@ -237,7 +237,7 @@ promote_revision(db, *, viewer_id, revision_id) -> None                         
 | Method | Route | Handler → service | Notes |
 |---|---|---|---|
 | GET | `/libraries/{id}/intelligence` | `get_artifact` | `{artifact_id, revision_id, status, content_md, citations, build}` (current revision); **no** version/source-set fields |
-| POST | `/libraries/{id}/intelligence/generate` | `generate_artifact` | 202 `{artifact_id, revision_id, run_id}`; **idempotency = client `request_token`**, so a no-change regenerate still builds a fresh draft revision |
+| POST | `/libraries/{id}/intelligence/generate` | `generate_artifact` | 202 `{artifact_id, revision_id, run_id}`; **idempotency = client `idempotency_key`** (same name as `chat_runs.idempotency_key`), so a no-change regenerate still builds a fresh draft revision |
 | GET (SSE) | `/stream/library-intelligence/{revision_id}/events` | `run_kit.tail` | reuses `_sse`; streams the draft revision's build |
 | GET | `/libraries/{id}/intelligence/revisions` | `list_revisions` | **optional** history; defer if not shipping restore now |
 | POST | `/libraries/{id}/intelligence/revisions/{revision_id}/promote` | `promote_revision` | **optional** restore; defer if not shipping now |
@@ -307,7 +307,7 @@ One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order 
 - **S4 — LI artifact rewrite (head + revisions).** New tables (head, revisions, citations); reduce via `structured_synthesis` over units; prose + `library_intelligence_citations` (per revision); `covered_targets`; **draft revision → promote** (set `current_revision_id`); computed status; generate route + SSE; optional `revisions`/`promote` routes. Delete the deterministic compiler + the 9 LI tables.
 - **S5 — chattable artifact + delete `library-chat`.** Resource scheme + resolver; "Chat" affordance via existing `conversation_references`; delete `LibraryChatTab` + surface.
 - **S6 — frontend pane.** New pane (MarkdownMessage + shared citation render + status + SSE + Generate/Regenerate); delete `LibraryIntelligenceView` deterministic UI.
-- **S7 — negative gates + head-assertion tests + god-file split** (`library_intelligence.py` ≤ ~250 lines: artifact owner only).
+- **S7 — negative gates + head-assertion tests + god-file split** (`library_intelligence.py` ≤ 620 lines: artifact-head owner only — GET read-model + freshness CTEs + the five public dataclasses + the SERIALIZABLE generate/promote transactions + SSE read deps; the LLM reduce worker lives in `library_intelligence_reduce.py`. The earlier ~250 target was aspirational; 620 is the realistic single-owner floor and the number the CI line-count gate enforces).
 
 ---
 
@@ -337,7 +337,7 @@ One Alembic migration, `raise NotImplementedError` on downgrade. Teardown order 
 - No second event-append (`_append_event`) or second run-finalize outside `run_kit`.
 - **Conversely, gates that must REMAIN present** (anti-over-deletion): `message_retrievals`, `conversation_references`, `oracle_reading_passages`, `object_links` table definitions and their consumers still exist.
 - **Allowed (Rev 3 head/revision model), gates must NOT flag:** `library_intelligence_artifact_revisions`, `current_revision_id`, `revision_id`.
-- No `useResource` polling of the intelligence endpoint; no `ON DELETE CASCADE`; no `dict[str, Any]` across new service boundaries; `library_intelligence.py` line-count gate.
+- No `useResource` polling of the intelligence endpoint; no `ON DELETE CASCADE`; no `dict[str, Any]` across new service boundaries; `library_intelligence.py` line-count gate (≤ 620 lines, matching §12 S7).
 
 ---
 

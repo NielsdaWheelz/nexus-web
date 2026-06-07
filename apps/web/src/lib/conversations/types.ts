@@ -67,6 +67,7 @@ export interface MessageRetrieval {
   selected: boolean;
   source_title?: string | null;
   section_label?: string | null;
+  summary_md?: string | null;
   exact_snippet?: string | null;
   snippet_prefix?: string | null;
   snippet_suffix?: string | null;

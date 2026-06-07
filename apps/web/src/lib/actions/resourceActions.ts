@@ -123,7 +123,6 @@ export function mediaResourceOptions(input: {
 
 export function libraryResourceOptions(input: {
   library: { is_default: boolean; role: string } | null | undefined;
-  onOpenChat?: () => void;
   onViewIntelligence?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -132,14 +131,6 @@ export function libraryResourceOptions(input: {
   if (!library) return [];
 
   const options: ActionMenuOption[] = [];
-
-  if (input.onOpenChat) {
-    options.push({
-      id: "chat-about-library",
-      label: "Chat about this library",
-      onSelect: input.onOpenChat,
-    });
-  }
 
   if (input.onViewIntelligence) {
     options.push({

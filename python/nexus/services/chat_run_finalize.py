@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message, MessageLLM, Model
 from nexus.errors import ApiErrorCode
+from nexus.schemas.conversation import chat_run_event_payload_json
+from nexus.services import run_kit
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
-from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, append_run_event
+from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_usage import usage_provider_json, usage_tokens
 
@@ -200,15 +202,17 @@ def finalize_run(
             elif error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
                 update_user_key_status(db, key.user_key_id, "invalid")
 
-    run.status = run_status
     run.error_code = error_code
-    run.completed_at = func.now()
-    run.updated_at = func.now()
     done_payload: dict[str, Any] = {"status": done_status}
     if error_code is not None:
         done_payload["error_code"] = error_code
     if assistant_message is not None and done_status == "complete":
         done_payload["final_chars"] = len(assistant_message.content)
-    append_run_event(db, run, "done", done_payload)
+    run_kit.mark_terminal(
+        db,
+        stream=run_kit.chat_run_stream(run),
+        status=run_status,
+        done_payload=chat_run_event_payload_json("done", done_payload),
+    )
     if commit:
         db.commit()

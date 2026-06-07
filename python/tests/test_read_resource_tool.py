@@ -30,6 +30,7 @@ from tests.factories import (
 from tests.test_resource_resolver import (
     _add_fragment,
     _make_highlight_with_anchor,
+    _make_li_artifact,
     _make_note_block,
     _make_page,
     _make_pdf,
@@ -227,6 +228,52 @@ def test_read_resource_library_uri_returns_scope_not_readable_error(
 
     assert result.is_error, f"Library URIs must error; got {result}"
     assert result.error_code == "scope_not_readable"
+
+
+def test_read_resource_li_artifact_returns_current_revision_body(
+    db_session: Session, bootstrapped_user: UUID
+):
+    from tests.factories import create_test_library
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Readable Synthesis")
+    content_md = "The whole synthesis prose with a citation [1]."
+    artifact_id = _make_li_artifact(
+        db_session, library_id, bootstrapped_user, content_md=content_md
+    )
+    uri = f"library_intelligence_artifact:{artifact_id}"
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert not result.is_error, f"A member should read the artifact body; got {result}"
+    assert result.kind == "library_intelligence"
+    assert result.body == content_md
+    # NON-citable: its [N] reference the revision's own citations, not a search chip.
+    assert result.citation_result_type is None
+    assert result.citation_source_id is None
+
+
+def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootstrapped_user: UUID):
+    from tests.factories import create_test_library
+
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
+    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uri = f"library_intelligence_artifact:{artifact_id}"
+    # Admit the reference so the gate passes; the loader masks the non-member.
+    _admit_reference(db_session, conversation_id, uri)
+
+    result = execute_read_resource(
+        db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
+    )
+
+    assert result.is_error, "A non-member must not read another library's artifact"
+    assert result.error_code == "missing"
 
 
 def test_read_resource_span_returns_body(db_session: Session, bootstrapped_user: UUID):

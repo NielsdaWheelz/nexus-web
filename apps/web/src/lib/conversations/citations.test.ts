@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildCitations } from "./citations";
+import {
+  messageToCitationOuts,
+  toReaderCitationData,
+} from "./citations";
 import type { ConversationMessage, MessageRetrieval } from "./types";
 
 const locator = {
@@ -52,9 +55,20 @@ function assistantMessage(): ConversationMessage {
   };
 }
 
-describe("buildCitations", () => {
-  it("builds reader citation data from message retrievals", () => {
-    expect(buildCitations(assistantMessage())).toEqual([
+function messageWith(
+  overrides: Partial<MessageRetrieval>,
+): ConversationMessage {
+  return {
+    ...assistantMessage(),
+    retrievals: [{ ...retrieval, ...overrides }],
+  };
+}
+
+describe("messageToCitationOuts → toReaderCitationData", () => {
+  it("renders reader citation data byte-identically to the chat citation flow", () => {
+    expect(
+      messageToCitationOuts(assistantMessage()).map(toReaderCitationData),
+    ).toEqual([
       {
         index: 1,
         color: "yellow",
@@ -71,13 +85,85 @@ describe("buildCitations", () => {
           snippet: "matched source text",
           highlight_behavior: "pulse",
           focus_behavior: "scroll_into_view",
-          status: "retrieved",
           label: "Source title",
           href: "/media/media-1#evidence-span-1",
           evidence_span_id: "span-1",
-          evidence_id: "retrieval-1",
         },
       },
     ]);
+  });
+});
+
+describe("messageToCitationOuts", () => {
+  it("emits role 'context' and an evidence_span target_ref", () => {
+    const outs = messageToCitationOuts(assistantMessage());
+    expect(outs).toHaveLength(1);
+    expect(outs[0]!.role).toBe("context");
+    expect(outs[0]!.target_ref).toEqual({ type: "evidence_span", id: "span-1" });
+  });
+
+  it("targets a content_chunk when no span and result_type is content_chunk", () => {
+    const outs = messageToCitationOuts(
+      messageWith({ evidence_span_id: null, result_type: "content_chunk" }),
+    );
+    expect(outs[0]!.target_ref).toEqual({
+      type: "content_chunk",
+      id: "fragment-1",
+    });
+  });
+
+  it("targets media when no span and not a content_chunk", () => {
+    const outs = messageToCitationOuts(
+      messageWith({ evidence_span_id: null, result_type: "fragment" }),
+    );
+    expect(outs[0]!.target_ref).toEqual({ type: "media", id: "media-1" });
+  });
+
+  it("returns [] when citation_index is empty", () => {
+    expect(
+      messageToCitationOuts({
+        ...assistantMessage(),
+        citation_index: [],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("toReaderCitationData", () => {
+  it("uses deep_link for href when present", () => {
+    const outs = messageToCitationOuts(
+      messageWith({ deep_link: "https://example.com/source" }),
+    );
+    const data = toReaderCitationData(outs[0]!);
+    expect(data.href).toBe("https://example.com/source");
+    expect(data.target?.href).toBe("https://example.com/source");
+  });
+
+  it("falls back to hrefForReaderTarget when deep_link is null", () => {
+    const outs = messageToCitationOuts(assistantMessage());
+    expect(toReaderCitationData(outs[0]!).href).toBe(
+      "/media/media-1#evidence-span-1",
+    );
+  });
+
+  it("surfaces a per-media summary_md as the preview summary", () => {
+    const outs = messageToCitationOuts(
+      messageWith({ summary_md: "A concise per-media abstract." }),
+    );
+    expect(toReaderCitationData(outs[0]!).preview.summary).toBe(
+      "A concise per-media abstract.",
+    );
+  });
+
+  it("omits the preview summary when summary_md is absent or blank", () => {
+    expect(
+      toReaderCitationData(messageToCitationOuts(assistantMessage())[0]!).preview
+        .summary,
+    ).toBeUndefined();
+    expect(
+      toReaderCitationData(
+        messageToCitationOuts(messageWith({ summary_md: "   " }))[0]!,
+      ).preview.summary,
+    ).toBeUndefined();
   });
 });

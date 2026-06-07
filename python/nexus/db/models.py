@@ -1544,7 +1544,7 @@ class LibraryEntry(Base):
 
 
 class LibraryIntelligenceArtifact(Base):
-    """Current library intelligence artifact for one library and artifact kind."""
+    """Stable library-intelligence head: one per library, promoting one revision."""
 
     __tablename__ = "library_intelligence_artifacts"
 
@@ -1558,16 +1558,20 @@ class LibraryIntelligenceArtifact(Base):
         ForeignKey("libraries.id"),
         nullable=False,
     )
-    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="building")
-    generator_model_id: Mapped[UUID | None] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    current_revision_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "library_intelligence_artifact_revisions.id",
+            name="fk_li_artifacts_current_revision",
+            use_alter=True,
+        ),
         nullable=True,
     )
-    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    invalidated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1580,35 +1584,17 @@ class LibraryIntelligenceArtifact(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "artifact_kind IN ('overview')",
-            name="ck_library_intelligence_artifacts_kind",
-        ),
-        CheckConstraint(
-            "status IN ('building', 'active', 'failed', 'stale')",
-            name="ck_library_intelligence_artifacts_status",
-        ),
-        CheckConstraint(
-            "(status = 'active' AND published_at IS NOT NULL) OR (status != 'active')",
-            name="ck_library_intelligence_artifacts_active_published",
-        ),
-        CheckConstraint(
-            "(invalid_reason IS NULL AND invalidated_at IS NULL) "
-            "OR (invalid_reason IS NOT NULL AND invalidated_at IS NOT NULL)",
-            name="ck_library_intelligence_artifacts_invalid_pair",
-        ),
         UniqueConstraint(
             "library_id",
-            "artifact_kind",
-            name="uix_library_intelligence_artifacts_library_kind",
+            name="uq_library_intelligence_artifacts_library",
         ),
     )
 
 
-class LibraryIntelligenceSection(Base):
-    """Rendered section in the current library intelligence artifact."""
+class LibraryIntelligenceArtifactRevision(Base):
+    """Immutable generated synthesis snapshot; a revision IS its generation run."""
 
-    __tablename__ = "library_intelligence_sections"
+    __tablename__ = "library_intelligence_artifact_revisions"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -1620,255 +1606,13 @@ class LibraryIntelligenceSection(Base):
         ForeignKey("library_intelligence_artifacts.id"),
         nullable=False,
     )
-    section_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("ordinal >= 0", name="ck_library_intelligence_sections_ordinal"),
-        CheckConstraint(
-            "section_kind IN ('overview', 'key_topics', 'key_sources', 'tensions', "
-            "'open_questions', 'reading_path', 'recent_changes')",
-            name="ck_library_intelligence_sections_kind",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(metadata) = 'object'",
-            name="ck_library_intelligence_sections_metadata_object",
-        ),
-        UniqueConstraint(
-            "artifact_id",
-            "section_kind",
-            name="uix_library_intelligence_sections_kind",
-        ),
-        UniqueConstraint(
-            "artifact_id",
-            "ordinal",
-            name="uix_library_intelligence_sections_ordinal",
-        ),
-    )
-
-
-class LibraryIntelligenceNode(Base):
-    """Topic, source, tension, or question node in the current artifact."""
-
-    __tablename__ = "library_intelligence_nodes"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    artifact_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifacts.id"),
-        nullable=False,
-    )
-    node_type: Mapped[str] = mapped_column(Text, nullable=False)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "node_type IN ('topic', 'entity', 'source', 'tension', 'open_question')",
-            name="ck_library_intelligence_nodes_type",
-        ),
-        CheckConstraint(
-            "char_length(slug) BETWEEN 1 AND 160",
-            name="ck_library_intelligence_nodes_slug_length",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(metadata) = 'object'",
-            name="ck_library_intelligence_nodes_metadata_object",
-        ),
-        UniqueConstraint("artifact_id", "slug", name="uix_library_intelligence_nodes_slug"),
-        Index(
-            "idx_library_intelligence_nodes_artifact_type",
-            "artifact_id",
-            "node_type",
-        ),
-    )
-
-
-class LibraryIntelligenceClaim(Base):
-    """Evidence-verifiable claim in one library intelligence artifact."""
-
-    __tablename__ = "library_intelligence_claims"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    artifact_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifacts.id"),
-        nullable=False,
-    )
-    node_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_nodes.id"),
-        nullable=True,
-    )
-    section_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_sections.id"),
-        nullable=True,
-    )
-    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
-    support_state: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "node_id IS NOT NULL OR section_id IS NOT NULL",
-            name="ck_library_intelligence_claims_parent",
-        ),
-        CheckConstraint(
-            "char_length(btrim(claim_text)) BETWEEN 1 AND 50000",
-            name="ck_library_intelligence_claims_text_length",
-        ),
-        CheckConstraint(
-            """
-            support_state IN (
-                'supported',
-                'partially_supported',
-                'contradicted',
-                'not_enough_evidence',
-                'out_of_scope',
-                'not_source_grounded'
-            )
-            """,
-            name="ck_library_intelligence_claims_support_state",
-        ),
-        CheckConstraint(
-            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
-            name="ck_library_intelligence_claims_confidence",
-        ),
-        CheckConstraint("ordinal >= 0", name="ck_library_intelligence_claims_ordinal"),
-        UniqueConstraint(
-            "artifact_id",
-            "ordinal",
-            name="uix_library_intelligence_claims_artifact_ordinal",
-        ),
-    )
-
-
-class LibraryIntelligenceEvidence(Base):
-    """Exact source evidence for one library intelligence claim."""
-
-    __tablename__ = "library_intelligence_evidence"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    claim_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_claims.id"),
-        nullable=False,
-    )
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    snippet: Mapped[str] = mapped_column(Text, nullable=False)
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    support_role: Mapped[str] = mapped_column(Text, nullable=False)
-    retrieval_status: Mapped[str] = mapped_column(Text, nullable=False)
-    score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_library_intelligence_evidence_source_ref_object",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR locator = 'null'::jsonb OR jsonb_typeof(locator) = 'object'",
-            name="ck_library_intelligence_evidence_locator_object",
-        ),
-        CheckConstraint(
-            "support_role IN ('supports', 'contradicts', 'context')",
-            name="ck_library_intelligence_evidence_support_role",
-        ),
-        CheckConstraint(
-            "retrieval_status IN ('retrieved', 'selected', 'included_in_artifact', "
-            "'excluded_by_scope', 'excluded_by_source_state')",
-            name="ck_library_intelligence_evidence_retrieval_status",
-        ),
-        CheckConstraint(
-            "score IS NULL OR score >= 0",
-            name="ck_library_intelligence_evidence_score",
-        ),
-        Index("idx_library_intelligence_evidence_claim", "claim_id"),
-    )
-
-
-class LibraryIntelligenceBuild(Base):
-    """Durable build record for a library intelligence artifact."""
-
-    __tablename__ = "library_intelligence_builds"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=False,
-    )
-    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    covered_targets: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    phase: Mapped[str] = mapped_column(Text, nullable=False)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    diagnostics: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
@@ -1876,42 +1620,109 @@ class LibraryIntelligenceBuild(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "artifact_kind IN ('overview')",
-            name="ck_library_intelligence_builds_kind",
+            "status IN ('building', 'ready', 'failed')",
+            name="ck_li_revisions_status",
         ),
         CheckConstraint(
-            "status IN ('pending', 'running', 'succeeded', 'failed')",
-            name="ck_library_intelligence_builds_status",
-        ),
-        CheckConstraint(
-            "phase IN ('queued', 'source_set', 'synthesis', 'evidence', "
-            "'publish', 'complete', 'failed')",
-            name="ck_library_intelligence_builds_phase",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(diagnostics) = 'object'",
-            name="ck_library_intelligence_builds_diagnostics_object",
-        ),
-        CheckConstraint(
-            "(status = 'failed' AND error_code IS NOT NULL) OR (status != 'failed')",
-            name="ck_library_intelligence_builds_failed_error",
-        ),
-        CheckConstraint(
-            "char_length(idempotency_key) BETWEEN 1 AND 256",
-            name="ck_library_intelligence_builds_idempotency_key_length",
+            "jsonb_typeof(covered_targets) = 'array'",
+            name="ck_li_revisions_covered_targets_array",
         ),
         Index(
-            "uix_library_intelligence_builds_inflight",
-            "library_id",
-            "artifact_kind",
+            "ix_li_revisions_artifact_created",
+            "artifact_id",
+            text("created_at DESC"),
+            text("id DESC"),
+        ),
+        Index(
+            "uq_li_revisions_artifact_idempotency_key",
+            "artifact_id",
+            "idempotency_key",
             unique=True,
-            postgresql_where=text("status IN ('pending', 'running')"),
+            postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
-        Index(
-            "idx_library_intelligence_builds_library_status",
-            "library_id",
-            "status",
+    )
+
+
+class LibraryIntelligenceRevisionEvent(Base):
+    """One run_kit event for a revision generation run (the LI run stream)."""
+
+    __tablename__ = "library_intelligence_revision_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("library_intelligence_artifact_revisions.id"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="ck_li_revision_events_seq_positive"),
+        CheckConstraint(
+            "event_type IN ('meta', 'progress', 'delta', 'done')",
+            name="ck_li_revision_events_type",
         ),
+        UniqueConstraint("revision_id", "seq", name="uq_li_revision_events_seq"),
+    )
+
+
+class LibraryIntelligenceCitation(Base):
+    """One typed citation of a revision; LI-private, written once with the snapshot."""
+
+    __tablename__ = "library_intelligence_citations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("library_intelligence_artifact_revisions.id"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('supports', 'contradicts', 'context')",
+            name="ck_li_citations_role",
+        ),
+        CheckConstraint(
+            "target_type IN ('evidence_span', 'content_chunk', 'media')",
+            name="ck_li_citations_target_type",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_li_citations_ordinal_non_negative"),
+        CheckConstraint(
+            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
+            name="ck_li_citations_locator_object",
+        ),
+        CheckConstraint(
+            "snapshot IS NULL OR jsonb_typeof(snapshot) = 'object'",
+            name="ck_li_citations_snapshot_object",
+        ),
+        UniqueConstraint("revision_id", "ordinal", name="uq_li_citations_revision_ordinal"),
     )
 
 
@@ -2770,6 +2581,73 @@ class MediaContentIndexState(Base):
     media: Mapped["Media"] = relationship("Media", back_populates="content_index_state")
 
 
+class MediaSummary(Base):
+    """Per-media unit head: one current summary + claim set per media (1:1)."""
+
+    __tablename__ = "media_summaries"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    content_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    summary_md: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('building', 'ready', 'failed')",
+            name="ck_media_summaries_status",
+        ),
+        UniqueConstraint("media_id", name="uq_media_summaries_media"),
+    )
+
+
+class MediaClaim(Base):
+    """One grounded per-media claim bound to an existing evidence span."""
+
+    __tablename__ = "media_claims"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    summary_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media_summaries.id")
+    )
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_span_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("evidence_spans.id")
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="ck_media_claims_ordinal_non_negative"),
+        UniqueConstraint("summary_id", "ordinal", name="uq_media_claims_summary_ordinal"),
+        Index("ix_media_claims_media", "media_id"),
+    )
+
+
 class MediaTranscriptState(Base):
     """Dedicated transcript-state table for media capabilities/search readiness."""
 
@@ -3270,13 +3148,16 @@ class ChatRunStatus(str, PyEnum):
 
 
 class ChatRunEventType(str, PyEnum):
-    """User-visible event types persisted for chat run replay."""
+    """User-visible event types persisted for chat run replay.
+
+    Mirrors the ``ck_chat_run_events_event_type`` CHECK exactly.
+    """
 
     meta = "meta"
     tool_call = "tool_call"
     retrieval_result = "retrieval_result"
-    claim = "claim"
-    claim_evidence = "claim_evidence"
+    citation_index = "citation_index"
+    reference_added = "reference_added"
     delta = "delta"
     done = "done"
 
@@ -3298,17 +3179,6 @@ class AppSearchResultType(str, PyEnum):
     evidence_span = "evidence_span"
     conversation = "conversation"
     web_result = "web_result"
-
-
-class AssistantClaimSupportStatus(str, PyEnum):
-    """Final support states for assistant message claims."""
-
-    supported = "supported"
-    partially_supported = "partially_supported"
-    contradicted = "contradicted"
-    not_enough_evidence = "not_enough_evidence"
-    out_of_scope = "out_of_scope"
-    not_source_grounded = "not_source_grounded"
 
 
 class AssistantClaimVerifierStatus(str, PyEnum):
@@ -4302,7 +4172,6 @@ class ChatRun(Base):
     )
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode: Mapped[str] = mapped_column(Text, nullable=False)
-    next_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -4330,7 +4199,6 @@ class ChatRun(Base):
             "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
             name="ck_chat_runs_idempotency_key_length",
         ),
-        CheckConstraint("next_event_seq >= 1", name="ck_chat_runs_next_event_seq_positive"),
         UniqueConstraint(
             "owner_user_id",
             "idempotency_key",
@@ -4515,8 +4383,7 @@ class ChatRunEvent(Base):
         CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
         CheckConstraint(
             "event_type IN ('meta', 'tool_call', 'retrieval_result', "
-            "'citation_index', 'reference_added', 'claim', "
-            "'claim_evidence', 'delta', 'done')",
+            "'citation_index', 'reference_added', 'delta', 'done')",
             name="ck_chat_run_events_event_type",
         ),
         UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),

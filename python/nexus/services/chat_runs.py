@@ -737,7 +737,6 @@ def create_chat_run(
             model_id=model_id,
             reasoning=reasoning,
             key_mode=key_mode,
-            next_event_seq=1,
         )
         db.add(run)
         db.flush()
@@ -890,7 +889,6 @@ def retry_failed_assistant_response(
             model_id=source_run.model_id,
             reasoning=source_run.reasoning,
             key_mode=source_run.key_mode,
-            next_event_seq=1,
         )
         db.add(run)
         db.flush()

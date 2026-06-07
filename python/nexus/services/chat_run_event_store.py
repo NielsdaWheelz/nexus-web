@@ -1,4 +1,9 @@
-"""Write-of-truth for chat_run_events: durable append plus run-state transitions."""
+"""Chat-run lifecycle helpers: durable append plus chat-bound state transitions.
+
+The generic event-append/seq mechanics live in ``run_kit``; this module owns the
+chat-specific concerns: validating the SSE payload contract before storage and
+the chat run-state transitions (running, cancel-checks, terminal accounting).
+"""
 
 from __future__ import annotations
 
@@ -8,19 +13,22 @@ from uuid import UUID
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, ChatRunEvent
+from nexus.db.models import ChatRun
 from nexus.schemas.conversation import chat_run_event_payload_json
+from nexus.services import run_kit
 
-TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
+TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
 
 
 def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[str, Any]) -> None:
-    seq = run.next_event_seq
-    payload = chat_run_event_payload_json(event_type, payload)
-    db.add(ChatRunEvent(run_id=run.id, seq=seq, event_type=event_type, payload=payload))
-    run.next_event_seq = seq + 1
-    run.updated_at = func.now()
-    db.flush()
+    """Validate the chat SSE payload contract, then durably append via run_kit."""
+    validated = chat_run_event_payload_json(event_type, payload)
+    run_kit.append_event(
+        db,
+        stream=run_kit.chat_run_stream(run),
+        event_type=event_type,
+        payload=validated,
+    )
 
 
 def append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[str, Any]) -> None:

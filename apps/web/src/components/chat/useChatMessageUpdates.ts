@@ -55,6 +55,8 @@ function retrievalFromSearchCitation(
     selected: citation.selected,
     source_title: citation.title,
     section_label: citation.source_label,
+    summary_md:
+      "summary_md" in citation ? (citation.summary_md ?? null) : null,
     exact_snippet: citation.snippet,
     retrieval_status: citation.selected ? "selected" : "retrieved",
     included_in_prompt: false,

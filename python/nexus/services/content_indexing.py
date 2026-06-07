@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.services import media_intelligence
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -383,6 +384,11 @@ def rebuild_media_content_index(
         embedding_model=embedding_model,
         now=now,
     )
+    # Single owner of the per-media unit trigger: every text-bearing source kind
+    # funnels through this ready branch, so the unit (re)build is enqueued here
+    # once rather than at each ingest call site. Participates in the caller's
+    # transaction so the enqueue commits atomically with the content-index write.
+    media_intelligence.ensure_media_unit_in_tx(db, media_id=media_id)
     return ContentIndexResult(media_id=media_id, status="ready", chunk_count=len(chunks))
 
 
@@ -908,6 +914,9 @@ def deactivate_media_content_index(db: Session, *, media_id: UUID, reason: str) 
 
 
 def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
+    # The per-media unit's claims reference this media's evidence_spans with a
+    # non-cascading FK; clear them through their sole owner before the spans go.
+    media_intelligence.clear_media_claims_for_reindex(db, media_id=media_id)
     db.execute(
         text(
             """

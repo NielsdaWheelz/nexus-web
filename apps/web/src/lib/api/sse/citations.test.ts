@@ -104,6 +104,71 @@ describe("retrieval citation contract", () => {
     ).toBe(false);
   });
 
+  it("accepts a media result with a per-media summary_md", () => {
+    expect(
+      isSearchCitationEventData({
+        type: "media",
+        id: "media-1",
+        result_type: "media",
+        source_id: "media-1",
+        title: "Article",
+        source_label: "Article",
+        snippet: "match",
+        deep_link: "/media/media-1",
+        context_ref: { type: "media", id: "media-1" },
+        locator: null,
+        media_id: "media-1",
+        media_kind: "web_article",
+        score: 1,
+        selected: true,
+        summary_md: "A concise per-media abstract.",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a media result without summary_md", () => {
+    expect(
+      isSearchCitationEventData({
+        type: "media",
+        id: "media-1",
+        result_type: "media",
+        source_id: "media-1",
+        title: "Article",
+        source_label: "Article",
+        snippet: "match",
+        deep_link: "/media/media-1",
+        context_ref: { type: "media", id: "media-1" },
+        locator: null,
+        media_id: "media-1",
+        media_kind: "web_article",
+        score: 1,
+        selected: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a non-string summary_md", () => {
+    expect(
+      isSearchCitationEventData({
+        type: "episode",
+        id: "episode-1",
+        result_type: "episode",
+        source_id: "episode-1",
+        title: "Episode",
+        source_label: "Podcast",
+        snippet: "match",
+        deep_link: "/media/episode-1",
+        context_ref: { type: "media", id: "episode-1" },
+        locator: null,
+        media_id: "episode-1",
+        media_kind: "podcast_episode",
+        score: 1,
+        selected: true,
+        summary_md: 42,
+      }),
+    ).toBe(false);
+  });
+
   it("rejects legacy source version fields", () => {
     expect(
       isSearchCitationEventData({
