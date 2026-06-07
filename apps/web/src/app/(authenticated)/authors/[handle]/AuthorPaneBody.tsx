@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, UserRound } from "lucide-react";
+import { ExternalLink, UserRound, X } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -10,11 +10,22 @@ import {
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import Pill from "@/components/ui/Pill";
+import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import ContributorPicker from "@/components/contributors/ContributorPicker";
 import { contributorResource } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { fetchContributor, fetchContributorWorks } from "@/lib/contributors/api";
+import {
+  addContributorAlias,
+  addContributorExternalId,
+  deleteContributorAlias,
+  deleteContributorExternalId,
+  fetchContributor,
+  fetchContributorWorks,
+  mergeContributor,
+  tombstoneContributor,
+} from "@/lib/contributors/api";
 import { useResource } from "@/lib/api/useResource";
 import type {
   ContributorAlias,
@@ -24,7 +35,12 @@ import type {
 } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRouter,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { compareStableString } from "@/lib/display/format";
 import styles from "./page.module.css";
 
@@ -99,15 +115,125 @@ export default function AuthorPaneBody() {
       };
     },
   });
+  const paneRouter = usePaneRouter();
   const [data, setData] = useState<ContributorPaneData | null>(null);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [roleFilter, setRoleFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
   const [queryFilter, setQueryFilter] = useState("");
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [authorityDraft, setAuthorityDraft] = useState("");
+  const [externalKeyDraft, setExternalKeyDraft] = useState("");
   const lastWorksRequestKeyRef = useRef<string | null>(null);
   const worksRequestIdRef = useRef(0);
+  const mergeCardRef = useRef<HTMLDivElement>(null);
   const loading =
     !!handle && !error && (data === null || data.contributor.handle !== handle);
+  useDialogOverlay({
+    ref: mergeCardRef,
+    active: mergeOpen,
+    onDismiss: () => setMergeOpen(false),
+  });
+
+  // After a curation mutation, the survivor handle may equal the loaded handle
+  // (alias/external-id/tombstone) — reload its summary + works in place so the
+  // pane reflects the change without losing the active filters.
+  async function reload(): Promise<void> {
+    if (!data) return;
+    const targetHandle = data.contributor.handle;
+    try {
+      const [contributorResponse, works] = await Promise.all([
+        fetchContributor(targetHandle),
+        fetchContributorWorks(targetHandle, {
+          role: roleFilter,
+          contentKind: kindFilter,
+          query: queryFilter,
+          limit: AUTHOR_WORKS_LIMIT,
+        }),
+      ]);
+      setData((current) =>
+        current && current.contributor.handle === targetHandle
+          ? {
+              ...current,
+              contributor: contributorResponse,
+              aliases: contributorResponse.aliases ?? [],
+              externalIds: contributorResponse.external_ids ?? [],
+              works,
+            }
+          : current,
+      );
+    } catch (reloadError) {
+      if (handleUnauthenticatedApiError(reloadError)) return;
+      setError(toFeedback(reloadError, { fallback: "Failed to refresh author" }));
+    }
+  }
+
+  async function runMutation(
+    action: () => Promise<unknown>,
+    fallback: string,
+  ): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await reload();
+      return true;
+    } catch (mutationError) {
+      if (handleUnauthenticatedApiError(mutationError)) return false;
+      setError(toFeedback(mutationError, { fallback }));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMergeSelect(target: ContributorSummary): Promise<void> {
+    if (!data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const survivor = await mergeContributor(data.contributor.handle, target.handle);
+      setMergeOpen(false);
+      paneRouter.push(`/authors/${encodeURIComponent(survivor.handle)}`);
+    } catch (mergeError) {
+      if (handleUnauthenticatedApiError(mergeError)) return;
+      setError(toFeedback(mergeError, { fallback: "Failed to merge author" }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAddAlias(): Promise<void> {
+    if (!data) return;
+    const alias = aliasDraft.trim();
+    if (!alias) return;
+    const ok = await runMutation(
+      () => addContributorAlias(data.contributor.handle, { alias }),
+      "Failed to add alias",
+    );
+    if (ok) setAliasDraft("");
+  }
+
+  async function handleAddExternalId(): Promise<void> {
+    if (!data) return;
+    const authority = authorityDraft.trim();
+    const externalKey = externalKeyDraft.trim();
+    if (!authority || !externalKey) return;
+    const ok = await runMutation(
+      () =>
+        addContributorExternalId(data.contributor.handle, {
+          authority,
+          external_key: externalKey,
+        }),
+      "Failed to add authority ID",
+    );
+    if (ok) {
+      setAuthorityDraft("");
+      setExternalKeyDraft("");
+    }
+  }
 
   useSetPaneTitle(loading ? null : (data?.contributor.display_name ?? "Author"));
 
@@ -118,6 +244,10 @@ export default function AuthorPaneBody() {
     setRoleFilter("");
     setKindFilter("");
     setQueryFilter("");
+    setMergeOpen(false);
+    setAliasDraft("");
+    setAuthorityDraft("");
+    setExternalKeyDraft("");
     lastWorksRequestKeyRef.current = null;
     worksRequestIdRef.current += 1;
     setError(
@@ -204,6 +334,10 @@ export default function AuthorPaneBody() {
     [data?.workFilterOptions]
   );
   const visibleWorks = data?.works ?? [];
+  // The backend follows merges, so a requested handle that no longer matches the
+  // resolved survivor means the URL handle was merged away.
+  const formerlyHandle =
+    data && handle && handle !== data.contributor.handle ? handle : null;
 
   return (
     <SectionCard>
@@ -229,61 +363,186 @@ export default function AuthorPaneBody() {
                   {data.contributor.kind ? (
                     <span>{data.contributor.kind.replace(/_/g, " ")}</span>
                   ) : null}
+                  {formerlyHandle ? (
+                    <span className={styles.formerly}>Formerly {formerlyHandle}</span>
+                  ) : null}
                 </div>
                 {data.contributor.disambiguation ? (
                   <p className={styles.disambiguation}>
                     {data.contributor.disambiguation}
                   </p>
                 ) : null}
+                <div className={styles.headerActions}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setMergeOpen(true)}
+                    disabled={busy}
+                  >
+                    Merge into…
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() =>
+                      void runMutation(
+                        () => tombstoneContributor(data.contributor.handle),
+                        "Failed to tombstone author",
+                      )
+                    }
+                    disabled={busy}
+                  >
+                    Tombstone
+                  </Button>
+                </div>
               </div>
             </header>
 
-            {data.aliases.length > 0 || data.externalIds.length > 0 ? (
-              <div className={styles.identityDetails}>
-                {data.aliases.length > 0 ? (
-                  <section>
-                    <h2>Aliases</h2>
-                    <div className={styles.pillRow}>
-                      {data.aliases.map((alias, index) => (
-                        <span key={`${alias.alias}-${index}`} className={styles.detailPill}>
-                          {alias.alias}
-                        </span>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-                {data.externalIds.length > 0 ? (
-                  <section>
-                    <h2>Authority IDs</h2>
-                    <div className={styles.pillRow}>
-                      {data.externalIds.map((externalId, index) =>
-                        externalId.external_url ? (
-                          <a
-                            key={`${externalId.authority}-${externalId.external_key}-${index}`}
-                            href={externalId.external_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={styles.detailPill}
-                          >
-                            {externalId.authority}
-                            <ExternalLink size={12} aria-hidden="true" />
-                          </a>
-                        ) : (
-                          <span
-                            key={`${externalId.authority}-${externalId.external_key}-${index}`}
-                            className={styles.detailPill}
-                          >
-                            {externalId.authority}
-                          </span>
-                        )
+            {/* split UI deferred */}
+            <div className={styles.identityDetails}>
+              <section>
+                <h2>Aliases</h2>
+                <div className={styles.pillRow}>
+                  {data.aliases.map((alias, index) => (
+                    <span
+                      key={alias.id ?? `${alias.alias}-${index}`}
+                      className={styles.removablePill}
+                    >
+                      {alias.alias}
+                      {alias.id ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Remove alias ${alias.alias}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void runMutation(
+                              () =>
+                                deleteContributorAlias(
+                                  data.contributor.handle,
+                                  alias.id as string,
+                                ),
+                              "Failed to remove alias",
+                            )
+                          }
+                        >
+                          <X size={12} aria-hidden="true" />
+                        </Button>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+                <div className={styles.inlineForm}>
+                  <Input
+                    aria-label="New alias"
+                    value={aliasDraft}
+                    placeholder="Add alias…"
+                    className={styles.inlineFormInput}
+                    onChange={(event) => setAliasDraft(event.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy || !aliasDraft.trim()}
+                    onClick={() => void handleAddAlias()}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </section>
+              <section>
+                <h2>Authority IDs</h2>
+                <div className={styles.pillRow}>
+                  {data.externalIds.map((externalId, index) => (
+                    <span
+                      key={
+                        externalId.id ??
+                        `${externalId.authority}-${externalId.external_key}-${index}`
+                      }
+                      className={styles.removablePill}
+                    >
+                      {externalId.external_url ? (
+                        <a
+                          href={externalId.external_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.detailPill}
+                        >
+                          {externalId.authority}
+                          <ExternalLink size={12} aria-hidden="true" />
+                        </a>
+                      ) : (
+                        externalId.authority
                       )}
-                    </div>
-                  </section>
-                ) : null}
-              </div>
-            ) : null}
+                      {externalId.id ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Remove authority ID ${externalId.authority}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void runMutation(
+                              () =>
+                                deleteContributorExternalId(
+                                  data.contributor.handle,
+                                  externalId.id as string,
+                                ),
+                              "Failed to remove authority ID",
+                            )
+                          }
+                        >
+                          <X size={12} aria-hidden="true" />
+                        </Button>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+                <div className={styles.inlineForm}>
+                  <Input
+                    aria-label="New authority"
+                    value={authorityDraft}
+                    placeholder="Authority…"
+                    className={styles.inlineFormInput}
+                    onChange={(event) => setAuthorityDraft(event.target.value)}
+                  />
+                  <Input
+                    aria-label="New authority key"
+                    value={externalKeyDraft}
+                    placeholder="External key…"
+                    className={styles.inlineFormInput}
+                    onChange={(event) => setExternalKeyDraft(event.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy || !authorityDraft.trim() || !externalKeyDraft.trim()}
+                    onClick={() => void handleAddExternalId()}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </section>
+            </div>
 
             <section className={styles.worksSection}>
+              <div className={styles.worksHeader}>
+                <h2>Works</h2>
+                <a
+                  href={`/search?contributor_handles=${encodeURIComponent(
+                    data.contributor.handle,
+                  )}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    paneRouter.push(
+                      `/search?contributor_handles=${encodeURIComponent(
+                        data.contributor.handle,
+                      )}`,
+                    );
+                  }}
+                >
+                  Search this author&apos;s works
+                </a>
+              </div>
               <div className={styles.workToolbar}>
                 <label>
                   <span>Search works</span>
@@ -343,6 +602,44 @@ export default function AuthorPaneBody() {
                 </AppList>
               )}
             </section>
+
+            {mergeOpen ? (
+              <div
+                className={styles.modalBackdrop}
+                role="presentation"
+                onClick={() => setMergeOpen(false)}
+              >
+                <div
+                  ref={mergeCardRef}
+                  className={styles.modalCard}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Merge author"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <h2 className={styles.modalTitle}>Merge into…</h2>
+                  <p className={styles.modalDescription}>
+                    Pick the author to merge <strong>{data.contributor.display_name}</strong>{" "}
+                    into. Credits, aliases, and authority IDs move to the survivor.
+                  </p>
+                  <ContributorPicker
+                    excludeHandle={data.contributor.handle}
+                    onSelect={(target) => void handleMergeSelect(target)}
+                    busy={busy}
+                  />
+                  <div className={styles.modalActions}>
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      onClick={() => setMergeOpen(false)}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>

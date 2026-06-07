@@ -134,6 +134,59 @@ def visible_media_ids_cte_sql() -> str:
     """
 
 
+def visible_podcast_ids_cte_sql() -> str:
+    """Podcasts visible to a viewer: active subscription OR library membership. Binds :viewer_id."""
+    return """
+        SELECT ps.podcast_id
+        FROM podcast_subscriptions ps
+        WHERE ps.user_id = :viewer_id
+          AND ps.status = 'active'
+
+        UNION
+
+        SELECT le.podcast_id
+        FROM library_entries le
+        JOIN memberships m ON m.library_id = le.library_id
+                          AND m.user_id = :viewer_id
+        WHERE le.podcast_id IS NOT NULL
+    """
+
+
+def visible_content_credit_rows_sql() -> str:
+    """Contributor-credit rows whose credited content is visible to the viewer. Binds :viewer_id."""
+    return f"""
+        SELECT cc.*
+        FROM contributor_credits cc
+        WHERE cc.project_gutenberg_catalog_ebook_id IS NOT NULL
+           OR cc.media_id IN ({visible_media_ids_cte_sql()})
+           OR cc.podcast_id IN ({visible_podcast_ids_cte_sql()})
+    """
+
+
+def visible_contributor_ids_cte_sql() -> str:
+    """Contributors visible to a viewer: a visible credit OR a viewer-owned object link.
+
+    Binds :viewer_id. This is the single definition of contributor visibility; every
+    consumer (directory, search, object refs, detail reads) shares it.
+    """
+    return f"""
+        SELECT vcc.contributor_id
+        FROM ({visible_content_credit_rows_sql()}) vcc
+
+        UNION
+
+        SELECT ol.a_id AS contributor_id
+        FROM object_links ol
+        WHERE ol.user_id = :viewer_id AND ol.a_type = 'contributor'
+
+        UNION
+
+        SELECT ol.b_id AS contributor_id
+        FROM object_links ol
+        WHERE ol.user_id = :viewer_id AND ol.b_type = 'contributor'
+    """
+
+
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
     """Check if viewer can read a conversation under visibility rules.
 

@@ -36,7 +36,9 @@ from nexus.auth.permissions import (
     can_read_conversation,
     can_read_media,
     is_library_member,
+    visible_contributor_ids_cte_sql,
     visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -68,7 +70,8 @@ from nexus.schemas.search import (
     SearchResultWebOut,
 )
 from nexus.services import object_search
-from nexus.services.contributor_credits import normalize_contributor_role
+from nexus.services.contributor_taxonomy import normalize_contributor_role
+from nexus.services.contributors import resolve_canonical_contributor_ids
 from nexus.services.locator_resolver import resolve_evidence_span
 from nexus.services.semantic_chunks import (
     build_text_embedding,
@@ -760,6 +763,14 @@ def search(
                 "Embedding provider returned an invalid response.",
             )
 
+    # Filter by canonical contributor ids so a merged handle returns the survivor's content.
+    # None = no contributor filter requested; an empty list = requested handles resolved to nothing.
+    contributor_ids = (
+        resolve_canonical_contributor_ids(db, normalized_contributor_handles)
+        if normalized_contributor_handles
+        else None
+    )
+
     # Execute search queries per type and collect results
     all_results: list[InternalSearchResult] = []
 
@@ -773,7 +784,7 @@ def search(
             semantic_query_embedding,
             scope_type,
             scope_id,
-            normalized_contributor_handles,
+            contributor_ids,
             normalized_roles,
             normalized_content_kinds,
             CANDIDATES_PER_TYPE,
@@ -883,20 +894,7 @@ def get_search_result(
             text(
                 f"""
                 WITH
-                    visible_podcasts AS (
-                        SELECT ps.podcast_id
-                        FROM podcast_subscriptions ps
-                        WHERE ps.user_id = :viewer_id
-                          AND ps.status = 'active'
-
-                        UNION
-
-                        SELECT le.podcast_id
-                        FROM library_entries le
-                        JOIN memberships m ON m.library_id = le.library_id
-                                          AND m.user_id = :viewer_id
-                        WHERE le.podcast_id IS NOT NULL
-                    ),
+                    visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
                     podcast_contributor_credits AS ({contributor_credits_rollup_cte_sql("podcast_id")})
                 SELECT p.id, p.title, pcc.contributor_credits
                 FROM podcasts p
@@ -1490,7 +1488,7 @@ def _search_type(
     semantic_query_embedding: tuple[str, list[float]] | None,
     scope_type: str,
     scope_id: UUID | None,
-    contributor_handles: list[str],
+    contributor_ids: list[UUID] | None,
     roles: list[str],
     content_kinds: list[str],
     limit: int,
@@ -1507,7 +1505,7 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             content_kinds,
             limit,
@@ -1522,7 +1520,7 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             ["podcast_episode"],
             limit,
@@ -1538,7 +1536,7 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             ["video"],
             limit,
@@ -1552,7 +1550,7 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             content_kinds,
             limit,
@@ -1566,7 +1564,7 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             content_kinds,
             limit,
@@ -1579,15 +1577,15 @@ def _search_type(
             has_query,
             scope_type,
             scope_id,
-            contributor_handles,
+            contributor_ids,
             roles,
             content_kinds,
             limit,
         )
 
-    # Remaining types do not filter by contributor handles, roles, or content_kinds;
+    # Remaining types do not filter by contributor ids, roles, or content_kinds;
     # any such filter rules out a match entirely.
-    if contributor_handles or roles or content_kinds:
+    if contributor_ids is not None or roles or content_kinds:
         return []
 
     if result_type == "evidence_span":
@@ -1620,7 +1618,7 @@ def _search_media(
     has_query: bool,
     scope_type: str,
     scope_id: UUID | None,
-    contributor_handles: list[str],
+    contributor_ids: list[UUID] | None,
     roles: list[str],
     content_kinds: list[str],
     limit: int,
@@ -1639,11 +1637,11 @@ def _search_media(
     elif result_type == "media":
         content_kind_filter = "AND m.kind NOT IN ('podcast_episode', 'video')"
 
-    if contributor_handles or roles:
+    if contributor_ids is not None or roles:
         credit_clauses = ["cc_filter.media_id = m.id"]
-        if contributor_handles:
-            credit_clauses.append("c_filter.handle = ANY(:contributor_handles)")
-            params["contributor_handles"] = contributor_handles
+        if contributor_ids is not None:
+            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
+            params["contributor_ids"] = contributor_ids
         if roles:
             credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
@@ -1651,9 +1649,7 @@ def _search_media(
             AND EXISTS (
                 SELECT 1
                 FROM contributor_credits cc_filter
-                JOIN contributors c_filter ON c_filter.id = cc_filter.contributor_id
                 WHERE {" AND ".join(credit_clauses)}
-                  AND c_filter.status NOT IN ('merged', 'tombstoned')
             )
         """
 
@@ -1760,7 +1756,7 @@ def _search_podcasts(
     has_query: bool,
     scope_type: str,
     scope_id: UUID | None,
-    contributor_handles: list[str],
+    contributor_ids: list[UUID] | None,
     roles: list[str],
     content_kinds: list[str],
     limit: int,
@@ -1773,11 +1769,11 @@ def _search_podcasts(
     params: dict = {"viewer_id": viewer_id, "query": q, "has_query": has_query, "limit": limit}
     contributor_credit_filter = ""
 
-    if contributor_handles or roles:
+    if contributor_ids is not None or roles:
         credit_clauses = ["cc_filter.podcast_id = p.id"]
-        if contributor_handles:
-            credit_clauses.append("c_filter.handle = ANY(:contributor_handles)")
-            params["contributor_handles"] = contributor_handles
+        if contributor_ids is not None:
+            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
+            params["contributor_ids"] = contributor_ids
         if roles:
             credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
@@ -1785,9 +1781,7 @@ def _search_podcasts(
             AND EXISTS (
                 SELECT 1
                 FROM contributor_credits cc_filter
-                JOIN contributors c_filter ON c_filter.id = cc_filter.contributor_id
                 WHERE {" AND ".join(credit_clauses)}
-                  AND c_filter.status NOT IN ('merged', 'tombstoned')
             )
         """
 
@@ -1820,20 +1814,7 @@ def _search_podcasts(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
-        WITH visible_podcasts AS (
-            SELECT ps.podcast_id
-            FROM podcast_subscriptions ps
-            WHERE ps.user_id = :viewer_id
-              AND ps.status = 'active'
-
-            UNION
-
-            SELECT le.podcast_id
-            FROM library_entries le
-            JOIN memberships m ON m.library_id = le.library_id
-                              AND m.user_id = :viewer_id
-            WHERE le.podcast_id IS NOT NULL
-        ),
+        WITH visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
         podcast_contributor_credits AS ({contributor_credits_rollup_cte_sql("podcast_id")})
         SELECT
             p.id,
@@ -1906,7 +1887,7 @@ def _search_content_chunks(
     has_query: bool,
     scope_type: str,
     scope_id: UUID | None,
-    contributor_handles: list[str],
+    contributor_ids: list[UUID] | None,
     roles: list[str],
     content_kinds: list[str],
     limit: int,
@@ -1931,11 +1912,11 @@ def _search_content_chunks(
     if content_kinds:
         content_kind_filter = "AND m.kind = ANY(:content_kinds)"
         params["content_kinds"] = content_kinds
-    if contributor_handles or roles:
+    if contributor_ids is not None or roles:
         credit_clauses = ["cc_filter.media_id = m.id"]
-        if contributor_handles:
-            credit_clauses.append("c_filter.handle = ANY(:contributor_handles)")
-            params["contributor_handles"] = contributor_handles
+        if contributor_ids is not None:
+            credit_clauses.append("cc_filter.contributor_id = ANY(:contributor_ids)")
+            params["contributor_ids"] = contributor_ids
         if roles:
             credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = roles
@@ -1943,9 +1924,7 @@ def _search_content_chunks(
             AND EXISTS (
                 SELECT 1
                 FROM contributor_credits cc_filter
-                JOIN contributors c_filter ON c_filter.id = cc_filter.contributor_id
                 WHERE {" AND ".join(credit_clauses)}
-                  AND c_filter.status NOT IN ('merged', 'tombstoned')
             )
         """
     if semantic_query_embedding is not None:
@@ -2249,6 +2228,21 @@ def _search_content_chunks(
     return results
 
 
+def _contributor_fts_text_sql() -> str:
+    """The single full-text blob for a contributor — display/sort name, disambiguation, and the
+    aggregated alias/external-id/credit text from this query's CTEs. The rank, headline, and
+    match expressions all derive from it so they can never drift apart."""
+    return """concat_ws(
+                    ' ',
+                    c.display_name,
+                    COALESCE(c.sort_name, ''),
+                    COALESCE(c.disambiguation, ''),
+                    COALESCE(alias_text.aliases, ''),
+                    COALESCE(external_id_text.external_ids, ''),
+                    COALESCE(credit_text.credited_names, '')
+                )"""
+
+
 def _search_contributors(
     db: Session,
     viewer_id: UUID,
@@ -2256,7 +2250,7 @@ def _search_contributors(
     has_query: bool,
     scope_type: str,
     scope_id: UUID | None,
-    contributor_handles: list[str],
+    contributor_ids: list[UUID] | None,
     roles: list[str],
     content_kinds: list[str],
     limit: int,
@@ -2272,9 +2266,9 @@ def _search_contributors(
     credit_filter = ""
     scope_credit_filter = ""
 
-    if contributor_handles:
-        handle_filter = "AND c.handle = ANY(:contributor_handles)"
-        params["contributor_handles"] = contributor_handles
+    if contributor_ids is not None:
+        handle_filter = "AND c.id = ANY(:contributor_ids)"
+        params["contributor_ids"] = contributor_ids
 
     if roles or content_kinds:
         credit_clauses = ["cc_filter.contributor_id = c.id"]
@@ -2357,23 +2351,19 @@ def _search_contributors(
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
+    # Unscoped search shows every visible contributor (credit OR viewer object-link), the
+    # single-owner predicate. A content scope narrows to contributors credited within it.
+    visible_contributors_cte = (
+        f"visible_contributors AS ({visible_contributor_ids_cte_sql()})"
+        if scope_type == "all"
+        else "visible_contributors AS (SELECT DISTINCT contributor_id FROM visible_scoped_credits)"
+    )
+
+    fts_text = _contributor_fts_text_sql()
     query = f"""
         WITH
             visible_media AS ({visible_media_ids_cte_sql()}),
-            visible_podcasts AS (
-                SELECT ps.podcast_id
-                FROM podcast_subscriptions ps
-                WHERE ps.user_id = :viewer_id
-                  AND ps.status = 'active'
-
-                UNION
-
-                SELECT le.podcast_id
-                FROM library_entries le
-                JOIN memberships m ON m.library_id = le.library_id
-                                  AND m.user_id = :viewer_id
-                WHERE le.podcast_id IS NOT NULL
-            ),
+            visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
             alias_text AS (
                 SELECT contributor_id, string_agg(alias, ' ') AS aliases
                 FROM contributor_aliases
@@ -2402,10 +2392,7 @@ def _search_contributors(
                   )
                 {scope_credit_filter}
             ),
-            visible_contributors AS (
-                SELECT DISTINCT contributor_id
-                FROM visible_scoped_credits
-            ),
+            {visible_contributors_cte},
             credit_text AS (
                 SELECT contributor_id, string_agg(credited_name, ' ') AS credited_names
                 FROM visible_scoped_credits
@@ -2423,31 +2410,12 @@ def _search_contributors(
                 'disambiguation', c.disambiguation
             ) AS contributor,
             CASE WHEN :has_query THEN ts_rank_cd(
-                to_tsvector(
-                    'english',
-                    concat_ws(
-                        ' ',
-                        c.display_name,
-                        COALESCE(c.sort_name, ''),
-                        COALESCE(c.disambiguation, ''),
-                        COALESCE(alias_text.aliases, ''),
-                        COALESCE(external_id_text.external_ids, ''),
-                        COALESCE(credit_text.credited_names, '')
-                    )
-                ),
+                to_tsvector('english', {fts_text}),
                 websearch_to_tsquery('english', :query)
             ) ELSE 0.0 END AS score,
             CASE WHEN :has_query THEN ts_headline(
                 'english',
-                concat_ws(
-                    ' ',
-                    c.display_name,
-                    COALESCE(c.sort_name, ''),
-                    COALESCE(c.disambiguation, ''),
-                    COALESCE(alias_text.aliases, ''),
-                    COALESCE(external_id_text.external_ids, ''),
-                    COALESCE(credit_text.credited_names, '')
-                ),
+                {fts_text},
                 websearch_to_tsquery('english', :query),
                 'MaxWords=50, MinWords=10, MaxFragments=1'
             ) ELSE c.display_name END AS snippet
@@ -2457,18 +2425,8 @@ def _search_contributors(
         LEFT JOIN credit_text ON credit_text.contributor_id = c.id
         JOIN visible_contributors vc ON vc.contributor_id = c.id
         WHERE c.status NOT IN ('merged', 'tombstoned')
-          AND (:has_query IS FALSE OR to_tsvector(
-                'english',
-                concat_ws(
-                    ' ',
-                    c.display_name,
-                    COALESCE(c.sort_name, ''),
-                    COALESCE(c.disambiguation, ''),
-                    COALESCE(alias_text.aliases, ''),
-                    COALESCE(external_id_text.external_ids, ''),
-                    COALESCE(credit_text.credited_names, '')
-                )
-            ) @@ websearch_to_tsquery('english', :query))
+          AND (:has_query IS FALSE OR to_tsvector('english', {fts_text})
+                @@ websearch_to_tsquery('english', :query))
         {handle_filter}
         {credit_filter}
         ORDER BY score DESC, c.handle ASC

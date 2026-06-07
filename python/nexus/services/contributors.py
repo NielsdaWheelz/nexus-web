@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
-from typing import cast
+import base64
+import hashlib
+import json
+import re
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import String, bindparam, func, or_, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import (
+    visible_content_credit_rows_sql,
+    visible_contributor_ids_cte_sql,
+    visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
+)
+from nexus.db.errors import integrity_constraint_name, is_serialization_failure
 from nexus.db.models import (
     Contributor,
     ContributorAlias,
@@ -18,25 +30,33 @@ from nexus.db.models import (
     ContributorIdentityEvent,
     ObjectLink,
 )
+from nexus.db.session import use_serializable_if_available
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorAliasOut,
+    ContributorDirectoryEntry,
+    ContributorDirectoryFacets,
+    ContributorDirectoryPage,
+    ContributorDirectoryPageInfo,
     ContributorExternalIdCreateRequest,
     ContributorExternalIdOut,
     ContributorKind,
+    ContributorMergeRequest,
     ContributorOut,
     ContributorSearchResultOut,
     ContributorSplitRequest,
     ContributorStatus,
     ContributorWorkOut,
+    FacetCount,
 )
 from nexus.schemas.notes import HydratedObjectRef
-from nexus.services.contributor_credits import (
+from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
+from nexus.services.contributor_taxonomy import (
+    CONFIRMED_ALIAS_SOURCES,
     CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES,
     normalize_contributor_name,
     normalize_contributor_role,
-    unique_contributor_handle_for_name,
 )
 
 ACTIVE_STATUSES = ("unverified", "verified")
@@ -54,6 +74,24 @@ def get_contributor_by_handle(
         else _load_active_contributor_by_handle(db, contributor_handle)
     )
     return _contributor_out(db, contributor)
+
+
+def resolve_canonical_contributor_ids(db: Session, handles: Sequence[str]) -> list[UUID]:
+    """Map handles to their canonical survivor ids (following merges), deduped and order-preserving.
+
+    Unknown handles are dropped. Callers filter by these ids so a merged handle returns the
+    survivor's content."""
+    canonical_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for handle in handles:
+        start_id = db.scalar(select(Contributor.id).where(Contributor.handle == handle))
+        if start_id is None:
+            continue
+        canonical_id = _canonical_contributor_id(db, start_id)
+        if canonical_id not in seen:
+            seen.add(canonical_id)
+            canonical_ids.append(canonical_id)
+    return canonical_ids
 
 
 def list_contributor_works(
@@ -117,23 +155,7 @@ def list_contributor_works(
                 JOIN podcasts p ON p.id = cc.podcast_id
                 WHERE cc.contributor_id = :contributor_id
                   AND cc.podcast_id IS NOT NULL
-                  AND (
-                        EXISTS (
-                            SELECT 1
-                            FROM podcast_subscriptions ps
-                            WHERE ps.podcast_id = p.id
-                              AND ps.user_id = :viewer_id
-                              AND ps.status = 'active'
-                        )
-                        OR EXISTS (
-                            SELECT 1
-                            FROM library_entries le
-                            JOIN memberships mship
-                              ON mship.library_id = le.library_id
-                             AND mship.user_id = :viewer_id
-                            WHERE le.podcast_id = p.id
-                        )
-                  )
+                  AND cc.podcast_id IN ({visible_podcast_ids_cte_sql()})
 
                 UNION ALL
 
@@ -333,6 +355,244 @@ def search_contributors(
     ]
 
 
+def list_contributors(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    q: str | None = None,
+    roles: frozenset[str] = frozenset(),
+    kinds: frozenset[str] = frozenset(),
+    content_kinds: frozenset[str] = frozenset(),
+    statuses: frozenset[str] = frozenset(),
+    sort: Literal["works", "name"] = "works",
+    cursor: str | None = None,
+    limit: int = 40,
+) -> ContributorDirectoryPage:
+    """Faceted directory of contributors visible to the viewer, with visibility-scoped work counts.
+
+    Object-link-only contributors appear with a work_count of 0. ``sort="name"`` paginates with a
+    keyset cursor over (sort_name, id); ``sort="works"`` paginates with an offset cursor."""
+    params: dict[str, Any] = {"viewer_id": viewer_id, "limit": limit + 1}
+    filters = ["c.status NOT IN ('merged', 'tombstoned')"]
+    if roles:
+        filters.append(
+            "EXISTS (SELECT 1 FROM scoped s WHERE s.contributor_id = c.id AND s.role = ANY(:roles))"
+        )
+        params["roles"] = sorted(roles)
+    if kinds:
+        filters.append("c.kind = ANY(:kinds)")
+        params["kinds"] = sorted(kinds)
+    if content_kinds:
+        filters.append(
+            "EXISTS (SELECT 1 FROM scoped s "
+            "WHERE s.contributor_id = c.id AND s.content_kind = ANY(:content_kinds))"
+        )
+        params["content_kinds"] = sorted(content_kinds)
+    if statuses:
+        filters.append("c.status = ANY(:statuses)")
+        params["statuses"] = sorted(statuses)
+    q_text = q.strip() if q else ""
+    if q_text:
+        filters.append(
+            "(c.display_name ILIKE :q_like OR c.sort_name ILIKE :q_like "
+            "OR EXISTS (SELECT 1 FROM contributor_aliases a "
+            "WHERE a.contributor_id = c.id AND a.normalized_alias ILIKE :q_prefix))"
+        )
+        params["q_like"] = f"%{q_text}%"
+        params["q_prefix"] = f"{q_text.lower()}%"
+
+    if sort == "name":
+        decoded = _decode_directory_cursor(cursor, "name") if cursor else None
+        if decoded is not None:
+            filters.append("(c.sort_name, c.id) > (:after_sort, CAST(:after_id AS uuid))")
+            params["after_sort"] = decoded["after"][0]
+            params["after_id"] = decoded["after"][1]
+        order_by = "ORDER BY c.sort_name ASC, c.id ASC"
+        offset = 0
+    else:
+        offset = _decode_directory_cursor(cursor, "works")["offset"] if cursor else 0
+        params["offset"] = offset
+        order_by = "ORDER BY work_count DESC, c.sort_name ASC, c.id ASC OFFSET :offset"
+
+    rows = (
+        db.execute(
+            text(
+                f"""
+            WITH {_directory_scoped_cte_sql()},
+                 counts AS (
+                     SELECT contributor_id,
+                            COUNT(DISTINCT work_key) AS work_count,
+                            array_agg(DISTINCT role) AS roles,
+                            array_agg(DISTINCT content_kind) AS content_kinds
+                     FROM scoped GROUP BY contributor_id
+                 )
+            SELECT c.id, c.handle, c.display_name, c.sort_name, c.kind, c.status, c.disambiguation,
+                   COALESCE(counts.work_count, 0) AS work_count,
+                   COALESCE(counts.roles, ARRAY[]::text[]) AS roles,
+                   COALESCE(counts.content_kinds, ARRAY[]::text[]) AS content_kinds
+            FROM contributors c
+            JOIN visible v ON v.contributor_id = c.id
+            LEFT JOIN counts ON counts.contributor_id = c.id
+            WHERE {" AND ".join(filters)}
+            {order_by}
+            LIMIT :limit
+            """
+            ),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    entries = [
+        ContributorDirectoryEntry(
+            handle=row["handle"],
+            href=f"/authors/{row['handle']}",
+            display_name=row["display_name"],
+            sort_name=row["sort_name"],
+            kind=row["kind"],
+            status=row["status"],
+            disambiguation=row["disambiguation"],
+            work_count=row["work_count"],
+            roles=sorted(row["roles"]),
+            content_kinds=sorted(row["content_kinds"]),
+        )
+        for row in page_rows
+    ]
+
+    next_cursor: str | None = None
+    if has_more and page_rows:
+        if sort == "name":
+            last = page_rows[-1]
+            next_cursor = _encode_directory_cursor(
+                {"k": "name", "after": [last["sort_name"], str(last["id"])]}
+            )
+        else:
+            next_cursor = _encode_directory_cursor({"k": "works", "offset": offset + limit})
+
+    return ContributorDirectoryPage(
+        entries=entries,
+        facets=_contributor_directory_facets(db, viewer_id),
+        page=ContributorDirectoryPageInfo(has_more=has_more, next_cursor=next_cursor),
+    )
+
+
+def _contributor_directory_facets(db: Session, viewer_id: UUID) -> ContributorDirectoryFacets:
+    rows = (
+        db.execute(
+            text(
+                f"""
+            WITH {_directory_scoped_cte_sql()},
+                 active AS (
+                     SELECT c.id, c.kind, c.status
+                     FROM contributors c
+                     JOIN visible v ON v.contributor_id = c.id
+                     WHERE c.status NOT IN ('merged', 'tombstoned')
+                 )
+            SELECT 'role' AS facet, role AS value, COUNT(DISTINCT contributor_id) AS count
+            FROM scoped GROUP BY role
+            UNION ALL
+            SELECT 'content_kind', content_kind, COUNT(DISTINCT contributor_id) FROM scoped
+            GROUP BY content_kind
+            UNION ALL
+            SELECT 'kind', kind, COUNT(*) FROM active GROUP BY kind
+            UNION ALL
+            SELECT 'status', status, COUNT(*) FROM active GROUP BY status
+            """
+            ),
+            {"viewer_id": viewer_id},
+        )
+        .mappings()
+        .all()
+    )
+
+    buckets: dict[str, list[FacetCount]] = {
+        "role": [],
+        "content_kind": [],
+        "kind": [],
+        "status": [],
+    }
+    for row in rows:
+        buckets[row["facet"]].append(FacetCount(value=row["value"], count=row["count"]))
+    for facet_counts in buckets.values():
+        facet_counts.sort(key=lambda fc: (-fc.count, fc.value))
+    return ContributorDirectoryFacets(
+        roles=buckets["role"],
+        kinds=buckets["kind"],
+        content_kinds=buckets["content_kind"],
+        statuses=buckets["status"],
+    )
+
+
+def _directory_scoped_cte_sql() -> str:
+    """`visible` (viewer-visible contributor ids) + `scoped` (their visible credit rows with
+    role/content_kind/work_key) — the shared base of the directory listing and its facets."""
+    return f"""visible AS ({visible_contributor_ids_cte_sql()}),
+                 scoped AS (
+                     SELECT cc.contributor_id, cc.role,
+                            CASE WHEN cc.media_id IS NOT NULL THEN m.kind
+                                 WHEN cc.podcast_id IS NOT NULL THEN 'podcast'
+                                 ELSE 'gutenberg' END AS content_kind,
+                            COALESCE(cc.media_id::text, cc.podcast_id::text,
+                                     cc.project_gutenberg_catalog_ebook_id::text) AS work_key
+                     FROM ({visible_content_credit_rows_sql()}) cc
+                     LEFT JOIN media m ON m.id = cc.media_id
+                 )"""
+
+
+def _encode_directory_cursor(payload: dict[str, Any]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def _decode_directory_cursor(cursor: str, expected_kind: str) -> dict[str, Any]:
+    invalid = ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid directory cursor")
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise invalid from exc
+    if not isinstance(payload, dict) or payload.get("k") != expected_kind:
+        raise invalid
+    if expected_kind == "name":
+        after = payload.get("after")
+        if not (isinstance(after, list) and len(after) == 2 and isinstance(after[0], str)):
+            raise invalid
+        try:
+            UUID(after[1])
+        except (ValueError, TypeError) as exc:
+            raise invalid from exc
+    else:
+        offset = payload.get("offset")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise invalid
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Identity writes — curator-gated, each atomic under SERIALIZABLE with retry.
+# ---------------------------------------------------------------------------
+
+
+def run_identity_write(
+    db: Session, fn: Callable[[], ContributorOut], *, retries: int = 3
+) -> ContributorOut:
+    """Run an identity mutation under SERIALIZABLE, retrying on serialization failure.
+
+    ``fn`` must reload its working rows and commit on each call so a retry sees fresh state.
+    Per concurrency.md there is no explicit row locking on top of SERIALIZABLE."""
+    for attempt in range(retries):
+        use_serializable_if_available(db)
+        try:
+            return fn()
+        except OperationalError as exc:
+            db.rollback()
+            if not is_serialization_failure(exc) or attempt == retries - 1:
+                raise
+    # justify-defect: the loop returns or raises on the final attempt; this is unreachable.
+    raise AssertionError("run_identity_write retry loop exhausted")
+
+
 def split_contributor(
     db: Session,
     *,
@@ -342,7 +602,9 @@ def split_contributor(
     request: ContributorSplitRequest,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    source = _load_active_contributor_by_handle(db, contributor_handle)
+    # Function-local import breaks the contributors → object_links → object_refs → contributors cycle.
+    from nexus.services.object_links import repoint_contributor_object_links
+
     if not (
         request.credit_ids
         or request.alias_ids
@@ -350,87 +612,80 @@ def split_contributor(
         or request.object_link_ids
     ):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Select contributor records to split")
-
     display_name = request.display_name.strip()
-    selected_credits = _load_selected_credits_for_split(db, source.id, request.credit_ids)
-    selected_aliases = _load_selected_aliases_for_split(db, source.id, request.alias_ids)
-    selected_external_ids = _load_selected_external_ids_for_split(
-        db,
-        source.id,
-        request.external_id_ids,
-    )
-    selected_object_links = _load_selected_object_links_for_split(
-        db,
-        actor_user_id,
-        source.id,
-        request.object_link_ids,
-    )
 
-    new_contributor = Contributor(
-        id=uuid4(),
-        handle=unique_contributor_handle_for_name(db, normalize_contributor_name(display_name)),
-        display_name=display_name,
-        sort_name=display_name,
-        kind=source.kind,
-        status="unverified",
-        disambiguation=source.disambiguation,
-    )
-    db.add(new_contributor)
-    db.flush()
-    db.add(
-        ContributorAlias(
-            contributor_id=new_contributor.id,
-            alias=display_name,
-            normalized_alias=normalize_contributor_name(display_name),
-            alias_kind="display",
-            source="manual",
-            is_primary=True,
+    def _txn() -> ContributorOut:
+        source = _load_active_contributor_by_handle(db, contributor_handle)
+        selected_credits = _load_selected_credits_for_split(db, source.id, request.credit_ids)
+        selected_aliases = _load_selected_aliases_for_split(db, source.id, request.alias_ids)
+        selected_external_ids = _load_selected_external_ids_for_split(
+            db, source.id, request.external_id_ids
         )
-    )
-
-    moved_credit_count = _move_selected_credits(
-        selected_credits,
-        new_contributor.id,
-    )
-    moved_alias_count = _move_selected_aliases(
-        selected_aliases,
-        new_contributor.id,
-    )
-    moved_external_id_count = _move_selected_external_ids(
-        selected_external_ids,
-        new_contributor.id,
-    )
-    moved_link_count = _move_selected_object_links(
-        selected_object_links,
-        source.id,
-        new_contributor.id,
-    )
-
-    db_now = db.scalar(select(func.now()))
-    assert (
-        db_now is not None
-    )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-    source.updated_at = db_now
-    new_contributor.updated_at = db_now
-    db.add(
-        ContributorIdentityEvent(
-            event_type="split",
-            actor_user_id=actor_user_id,
-            source_contributor_id=source.id,
-            target_contributor_id=new_contributor.id,
-            payload={
-                "source_handle": source.handle,
-                "target_handle": new_contributor.handle,
-                "moved_credit_count": moved_credit_count,
-                "moved_alias_count": moved_alias_count,
-                "moved_external_id_count": moved_external_id_count,
-                "moved_link_count": moved_link_count,
-            },
+        selected_object_links = _load_selected_object_links_for_split(
+            db, actor_user_id, source.id, request.object_link_ids
         )
-    )
-    db.commit()
-    db.refresh(new_contributor)
-    return _contributor_out(db, new_contributor)
+
+        new_contributor = Contributor(
+            id=uuid4(),
+            handle=unique_contributor_handle_for_name(db, normalize_contributor_name(display_name)),
+            display_name=display_name,
+            sort_name=display_name,
+            kind=source.kind,
+            status="unverified",
+            disambiguation=source.disambiguation,
+        )
+        db.add(new_contributor)
+        db.flush()
+        db.add(
+            ContributorAlias(
+                contributor_id=new_contributor.id,
+                alias=display_name,
+                normalized_alias=normalize_contributor_name(display_name),
+                alias_kind="display",
+                source="manual",
+                is_primary=True,
+            )
+        )
+
+        moved_credit_count = _move_selected_credits(selected_credits, new_contributor.id)
+        moved_alias_count = _move_selected_aliases(selected_aliases, new_contributor.id)
+        moved_external_id_count = _move_selected_external_ids(
+            selected_external_ids, new_contributor.id
+        )
+        moved_link_count = repoint_contributor_object_links(
+            db,
+            link_ids=[link.id for link in selected_object_links],
+            from_id=source.id,
+            to_id=new_contributor.id,
+        )
+
+        db_now = db.scalar(select(func.now()))
+        assert (
+            db_now is not None
+        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
+        source.updated_at = db_now
+        new_contributor.updated_at = db_now
+        db.add(
+            ContributorIdentityEvent(
+                event_type="split",
+                actor_user_id=actor_user_id,
+                source_contributor_id=source.id,
+                target_contributor_id=new_contributor.id,
+                payload={
+                    "source_handle": source.handle,
+                    "target_handle": new_contributor.handle,
+                    "moved_credit_count": moved_credit_count,
+                    "moved_alias_count": moved_alias_count,
+                    "moved_external_id_count": moved_external_id_count,
+                    "moved_link_count": moved_link_count,
+                },
+            )
+        )
+        db.commit()
+        db.refresh(new_contributor)
+        return _contributor_out(db, new_contributor)
+
+    return run_identity_write(db, _txn)
 
 
 def tombstone_contributor(
@@ -441,31 +696,35 @@ def tombstone_contributor(
     contributor_handle: str,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    contributor = _load_active_contributor_by_handle(db, contributor_handle)
-    blocking_reference = _blocking_contributor_reference_kind(db, contributor)
-    if blocking_reference is not None:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Move or remove contributor {blocking_reference} before tombstoning",
+
+    def _txn() -> ContributorOut:
+        contributor = _load_active_contributor_by_handle(db, contributor_handle)
+        blocking_reference = _blocking_contributor_reference_kind(db, contributor)
+        if blocking_reference is not None:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"Move or remove contributor {blocking_reference} before tombstoning",
+            )
+        db_now = db.scalar(select(func.now()))
+        assert (
+            db_now is not None
+        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
+        contributor.status = "tombstoned"
+        contributor.updated_at = db_now
+        db.add(
+            ContributorIdentityEvent(
+                event_type="tombstone",
+                actor_user_id=actor_user_id,
+                source_contributor_id=contributor.id,
+                target_contributor_id=None,
+                payload={"handle": contributor.handle},
+            )
         )
-    db_now = db.scalar(select(func.now()))
-    assert (
-        db_now is not None
-    )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-    contributor.status = "tombstoned"
-    contributor.updated_at = db_now
-    db.add(
-        ContributorIdentityEvent(
-            event_type="tombstone",
-            actor_user_id=actor_user_id,
-            source_contributor_id=contributor.id,
-            target_contributor_id=None,
-            payload={"handle": contributor.handle},
-        )
-    )
-    db.commit()
-    db.refresh(contributor)
-    return _contributor_out(db, contributor)
+        db.commit()
+        db.refresh(contributor)
+        return _contributor_out(db, contributor)
+
+    return run_identity_write(db, _txn)
 
 
 def add_contributor_alias(
@@ -477,50 +736,54 @@ def add_contributor_alias(
     request: ContributorAliasCreateRequest,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    contributor = _load_active_contributor_by_handle(db, contributor_handle)
-    alias_text = " ".join(request.alias.split())
-    normalized_alias = normalize_contributor_name(alias_text)
-    duplicate_id = db.scalar(
-        select(ContributorAlias.id).where(
-            ContributorAlias.contributor_id == contributor.id,
-            ContributorAlias.normalized_alias == normalized_alias,
-            ContributorAlias.alias_kind == request.alias_kind,
-        )
-    )
-    if duplicate_id is not None:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor alias already exists")
 
-    alias = ContributorAlias(
-        contributor_id=contributor.id,
-        alias=alias_text,
-        normalized_alias=normalized_alias,
-        sort_name=request.sort_name,
-        alias_kind=request.alias_kind,
-        locale=request.locale,
-        script=request.script,
-        source=request.source,
-        confidence=request.confidence,
-        is_primary=request.is_primary,
-    )
-    db.add(alias)
-    db.flush()
-    db.add(
-        ContributorIdentityEvent(
-            event_type="alias_add",
-            actor_user_id=actor_user_id,
-            source_contributor_id=contributor.id,
-            target_contributor_id=None,
-            payload={
-                "contributor_handle": contributor.handle,
-                "alias_id": str(alias.id),
-                "alias": alias.alias,
-                "alias_kind": alias.alias_kind,
-            },
+    def _txn() -> ContributorOut:
+        contributor = _load_active_contributor_by_handle(db, contributor_handle)
+        alias_text = " ".join(request.alias.split())
+        normalized_alias = normalize_contributor_name(alias_text)
+        duplicate_id = db.scalar(
+            select(ContributorAlias.id).where(
+                ContributorAlias.contributor_id == contributor.id,
+                ContributorAlias.normalized_alias == normalized_alias,
+                ContributorAlias.alias_kind == request.alias_kind,
+            )
         )
-    )
-    db.commit()
-    db.refresh(contributor)
-    return _contributor_out(db, contributor)
+        if duplicate_id is not None:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor alias already exists")
+
+        alias = ContributorAlias(
+            contributor_id=contributor.id,
+            alias=alias_text,
+            normalized_alias=normalized_alias,
+            sort_name=request.sort_name,
+            alias_kind=request.alias_kind,
+            locale=request.locale,
+            script=request.script,
+            source=request.source,
+            confidence=request.confidence,
+            is_primary=request.is_primary,
+        )
+        db.add(alias)
+        db.flush()
+        db.add(
+            ContributorIdentityEvent(
+                event_type="alias_add",
+                actor_user_id=actor_user_id,
+                source_contributor_id=contributor.id,
+                target_contributor_id=None,
+                payload={
+                    "contributor_handle": contributor.handle,
+                    "alias_id": str(alias.id),
+                    "alias": alias.alias,
+                    "alias_kind": alias.alias_kind,
+                },
+            )
+        )
+        db.commit()
+        db.refresh(contributor)
+        return _contributor_out(db, contributor)
+
+    return run_identity_write(db, _txn)
 
 
 def delete_contributor_alias(
@@ -532,34 +795,38 @@ def delete_contributor_alias(
     alias_id: UUID,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    contributor = _load_active_contributor_by_handle(db, contributor_handle)
-    alias = db.scalar(
-        select(ContributorAlias).where(
-            ContributorAlias.id == alias_id,
-            ContributorAlias.contributor_id == contributor.id,
+
+    def _txn() -> ContributorOut:
+        contributor = _load_active_contributor_by_handle(db, contributor_handle)
+        alias = db.scalar(
+            select(ContributorAlias).where(
+                ContributorAlias.id == alias_id,
+                ContributorAlias.contributor_id == contributor.id,
+            )
         )
-    )
-    if alias is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor alias not found")
-    payload = {
-        "contributor_handle": contributor.handle,
-        "alias_id": str(alias.id),
-        "alias": alias.alias,
-        "alias_kind": alias.alias_kind,
-    }
-    db.delete(alias)
-    db.add(
-        ContributorIdentityEvent(
-            event_type="alias_remove",
-            actor_user_id=actor_user_id,
-            source_contributor_id=contributor.id,
-            target_contributor_id=None,
-            payload=payload,
+        if alias is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor alias not found")
+        payload = {
+            "contributor_handle": contributor.handle,
+            "alias_id": str(alias.id),
+            "alias": alias.alias,
+            "alias_kind": alias.alias_kind,
+        }
+        db.delete(alias)
+        db.add(
+            ContributorIdentityEvent(
+                event_type="alias_remove",
+                actor_user_id=actor_user_id,
+                source_contributor_id=contributor.id,
+                target_contributor_id=None,
+                payload=payload,
+            )
         )
-    )
-    db.commit()
-    db.refresh(contributor)
-    return _contributor_out(db, contributor)
+        db.commit()
+        db.refresh(contributor)
+        return _contributor_out(db, contributor)
+
+    return run_identity_write(db, _txn)
 
 
 def add_contributor_external_id(
@@ -571,49 +838,53 @@ def add_contributor_external_id(
     request: ContributorExternalIdCreateRequest,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    contributor = _load_active_contributor_by_handle(db, contributor_handle)
-    authority = request.authority.strip().lower()
-    external_key = request.external_key.strip()
-    if authority not in CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID authority is invalid"
-        )
 
-    existing = db.scalar(
-        select(ContributorExternalId).where(
-            ContributorExternalId.authority == authority,
-            ContributorExternalId.external_key == external_key,
-        )
-    )
-    if existing is not None:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID already exists")
+    def _txn() -> ContributorOut:
+        contributor = _load_active_contributor_by_handle(db, contributor_handle)
+        authority = request.authority.strip().lower()
+        external_key = request.external_key.strip()
+        if authority not in CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID authority is invalid"
+            )
 
-    external_id = ContributorExternalId(
-        contributor_id=contributor.id,
-        authority=authority,
-        external_key=external_key,
-        external_url=request.external_url,
-        source=request.source,
-    )
-    db.add(external_id)
-    db.flush()
-    db.add(
-        ContributorIdentityEvent(
-            event_type="external_id_add",
-            actor_user_id=actor_user_id,
-            source_contributor_id=contributor.id,
-            target_contributor_id=None,
-            payload={
-                "contributor_handle": contributor.handle,
-                "external_id_id": str(external_id.id),
-                "authority": external_id.authority,
-                "external_key": external_id.external_key,
-            },
+        existing = db.scalar(
+            select(ContributorExternalId).where(
+                ContributorExternalId.authority == authority,
+                ContributorExternalId.external_key == external_key,
+            )
         )
-    )
-    db.commit()
-    db.refresh(contributor)
-    return _contributor_out(db, contributor)
+        if existing is not None:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Contributor external ID already exists")
+
+        external_id = ContributorExternalId(
+            contributor_id=contributor.id,
+            authority=authority,
+            external_key=external_key,
+            external_url=request.external_url,
+            source=request.source,
+        )
+        db.add(external_id)
+        db.flush()
+        db.add(
+            ContributorIdentityEvent(
+                event_type="external_id_add",
+                actor_user_id=actor_user_id,
+                source_contributor_id=contributor.id,
+                target_contributor_id=None,
+                payload={
+                    "contributor_handle": contributor.handle,
+                    "external_id_id": str(external_id.id),
+                    "authority": external_id.authority,
+                    "external_key": external_id.external_key,
+                },
+            )
+        )
+        db.commit()
+        db.refresh(contributor)
+        return _contributor_out(db, contributor)
+
+    return run_identity_write(db, _txn)
 
 
 def delete_contributor_external_id(
@@ -625,34 +896,202 @@ def delete_contributor_external_id(
     external_id_id: UUID,
 ) -> ContributorOut:
     _require_contributor_curator(actor_roles)
-    contributor = _load_active_contributor_by_handle(db, contributor_handle)
-    external_id = db.scalar(
-        select(ContributorExternalId).where(
-            ContributorExternalId.id == external_id_id,
-            ContributorExternalId.contributor_id == contributor.id,
+
+    def _txn() -> ContributorOut:
+        contributor = _load_active_contributor_by_handle(db, contributor_handle)
+        external_id = db.scalar(
+            select(ContributorExternalId).where(
+                ContributorExternalId.id == external_id_id,
+                ContributorExternalId.contributor_id == contributor.id,
+            )
         )
-    )
-    if external_id is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor external ID not found")
-    payload = {
-        "contributor_handle": contributor.handle,
-        "external_id_id": str(external_id.id),
-        "authority": external_id.authority,
-        "external_key": external_id.external_key,
-    }
-    db.delete(external_id)
-    db.add(
-        ContributorIdentityEvent(
-            event_type="external_id_remove",
-            actor_user_id=actor_user_id,
-            source_contributor_id=contributor.id,
-            target_contributor_id=None,
-            payload=payload,
+        if external_id is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor external ID not found")
+        payload = {
+            "contributor_handle": contributor.handle,
+            "external_id_id": str(external_id.id),
+            "authority": external_id.authority,
+            "external_key": external_id.external_key,
+        }
+        db.delete(external_id)
+        db.add(
+            ContributorIdentityEvent(
+                event_type="external_id_remove",
+                actor_user_id=actor_user_id,
+                source_contributor_id=contributor.id,
+                target_contributor_id=None,
+                payload=payload,
+            )
         )
-    )
-    db.commit()
-    db.refresh(contributor)
-    return _contributor_out(db, contributor)
+        db.commit()
+        db.refresh(contributor)
+        return _contributor_out(db, contributor)
+
+    return run_identity_write(db, _txn)
+
+
+def merge_contributor(
+    db: Session,
+    *,
+    actor_user_id: UUID,
+    actor_roles: Collection[str] = frozenset(),
+    contributor_handle: str,
+    request: ContributorMergeRequest,
+) -> ContributorOut:
+    """Redirect a duplicate contributor (source, from the path handle) into a survivor (target).
+
+    Repoints credits/aliases/external-ids onto the target (deduping equivalents), writes a confirmed
+    merge-alias for the source name so name-only reingest resolves to the survivor, flattens prior
+    merge chains, and marks the source ``merged``. Object links are not touched — reads canonicalize."""
+    _require_contributor_curator(actor_roles)
+
+    def _txn() -> ContributorOut:
+        source = _load_contributor_for_merge(db, contributor_handle)
+        target = _load_contributor_for_merge(db, request.target_handle)
+        if source.id == target.id:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Cannot merge a contributor into itself")
+
+        ids = {"source_id": source.id, "target_id": target.id}
+        merged_duplicate_credits = len(
+            db.execute(
+                text(
+                    """
+                    DELETE FROM contributor_credits src
+                    WHERE src.contributor_id = :source_id
+                      AND EXISTS (
+                          SELECT 1 FROM contributor_credits tgt
+                          WHERE tgt.contributor_id = :target_id
+                            AND tgt.role = src.role
+                            AND tgt.normalized_credited_name = src.normalized_credited_name
+                            AND tgt.media_id IS NOT DISTINCT FROM src.media_id
+                            AND tgt.podcast_id IS NOT DISTINCT FROM src.podcast_id
+                            AND tgt.project_gutenberg_catalog_ebook_id
+                                IS NOT DISTINCT FROM src.project_gutenberg_catalog_ebook_id
+                      )
+                    RETURNING src.id
+                    """
+                ),
+                ids,
+            ).fetchall()
+        )
+        repointed_credits = len(
+            db.execute(
+                text(
+                    """
+                    UPDATE contributor_credits SET contributor_id = :target_id, updated_at = now()
+                    WHERE contributor_id = :source_id
+                    RETURNING id
+                    """
+                ),
+                ids,
+            ).fetchall()
+        )
+
+        db.execute(
+            text(
+                """
+                DELETE FROM contributor_aliases src
+                WHERE src.contributor_id = :source_id
+                  AND EXISTS (
+                      SELECT 1 FROM contributor_aliases tgt
+                      WHERE tgt.contributor_id = :target_id
+                        AND tgt.normalized_alias = src.normalized_alias
+                        AND tgt.alias_kind = src.alias_kind
+                  )
+                """
+            ),
+            ids,
+        )
+        db.execute(
+            text(
+                """
+                UPDATE contributor_aliases SET contributor_id = :target_id, is_primary = false
+                WHERE contributor_id = :source_id
+                """
+            ),
+            ids,
+        )
+
+        # Durable confirmed merge-alias so name-only reingest of the source name resolves to the
+        # target. "merge" is in CONFIRMED_ALIAS_SOURCES; written even if another confirmed alias
+        # exists, so the breadcrumb survives later alias edits. Idempotent on (name, source="merge").
+        merged_name = normalize_contributor_name(source.display_name)
+        existing_merge_alias = db.scalar(
+            select(ContributorAlias.id).where(
+                ContributorAlias.contributor_id == target.id,
+                ContributorAlias.normalized_alias == merged_name,
+                ContributorAlias.source == "merge",
+            )
+        )
+        if existing_merge_alias is None:
+            db.add(
+                ContributorAlias(
+                    contributor_id=target.id,
+                    alias=source.display_name,
+                    normalized_alias=merged_name,
+                    alias_kind="search",
+                    source="merge",
+                    is_primary=False,
+                )
+            )
+
+        # External ids are globally unique on (authority, external_key), so a plain repoint never
+        # collides; differing keys for one authority simply coexist on the target (R3).
+        db.execute(
+            text(
+                "UPDATE contributor_external_ids SET contributor_id = :target_id "
+                "WHERE contributor_id = :source_id"
+            ),
+            ids,
+        )
+        # Flatten prior chains so resolution stays depth 1.
+        db.execute(
+            text(
+                "UPDATE contributors SET merged_into_contributor_id = :target_id "
+                "WHERE merged_into_contributor_id = :source_id"
+            ),
+            ids,
+        )
+
+        db_now = db.scalar(select(func.now()))
+        assert (
+            db_now is not None
+        )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
+        source.status = "merged"
+        source.merged_into_contributor_id = target.id
+        source.merged_at = db_now
+        source.updated_at = db_now
+        target.updated_at = db_now
+        db.add(
+            ContributorIdentityEvent(
+                event_type="merge",
+                actor_user_id=actor_user_id,
+                source_contributor_id=source.id,
+                target_contributor_id=target.id,
+                payload={
+                    "source_handle": source.handle,
+                    "target_handle": target.handle,
+                    "merged_duplicate_credits": merged_duplicate_credits,
+                    "repointed_credits": repointed_credits,
+                },
+            )
+        )
+        db.commit()
+        db.refresh(target)
+        return _contributor_out(db, target)
+
+    return run_identity_write(db, _txn)
+
+
+def _load_contributor_for_merge(db: Session, contributor_handle: str) -> Contributor:
+    contributor = db.scalar(select(Contributor).where(Contributor.handle == contributor_handle))
+    if contributor is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
+    if contributor.status not in ACTIVE_STATUSES:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST, "Contributor is already merged or tombstoned"
+        )
+    return contributor
 
 
 def hydrate_contributor_object_ref(
@@ -662,7 +1101,7 @@ def hydrate_contributor_object_ref(
 ) -> HydratedObjectRef:
     contributor = _load_visible_contributor_by_id(
         db,
-        contributor_id,
+        _canonical_contributor_id(db, contributor_id),
         viewer_id,
         message="Object not found",
     )
@@ -684,14 +1123,33 @@ def _require_contributor_curator(actor_roles: Collection[str]) -> None:
         )
 
 
-def _load_active_contributor_by_handle(db: Session, contributor_handle: str) -> Contributor:
-    contributor = db.scalar(
-        select(Contributor).where(
-            Contributor.handle == contributor_handle,
-            Contributor.status.in_(ACTIVE_STATUSES),
+def _canonical_contributor_id(db: Session, contributor_id: UUID) -> UUID:
+    """Follow ``merged_into_contributor_id`` to the surviving contributor. Merge flattens chains,
+    so depth is normally 1; the guard catches a cycle (a defect)."""
+    current = contributor_id
+    for _ in range(8):
+        merged_into = db.scalar(
+            select(Contributor.merged_into_contributor_id).where(Contributor.id == current)
         )
-    )
-    if contributor is None:
+        if merged_into is None:
+            return current
+        current = merged_into
+    # justify-defect: merge flattens chains to depth 1; a longer chain is a cycle/defect.
+    raise AssertionError(f"contributor merge chain too deep from {contributor_id}")
+
+
+def _canonical_id_for_handle(db: Session, contributor_handle: str) -> UUID:
+    row = db.execute(
+        select(Contributor.id, Contributor.status).where(Contributor.handle == contributor_handle)
+    ).first()
+    if row is None or row.status == "tombstoned":
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
+    return _canonical_contributor_id(db, row.id)
+
+
+def _load_active_contributor_by_handle(db: Session, contributor_handle: str) -> Contributor:
+    contributor = db.get(Contributor, _canonical_id_for_handle(db, contributor_handle))
+    if contributor is None or contributor.status not in ACTIVE_STATUSES:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
     return contributor
 
@@ -701,25 +1159,9 @@ def _load_visible_contributor_by_handle(
     contributor_handle: str,
     viewer_id: UUID,
 ) -> Contributor:
-    contributor_id = db.execute(
-        text(
-            f"""
-            WITH {_visible_contributor_ctes_sql()}
-            SELECT c.id
-            FROM contributors c
-            JOIN visible_contributors vc ON vc.contributor_id = c.id
-            WHERE c.handle = :contributor_handle
-              AND c.status IN ('unverified', 'verified')
-            """
-        ),
-        {"viewer_id": viewer_id, "contributor_handle": contributor_handle},
-    ).scalar_one_or_none()
-    if contributor_id is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    contributor = db.get(Contributor, contributor_id)
-    if contributor is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor not found")
-    return contributor
+    return _load_visible_contributor_by_id(
+        db, _canonical_id_for_handle(db, contributor_handle), viewer_id
+    )
 
 
 def _load_visible_contributor_by_id(
@@ -751,55 +1193,14 @@ def _load_visible_contributor_by_id(
 
 
 def _visible_contributor_ctes_sql() -> str:
+    """Define ``visible_contributor_credits`` (rows) and ``visible_contributors`` (ids)
+    from the single owner in ``permissions``."""
     return f"""
-            visible_media AS (
-                {visible_media_ids_cte_sql()}
-            ),
-            visible_podcasts AS (
-                SELECT ps.podcast_id
-                FROM podcast_subscriptions ps
-                WHERE ps.user_id = :viewer_id
-                  AND ps.status = 'active'
-
-                UNION
-
-                SELECT le.podcast_id
-                FROM library_entries le
-                JOIN memberships mship
-                  ON mship.library_id = le.library_id
-                 AND mship.user_id = :viewer_id
-                WHERE le.podcast_id IS NOT NULL
-            ),
             visible_contributor_credits AS (
-                SELECT cc.*
-                FROM contributor_credits cc
-                LEFT JOIN visible_media vm ON vm.media_id = cc.media_id
-                LEFT JOIN visible_podcasts vp ON vp.podcast_id = cc.podcast_id
-                WHERE vm.media_id IS NOT NULL
-                   OR vp.podcast_id IS NOT NULL
-                   OR cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-            ),
-            visible_contributor_object_links AS (
-                SELECT ol.a_id AS contributor_id
-                FROM object_links ol
-                WHERE ol.user_id = :viewer_id
-                  AND ol.a_type = 'contributor'
-
-                UNION
-
-                SELECT ol.b_id AS contributor_id
-                FROM object_links ol
-                WHERE ol.user_id = :viewer_id
-                  AND ol.b_type = 'contributor'
+                {visible_content_credit_rows_sql()}
             ),
             visible_contributors AS (
-                SELECT contributor_id
-                FROM visible_contributor_credits
-
-                UNION
-
-                SELECT contributor_id
-                FROM visible_contributor_object_links
+                {visible_contributor_ids_cte_sql()}
             )
     """
 
@@ -912,22 +1313,6 @@ def _load_selected_object_links_for_split(
     return list(links)
 
 
-def _move_selected_object_links(
-    links: list[ObjectLink],
-    source_id: UUID,
-    target_id: UUID,
-) -> int:
-    moved = 0
-    for link in links:
-        if link.a_type == "contributor" and link.a_id == source_id:
-            link.a_id = target_id
-            moved += 1
-        if link.b_type == "contributor" and link.b_id == source_id:
-            link.b_id = target_id
-            moved += 1
-    return moved
-
-
 def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:
     credit_id = db.scalar(
         select(ContributorCredit.id)
@@ -950,126 +1335,10 @@ def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) 
     if object_link_id is not None:
         return "object links"
 
-    if _persisted_contributor_ref_exists(db, contributor):
+    if contributor_is_referenced_in_persisted_context(db, contributor_handle=contributor.handle):
         return "persisted references"
 
     return None
-
-
-def _persisted_contributor_ref_exists(db: Session, contributor: Contributor) -> bool:
-    selected_context_refs_sql = _json_array_contains_contributor_ref_sql(
-        "mtc.selected_context_refs",
-        "selected_ref",
-    )
-    included_context_refs_sql = _json_array_contains_contributor_ref_sql(
-        "cpa.included_context_refs",
-        "included_ref",
-    )
-    row = db.execute(
-        text(
-            f"""
-            SELECT 1
-            WHERE EXISTS (
-                SELECT 1
-                FROM message_retrievals mr
-                WHERE {_json_contains_contributor_ref_sql("mr.context_ref")}
-                   OR {_json_contains_contributor_ref_sql("mr.result_ref")}
-                LIMIT 1
-            )
-            OR EXISTS (
-                SELECT 1
-                FROM message_tool_calls mtc
-                WHERE {_json_array_contains_contributor_ref_sql("mtc.result_refs", "result_ref")}
-                   OR {selected_context_refs_sql}
-                LIMIT 1
-            )
-            OR EXISTS (
-                SELECT 1
-                FROM chat_prompt_assemblies cpa
-                WHERE {included_context_refs_sql}
-                LIMIT 1
-            )
-            """
-        ),
-        {
-            "contributor_id_text": str(contributor.id),
-            "contributor_handle": contributor.handle,
-            "contributor_resource_ref": f"contributor:{contributor.handle}",
-        },
-    ).fetchone()
-    return row is not None
-
-
-def _json_array_contains_contributor_ref_sql(column: str, alias: str) -> str:
-    return f"""
-        EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements({column}) AS {alias}(value)
-            WHERE {_json_contains_contributor_ref_sql(f"{alias}.value")}
-        )
-    """
-
-
-def _json_contains_contributor_ref_sql(column: str) -> str:
-    return f"""
-        (
-            {column} @> jsonb_build_object(
-                'type', 'contributor',
-                'id', CAST(:contributor_id_text AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'type', 'contributor',
-                'id', CAST(:contributor_handle AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'type', 'contributor',
-                'id', CAST(:contributor_resource_ref AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'type', 'contributor',
-                'contributor_handle', CAST(:contributor_handle AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'type', 'contributor',
-                'handle', CAST(:contributor_handle AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'objectType', 'contributor',
-                'objectId', CAST(:contributor_id_text AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'result_type', 'contributor',
-                'source_id', CAST(:contributor_id_text AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'result_type', 'contributor',
-                'source_id', CAST(:contributor_handle AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'result_type', 'contributor',
-                'source_id', CAST(:contributor_resource_ref AS text)
-            )
-            OR {column} @> jsonb_build_object(
-                'context_ref',
-                jsonb_build_object('type', 'contributor', 'id', CAST(:contributor_id_text AS text))
-            )
-            OR {column} @> jsonb_build_object(
-                'context_ref',
-                jsonb_build_object('type', 'contributor', 'id', CAST(:contributor_handle AS text))
-            )
-            OR {column} @> jsonb_build_object(
-                'context_ref',
-                jsonb_build_object('type', 'contributor', 'id', CAST(:contributor_resource_ref AS text))
-            )
-            OR {column} @> jsonb_build_object(
-                'context_ref',
-                jsonb_build_object(
-                    'type', 'contributor',
-                    'contributor_handle', CAST(:contributor_handle AS text)
-                )
-            )
-        )
-    """
 
 
 def _contributor_out(db: Session, contributor: Contributor) -> ContributorOut:
@@ -1105,3 +1374,306 @@ def _contributor_out(db: Session, contributor: Contributor) -> ContributorOut:
         created_at=contributor.created_at,
         updated_at=contributor.updated_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# Identity resolution — the single owner, called by contributor_credits.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ContributorExternalIdEvidence:
+    """A strong-authority external identifier that asserts contributor identity."""
+
+    authority: str
+    external_key: str
+    external_url: str | None = None
+
+
+@dataclass(frozen=True)
+class ContributorResolutionInput:
+    """Typed identity evidence for one credit. Provider IDs and ``source_ref`` provenance are
+    deliberately absent — only explicit ids/handles and strong external ids assert identity."""
+
+    credited_name: str
+    source: str
+    explicit_id: UUID | None = None
+    explicit_handle: str | None = None
+    external_ids: tuple[ContributorExternalIdEvidence, ...] = ()
+
+
+@dataclass(frozen=True)
+class ContributorResolution:
+    contributor_id: UUID
+    resolution_status: str  # external_id | manual | confirmed_alias | unverified
+
+
+def resolve_or_create_contributor(
+    db: Session, item: ContributorResolutionInput
+) -> ContributorResolution:
+    explicit = _resolve_explicit_contributor(db, item)
+    if explicit is not None:
+        return ContributorResolution(explicit, "manual")
+
+    if item.external_ids:
+        return ContributorResolution(
+            _resolve_or_attach_external_id(db, item, item.external_ids[0]), "external_id"
+        )
+
+    confirmed_alias = _resolve_confirmed_alias(db, item.credited_name)
+    if confirmed_alias is not None:
+        return ContributorResolution(confirmed_alias, "confirmed_alias")
+
+    return ContributorResolution(_create_unverified_contributor(db, item), "unverified")
+
+
+def _resolve_explicit_contributor(db: Session, item: ContributorResolutionInput) -> UUID | None:
+    if item.explicit_id is not None:
+        row = db.execute(
+            text(
+                """
+                SELECT id
+                FROM contributors
+                WHERE id = :contributor_id
+                  AND status IN ('unverified', 'verified')
+                """
+            ),
+            {"contributor_id": item.explicit_id},
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    if item.explicit_handle:
+        row = db.execute(
+            text(
+                """
+                SELECT id
+                FROM contributors
+                WHERE handle = :contributor_handle
+                  AND status IN ('unverified', 'verified')
+                """
+            ),
+            {"contributor_handle": item.explicit_handle},
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    return None
+
+
+def _resolve_or_attach_external_id(
+    db: Session,
+    item: ContributorResolutionInput,
+    evidence: ContributorExternalIdEvidence,
+) -> UUID:
+    existing = _select_contributor_by_external_id(db, evidence.authority, evidence.external_key)
+    if existing is not None:
+        return existing
+    try:
+        with db.begin_nested():
+            contributor_id = _create_unverified_contributor(db, item)
+            _insert_external_id(db, contributor_id, evidence, item.source)
+            return contributor_id
+    except IntegrityError as exc:
+        if not _is_contributor_identity_race(exc):
+            raise
+        existing = _select_contributor_by_external_id(db, evidence.authority, evidence.external_key)
+        if existing is not None:
+            return existing
+        # The handle was taken in the race; attach the external id to that owner instead.
+        handle_owner = _select_contributor_by_handle(
+            db, contributor_handle_for_name(normalize_contributor_name(item.credited_name))
+        )
+        if handle_owner is None:
+            raise
+        try:
+            with db.begin_nested():
+                _insert_external_id(db, handle_owner, evidence, item.source)
+        except IntegrityError as attach_exc:
+            if not _is_contributor_external_id_conflict(attach_exc):
+                raise
+            external_owner = _select_contributor_by_external_id(
+                db, evidence.authority, evidence.external_key
+            )
+            if external_owner is None:
+                raise
+            handle_owner = external_owner
+        return handle_owner
+
+
+def _insert_external_id(
+    db: Session,
+    contributor_id: UUID,
+    evidence: ContributorExternalIdEvidence,
+    source: str,
+) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO contributor_external_ids (
+                contributor_id, authority, external_key, external_url, source
+            )
+            VALUES (:contributor_id, :authority, :external_key, :external_url, :source)
+            """
+        ),
+        {
+            "contributor_id": contributor_id,
+            "authority": evidence.authority,
+            "external_key": evidence.external_key,
+            "external_url": evidence.external_url,
+            "source": source,
+        },
+    )
+
+
+def _resolve_confirmed_alias(db: Session, credited_name: str) -> UUID | None:
+    normalized_name = normalize_contributor_name(credited_name)
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                c.id,
+                bool_or(ca.is_primary) AS has_primary,
+                min(c.created_at) AS created_at
+            FROM contributor_aliases ca
+            JOIN contributors c ON c.id = ca.contributor_id
+            WHERE ca.normalized_alias = :normalized_name
+              AND ca.source = ANY(:confirmed_alias_sources)
+              AND c.status IN ('unverified', 'verified')
+            GROUP BY c.id
+            ORDER BY has_primary DESC, created_at ASC, c.id ASC
+            LIMIT 2
+            """
+        ),
+        {
+            "normalized_name": normalized_name,
+            "confirmed_alias_sources": sorted(CONFIRMED_ALIAS_SOURCES),
+        },
+    ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def _create_unverified_contributor(db: Session, item: ContributorResolutionInput) -> UUID:
+    # justify-service-invariant-check: contributors.sort_name is NOT NULL and is written
+    # from credited_name here; `str` cannot express "non-empty". Callers drop empty credited
+    # names before resolving, so an empty one reaching the sole create seam is a defect.
+    assert item.credited_name.strip(), "contributor credited_name must be non-empty"
+    normalized_name = normalize_contributor_name(item.credited_name)
+    handle = unique_contributor_handle_for_name(db, normalized_name)
+    contributor_id = uuid4()
+    try:
+        with db.begin_nested():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO contributors (id, handle, display_name, sort_name, kind, status)
+                    VALUES (:id, :handle, :display_name, :sort_name, 'unknown', 'unverified')
+                    """
+                ),
+                {
+                    "id": contributor_id,
+                    "handle": handle,
+                    "display_name": item.credited_name,
+                    "sort_name": item.credited_name,
+                },
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO contributor_aliases (
+                        contributor_id, alias, normalized_alias, alias_kind, source, is_primary
+                    )
+                    VALUES (:contributor_id, :alias, :normalized_alias, 'display', :source, true)
+                    """
+                ),
+                {
+                    "contributor_id": contributor_id,
+                    "alias": item.credited_name,
+                    "normalized_alias": normalized_name,
+                    "source": item.source,
+                },
+            )
+            return contributor_id
+    except IntegrityError as exc:
+        if not _is_contributor_handle_conflict(exc):
+            raise
+        existing = _select_contributor_by_handle(db, handle)
+        if existing is None:
+            raise
+        return existing
+
+
+def unique_contributor_handle_for_name(db: Session, normalized_name: str) -> str:
+    base_handle = contributor_handle_for_name(normalized_name)
+    handle = base_handle
+    while True:
+        row = db.execute(
+            text("SELECT 1 FROM contributors WHERE handle = :handle"),
+            {"handle": handle},
+        ).fetchone()
+        if row is None:
+            return handle
+        handle = f"{base_handle}-{uuid4().hex[:8]}"
+
+
+def contributor_handle_for_name(normalized_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized_name).strip("-") or "contributor"
+    suffix = hashlib.md5(normalized_name.encode("utf-8")).hexdigest()[:8]
+    return f"{slug[:48]}-{suffix}"
+
+
+def _select_contributor_by_external_id(
+    db: Session, authority: str, external_key: str
+) -> UUID | None:
+    row = db.execute(
+        text(
+            """
+            SELECT c.id
+            FROM contributor_external_ids cei
+            JOIN contributors c ON c.id = cei.contributor_id
+            WHERE cei.authority = :authority
+              AND cei.external_key = :external_key
+              AND c.status IN ('unverified', 'verified')
+            LIMIT 1
+            """
+        ),
+        {"authority": authority, "external_key": external_key},
+    ).fetchone()
+    return row[0] if row is not None else None
+
+
+def _select_contributor_by_handle(db: Session, handle: str) -> UUID | None:
+    row = db.execute(
+        text(
+            """
+            SELECT id
+            FROM contributors
+            WHERE handle = :handle
+              AND status IN ('unverified', 'verified')
+            """
+        ),
+        {"handle": handle},
+    ).fetchone()
+    return row[0] if row is not None else None
+
+
+def _is_contributor_identity_race(exc: IntegrityError) -> bool:
+    return _is_contributor_handle_conflict(exc) or _is_contributor_external_id_conflict(exc)
+
+
+def _is_contributor_handle_conflict(exc: IntegrityError) -> bool:
+    return _resolved_constraint_name(exc) == "uq_contributors_handle"
+
+
+def _is_contributor_external_id_conflict(exc: IntegrityError) -> bool:
+    return _resolved_constraint_name(exc) == "uq_contributor_external_ids_authority_key"
+
+
+def _resolved_constraint_name(exc: IntegrityError) -> str | None:
+    name = integrity_constraint_name(exc)
+    if name:
+        return name
+    message = str(getattr(exc, "orig", None) or exc)
+    if "uq_contributors_handle" in message:
+        return "uq_contributors_handle"
+    if "uq_contributor_external_ids_authority_key" in message:
+        return "uq_contributor_external_ids_authority_key"
+    return None

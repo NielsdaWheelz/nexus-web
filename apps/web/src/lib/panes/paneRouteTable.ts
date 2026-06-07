@@ -118,6 +118,13 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
       subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
     }),
   },
+  authors: {
+    icon: UserRound,
+    getChrome: () => ({
+      title: "Authors",
+      subtitle: "Everyone credited across your library.",
+    }),
+  },
   author: {
     icon: UserRound,
     getChrome: () => ({ title: "Author" }),

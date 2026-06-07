@@ -114,7 +114,7 @@ class ContributorOut(BaseModel):
     handle: str
     href: str = ""
     display_name: str = Field(serialization_alias="displayName")
-    sort_name: str | None = Field(None, serialization_alias="sortName")
+    sort_name: str = Field(serialization_alias="sortName")
     kind: ContributorKind
     status: ContributorStatus
     disambiguation: str | None = None
@@ -238,7 +238,7 @@ class ContributorSearchResultOut(BaseModel):
     handle: str
     href: str
     display_name: str = Field(serialization_alias="displayName")
-    sort_name: str | None = Field(None, serialization_alias="sortName")
+    sort_name: str = Field(serialization_alias="sortName")
     kind: ContributorKind
     status: ContributorStatus
     disambiguation: str | None = None
@@ -276,3 +276,62 @@ class ContributorSplitRequest(BaseModel):
     )
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+class ContributorMergeRequest(BaseModel):
+    target_handle: str = Field(
+        validation_alias=AliasChoices("target_handle", "targetHandle"),
+        serialization_alias="targetHandle",
+        min_length=1,
+        max_length=200,
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
+
+
+class FacetCount(BaseModel):
+    value: str
+    count: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ContributorDirectoryFacets(BaseModel):
+    roles: list[FacetCount] = Field(default_factory=list)
+    kinds: list[FacetCount] = Field(default_factory=list)
+    content_kinds: list[FacetCount] = Field(
+        default_factory=list, serialization_alias="contentKinds"
+    )
+    statuses: list[FacetCount] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorDirectoryEntry(BaseModel):
+    handle: str
+    href: str
+    display_name: str = Field(serialization_alias="displayName")
+    sort_name: str = Field(serialization_alias="sortName")
+    kind: ContributorKind
+    status: ContributorStatus
+    disambiguation: str | None = None
+    work_count: int = Field(serialization_alias="workCount")
+    roles: list[str] = Field(default_factory=list)
+    content_kinds: list[str] = Field(default_factory=list, serialization_alias="contentKinds")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorDirectoryPageInfo(BaseModel):
+    has_more: bool = Field(serialization_alias="hasMore")
+    next_cursor: str | None = Field(None, serialization_alias="nextCursor")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ContributorDirectoryPage(BaseModel):
+    entries: list[ContributorDirectoryEntry] = Field(default_factory=list)
+    facets: ContributorDirectoryFacets
+    page: ContributorDirectoryPageInfo
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")

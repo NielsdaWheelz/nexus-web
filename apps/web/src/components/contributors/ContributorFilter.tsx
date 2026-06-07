@@ -4,16 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import Input from "@/components/ui/Input";
-import { fetchContributor, fetchContributors } from "@/lib/contributors/api";
+import { fetchContributor } from "@/lib/contributors/api";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import type { ContributorSummary } from "@/lib/contributors/types";
+import { useContributorSearch } from "@/lib/contributors/useContributorSearch";
 
 interface ContributorFilterProps {
   selectedHandles: string[];
   onChange: (handles: string[]) => void;
 }
-
-const CONTRIBUTOR_SEARCH_DEBOUNCE_MS = 200;
 
 function dedupeHandles(handles: string[]): string[] {
   const seen = new Set<string>();
@@ -34,13 +33,16 @@ export default function ContributorFilter({
   onChange,
 }: ContributorFilterProps) {
   const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<ContributorSummary[]>([]);
   const [selectedByHandle, setSelectedByHandle] = useState<Record<string, ContributorSummary>>({});
-  const requestIdRef = useRef(0);
   const selectedHandleRequestsRef = useRef(new Set<string>());
   const selectedHandleSetRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const normalizedHandles = useMemo(() => dedupeHandles(selectedHandles), [selectedHandles]);
+  const searchResults = useContributorSearch(query);
+  const suggestions = useMemo(() => {
+    const selected = new Set(normalizedHandles);
+    return searchResults.filter((contributor) => !selected.has(contributor.handle));
+  }, [normalizedHandles, searchResults]);
 
   useEffect(() => {
     selectedHandleSetRef.current = new Set(normalizedHandles);
@@ -79,38 +81,6 @@ export default function ContributorFilter({
     }
   }, [normalizedHandles, selectedByHandle]);
 
-  useEffect(() => {
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      void fetchContributors(trimmed)
-        .then((contributors) => {
-          if (requestIdRef.current !== requestId) {
-            return;
-          }
-          const selected = new Set(normalizedHandles);
-          setSuggestions(
-            contributors.filter((contributor) => !selected.has(contributor.handle))
-          );
-        })
-        .catch(() => {
-          if (requestIdRef.current === requestId) {
-            setSuggestions([]);
-          }
-        });
-    }, CONTRIBUTOR_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [normalizedHandles, query]);
-
   function addContributor(contributor: ContributorSummary) {
     onChange(dedupeHandles([...normalizedHandles, contributor.handle]));
     setSelectedByHandle((current) => ({
@@ -118,7 +88,6 @@ export default function ContributorFilter({
       [contributor.handle]: contributor,
     }));
     setQuery("");
-    setSuggestions([]);
   }
 
   function removeHandle(handle: string) {

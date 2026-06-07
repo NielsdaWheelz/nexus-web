@@ -157,9 +157,108 @@ describe("AuthorPaneBody", () => {
     });
     expect(screen.getByRole("link", { name: /Selected Work/ })).toBeVisible();
   });
+
+  it("merges into a picked target then navigates to the survivor", async () => {
+    let mergeBody: unknown = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        const url = requestUrl(path);
+        if (url.pathname === "/api/contributors/source-author") {
+          return jsonResponse({ data: contributor("source-author", "Source Author") });
+        }
+        if (url.pathname === "/api/contributors/source-author/works") {
+          return jsonResponse({ data: { works: [] } });
+        }
+        if (url.pathname === "/api/contributors" && init?.method !== "POST") {
+          return jsonResponse({
+            data: { contributors: [contributor("target-author", "Target Author")] },
+          });
+        }
+        if (url.pathname === "/api/contributors/source-author/merge") {
+          mergeBody = init?.body ? JSON.parse(init.body as string) : null;
+          return jsonResponse({ data: contributor("target-author", "Target Author") });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const onNavigatePane = vi.fn();
+    render(authorPane("source-author", { onNavigatePane }));
+
+    expect(await screen.findByRole("heading", { name: "Source Author" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Merge into/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Merge author" });
+    fireEvent.change(screen.getByLabelText("Search authors"), {
+      target: { value: "target" },
+    });
+    const targetButton = await screen.findByRole("button", { name: "Target Author" });
+    fireEvent.click(targetButton);
+
+    await waitFor(() => {
+      expect(mergeBody).toEqual({ target_handle: "target-author" });
+    });
+    await waitFor(() => {
+      expect(onNavigatePane).toHaveBeenCalledWith(
+        "pane-1",
+        "/authors/target-author",
+        undefined,
+      );
+    });
+    expect(dialog).not.toBeInTheDocument();
+  });
+
+  it("links the search pivot to the contributor handle", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        const url = requestUrl(path);
+        if (url.pathname === "/api/contributors/pivot-author") {
+          return jsonResponse({ data: contributor("pivot-author", "Pivot Author") });
+        }
+        if (url.pathname === "/api/contributors/pivot-author/works") {
+          return jsonResponse({ data: { works: [] } });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(authorPane("pivot-author"));
+
+    expect(await screen.findByRole("heading", { name: "Pivot Author" })).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: /Search this author's works/ }),
+    ).toHaveAttribute("href", "/search?contributor_handles=pivot-author");
+  });
+
+  it("shows a 'Formerly' note when the URL handle was merged away", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        const url = requestUrl(path);
+        // The backend follows merges: the requested old handle resolves to the survivor.
+        if (url.pathname === "/api/contributors/old-handle") {
+          return jsonResponse({ data: contributor("new-handle", "Merged Author") });
+        }
+        if (url.pathname === "/api/contributors/old-handle/works") {
+          return jsonResponse({ data: { works: [] } });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    render(authorPane("old-handle"));
+
+    expect(await screen.findByRole("heading", { name: "Merged Author" })).toBeVisible();
+    expect(screen.getByText("Formerly old-handle")).toBeVisible();
+  });
 });
 
-function authorPane(handle: string) {
+function authorPane(
+  handle: string,
+  options: { onNavigatePane?: (paneId: string, href: string) => void } = {},
+) {
   const href = `/authors/${handle}`;
   return (
     <PaneRuntimeProvider
@@ -173,7 +272,7 @@ function authorPane(handle: string) {
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       pathParams={{ handle }}
-      onNavigatePane={() => {}}
+      onNavigatePane={options.onNavigatePane ?? (() => {})}
       onReplacePane={() => {}}
       onOpenInNewPane={() => {}}
     >

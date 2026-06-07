@@ -769,15 +769,28 @@ predicates in `auth/permissions.py`; the search/object readers read
 
 ### 8.6 Contributors
 
-A canonical authorship graph (`services/contributors.py`,
-`contributor_credits.py`): `contributors` (person/org/group) with searchable
-`contributor_aliases`, authority `contributor_external_ids` (orcid/isni/viaf/…,
-globally unique per authority), and `contributor_credits` attaching a contributor
-to exactly one media/podcast/Gutenberg-ebook. Credit resolution prefers explicit
-id → external-id → confirmed alias → new unverified contributor. `split` and
-`tombstone` are implemented with an audit trail (`contributor_identity_events`);
-`merge` is modeled but not yet implemented. Surfaced in the UI as author chips
-linking to `/authors/{handle}`.
+A canonical authorship graph split across single owners: `contributor_taxonomy.py`
+(leaf — role/status/authority vocabularies + name normalizers), `contributors.py`
+(identity: resolve/create, merge, split, tombstone, aliases, external IDs, handle gen,
+the Authors directory), and `contributor_credits.py` (the credit junction only).
+`contributors` (person/org/group) carry searchable `contributor_aliases`, authority
+`contributor_external_ids` (orcid/isni/viaf/…, globally unique per authority), and
+`contributor_credits` attaching a contributor to exactly one media/podcast/Gutenberg-ebook.
+Credit resolution prefers explicit id → **strong** external-id (only true authority files
+— orcid/isni/viaf/wikidata/openalex/lcnaf — assert identity; provider IDs and `source_ref`
+are provenance, never identity) → confirmed alias → new unverified contributor. `split`,
+`tombstone`, and `merge` are all implemented with an audit trail
+(`contributor_identity_events`) and run under `run_identity_write` (SERIALIZABLE + bounded
+retry). `merge` redirects a duplicate into a survivor — repointing credits/aliases/external-ids,
+writing a confirmed `source="merge"` alias so name-only reingest resolves to the survivor, and
+leaving `object_links` untouched (reads canonicalize through `merged_into_contributor_id`).
+Visibility predicates (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
+`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`; persisted-chat-ref
+checks live in `chat_context_refs.py`; object-link writes go through `object_links.py`.
+Surfaced in the UI as the `/authors` faceted **directory** (peer of Libraries — work counts,
+role/kind/content-kind/status facets, works|name sort, cursor paging) and author chips linking
+to `/authors/{handle}`; the detail pane offers curator-gated alias/external-id/split/tombstone
+edits and merge.
 
 ### 8.7 Notes
 

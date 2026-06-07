@@ -110,3 +110,94 @@
 .workSearchInput {
   min-width: min(260px, 100%);
 }
+
+.formerly {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.worksHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.removablePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  padding: 2px 4px 2px 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.inlineForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-2);
+}
+
+.inlineFormInput {
+  min-width: min(180px, 100%);
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--overlay-scrim);
+  z-index: 1000;
+}
+
+.modalCard {
+  width: min(480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 16px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  color: var(--ink);
+}
+
+.modalDescription {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.modalActions {
+  display: flex;
+  gap: 8px;
+}

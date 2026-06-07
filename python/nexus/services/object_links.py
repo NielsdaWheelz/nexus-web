@@ -186,6 +186,45 @@ def delete_object_link(db: Session, viewer_id: UUID, link_id: UUID) -> None:
     db.commit()
 
 
+def repoint_contributor_object_links(
+    db: Session, *, link_ids: list[UUID], from_id: UUID, to_id: UUID
+) -> int:
+    """Move the given contributor object-links from one contributor to another (split's link move).
+
+    Does not commit — the caller owns the transaction. Drops links that become self-links or
+    duplicate an existing unordered pair after the move."""
+    if not link_ids or from_id == to_id:
+        return 0
+    links = db.scalars(select(ObjectLink).where(ObjectLink.id.in_(link_ids))).all()
+    moved = 0
+    for link in links:
+        repointed = False
+        if link.a_type == "contributor" and link.a_id == from_id:
+            link.a_id = to_id
+            repointed = True
+        if link.b_type == "contributor" and link.b_id == from_id:
+            link.b_id = to_id
+            repointed = True
+        if not repointed:
+            continue
+        is_self_link = link.a_type == link.b_type and link.a_id == link.b_id
+        duplicate_id = _duplicate_unlocated_link_id(
+            db,
+            link.user_id,
+            relation_type=link.relation_type,
+            a_type=link.a_type,
+            a_id=link.a_id,
+            b_type=link.b_type,
+            b_id=link.b_id,
+            exclude_link_id=link.id,
+        )
+        if is_self_link or duplicate_id is not None:
+            db.delete(link)
+            continue
+        moved += 1
+    return moved
+
+
 def _duplicate_unlocated_link_id(
     db: Session,
     viewer_id: UUID,
