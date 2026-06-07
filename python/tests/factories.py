@@ -132,7 +132,6 @@ def _message_document(role: str, content: str) -> dict[str, object]:
     text = content.strip()
     return {
         "type": "message_document",
-        "version": 1,
         "blocks": []
         if not text
         else [
@@ -426,7 +425,6 @@ def create_searchable_media(
         session,
         media_id=media.id,
         source_kind="web_article",
-        artifact_ref=f"fragments:{fragment.id}",
         fragments=[fragment],
         reason="test_factory",
     )
@@ -442,67 +440,6 @@ def create_searchable_media(
         add_media_to_library(session, lib.id, media.id)
     session.commit()
     return media.id
-
-
-def activate_replacement_content_index_run(
-    session: Session,
-    *,
-    media_id: UUID,
-    active_run_id: UUID,
-) -> UUID:
-    replacement_run_id = uuid4()
-    session.execute(
-        text(
-            """
-            INSERT INTO content_index_runs (
-                id,
-                media_id,
-                state,
-                source_version,
-                extractor_version,
-                chunker_version,
-                embedding_provider,
-                embedding_model,
-                embedding_version,
-                embedding_config_hash,
-                started_at,
-                finished_at,
-                activated_at
-            )
-            SELECT
-                :replacement_run_id,
-                media_id,
-                'ready',
-                source_version || '-replacement',
-                extractor_version,
-                chunker_version,
-                embedding_provider,
-                embedding_model,
-                embedding_version,
-                embedding_config_hash,
-                now(),
-                now(),
-                now()
-            FROM content_index_runs
-            WHERE id = :active_run_id
-            """
-        ),
-        {"replacement_run_id": replacement_run_id, "active_run_id": active_run_id},
-    )
-    session.execute(
-        text(
-            """
-            UPDATE media_content_index_states
-            SET active_run_id = :replacement_run_id,
-                latest_run_id = :replacement_run_id,
-                updated_at = now()
-            WHERE media_id = :media_id
-            """
-        ),
-        {"replacement_run_id": replacement_run_id, "media_id": media_id},
-    )
-    session.flush()
-    return replacement_run_id
 
 
 # =============================================================================
@@ -752,7 +689,6 @@ def create_searchable_media_in_library(
         session,
         media_id=media.id,
         source_kind="web_article",
-        artifact_ref=f"fragments:{fragment.id}",
         fragments=[fragment],
         reason="test_factory",
     )
@@ -834,7 +770,6 @@ def create_failed_epub_media(
     *,
     last_error_code: str = "E_EXTRACT_FAILED",
     processing_attempts: int = 1,
-    file_sha256: str | None = None,
 ) -> UUID:
     """Create a failed EPUB media row with an optional media_file record.
 
@@ -850,7 +785,6 @@ def create_failed_epub_media(
         last_error_code=last_error_code,
         last_error_message="test failure",
         failed_at=datetime.now(UTC),
-        file_sha256=file_sha256,
         processing_attempts=processing_attempts,
     )
     session.add(media)
@@ -957,7 +891,6 @@ def create_ready_epub_with_chapters(
         session,
         media_id=media.id,
         source_kind="epub",
-        artifact_ref=f"media/{media.id}/original.epub",
         fragments=fragments,
         reason="test_factory",
     )
@@ -1106,7 +1039,6 @@ def create_pdf_media_with_text(
                 page_number=i + 1,
                 start_offset=start,
                 end_offset=end,
-                text_extract_version=1,
             )
         )
 

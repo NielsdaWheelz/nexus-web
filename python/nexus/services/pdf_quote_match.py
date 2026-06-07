@@ -49,7 +49,6 @@ class MatchResult:
     """Structured result of PDF quote-match computation."""
 
     status: MatchStatus
-    match_version: int | None
     start_offset: int | None
     end_offset: int | None
     prefix: str
@@ -81,7 +80,6 @@ def compute_match(
     if not exact:
         return MatchResult(
             status=MatchStatus.empty_exact,
-            match_version=1,
             start_offset=None,
             end_offset=None,
             prefix="",
@@ -138,7 +136,6 @@ def _result_for_matches(
         abs_end = abs_start + len(exact)
         return MatchResult(
             status=MatchStatus.unique,
-            match_version=1,
             start_offset=abs_start,
             end_offset=abs_end,
             prefix=_derive_prefix(plain_text, abs_start),
@@ -146,7 +143,6 @@ def _result_for_matches(
         )
     return MatchResult(
         status=MatchStatus.ambiguous if len(matches) > 1 else MatchStatus.no_match,
-        match_version=1,
         start_offset=None,
         end_offset=None,
         prefix="",

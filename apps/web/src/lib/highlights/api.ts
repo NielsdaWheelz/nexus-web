@@ -15,7 +15,6 @@ export interface HighlightLinkedNoteBlock {
   body_pm_json?: Record<string, unknown>;
   body_markdown?: string;
   body_text: string;
-  revision: number;
 }
 
 export interface Highlight {
@@ -27,7 +26,6 @@ export interface Highlight {
     start_offset: number;
     end_offset: number;
   };
-  source_version?: string;
   color: HighlightColor;
   exact: string;
   prefix: string;
@@ -168,11 +166,9 @@ export async function saveHighlightNote(
   noteBlockId: string | null,
   createBlockId: string,
   bodyPmJson: Record<string, unknown>,
-  baseRevision: number | null,
 ): Promise<HighlightLinkedNoteBlock> {
   const noteBlock = noteBlockId
     ? await updateNoteBlock(noteBlockId, {
-        baseRevision: requiredRevision(baseRevision),
         bodyPmJson,
       })
     : await createNoteBlock({
@@ -186,22 +182,11 @@ export async function saveHighlightNote(
     body_pm_json: noteBlock.bodyPmJson,
     body_markdown: noteBlock.bodyMarkdown,
     body_text: noteBlock.bodyText,
-    revision: requiredRevision(noteBlock.revision),
   };
 }
 
-export async function deleteHighlightNote(
-  noteBlockId: string,
-  baseRevision: number,
-): Promise<void> {
-  await deleteNoteBlock(noteBlockId, { baseRevision });
-}
-
-function requiredRevision(revision: number | null | undefined): number {
-  if (typeof revision !== "number" || !Number.isFinite(revision)) {
-    throw new Error("Highlight note is missing revision metadata");
-  }
-  return revision;
+export async function deleteHighlightNote(noteBlockId: string): Promise<void> {
+  await deleteNoteBlock(noteBlockId);
 }
 
 export function patchHighlightLinkedNoteBlock<

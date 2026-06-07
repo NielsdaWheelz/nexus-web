@@ -122,12 +122,15 @@ import {
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
-  isReadableStatus,
   type MediaNavigationResponse,
   type NormalizedNavigationTocNode,
   normalizeReaderNavigationToc,
   type ReaderNavigationSection,
 } from "@/lib/media/readerNavigation";
+import {
+  canReadMediaDocument,
+  type DocumentProcessingStatus,
+} from "@/lib/media/documentReadiness";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
@@ -202,7 +205,6 @@ export interface Media extends MediaProcessingSnapshot {
   canonical_source_url: string | null;
   retrieval_status?: string | null;
   retrieval_status_reason?: string | null;
-  source_version?: string | null;
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
@@ -293,7 +295,6 @@ interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
   canonicalText: string;
-  sourceVersion: string | null;
 }
 
 interface EpubSectionContent {
@@ -312,7 +313,6 @@ interface EpubSectionContent {
   canonical_text: string;
   char_count: number;
   word_count: number;
-  source_version?: string | null;
   created_at: string;
 }
 
@@ -790,7 +790,7 @@ export default function MediaPaneBody() {
   const canRead = media
     ? isTranscriptMedia
       ? Boolean(media.capabilities?.can_read)
-      : isReadableStatus(media.processing_status)
+      : canReadMediaDocument(media)
     : false;
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
@@ -925,7 +925,6 @@ export default function MediaPaneBody() {
         fragmentId: activeEpubSection.fragment_id,
         htmlSanitized: activeEpubSection.html_sanitized,
         canonicalText: activeEpubSection.canonical_text,
-        sourceVersion: activeEpubSection.source_version ?? null,
       };
     }
     const frag = isTranscriptMedia
@@ -940,7 +939,6 @@ export default function MediaPaneBody() {
         fragmentId: frag.id,
         htmlSanitized: frag.html_sanitized,
         canonicalText: frag.canonical_text,
-        sourceVersion: frag.source_version ?? null,
       };
     }
     return null;
@@ -1251,8 +1249,7 @@ export default function MediaPaneBody() {
   const pollMetadataRetryState = useCallback(async () => {
     try {
       await refreshMetadataRetryState();
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
+    } catch {
       setMetadataRetryPollsRemaining((remaining) => Math.max(remaining - 1, 0));
     }
   }, [refreshMetadataRetryState]);
@@ -2784,7 +2781,9 @@ export default function MediaPaneBody() {
           });
         return createdHighlight;
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return null;
+        if (handleUnauthenticatedApiError(err)) {
+          return null;
+        }
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
           try {
             const requestVersion = ++highlightVersionRef.current;
@@ -2808,7 +2807,9 @@ export default function MediaPaneBody() {
             clearRetainedSelection(true);
             return existing ?? null;
           } catch (refreshErr) {
-            if (handleUnauthenticatedApiError(refreshErr)) return null;
+            if (handleUnauthenticatedApiError(refreshErr)) {
+              return null;
+            }
             console.error(
               "Failed to refresh highlights after conflict:",
               refreshErr,
@@ -2945,7 +2946,9 @@ export default function MediaPaneBody() {
         cancelEditBounds();
         clearRetainedSelection(true);
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
+        if (handleUnauthenticatedApiError(err)) {
+          return;
+        }
         console.error("Failed to update bounds:", err);
         feedback.show({
           severity: "error",
@@ -3038,14 +3041,12 @@ export default function MediaPaneBody() {
       noteBlockId: string | null,
       createBlockId: string,
       bodyPmJson: Record<string, unknown>,
-      baseRevision: number | null,
     ) => {
       const linkedNoteBlock = await saveHighlightNote(
         highlightId,
         noteBlockId,
         createBlockId,
         bodyPmJson,
-        baseRevision,
       );
       applyToAllHighlightSlots((list) =>
         patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
@@ -3058,10 +3059,9 @@ export default function MediaPaneBody() {
   const handleNoteDelete = useCallback(
     async (
       noteBlockId: string,
-      baseRevision: number,
       shouldApply: () => boolean,
     ) => {
-      await deleteHighlightNote(noteBlockId, baseRevision);
+      await deleteHighlightNote(noteBlockId);
       if (shouldApply()) {
         applyToAllHighlightSlots((list) =>
           removeHighlightLinkedNoteBlock(list, noteBlockId),
@@ -3503,7 +3503,7 @@ export default function MediaPaneBody() {
       capabilityPatch,
     }: {
       resetRefreshSource: boolean;
-      processingStatus: string;
+      processingStatus: DocumentProcessingStatus;
       sourceFailed: boolean;
       capabilityPatch: MediaActionCapabilities;
     }) => {
@@ -3746,7 +3746,7 @@ export default function MediaPaneBody() {
           <Pill tone="warning">Reconnecting...</Pill>
         ) : null}
         {media &&
-        isReadableStatus(media.processing_status) &&
+        media.processing_status === "ready_for_reading" &&
         media.failure_stage === "metadata" ? (
           media.capabilities?.can_retry_metadata ? (
             <button
@@ -4357,7 +4357,6 @@ export default function MediaPaneBody() {
             ...selector,
           },
           snippet: highlight.exact,
-          sourceVersion: highlight.source_version ?? `highlight:${highlight.id}`,
           highlightBehavior: "pulse",
           focusBehavior: "scroll_into_view",
         });
@@ -4378,8 +4377,6 @@ export default function MediaPaneBody() {
               text_quote_selector: selector,
             },
             snippet: highlight.exact,
-            sourceVersion:
-              highlight.source_version ?? `highlight:${highlight.id}`,
             highlightBehavior: "pulse",
             focusBehavior: "scroll_into_view",
           }
@@ -4395,8 +4392,6 @@ export default function MediaPaneBody() {
               text_quote_selector: selector,
             },
             snippet: highlight.exact,
-            sourceVersion:
-              highlight.source_version ?? `highlight:${highlight.id}`,
             highlightBehavior: "pulse",
             focusBehavior: "scroll_into_view",
           };

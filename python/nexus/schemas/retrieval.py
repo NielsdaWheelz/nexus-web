@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    TypeAdapter,
+    model_validator,
+)
 
 
 class RetrievalContextRef(BaseModel):
@@ -41,7 +48,6 @@ class MediaRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -67,7 +73,6 @@ class PodcastRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: None = None
     media_kind: None = None
@@ -94,7 +99,6 @@ class EpisodeRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -120,7 +124,6 @@ class VideoRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -150,7 +153,6 @@ class ContentChunkRetrievalResultRef(BaseModel):
     context_ref: RetrievalContextRef
     evidence_span_id: UUID | str | None = None
     evidence_span_ids: list[UUID | str] = Field(default_factory=list)
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -178,7 +180,6 @@ class FragmentRetrievalResultRef(BaseModel):
     deep_link: str
     citation_label: str | None = None
     context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -206,7 +207,6 @@ class ContributorRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: None = None
     media_kind: None = None
@@ -233,7 +233,6 @@ class PageRetrievalResultRef(BaseModel):
     deep_link: str
     description: str | None = None
     context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
     locator: None = None
     media_id: None = None
     media_kind: None = None
@@ -263,7 +262,6 @@ class NoteBlockRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: None = None
     media_kind: None = None
@@ -293,7 +291,6 @@ class HighlightRetrievalResultRef(BaseModel):
     deep_link: str
     citation_label: str | None = None
     context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
@@ -322,7 +319,6 @@ class MessageRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: None = None
     media_kind: None = None
@@ -356,7 +352,6 @@ class WebRetrievalResultRef(BaseModel):
     rank: int | None = None
     provider: str | None = None
     provider_request_id: str | None = None
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     context_ref: RetrievalContextRef
     media_id: None = None
@@ -387,7 +382,6 @@ class EvidenceSpanRetrievalResultRef(BaseModel):
     citation_label: str
     context_ref: RetrievalContextRef
     evidence_span_id: UUID | str
-    source_version: str = Field(min_length=1)
     locator: RetrievalLocator
     media_id: UUID | str
     media_kind: str | None = None
@@ -414,7 +408,6 @@ class ConversationRetrievalResultRef(BaseModel):
     snippet: str
     deep_link: str
     context_ref: RetrievalContextRef
-    source_version: None = None
     locator: None = None
     media_id: None = None
     media_kind: None = None
@@ -531,7 +524,6 @@ class PdfPageGeometryLocator(BaseModel):
 class TranscriptTimeRangeLocator(BaseModel):
     type: Literal["transcript_time_range"]
     media_id: UUID | str
-    transcript_version_id: UUID | str | None = None
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
     text_quote_selector: dict[str, Any] | None = None
@@ -550,7 +542,6 @@ class AudioTimeRangeLocator(BaseModel):
     media_id: UUID | str
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
-    transcript_version_id: UUID | str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -566,7 +557,6 @@ class VideoTimeRangeLocator(BaseModel):
     media_id: UUID | str
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
-    transcript_version_id: UUID | str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

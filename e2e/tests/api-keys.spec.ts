@@ -2,8 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 interface ApiKey {
   provider: string;
-  fingerprint?: string | null;
-  key_fingerprint?: string | null;
+  key_fingerprint: string | null;
 }
 
 test.describe("api keys", () => {
@@ -15,7 +14,7 @@ test.describe("api keys", () => {
     const payload = (await response.json()) as { data: ApiKey[] };
     const key = payload.data.find((candidate) => candidate.provider === provider);
     expect(key, `Expected ${provider} key metadata in /api/keys`).toBeTruthy();
-    const fingerprint = key?.key_fingerprint ?? key?.fingerprint;
+    const fingerprint = key?.key_fingerprint;
     expect(fingerprint, `Expected ${provider} key fingerprint`).toEqual(
       expect.stringMatching(/^\S{4}$/),
     );

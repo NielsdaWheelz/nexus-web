@@ -9,6 +9,7 @@ import {
   type MediaActionCapabilities,
   retryMediaMetadata,
 } from "@/lib/media/ingestionClient";
+import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 
 interface DocumentDeleteResponse {
@@ -47,7 +48,7 @@ interface UseDocumentActionsOptions {
   /** Called after a retry/refresh API call succeeds; component resets its local content state. */
   onProcessingRestarted: (options: {
     resetRefreshSource: boolean;
-    processingStatus: string;
+    processingStatus: DocumentProcessingStatus;
     sourceFailed: boolean;
     capabilityPatch: MediaActionCapabilities;
   }) => void;

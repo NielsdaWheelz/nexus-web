@@ -20,6 +20,10 @@ import {
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import {
+  requireDocumentProcessingStatus,
+  type DocumentProcessingStatus,
+} from "@/lib/media/documentReadiness";
+import {
   FeedbackNotice,
   toFeedback,
   useFeedback,
@@ -99,30 +103,8 @@ interface LibraryMediaEntry {
   published_date: string | null;
   publisher: string | null;
   canonical_source_url: string | null;
-  processing_status:
-    | "pending"
-    | "extracting"
-    | "ready_for_reading"
-    | "embedding"
-    | "ready"
-    | "failed";
+  processing_status: DocumentProcessingStatus;
   capabilities?: Partial<MediaActionCapabilities>;
-}
-
-function normalizeMediaProcessingStatus(
-  value: string,
-): LibraryMediaEntry["processing_status"] {
-  if (
-    value === "pending" ||
-    value === "extracting" ||
-    value === "ready_for_reading" ||
-    value === "embedding" ||
-    value === "ready" ||
-    value === "failed"
-  ) {
-    return value;
-  }
-  return "failed";
 }
 
 interface LibraryPodcastEntry {
@@ -514,7 +496,7 @@ export default function LibraryPaneBody() {
             action: "retry",
             successTitle: args.successTitle,
           });
-          nextProcessingStatus = normalizeMediaProcessingStatus(
+          nextProcessingStatus = requireDocumentProcessingStatus(
             projection.processingStatus,
           );
           capabilityPatch = projection.capabilityPatch;
@@ -525,7 +507,7 @@ export default function LibraryPaneBody() {
             action: "refresh",
             successTitle: args.successTitle,
           });
-          nextProcessingStatus = normalizeMediaProcessingStatus(
+          nextProcessingStatus = requireDocumentProcessingStatus(
             projection.processingStatus,
           );
           capabilityPatch = projection.capabilityPatch;
@@ -1096,8 +1078,6 @@ export default function LibraryPaneBody() {
                   statusLabel = "Queued";
                 } else if (item.media.processing_status === "extracting") {
                   statusLabel = "Processing";
-                } else if (item.media.processing_status === "embedding") {
-                  statusLabel = "Indexing";
                 } else if (item.media.processing_status === "failed") {
                   statusLabel = "Failed";
                 }

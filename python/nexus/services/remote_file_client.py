@@ -1,6 +1,5 @@
 """Remote PDF/EPUB fetch policy."""
 
-import hashlib
 from dataclasses import dataclass
 from tempfile import TemporaryFile
 from urllib.parse import urljoin
@@ -32,7 +31,6 @@ _USER_AGENT = "Nexus Media Ingestion/1.0"
 class RemoteFileFetchResult:
     content_type: str
     size_bytes: int
-    sha256: str
     final_url: str
 
 
@@ -124,7 +122,6 @@ def _write_response_to_storage(
     storage_client: StorageClientBase,
     final_url: str,
 ) -> RemoteFileFetchResult:
-    hasher = hashlib.sha256()
     size_bytes = 0
     saw_chunk = False
 
@@ -146,7 +143,6 @@ def _write_response_to_storage(
                     ApiErrorCode.E_FILE_TOO_LARGE,
                     f"Remote {kind.upper()} exceeds maximum size.",
                 )
-            hasher.update(chunk)
             payload.write(chunk)
 
         if not saw_chunk:
@@ -164,6 +160,5 @@ def _write_response_to_storage(
     return RemoteFileFetchResult(
         content_type=content_type,
         size_bytes=size_bytes,
-        sha256=hasher.hexdigest(),
         final_url=final_url,
     )

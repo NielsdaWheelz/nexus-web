@@ -29,7 +29,6 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
               id: "p1",
               title: "Hydrated Note Page",
               description: null,
-              revision: 1,
             },
           ],
       },

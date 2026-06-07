@@ -183,7 +183,6 @@ function mediaResponse() {
     canonical_source_url: null,
     processing_status: "ready_for_reading",
     retrieval_status: "ready",
-    source_version: "source:v1",
     contributors: [],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -204,7 +203,6 @@ function fragmentResponse() {
       id: "fragment-1",
       html_sanitized: "<p>Readable text.</p>",
       canonical_text: "",
-      source_version: "source:v1",
     },
   ];
 }
@@ -223,7 +221,6 @@ function navigationTocNodes() {
       level: 1,
       depth: 0,
       section_id: "section-1",
-      source_version: "source:v1",
       children: [],
     },
   ];
@@ -355,7 +352,6 @@ describe("MediaPaneBody pane sizing", () => {
         return jsonResponse({
           media_id: "media-1",
           kind: testState.mediaKind,
-          source_version: "source:v1",
           sections: [
             {
               section_id: "section-1",
@@ -371,7 +367,6 @@ describe("MediaPaneBody pane sizing", () => {
               href_fragment: null,
               anchor_id: null,
               char_count: 0,
-              source_version: "source:v1",
             },
           ],
           toc_nodes: navigationTocNodes(),
@@ -396,7 +391,6 @@ describe("MediaPaneBody pane sizing", () => {
           canonical_text: "",
           char_count: 0,
           word_count: 2,
-          source_version: "source:v1",
           created_at: "2026-01-01T00:00:00Z",
         });
       }

@@ -1,6 +1,5 @@
 """Tests for storage clients and path utilities."""
 
-import hashlib
 from collections.abc import Iterator
 from io import BytesIO
 from uuid import uuid4
@@ -150,21 +149,21 @@ class TestPathBuilding:
             build_epub_asset_storage_path(uuid4(), asset_key)
 
     def test_build_oracle_plate_storage_path(self):
-        sha = "a" * 64
+        slug = "seed-plate-ab12"
 
-        assert build_oracle_plate_storage_path(sha, "jpg") == f"oracle/plates/{sha}.jpg"
+        assert build_oracle_plate_storage_path(slug, "jpg") == f"oracle/plates/{slug}.jpg"
 
-    def test_build_oracle_plate_storage_path_rejects_short_sha(self):
-        with pytest.raises(ValueError, match="64 lowercase hex chars"):
-            build_oracle_plate_storage_path("a" * 63, "jpg")
+    def test_build_oracle_plate_storage_path_rejects_bad_slug(self):
+        with pytest.raises(ValueError, match="oracle plate slug"):
+            build_oracle_plate_storage_path("Bad Slug", "jpg")
 
-    def test_build_oracle_plate_storage_path_rejects_uppercase_sha(self):
-        with pytest.raises(ValueError, match="64 lowercase hex chars"):
-            build_oracle_plate_storage_path("A" * 64, "jpg")
+    def test_build_oracle_plate_storage_path_rejects_empty_slug(self):
+        with pytest.raises(ValueError, match="oracle plate slug"):
+            build_oracle_plate_storage_path("", "jpg")
 
     def test_build_oracle_plate_storage_path_rejects_unsupported_ext(self):
         with pytest.raises(ValueError, match="jpg|png|webp"):
-            build_oracle_plate_storage_path("a" * 64, "gif")
+            build_oracle_plate_storage_path("seed-plate", "gif")
 
     @pytest.mark.parametrize(
         ("content_type", "ext"),
@@ -544,27 +543,10 @@ class TestReadObjectChecked:
         result = read_object_checked(
             client,
             "oracle/plates/x.jpg",
-            expected_sha256=hashlib.sha256(payload).hexdigest(),
             expected_size=len(payload),
         )
 
         assert result == payload
-
-    def test_silent_corruption_same_size_wrong_sha_raises(self):
-        # Tampered content with the SAME byte length: only the hash check can
-        # catch this. This is the integrity branch that was previously untested.
-        original = b"the real plate bytes!!"
-        tampered = b"the FAKE plate bytes!!"
-        assert len(tampered) == len(original)
-        client = ChunkedStorageClient([tampered])
-
-        with pytest.raises(StorageError, match="integrity mismatch"):
-            read_object_checked(
-                client,
-                "oracle/plates/x.jpg",
-                expected_sha256=hashlib.sha256(original).hexdigest(),
-                expected_size=len(original),
-            )
 
     def test_oversize_payload_raises(self):
         original = b"abc"
@@ -574,7 +556,6 @@ class TestReadObjectChecked:
             read_object_checked(
                 client,
                 "oracle/plates/x.jpg",
-                expected_sha256=hashlib.sha256(original).hexdigest(),
                 expected_size=len(original),
             )
 
@@ -586,6 +567,5 @@ class TestReadObjectChecked:
             read_object_checked(
                 client,
                 "oracle/plates/x.jpg",
-                expected_sha256=hashlib.sha256(original).hexdigest(),
                 expected_size=len(original),
             )

@@ -71,7 +71,6 @@ class LinkedNoteBlockRef(BaseModel):
     body_pm_json: dict[str, object]
     body_markdown: str
     body_text: str
-    revision: int
 
 
 class TypedHighlightOut(BaseModel):

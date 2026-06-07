@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Node as ProseMirrorNode } from "prosemirror-model";
-import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
@@ -10,15 +9,14 @@ import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 export const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
 export const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
 export const NOTE_LAYOUT_MEASURE_DELAY_MS = 100;
-const NOTE_DRAFT_STORAGE_PREFIX = "nexus.noteDraft.v1:";
+const NOTE_DRAFT_STORAGE_PREFIX = "nexus.noteDraft:";
 
 export type NoteEditorSessionStatus =
   | "clean"
   | "dirty"
   | "saving"
   | "saved"
-  | "failed"
-  | "conflict";
+  | "failed";
 
 export interface NoteEditorSaveContext {
   resourceKey: string;
@@ -31,7 +29,6 @@ interface UseNoteEditorSessionOptions {
   save: (doc: ProseMirrorNode, context: NoteEditorSaveContext) => Promise<void>;
   draftMetadata?: () => unknown;
   onError?: (error: unknown) => void;
-  onConflict?: (error: unknown) => void;
 }
 
 export interface NoteEditorSession {
@@ -51,14 +48,12 @@ export function useNoteEditorSession({
   save,
   draftMetadata,
   onError,
-  onConflict,
 }: UseNoteEditorSessionOptions): NoteEditorSession {
   const [status, setStatus] = useState<NoteEditorSessionStatus>("clean");
   const resourceKeyRef = useRef(resourceKey);
   const saveRef = useRef(save);
   const draftMetadataRef = useRef(draftMetadata);
   const onErrorRef = useRef(onError);
-  const onConflictRef = useRef(onConflict);
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const localSequenceRef = useRef(0);
@@ -82,8 +77,7 @@ export function useNoteEditorSession({
     saveRef.current = save;
     draftMetadataRef.current = draftMetadata;
     onErrorRef.current = onError;
-    onConflictRef.current = onConflict;
-  }, [draftMetadata, onConflict, onError, save]);
+  }, [draftMetadata, onError, save]);
 
   const clearTimers = useCallback(() => {
     if (idleTimerRef.current !== null) {
@@ -153,16 +147,6 @@ export function useNoteEditorSession({
           if (handleUnauthenticatedApiError(error)) {
             return;
           }
-          if (isNoteConflictError(error)) {
-            if (isLatestSequence && !hasQueuedWork) {
-              pendingDocRef.current = doc;
-              pendingSequenceRef.current = sequence;
-              setMountedStatus("conflict");
-              onConflictRef.current?.(error);
-            }
-            return;
-          }
-
           if (isLatestSequence && !hasQueuedWork) {
             pendingDocRef.current = doc;
             pendingSequenceRef.current = sequence;
@@ -288,10 +272,6 @@ export function useNoteEditorSession({
   }, [clearTimers]);
 
   return { status, scheduleSave, flush, reset };
-}
-
-function isNoteConflictError(error: unknown): boolean {
-  return isApiError(error) && error.code === "E_NOTE_CONFLICT";
 }
 
 function createClientMutationId(resourceKey: string, sequence: number): string {

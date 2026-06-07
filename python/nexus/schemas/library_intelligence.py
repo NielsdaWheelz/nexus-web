@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 ArtifactFreshnessStatus = Literal["current", "stale", "building", "failed", "unavailable"]
 BuildStatus = Literal["pending", "running", "succeeded", "failed"]
@@ -27,7 +27,11 @@ SupportState = Literal[
 ]
 
 
-class LibraryIntelligenceBuildOut(BaseModel):
+class LibraryIntelligenceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class LibraryIntelligenceBuildOut(LibraryIntelligenceModel):
     build_id: UUID
     status: BuildStatus
     phase: str
@@ -38,13 +42,13 @@ class LibraryIntelligenceBuildOut(BaseModel):
     completed_at: datetime | None = None
 
 
-class LibraryIntelligenceRefreshOut(BaseModel):
+class LibraryIntelligenceRefreshOut(LibraryIntelligenceModel):
     build_id: UUID
     status: BuildStatus
     idempotent: bool
 
 
-class LibraryIntelligenceCoverageOut(BaseModel):
+class LibraryIntelligenceCoverageOut(LibraryIntelligenceModel):
     media_id: UUID | None = None
     podcast_id: UUID | None = None
     source_kind: Literal["media", "podcast"]
@@ -57,7 +61,7 @@ class LibraryIntelligenceCoverageOut(BaseModel):
     source_updated_at: datetime | None = None
 
 
-class LibraryIntelligenceEvidenceOut(BaseModel):
+class LibraryIntelligenceEvidenceOut(LibraryIntelligenceModel):
     id: UUID
     source_ref: dict[str, object]
     snippet: str
@@ -67,7 +71,7 @@ class LibraryIntelligenceEvidenceOut(BaseModel):
     score: float | None = None
 
 
-class LibraryIntelligenceClaimOut(BaseModel):
+class LibraryIntelligenceClaimOut(LibraryIntelligenceModel):
     id: UUID
     claim_text: str
     support_state: SupportState
@@ -76,7 +80,7 @@ class LibraryIntelligenceClaimOut(BaseModel):
     evidence: list[LibraryIntelligenceEvidenceOut]
 
 
-class LibraryIntelligenceSectionOut(BaseModel):
+class LibraryIntelligenceSectionOut(LibraryIntelligenceModel):
     id: UUID
     section_kind: SectionKind
     title: str
@@ -86,25 +90,13 @@ class LibraryIntelligenceSectionOut(BaseModel):
     metadata: dict[str, object]
 
 
-class LibraryIntelligenceArtifactFreshnessOut(BaseModel):
-    current_source_set_version_id: UUID | None = None
-    active_source_set_version_id: UUID | None = None
-    current_source_set_hash: str | None = None
-    active_source_set_hash: str | None = None
-
-
-class LibraryIntelligenceArtifactOut(BaseModel):
+class LibraryIntelligenceArtifactOut(LibraryIntelligenceModel):
     kind: Literal["overview"]
     status: ArtifactFreshnessStatus
-    active_version_id: UUID | None = None
-    source_set_version_id: UUID | None = None
-    prompt_version: str | None = None
-    schema_version: str | None = None
     published_at: datetime | None = None
-    freshness: LibraryIntelligenceArtifactFreshnessOut
 
 
-class LibraryIntelligenceOut(BaseModel):
+class LibraryIntelligenceOut(LibraryIntelligenceModel):
     library_id: UUID
     status: ArtifactFreshnessStatus
     source_count: int

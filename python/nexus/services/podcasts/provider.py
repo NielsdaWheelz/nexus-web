@@ -75,7 +75,6 @@ class PodcastIndexClient:
                     settings.real_media_fixture_dir,
                     "nasa-hwhap-podcast-index-search.json",
                     548,
-                    "e305e72eac4aa73d6c002d703627316c64dd8140ee7627abaad29851e2771b29",
                 )
         else:
             payload = None
@@ -130,7 +129,6 @@ class PodcastIndexClient:
                     settings.real_media_fixture_dir,
                     "nasa-hwhap-podcast-index-byfeedurl.json",
                     522,
-                    "bd819ebd4fee93d475854727cba8c4a8e5415c1bf6a3c5c281dd5ed284538058",
                 )
             else:
                 payload = None
@@ -188,7 +186,6 @@ class PodcastIndexClient:
                     settings.real_media_fixture_dir,
                     "nasa-hwhap-podcast-index-episodes.json",
                     706,
-                    "3ef17f4c96f1c40dc3044092a25d7eb9ecef361d19e647caab558c1a2e0b926b",
                 )
             else:
                 payload = None
@@ -261,7 +258,6 @@ def _read_real_media_json_fixture(
     fixture_dir: str | None,
     filename: str,
     expected_bytes: int,
-    expected_sha256: str,
 ) -> dict[str, Any]:
     if fixture_dir is None:
         raise ApiError(
@@ -278,10 +274,10 @@ def _read_real_media_json_fixture(
             f"Podcast provider fixture unavailable: {exc}",
         ) from exc
 
-    if len(payload) != expected_bytes or hashlib.sha256(payload).hexdigest() != expected_sha256:
+    if len(payload) != expected_bytes:
         raise ApiError(
             ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-            f"Podcast provider fixture hash mismatch: {filename}",
+            f"Podcast provider fixture size mismatch: {filename}",
         )
 
     try:

@@ -53,14 +53,6 @@ _OBJECT_REF_MARKDOWN_RE = re.compile(
 )
 
 
-def _bump_page_revision(page: Page) -> None:
-    page.revision = int(page.revision or 0) + 1
-
-
-def _bump_block_revision(block: NoteBlock) -> None:
-    block.revision = int(block.revision or 0) + 1
-
-
 def pm_doc_from_text(text: str) -> dict[str, Any]:
     paragraph: dict[str, Any] = {"type": "paragraph"}
     if text:
@@ -247,7 +239,6 @@ def update_page(
         page.description = request.description
         changed = True
     if changed:
-        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     db.commit()
@@ -283,8 +274,7 @@ def _patch_page_document_once(
         )
     }
     requested_by_id = {block.id: block for block in request.blocks}
-    deleted_revision_by_id = {block.id: block.base_revision for block in request.deleted_blocks}
-    deleted_ids = set(deleted_revision_by_id)
+    deleted_ids = set(request.deleted_blocks)
 
     if request.focus_block_id is not None:
         focused = existing_blocks.get(request.focus_block_id)
@@ -295,9 +285,6 @@ def _patch_page_document_once(
         block = existing_blocks.get(block_id)
         if block is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-        base_revision = deleted_revision_by_id[block_id]
-        if block.revision != base_revision:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
 
     for block_id in list(deleted_ids):
         deleted_ids.update(
@@ -308,19 +295,7 @@ def _patch_page_document_once(
 
     for patch in request.blocks:
         block = existing_blocks.get(patch.id)
-        if block is not None:
-            if patch.base_revision is None:
-                raise ConflictError(
-                    ApiErrorCode.E_NOTE_CONFLICT,
-                    "Existing note block requires a base revision",
-                )
-            if block.revision != patch.base_revision:
-                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
-        else:
-            if patch.base_revision is not None:
-                raise ApiError(
-                    ApiErrorCode.E_INVALID_REQUEST, "New block cannot have a base revision"
-                )
+        if block is None:
             if db.get(NoteBlock, patch.id) is not None:
                 raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
 
@@ -395,24 +370,6 @@ def _patch_page_document_once(
             if block_id in existing_blocks:
                 touched_existing_order_ids.add(block_id)
 
-    structure_changed = bool(deleted_ids)
-    for patch in request.blocks:
-        block = existing_blocks.get(patch.id)
-        if block is None:
-            structure_changed = True
-            continue
-        if final_parent_by_id[patch.id] != block.parent_block_id:
-            structure_changed = True
-        if final_order_by_id[patch.id] != block.order_key:
-            structure_changed = True
-    for block_id in touched_existing_order_ids:
-        block = existing_blocks[block_id]
-        if final_order_by_id[block_id] != block.order_key:
-            structure_changed = True
-
-    if structure_changed and page.revision != request.base_page_revision:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Page revision conflict")
-
     def requested_parent_depth(block_id: UUID) -> int:
         depth = 0
         parent_id = final_parent_by_id.get(block_id)
@@ -478,7 +435,6 @@ def _patch_page_document_once(
                 continue
             if body_changed:
                 _sync_inline_reference_links(db, viewer_id, block)
-            _bump_block_revision(block)
             block.updated_at = func.now()
             object_search.project_note_block(db, viewer_id, block)
             changed = True
@@ -490,7 +446,6 @@ def _patch_page_document_once(
             if final_order_by_id[block_id] == block.order_key:
                 continue
             block.order_key = final_order_by_id[block_id]
-            _bump_block_revision(block)
             block.updated_at = func.now()
             object_search.project_note_block(db, viewer_id, block)
             changed = True
@@ -511,7 +466,6 @@ def _patch_page_document_once(
             changed = True
 
         if changed:
-            _bump_page_revision(page)
             page.updated_at = func.now()
             object_search.project_page(db, viewer_id, page)
 
@@ -714,7 +668,6 @@ def create_note_block(
     _sync_inline_reference_links(db, viewer_id, block)
     object_search.project_note_block(db, viewer_id, block)
 
-    _bump_page_revision(page)
     page.updated_at = func.now()
     object_search.project_page(db, viewer_id, page)
     db.commit()
@@ -756,8 +709,6 @@ def _update_note_block_once(
     request: UpdateNoteBlockRequest,
 ) -> NoteBlockOut:
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
-    if block.revision != request.base_revision:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
     page_id = block.page_id
     assert page_id is not None
     changed = False
@@ -775,11 +726,9 @@ def _update_note_block_once(
     if changed:
         if body_changed:
             _sync_inline_reference_links(db, viewer_id, block)
-        _bump_block_revision(block)
         block.updated_at = func.now()
         page = db.get(Page, page_id)
         if page is not None:
-            _bump_page_revision(page)
             page.updated_at = func.now()
             object_search.project_page(db, viewer_id, page)
         object_search.project_note_block(db, viewer_id, block)
@@ -801,7 +750,6 @@ def set_note_block_markdown_body_without_commit(
         block.body_pm_json = body_pm_json
         block.body_markdown = markdown_from_pm_json(body_pm_json)
         block.body_text = text_from_pm_json(body_pm_json)
-        _bump_block_revision(block)
         block.updated_at = func.now()
         _sync_inline_reference_links(db, viewer_id, block)
         object_search.project_note_block(db, viewer_id, block)
@@ -840,11 +788,9 @@ def move_note_block(
     )
     block.parent_block_id = parent.id if parent is not None else None
     _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
-    _bump_block_revision(block)
     block.updated_at = func.now()
     page = db.get(Page, page_id)
     if page is not None:
-        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, block)
@@ -864,7 +810,6 @@ def split_note_block(
     assert page_id is not None
     before_pm_json, after_pm_json = _split_pm_json(block.body_pm_json, request.offset)
     _set_block_body_pm_json(block, before_pm_json)
-    _bump_block_revision(block)
     block.updated_at = func.now()
     new_block = NoteBlock(
         user_id=viewer_id,
@@ -887,7 +832,6 @@ def split_note_block(
     _sync_inline_reference_links(db, viewer_id, new_block)
     page = db.get(Page, page_id)
     if page is not None:
-        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, block)
@@ -910,7 +854,6 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
         previous,
         _merge_pm_json(previous.body_pm_json, block.body_pm_json),
     )
-    _bump_block_revision(previous)
     previous.updated_at = func.now()
     for child in _siblings(db, page_id, block.id):
         child.parent_block_id = previous.id
@@ -928,7 +871,6 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     _renumber_siblings(db, previous_page_id, previous.parent_block_id)
     page = db.get(Page, previous_page_id)
     if page is not None:
-        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, previous)
@@ -937,20 +879,16 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     return _block_out(previous, _child_tree(db, previous_page_id, previous.id))
 
 
-def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID, base_revision: int) -> None:
+def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     _with_serialization_retry(
         db,
         "Note block delete",
-        lambda: _delete_note_block_once(db, viewer_id, block_id, base_revision),
+        lambda: _delete_note_block_once(db, viewer_id, block_id),
     )
 
 
-def _delete_note_block_once(
-    db: Session, viewer_id: UUID, block_id: UUID, base_revision: int
-) -> None:
+def _delete_note_block_once(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
-    if block.revision != base_revision:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
     page_id = block.page_id
     assert page_id is not None
     descendant_ids = _descendant_ids(db, block.id)
@@ -979,7 +917,6 @@ def _delete_note_block_once(
     _renumber_siblings(db, page_id, block.parent_block_id)
     page = db.get(Page, page_id)
     if page is not None:
-        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     db.commit()
@@ -1063,7 +1000,6 @@ def set_highlight_note_body(
             )
             db.delete(existing)
             if page is not None:
-                _bump_page_revision(page)
                 page.updated_at = func.now()
                 object_search.project_page(db, viewer_id, page)
             if commit:
@@ -1090,13 +1026,11 @@ def set_highlight_note_body(
         existing.body_pm_json = body_pm_json
         existing.body_markdown = normalized
         existing.body_text = normalized
-        _bump_block_revision(existing)
         existing.updated_at = func.now()
         _sync_inline_reference_links(db, viewer_id, existing)
         object_search.project_note_block(db, viewer_id, existing)
         page = db.get(Page, existing.page_id) if existing.page_id is not None else None
         if page is not None:
-            _bump_page_revision(page)
             page.updated_at = func.now()
             object_search.project_page(db, viewer_id, page)
     if commit:
@@ -1169,7 +1103,6 @@ def _create_note_block_without_commit(
         )
     _sync_inline_reference_links(db, viewer_id, block)
     object_search.project_note_block(db, viewer_id, block)
-    _bump_page_revision(page)
     page.updated_at = func.now()
     object_search.project_page(db, viewer_id, page)
     return block
@@ -1689,7 +1622,6 @@ def _page_out(db: Session, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         description=page.description,
-        revision=page.revision,
         updated_at=page.updated_at,
         blocks=_child_tree(db, page.id, None),
     )
@@ -1708,7 +1640,6 @@ def _block_out(block: NoteBlock, children: list[NoteBlockOut]) -> NoteBlockOut:
         body_markdown=block.body_markdown,
         body_text=block.body_text,
         collapsed=block.collapsed,
-        revision=block.revision,
         children=children,
         created_at=block.created_at,
         updated_at=block.updated_at,

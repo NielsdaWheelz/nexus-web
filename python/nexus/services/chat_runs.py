@@ -22,7 +22,6 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
-from nexus.config import get_settings
 from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
@@ -1162,9 +1161,6 @@ async def _execute_chat_run(
                 db,
                 run=run,
                 model=model,
-                environment=get_settings().nexus_env.value,
-                key_mode_used=resolved_key.mode,
-                provider_account_boundary=resolved_key.user_key_id or resolved_key.mode,
                 max_output_tokens=max_output_tokens,
                 reader_context=reader_context,
                 reader_selection=reader_selection,
@@ -1216,8 +1212,6 @@ async def _execute_chat_run(
             conversation_id=str(run.conversation_id),
             assistant_message_id=str(run.assistant_message_id),
             prompt_chars=assembly.prompt_plan.text_char_count(),
-            stable_prefix_hash=assembly.prompt_plan.stable_prefix_hash,
-            provider_request_hash=assembly.prompt_plan.provider_request_hash,
             cacheable_input_tokens_estimate=assembly.prompt_plan.cacheable_input_tokens_estimate,
         )
         logger.info("llm.request.started", **llm_log_fields)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from uuid import uuid4
 
@@ -12,15 +11,19 @@ from sqlalchemy import text
 from nexus.db.models import Fragment
 from nexus.services.content_indexing import (
     IndexableBlock,
-    SourceSnapshotSpec,
     rebuild_fragment_content_index,
     rebuild_media_content_index,
     rebuild_transcript_content_index,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.transcript_segments import TranscriptSegmentInput
-from tests.factories import add_library_entry_only as seed_media_in_library
-from tests.factories import get_user_default_library
+from tests.factories import (
+    add_library_entry_only as seed_media_in_library,
+)
+from tests.factories import (
+    create_searchable_media,
+    get_user_default_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -78,7 +81,6 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
             session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment.id}",
             fragments=[fragment],
             reason="test",
         )
@@ -117,12 +119,57 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
     )
 
     assert response.status_code == 200, response.text
+    _assert_no_version_provenance(response.json()["data"])
     resolver = response.json()["data"]["resolver"]
     assert resolver["status"] == "resolved", resolver
     assert resolver["highlight"]["kind"] == "web_text"
     assert resolver["highlight"]["text_quote"]["exact"] == (
         "Durable quote needle for stale locator coverage."
     )
+
+
+def test_evidence_resolution_rejects_span_from_inactive_index_run(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+
+    with direct_db.session() as session:
+        media_id = create_searchable_media(session, user_id, title="Stale Evidence URL")
+        old_span_id = session.execute(
+            text(
+                """
+                SELECT primary_evidence_span_id
+                FROM content_chunks
+                WHERE media_id = :media_id
+                ORDER BY chunk_idx ASC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
+        rebuild_fragment_content_index(
+            session,
+            media_id=media_id,
+            source_kind="web_article",
+            fragments=[fragment],
+            reason="test_stale_evidence_url",
+        )
+        session.commit()
+
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+    response = auth_client.get(
+        f"/media/{media_id}/evidence/{old_span_id}",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 404, response.text
 
 
 def test_evidence_resolution_requires_primary_chunk_span_coherence(
@@ -173,7 +220,6 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
             session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment.id}",
             fragments=[fragment],
             reason="test",
         )
@@ -182,8 +228,6 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
                 """
                 SELECT
                     cc.id,
-                    cc.index_run_id,
-                    cc.source_snapshot_id,
                     cc.primary_evidence_span_id,
                     cc.summary_locator,
                     ccp.block_id,
@@ -204,28 +248,22 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
                 """
                 INSERT INTO evidence_spans (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
                     end_block_offset,
                     span_text,
-                    span_sha256,
                     selector,
                     citation_label,
                     resolver_kind
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :block_id,
                     :block_id,
                     :start_offset,
                     :end_offset,
                     :span_text,
-                    :span_sha,
                     CAST(:selector AS jsonb),
                     'Sibling',
                     'web'
@@ -235,14 +273,11 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": row[1],
-                "source_snapshot_id": row[2],
-                "block_id": row[5],
-                "start_offset": row[6],
-                "end_offset": row[7],
+                "block_id": row[3],
+                "start_offset": row[4],
+                "end_offset": row[5],
                 "span_text": mismatch_text,
-                "span_sha": _sha256(mismatch_text),
-                "selector": json.dumps(row[4]),
+                "selector": json.dumps(row[2]),
             },
         ).scalar_one()
         session.execute(
@@ -324,7 +359,6 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
             session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment.id}",
             fragments=[fragment],
             reason="test",
         )
@@ -334,8 +368,6 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
                     """
                 SELECT
                     cc.primary_evidence_span_id,
-                    cc.index_run_id,
-                    cc.source_snapshot_id,
                     cb.id AS block_id,
                     cb.locator
                 FROM content_chunks cc
@@ -360,28 +392,22 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
                 """
                 INSERT INTO evidence_spans (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
                     end_block_offset,
                     span_text,
-                    span_sha256,
                     selector,
                     citation_label,
                     resolver_kind
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :block_id,
                     :block_id,
                     :start_offset,
                     :end_offset,
                     :span_text,
-                    :span_sha,
                     CAST(:selector AS jsonb),
                     'Exact',
                     'web'
@@ -391,13 +417,10 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": row["index_run_id"],
-                "source_snapshot_id": row["source_snapshot_id"],
                 "block_id": row["block_id"],
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "span_text": exact,
-                "span_sha": _sha256(exact),
                 "selector": json.dumps(selector),
             },
         ).scalar_one()
@@ -416,6 +439,7 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
+    _assert_no_version_provenance(data)
     resolver = data["resolver"]
     assert data["span_text"] == exact
     assert resolver["status"] == "resolved", resolver
@@ -433,8 +457,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
     auth_client.get("/me", headers=auth_headers(user_id))
     media_id = uuid4()
     plain_text = "PDF durable quote needle for stale selector coverage."
-    file_sha256 = hashlib.sha256(b"pdf-bytes-v1").hexdigest()
-    source_fingerprint = f"sha256:{file_sha256}"
 
     with direct_db.session() as session:
         default_library_id = get_user_default_library(session, user_id)
@@ -444,11 +466,11 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
                 """
                 INSERT INTO media (
                     id, kind, title, processing_status, created_by_user_id,
-                    plain_text, page_count, file_sha256
+                    plain_text, page_count
                 )
                 VALUES (
                     :media_id, 'pdf', 'Stale Locator PDF', 'ready_for_reading', :user_id,
-                    :plain_text, 1, :file_sha256
+                    :plain_text, 1
                 )
                 """
             ),
@@ -456,7 +478,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
                 "media_id": media_id,
                 "user_id": user_id,
                 "plain_text": plain_text,
-                "file_sha256": file_sha256,
             },
         )
         seed_media_in_library(session, default_library_id, media_id)
@@ -471,8 +492,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
         )
         selector = {
             "kind": "pdf_text",
-            "version": 1,
-            "source_fingerprint": source_fingerprint,
             "page_number": 1,
             "physical_page_number": 1,
             "page_label": "1",
@@ -482,7 +501,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
             "page_text_end_offset": len(plain_text),
             "text_quote": _text_quote(plain_text, 0, len(plain_text)),
             "geometry": {
-                "version": 1,
                 "coordinate_space": "pdf_points",
                 "page_width": 612,
                 "page_height": 792,
@@ -506,19 +524,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
             session,
             media_id=media_id,
             source_kind="pdf",
-            source_snapshot=SourceSnapshotSpec(
-                artifact_kind="pdf_text",
-                artifact_ref=f"media:{media_id}:pdf_text",
-                content_type="text/plain",
-                byte_length=len(plain_text.encode("utf-8")),
-                source_fingerprint=source_fingerprint,
-                content_sha256=_sha256(plain_text),
-                source_version="test_pdf_v1",
-                extractor_version="test_pdf_extractor_v1",
-                parent_snapshot_id=None,
-                language=None,
-                metadata={"source_fingerprint": source_fingerprint},
-            ),
             blocks=[
                 IndexableBlock(
                     media_id=media_id,
@@ -571,21 +576,20 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
     )
 
     assert response.status_code == 200, response.text
+    _assert_no_version_provenance(response.json()["data"])
     resolver = response.json()["data"]["resolver"]
     assert resolver["status"] == "resolved", resolver
     assert resolver["highlight"]["kind"] == "pdf_text"
     assert resolver["highlight"]["text_quote"]["exact"] == plain_text
 
 
-def test_transcript_evidence_uses_snapshot_after_active_version_changes(
+def test_transcript_evidence_uses_current_blocks_after_segment_changes(
     auth_client,
     direct_db: DirectSessionManager,
 ):
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     media_id = uuid4()
-    first_version_id = uuid4()
-    second_version_id = uuid4()
     first_segments = [
         TranscriptSegmentInput(
             segment_idx=0,
@@ -627,29 +631,16 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
         session.execute(
             text(
                 """
-                INSERT INTO podcast_transcript_versions (
-                    id, media_id, version_no, transcript_coverage, is_active,
-                    created_by_user_id
-                )
-                VALUES (:id, :media_id, 1, 'full', true, :user_id)
-                """
-            ),
-            {"id": first_version_id, "media_id": media_id, "user_id": user_id},
-        )
-        session.execute(
-            text(
-                """
                 INSERT INTO podcast_transcript_segments (
-                    transcript_version_id, media_id, segment_idx, canonical_text,
+                    media_id, segment_idx, canonical_text,
                     t_start_ms, t_end_ms, speaker_label
                 )
                 VALUES (
-                    :version_id, :media_id, 0, :canonical_text, 1000, 2500, 'Host'
+                    :media_id, 0, :canonical_text, 1000, 2500, 'Host'
                 )
                 """
             ),
             {
-                "version_id": first_version_id,
                 "media_id": media_id,
                 "canonical_text": first_segments[0].canonical_text,
             },
@@ -669,7 +660,6 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
         rebuild_transcript_content_index(
             session,
             media_id=media_id,
-            transcript_version_id=first_version_id,
             transcript_segments=first_segments,
             reason="test",
         )
@@ -688,38 +678,13 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
         session.execute(
             text(
                 """
-                UPDATE podcast_transcript_versions
-                SET is_active = false
-                WHERE id = :version_id
+                UPDATE podcast_transcript_segments
+                SET canonical_text = 'Beta replacement transcript.'
+                WHERE media_id = :media_id
+                  AND segment_idx = 0
                 """
             ),
-            {"version_id": first_version_id},
-        )
-        session.execute(
-            text(
-                """
-                INSERT INTO podcast_transcript_versions (
-                    id, media_id, version_no, transcript_coverage, is_active,
-                    created_by_user_id
-                )
-                VALUES (:id, :media_id, 2, 'full', true, :user_id)
-                """
-            ),
-            {"id": second_version_id, "media_id": media_id, "user_id": user_id},
-        )
-        session.execute(
-            text(
-                """
-                INSERT INTO podcast_transcript_segments (
-                    transcript_version_id, media_id, segment_idx, canonical_text,
-                    t_start_ms, t_end_ms, speaker_label
-                )
-                VALUES (
-                    :version_id, :media_id, 0, 'Beta replacement transcript.', 1000, 2500, 'Host'
-                )
-                """
-            ),
-            {"version_id": second_version_id, "media_id": media_id},
+            {"media_id": media_id},
         )
         session.execute(
             text(
@@ -736,7 +701,6 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
     direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
 
@@ -746,6 +710,7 @@ def test_transcript_evidence_uses_snapshot_after_active_version_changes(
     )
 
     assert response.status_code == 200, response.text
+    _assert_no_version_provenance(response.json()["data"])
     resolver = response.json()["data"]["resolver"]
     assert resolver["status"] == "resolved", resolver
     assert resolver["highlight"]["kind"] == "transcript_time_text"
@@ -760,5 +725,13 @@ def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str
     }
 
 
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _assert_no_version_provenance(value: object) -> None:
+    if isinstance(value, dict):
+        assert "source_version" not in value
+        assert "source_fingerprint" not in value
+        assert "transcript_version_id" not in value
+        for child in value.values():
+            _assert_no_version_provenance(child)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_no_version_provenance(child)

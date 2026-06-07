@@ -17,7 +17,6 @@ const baseMessage = {
 function messageDocument(text: string, role: ConversationMessage["role"]) {
   return {
     type: "message_document" as const,
-    version: 1 as const,
     blocks: text.trim()
       ? [
           {

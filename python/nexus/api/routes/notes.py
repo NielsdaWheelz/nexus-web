@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -13,7 +13,6 @@ from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreateNoteBlockRequest,
     CreatePageRequest,
-    DeleteNoteBlockRequest,
     MoveNoteBlockRequest,
     PatchPageDocumentRequest,
     QuickCaptureRequest,
@@ -164,13 +163,15 @@ def update_note_block(
 
 
 @router.delete("/blocks/{block_id}", status_code=204)
-def delete_note_block(
+async def delete_note_block(
     block_id: UUID,
-    request: DeleteNoteBlockRequest,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    notes_service.delete_note_block(db, viewer.user_id, block_id, request.base_revision)
+    if (await request.body()).strip():
+        raise HTTPException(status_code=422, detail="Delete note block does not accept a body")
+    notes_service.delete_note_block(db, viewer.user_id, block_id)
     return Response(status_code=204)
 
 

@@ -58,7 +58,6 @@ class OracleReadingPassageOut(BaseModel):
 
     phase: str
     source_kind: str
-    source_ref: dict[str, Any]
     exact_snippet: str
     locator_label: str
     attribution_text: str

@@ -56,7 +56,6 @@ export function MessageRow({
         evidenceSpanId: target.evidence_span_id ?? undefined,
         locator: target.locator,
         snippet: target.snippet,
-        sourceVersion: target.source_version,
         highlightBehavior: target.highlight_behavior,
         focusBehavior: target.focus_behavior,
       });

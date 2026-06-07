@@ -6,7 +6,6 @@ export interface ReaderSourceTarget {
   media_id: string;
   locator: RetrievalLocator;
   snippet: string | null;
-  source_version: string;
   highlight_behavior: "pulse";
   focus_behavior: "scroll_into_view";
   status: string;
@@ -44,11 +43,7 @@ export function hrefForReaderTarget(input: {
 export function readerTargetFromRetrieval(
   retrieval: MessageRetrieval,
 ): ReaderSourceTarget | null {
-  if (
-    !retrieval.media_id ||
-    !retrieval.source_version ||
-    !isRetrievalLocator(retrieval.locator ?? null)
-  ) {
+  if (!retrieval.media_id || !isRetrievalLocator(retrieval.locator ?? null)) {
     return null;
   }
   return {
@@ -56,7 +51,6 @@ export function readerTargetFromRetrieval(
     media_id: retrieval.media_id,
     locator: retrieval.locator!,
     snippet: retrieval.exact_snippet ?? null,
-    source_version: retrieval.source_version,
     highlight_behavior: "pulse",
     focus_behavior: "scroll_into_view",
     status: retrieval.retrieval_status ?? "retrieved",

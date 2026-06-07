@@ -1,6 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import {
   expect,
@@ -8,16 +7,15 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "../api";
-import supabaseEnv from "../../supabase-env.cjs";
 import { openHighlightsPane as openReaderHighlightsPane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
+import { runE2eWorkerOnce } from "../worker";
 import {
   ACTIVE_WORKSPACE_PANE_SELECTOR,
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
 } from "../workspace";
 
-const { buildE2eAppRuntimeEnv } = supabaseEnv;
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
   pdf: "PDFs",
@@ -33,17 +31,16 @@ const REAL_MEDIA_FIXTURE_DIR = path.join(
 );
 const REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS = 120_000;
 const REAL_MEDIA_WORKER_POLL_MS = 200;
-const REAL_MEDIA_WORKER_ITERATION_TIMEOUT_MS = 30_000;
 const NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE";
 
 export const FRESH_REAL_MEDIA_FIXTURES = {
   pdfSvms: {
-    sha256: "4aed6fc3d300ce7552b341e3e01f3d795aa437de1045c022e6ee0b4309492531",
+    sizeBytes: 1_502_380,
     query: "support vectors",
     needle: "support vectors",
   },
   epubMobyDickOld: {
-    sha256: "29d4cd3f8f953cf91d030b3581c805944a063dfc216ee48628f3c87ba5ace266",
+    sizeBytes: 840_468,
     query: "Call me Ishmael",
     needle: "Call me Ishmael",
   },
@@ -88,7 +85,6 @@ export interface RealMediaWorkerResult {
   worker_iterations?: number;
   last?: unknown;
   index_status?: string | null;
-  index_run_state?: string | null;
   chunk_count?: number;
   evidence_count?: number;
   embedding_count?: number;
@@ -112,7 +108,6 @@ interface RealMediaUploadIngestResponse {
 
 export interface RealMediaFreshUploadTrace {
   media_id: string;
-  artifact_sha256: string;
   ingest: RealMediaUploadIngestResponse["data"];
   worker: RealMediaWorkerResult;
 }
@@ -132,25 +127,21 @@ export async function uploadFreshRealMediaFileThroughUi({
   artifactPath,
   filename,
   mimeType,
-  expectedSha256,
+  expectedSizeBytes,
   seededMediaId,
-  seededSha256,
   artifactSalt,
 }: {
   page: Page;
   artifactPath: string;
   filename: string;
   mimeType: string;
-  expectedSha256: string;
+  expectedSizeBytes: number;
   seededMediaId: string;
-  seededSha256: string;
   artifactSalt?: string;
 }): Promise<RealMediaFreshUploadTrace> {
   assertRealMediaStorageIsLocal();
   const fixtureBytes = readFileSync(artifactPath);
-  expect(createHash("sha256").update(fixtureBytes).digest("hex")).toBe(
-    expectedSha256,
-  );
+  expect(fixtureBytes.byteLength).toBe(expectedSizeBytes);
   const uploadSalt = artifactSalt
     ? `${artifactSalt}:${process.pid}:${Date.now()}:${randomUUID()}`
     : null;
@@ -160,8 +151,6 @@ export async function uploadFreshRealMediaFileThroughUi({
         Buffer.from(`\n% nexus-real-media-e2e:${uploadSalt}\n`, "utf-8"),
       ])
     : fixtureBytes;
-  const artifactSha256 = createHash("sha256").update(uploadBytes).digest("hex");
-  expect(artifactSha256).not.toBe(seededSha256);
 
   await gotoRealMediaSinglePane(page, "/libraries");
   await page.getByRole("button", { name: "Add content" }).click();
@@ -202,7 +191,6 @@ export async function uploadFreshRealMediaFileThroughUi({
 
   return {
     media_id: ingest.data.media_id,
-    artifact_sha256: artifactSha256,
     ingest: ingest.data,
     worker,
   };
@@ -231,146 +219,25 @@ export function writeRealMediaTrace(
 
 function runRealMediaWorkerOnce(mediaId?: string): RealMediaWorkerResult {
   assertRealMediaStorageIsLocal();
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required to drain the real-media worker.");
-  }
-  const nexusEnv = process.env.NEXUS_ENV ?? "local";
-  if (nexusEnv !== "local") {
-    throw new Error(
-      `Refusing to run real-media fixture worker with NEXUS_ENV=${nexusEnv}.`,
-    );
-  }
-  let databaseHost = "";
-  try {
-    databaseHost = new URL(
-      databaseUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://"),
-    ).hostname;
-  } catch (error) {
-    throw new Error(
-      `DATABASE_URL is not a valid PostgreSQL URL: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(databaseHost)) {
-    throw new Error(
-      `Refusing to run real-media fixture worker against non-local database host ${databaseHost}.`,
-    );
-  }
 
-  const workerEnv = {
-    ...buildE2eAppRuntimeEnv(process.env),
-    DATABASE_URL: databaseUrl,
-    NEXUS_ENV: nexusEnv,
-    REAL_MEDIA_PROVIDER_FIXTURES: "1",
-    REAL_MEDIA_FIXTURE_DIR:
-      process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
-    ...(mediaId ? { NEXUS_REAL_MEDIA_READY_MEDIA_ID: mediaId } : {}),
-  };
-
-  const child = spawnSync(
-    "uv",
-    [
-      "run",
-      "--project",
-      "python",
-      "python",
-      "-c",
-      `
-import json
-import os
-
-from apps.worker.main import create_worker
-
-payload = {"processed": bool(create_worker().run_once())}
-media_id = os.environ.get("NEXUS_REAL_MEDIA_READY_MEDIA_ID")
-if media_id:
-    import psycopg
-
-    database_url = os.environ["DATABASE_URL"].replace(
-        "postgresql+psycopg://",
-        "postgresql://",
-        1,
-    )
-    with psycopg.connect(database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    m.processing_status::text,
-                    COALESCE(mcis.status, 'pending'),
-                    active_run.state,
-                    count(DISTINCT cc.id),
-                    count(DISTINCT es.id),
-                    count(DISTINCT ce.id)
-                FROM media m
-                LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
-                LEFT JOIN content_chunks cc
-                  ON cc.media_id = m.id
-                 AND cc.index_run_id = mcis.active_run_id
-                LEFT JOIN evidence_spans es
-                  ON es.media_id = m.id
-                 AND es.index_run_id = mcis.active_run_id
-                LEFT JOIN content_embeddings ce ON ce.chunk_id = cc.id
-                WHERE m.id = %s::uuid
-                GROUP BY m.processing_status, mcis.status, active_run.state
-                """,
-                (media_id,),
-            )
-            row = cur.fetchone()
-    payload["index"] = None if row is None else {
-        "processing_status": row[0],
-        "index_status": row[1],
-        "index_run_state": row[2],
-        "chunk_count": row[3],
-        "evidence_count": row[4],
-        "embedding_count": row[5],
-    }
-print(json.dumps(payload, sort_keys=True))
-`,
-    ],
-    {
-      cwd: ROOT_DIR,
-      env: workerEnv,
-      encoding: "utf-8",
-      timeout: REAL_MEDIA_WORKER_ITERATION_TIMEOUT_MS,
+  const result = runE2eWorkerOnce({
+    mediaId,
+    allowedNexusEnvs: ["local"],
+    extraEnv: {
+      REAL_MEDIA_PROVIDER_FIXTURES: "1",
+      REAL_MEDIA_FIXTURE_DIR:
+        process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
     },
-  );
-
-  if (child.error) {
-    throw child.error;
-  }
-  if (child.status !== 0) {
-    throw new Error(child.stderr || child.stdout);
-  }
-
-  const lines = child.stdout.trim().split(/\r?\n/).filter(Boolean);
-  const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
-    string,
-    unknown
-  >;
-  const index = result.index as
-    | {
-        index_status?: string | null;
-        index_run_state?: string | null;
-        chunk_count?: number;
-        evidence_count?: number;
-        embedding_count?: number;
-      }
-    | null
-    | undefined;
+  });
   return {
-    worker_iterations: result.processed === true ? 1 : 0,
-    last: result.last,
-    index_status: index?.index_status ?? null,
-    index_run_state: index?.index_run_state ?? null,
-    chunk_count: Number(index?.chunk_count ?? 0),
-    evidence_count: Number(index?.evidence_count ?? 0),
-    embedding_count: Number(index?.embedding_count ?? 0),
-    stdout: child.stdout.slice(-4000),
-    stderr: child.stderr.slice(-4000),
+    worker_iterations: result.processed ? 1 : 0,
+    processing_status: result.index?.processing_status ?? undefined,
+    index_status: result.index?.index_status ?? null,
+    chunk_count: result.index?.chunk_count ?? 0,
+    evidence_count: result.index?.evidence_count ?? 0,
+    embedding_count: result.index?.embedding_count ?? 0,
+    stdout: result.stdout,
+    stderr: result.stderr,
   };
 }
 
@@ -456,7 +323,6 @@ export async function drainRealMediaWorkerForMediaReady(
         processing_status: processingStatus,
         retrieval_status: retrievalStatus,
         index_status: workerResult.index_status,
-        index_run_state: workerResult.index_run_state,
         chunk_count: workerResult.chunk_count,
         evidence_count: workerResult.evidence_count,
         embedding_count: workerResult.embedding_count,
@@ -465,7 +331,6 @@ export async function drainRealMediaWorkerForMediaReady(
         retrievalStatus === "ready" &&
         processingStatus === "ready_for_reading" &&
         workerResult.index_status === "ready" &&
-        workerResult.index_run_state === "ready" &&
         (workerResult.chunk_count ?? 0) > 0 &&
         (workerResult.evidence_count ?? 0) > 0 &&
         (workerResult.embedding_count ?? 0) > 0
@@ -475,7 +340,6 @@ export async function drainRealMediaWorkerForMediaReady(
           retrieval_status: retrievalStatus,
           processing_status: processingStatus,
           index_status: workerResult.index_status,
-          index_run_state: workerResult.index_run_state,
           chunk_count: workerResult.chunk_count,
           evidence_count: workerResult.evidence_count,
           embedding_count: workerResult.embedding_count,
@@ -497,7 +361,6 @@ export async function drainRealMediaWorkerForMediaReady(
           retrieval_status: retrievalStatus,
           processing_status: processingStatus,
           index_status: workerResult.index_status,
-          index_run_state: workerResult.index_run_state,
           chunk_count: workerResult.chunk_count,
           evidence_count: workerResult.evidence_count,
           embedding_count: workerResult.embedding_count,

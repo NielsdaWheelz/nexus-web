@@ -1,11 +1,10 @@
-"""The single owner of transcript-version writes and media_transcript_states.
+"""The single owner of current transcript writes and media_transcript_states.
 
 Podcast RSS sync, on-demand podcast transcription, and YouTube ingest all call
-`write_transcript_version`; none re-implements the deactivate/allocate/insert
-sequence and none reaches a private symbol of another module. The advisory lock
-is kind-agnostic (`transcript-version:{media_id}`) and the two unique indexes on
-`podcast_transcript_versions` (`(media_id, version_no)` and the partial
-`(media_id) WHERE is_active`) are the integrity backstop under READ COMMITTED.
+`write_current_transcript`; none re-implements the replace/insert/index sequence
+and none reaches a private symbol of another module. The advisory lock is
+kind-agnostic (`transcript-current:{media_id}`), and current rows are keyed by
+`media_id` plus their local index.
 """
 
 from __future__ import annotations
@@ -13,11 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, assert_never
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
@@ -27,6 +25,7 @@ from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
+from nexus.services.media_processing_state import mark_ready_for_reading_by_id
 from nexus.services.transcript_segments import (
     TranscriptSegmentInput,
     insert_transcript_fragments,
@@ -46,145 +45,74 @@ TranscriptRequestReason = Literal[
 
 
 @dataclass(frozen=True)
-class TranscriptWriteResult:
-    transcript_version_id: UUID
-    version_no: int
+class CurrentTranscriptWriteResult:
     segment_count: int
     semantic_status: Literal["ready", "failed"]
 
 
-def write_transcript_version(
+def write_current_transcript(
     db: Session,
     *,
     media_id: UUID,
-    created_by_user_id: UUID | None,
     request_reason: TranscriptRequestReason,
     transcript_coverage: Literal["partial", "full"],
     transcript_segments: Sequence[TranscriptSegmentInput],
-    fragment_strategy: Literal["preserve_anchors", "replace"] = "preserve_anchors",
     mark_media_ready: bool = True,
     now: datetime,
-) -> TranscriptWriteResult:
-    """Create the next transcript version and optionally make the media readable.
+) -> CurrentTranscriptWriteResult:
+    """Replace the current transcript and optionally make the media readable.
 
     Runs in the CALLER's transaction (transaction() is non-reentrant). Holds
-    `pg_advisory_xact_lock('transcript-version:{media_id}')` across the whole
-    sequence: deactivate prior versions, allocate `MAX(version_no)+1`, insert the
-    version, dispose of prior fragments per `fragment_strategy`, insert the new
-    fragments and segments, rebuild the semantic index, and record the media
-    transcript state. `fragment_strategy="preserve_anchors"` bumps prior fragments
-    aside so existing highlight anchors survive; `"replace"` deletes the media's
-    highlights and fragments first (destructive; YouTube re-ingest only).
+    `pg_advisory_xact_lock('transcript-current:{media_id}')` across the whole
+    sequence: remove current transcript fragments/segments, insert the new current
+    rows, rebuild the semantic index, and record the media transcript state.
     Source-attempt materializers pass `mark_media_ready=False`; the source owner
     records terminal media success after the adapter returns.
     """
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-        {"lock_key": f"transcript-version:{media_id}"},
+        {"lock_key": f"transcript-current:{media_id}"},
     )
 
     db.execute(
         text(
             """
-            UPDATE podcast_transcript_versions
-            SET is_active = false, updated_at = :now
-            WHERE media_id = :media_id
+            DELETE FROM highlights h
+            USING highlight_fragment_anchors hfa
+            JOIN fragments f ON f.id = hfa.fragment_id
+            WHERE h.id = hfa.highlight_id
+              AND f.media_id = :media_id
             """
         ),
-        {"media_id": media_id, "now": now},
+        {"media_id": media_id},
     )
-    next_version_no = int(
-        db.execute(
-            text(
-                """
-                SELECT COALESCE(MAX(version_no), 0) + 1
-                FROM podcast_transcript_versions
-                WHERE media_id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        ).scalar_one()
+    db.execute(
+        text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
+        {"media_id": media_id},
     )
-    try:
-        transcript_version_id: UUID = db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcript_versions (
-                    media_id, version_no, transcript_coverage, is_active,
-                    request_reason, created_by_user_id, created_at, updated_at
-                )
-                VALUES (
-                    :media_id, :version_no, :transcript_coverage, true,
-                    :request_reason, :created_by_user_id, :now, :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "version_no": next_version_no,
-                "transcript_coverage": transcript_coverage,
-                "request_reason": request_reason,
-                "created_by_user_id": created_by_user_id,
-                "now": now,
-            },
-        ).scalar_one()
-    except IntegrityError as exc:
-        # The unique indexes reject a duplicate version_no / second active row, so a
-        # lost race is a retryable conflict, never a corrupted or lost transcript.
-        raise ApiError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Concurrent transcript version write; retry.",
-        ) from exc
-
-    if fragment_strategy == "preserve_anchors":
-        db.execute(
-            text("UPDATE fragments SET idx = idx + 1000000 WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        )
-    elif fragment_strategy == "replace":
-        db.execute(
-            text(
-                """
-                DELETE FROM highlights AS h
-                USING highlight_fragment_anchors AS hfa
-                JOIN fragments AS f ON f.id = hfa.fragment_id
-                WHERE h.id = hfa.highlight_id
-                  AND f.media_id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        )
-        db.execute(
-            text("DELETE FROM fragments WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        )
-    else:
-        assert_never(fragment_strategy)
+    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
 
     insert_transcript_fragments(
         db,
         media_id,
         transcript_segments,
         now=now,
-        transcript_version_id=transcript_version_id,
     )
     for segment_idx, segment in enumerate(transcript_segments):
         db.execute(
             text(
                 """
                 INSERT INTO podcast_transcript_segments (
-                    transcript_version_id, media_id, segment_idx, canonical_text,
+                    media_id, segment_idx, canonical_text,
                     t_start_ms, t_end_ms, speaker_label, created_at
                 )
                 VALUES (
-                    :transcript_version_id, :media_id, :segment_idx, :canonical_text,
+                    :media_id, :segment_idx, :canonical_text,
                     :t_start_ms, :t_end_ms, :speaker_label, :created_at
                 )
                 """
             ),
             {
-                "transcript_version_id": transcript_version_id,
                 "media_id": media_id,
                 "segment_idx": segment_idx,
                 "canonical_text": segment.canonical_text,
@@ -206,9 +134,8 @@ def write_transcript_version(
             rebuild_transcript_content_index(
                 db,
                 media_id=media_id,
-                transcript_version_id=transcript_version_id,
                 transcript_segments=transcript_segments,
-                reason="transcript_version_write",
+                reason="transcript_write",
             )
     except (
         Exception
@@ -220,7 +147,6 @@ def write_transcript_version(
         logger.exception(
             "transcript_semantic_index_failed",
             media_id=str(media_id),
-            transcript_version_id=str(transcript_version_id),
             error=str(exc),
         )
         mark_content_index_failed(
@@ -231,22 +157,7 @@ def write_transcript_version(
         )
 
     if mark_media_ready:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET processing_status = 'ready_for_reading',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_completed_at = :now,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {"media_id": media_id, "now": now},
-        )
+        mark_ready_for_reading_by_id(db, media_id=media_id, now=now)
     set_media_transcript_state(
         db,
         media_id=media_id,
@@ -257,9 +168,7 @@ def write_transcript_version(
         last_error_code=semantic_error_code,
         now=now,
     )
-    return TranscriptWriteResult(
-        transcript_version_id=transcript_version_id,
-        version_no=next_version_no,
+    return CurrentTranscriptWriteResult(
         segment_count=len(transcript_segments),
         semantic_status=semantic_status,
     )
@@ -276,10 +185,8 @@ def set_media_transcript_state(
     last_error_code: str | None = None,
     now: datetime,
 ) -> None:
-    """Insert or update the media_transcript_states row on a transcript-version write.
+    """Insert or update the media_transcript_states row on a transcript write.
 
-    The active transcript version is resolved by `WHERE is_active` on
-    `podcast_transcript_versions`, so this row carries no version pointer.
     `None` for semantic_status / last_request_reason preserves the existing value.
     """
     existing = db.scalar(

@@ -47,7 +47,6 @@ describe("HtmlRenderer", () => {
         end_offset: 32,
       },
       snippet: "Second quote",
-      sourceVersion: "web:media-1:v1",
       highlightBehavior: "pulse",
       focusBehavior: "scroll_into_view",
     });

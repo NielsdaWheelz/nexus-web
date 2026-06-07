@@ -9,7 +9,7 @@ type SourceActionKind = "retry" | "refresh";
 type SourceActionSeverity = "success" | "warning";
 
 export interface SourceActionProjection {
-  processingStatus: string;
+  processingStatus: SourceActionResult["processingStatus"];
   sourceFailed: boolean;
   resetRefreshSource: boolean;
   capabilityPatch: MediaActionCapabilities;

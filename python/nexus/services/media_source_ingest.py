@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import posixpath
 import re
@@ -95,8 +94,6 @@ _IN_FLIGHT_ATTEMPT_STATUSES = {
 }
 _REFRESHABLE_STATUSES = {
     ProcessingStatus.ready_for_reading,
-    ProcessingStatus.embedding,
-    ProcessingStatus.ready,
     ProcessingStatus.failed,
 }
 _NON_REACQUIRABLE_FILE_ERROR_CODES = {
@@ -259,7 +256,7 @@ def accept_browser_article_capture(
     intent_key = _intent_key(
         source_type,
         url,
-        hashlib.sha256(html_bytes).hexdigest(),
+        len(html_bytes),
         library_ids=library_ids,
     )
     clean_idempotency_key = _clean_idempotency_key(idempotency_key)
@@ -336,7 +333,6 @@ def accept_browser_article_capture(
         "storage_path": storage_path,
         "content_type": "text/html; charset=utf-8",
         "size_bytes": len(html_bytes),
-        "sha256": hashlib.sha256(html_bytes).hexdigest(),
     }
     library_entries.assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media.id, library_ids
@@ -429,12 +425,11 @@ def accept_browser_file_capture(
     if clean_source_url is not None:
         validate_requested_url(clean_source_url)
 
-    sha256 = hashlib.sha256(payload).hexdigest()
     source_type = f"browser_{kind}_capture"
     intent_key = _intent_key(
         source_type,
         clean_source_url or cleaned_filename,
-        sha256,
+        len(payload),
         library_ids=library_ids,
     )
     clean_idempotency_key = _clean_idempotency_key(idempotency_key)
@@ -459,46 +454,6 @@ def accept_browser_file_capture(
                 processing_status=_status_to_str(media.processing_status),
                 ingest_enqueued=existing_attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
             )
-
-    existing_media = _find_reusable_file_media(db, viewer_id, kind, sha256)
-    if existing_media is not None:
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, existing_media.id, library_ids
-        )
-        attempt = _create_attempt(
-            db,
-            media=existing_media,
-            viewer_id=viewer_id,
-            source_type=source_type,
-            intent_key=intent_key,
-            requested_url=clean_source_url,
-            canonical_source_url=(
-                normalize_url_for_display(clean_source_url) if clean_source_url else None
-            ),
-            provider="browser_capture",
-            provider_target_ref=None,
-            source_payload={
-                "filename": cleaned_filename,
-                "content_type": normalized_content_type,
-                "size_bytes": len(payload),
-                "sha256": sha256,
-                "source_url": clean_source_url,
-                "library_ids": [str(library_id) for library_id in library_ids],
-            },
-            request_id=request_id,
-            idempotency_key=clean_idempotency_key,
-            status=_ATTEMPT_SUCCEEDED,
-        )
-        db.commit()
-        return FromUrlResponse(
-            media_id=existing_media.id,
-            source_attempt_id=attempt.id,
-            source_type=attempt.source_type,
-            source_attempt_status=attempt.status,
-            idempotency_outcome="reused",
-            processing_status=_status_to_str(existing_media.processing_status),
-            ingest_enqueued=False,
-        )
 
     title = cleaned_filename
     if not title and clean_source_url is not None:
@@ -530,7 +485,6 @@ def accept_browser_file_capture(
         build_storage_path(media.id, get_file_extension(kind)) if valid_signature else None
     )
     if valid_signature:
-        media.file_sha256 = sha256
         db.add(
             MediaFile(
                 media_id=media.id,
@@ -553,7 +507,6 @@ def accept_browser_file_capture(
             "filename": cleaned_filename,
             "content_type": normalized_content_type,
             "size_bytes": len(payload),
-            "sha256": sha256,
             "source_url": clean_source_url,
             "storage_path": storage_path,
             "library_ids": [str(library_id) for library_id in library_ids],
@@ -1275,25 +1228,6 @@ def _reused_url_attempt_status(media: Media) -> str:
     if media.processing_status == ProcessingStatus.failed:
         return _ATTEMPT_FAILED
     return _ATTEMPT_SUCCEEDED
-
-
-def _find_reusable_file_media(
-    db: Session,
-    viewer_id: UUID,
-    kind: str,
-    sha256: str,
-) -> Media | None:
-    return (
-        db.execute(
-            select(Media).where(
-                Media.created_by_user_id == viewer_id,
-                Media.kind == kind,
-                Media.file_sha256 == sha256,
-            )
-        )
-        .scalars()
-        .one_or_none()
-    )
 
 
 def _create_attempt(
@@ -2147,7 +2081,6 @@ def _run_browser_article_capture(
     return {
         "status": "success",
         "source_type": source_types.BROWSER_ARTICLE_CAPTURE,
-        "artifact_ref": storage_path,
         "post_success_index": "web_article",
         "fragment_id": str(fragment_id),
         "metadata_enrichment": True,
@@ -2187,24 +2120,6 @@ def _run_remote_file(
     if media is None:
         _delete_storage_object(storage_client, storage_path)
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    owner_id = media.created_by_user_id or attempt.created_by_user_id
-    if owner_id is not None:
-        existing = _find_reusable_file_media(db, owner_id, kind, fetched.sha256)
-        if existing is not None and existing.id != media_id:
-            library_entries.assign_libraries_for_media_in_current_transaction(
-                db,
-                owner_id,
-                existing.id,
-                _library_ids_from_payload(attempt.source_payload),
-            )
-            db.commit()
-            _delete_storage_object(storage_client, storage_path)
-            return {
-                "status": "deduped",
-                "media_id": str(existing.id),
-                "sha256": fetched.sha256,
-            }
-    media.file_sha256 = fetched.sha256
     media.canonical_source_url = normalize_url_for_display(fetched.final_url)
     media.updated_at = func.now()
     media_file = db.get(MediaFile, media_id)
@@ -2623,8 +2538,8 @@ def _upload_init_response(
     upload_url: str | None = None
     can_sign_upload = (
         media_file is not None
-        and media.file_sha256 is None
         and media.processing_status == ProcessingStatus.pending
+        and media.processing_started_at is None
         and attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED}
     )
     if can_sign_upload:

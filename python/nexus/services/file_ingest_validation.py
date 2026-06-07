@@ -1,7 +1,5 @@
 """Shared validation for PDF/EPUB file-ingest paths."""
 
-import hashlib
-
 from nexus.config import get_settings
 from nexus.db.models import MediaFile
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
@@ -51,8 +49,6 @@ def validate_file_source_integrity(
     storage_client,
     media_file: MediaFile,
     kind: str,
-    *,
-    expected_sha256: str | None = None,
 ) -> None:
     """Validate stored file bytes before retrying extraction."""
     settings = get_settings()
@@ -72,7 +68,6 @@ def validate_file_source_integrity(
 
     max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
     try:
-        hasher = hashlib.sha256()
         total_bytes = 0
         first_chunk = True
 
@@ -91,13 +86,6 @@ def validate_file_source_integrity(
                     ApiErrorCode.E_FILE_TOO_LARGE,
                     f"File size exceeds maximum {max_size} bytes for {kind}.",
                 )
-            hasher.update(chunk)
-
-        if expected_sha256 is not None and hasher.hexdigest() != expected_sha256:
-            raise InvalidRequestError(
-                ApiErrorCode.E_STORAGE_MISSING,
-                "Source integrity mismatch: stored hash does not match source bytes.",
-            )
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,

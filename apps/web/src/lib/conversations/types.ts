@@ -72,7 +72,6 @@ export interface MessageRetrieval {
   snippet_suffix?: string | null;
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
-  source_version?: string | null;
   citation_ordinal?: number | null;
   created_at?: string;
 }
@@ -140,7 +139,6 @@ export interface MessageRetrievalCandidateLedger {
   selection_reason: string;
   result_ref: MessageRetrievalResultRef;
   locator?: RetrievalLocator | null;
-  source_version?: string | null;
   created_at: string;
 }
 
@@ -159,7 +157,6 @@ export interface MessageRerankLedger {
 
 export interface MessageDocument {
   type: "message_document";
-  version: number;
   blocks: Array<
     | {
         type: "text";

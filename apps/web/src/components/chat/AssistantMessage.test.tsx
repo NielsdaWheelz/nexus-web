@@ -16,7 +16,6 @@ function assistantMessage(text = "Alpha beta gamma"): ConversationMessage {
     updated_at: "2026-06-03T00:00:00Z",
     message_document: {
       type: "message_document",
-      version: 1,
       blocks: [{ type: "text", format: "plain", text }],
     },
   };

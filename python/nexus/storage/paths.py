@@ -9,7 +9,7 @@ Path Invariants:
     - Media source artifact: media/{media_id}/source/{attempt_id}.{ext}
     - Upload staging: uploads/media/{media_id}/original.{ext}
     - EPUB asset: media/{media_id}/assets/{asset_key}
-    - Oracle plate: oracle/plates/{sha256}.{ext}
+    - Oracle plate: oracle/plates/{slug}.{ext}
 
 Rules:
     - No leading slash
@@ -99,10 +99,12 @@ def ext_for_content_type(content_type: str) -> str:
     return ext
 
 
-def build_oracle_plate_storage_path(sha256: str, ext: str) -> str:
-    """Build the content-addressed storage path for an oracle corpus plate."""
-    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        raise ValueError("oracle plate sha256 must be 64 lowercase hex chars")
+def build_oracle_plate_storage_path(slug: str, ext: str) -> str:
+    """Build the stable current storage path for an oracle corpus plate."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,191}", slug):
+        raise ValueError(
+            "oracle plate slug must be lowercase letters, numbers, dots, underscores, or hyphens"
+        )
     if ext not in set(PLATE_CONTENT_TYPE_TO_EXT.values()):
         raise ValueError("oracle plate ext must be jpg|png|webp")
-    return f"oracle/plates/{sha256}.{ext}"
+    return f"oracle/plates/{slug}.{ext}"

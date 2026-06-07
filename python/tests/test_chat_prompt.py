@@ -59,15 +59,10 @@ def test_prompt_plan_keeps_stable_prefix_before_dynamic_blocks():
         dynamic_system_blocks=[evidence],
         history_blocks=[],
         current_user_block=current,
-        cache_identity={"conversation_id": "c1", "provider": "openai"},
-        model_name="gpt-test",
-        max_tokens=100,
-        reasoning_effort="none",
     )
 
     assert [block.id for block in plan.turns[0].blocks] == ["system", "scope", "retrieval"]
     assert plan.cacheable_input_tokens_estimate == system.estimated_tokens + scope.estimated_tokens
-    assert plan.stable_prefix_hash
 
 
 def test_prompt_plan_manifest_contains_no_raw_text():
@@ -82,16 +77,13 @@ def test_prompt_plan_manifest_contains_no_raw_text():
         dynamic_system_blocks=[],
         history_blocks=[],
         current_user_block=current,
-        cache_identity={"conversation_id": "c1"},
-        model_name="gpt-test",
-        max_tokens=100,
-        reasoning_effort="none",
     )
 
     manifest = plan.manifest()
 
     assert "private user text" not in str(manifest)
-    assert manifest["provider_request_hash"] == plan.provider_request_hash
+    assert "stable_prefix_hash" not in manifest
+    assert "provider_request_hash" not in manifest
 
 
 def test_llm_request_is_derived_from_structured_turns():
@@ -106,10 +98,6 @@ def test_llm_request_is_derived_from_structured_turns():
         dynamic_system_blocks=[],
         history_blocks=[],
         current_user_block=current,
-        cache_identity={"conversation_id": "c1"},
-        model_name="gpt-test",
-        max_tokens=100,
-        reasoning_effort="none",
     )
 
     request = build_llm_request_from_plan(
@@ -121,7 +109,7 @@ def test_llm_request_is_derived_from_structured_turns():
     )
 
     assert request.messages[0].content == "Follow up"
-    assert request.prompt_cache_key == plan.stable_prefix_hash
+    assert request.prompt_cache_key is None
 
 
 def test_prompt_size_validation_fails():
@@ -136,10 +124,6 @@ def test_prompt_size_validation_fails():
         dynamic_system_blocks=[],
         history_blocks=[],
         current_user_block=current,
-        cache_identity={"conversation_id": "c1"},
-        model_name="gpt-test",
-        max_tokens=100,
-        reasoning_effort="none",
     )
 
     with pytest.raises(PromptTooLargeError) as exc_info:

@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
+import {
+  isDocumentProcessingTerminal,
+  requireDocumentProcessingStatus,
+  type DocumentProcessingStatus,
+} from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
 import type {
   TranscriptState,
@@ -10,7 +15,7 @@ import type {
 } from "@/lib/media/transcriptView";
 
 export interface MediaProcessingSnapshot {
-  processing_status: string;
+  processing_status: DocumentProcessingStatus;
   last_error_code?: string | null;
   failure_stage?: string | null;
   capabilities?: {
@@ -33,8 +38,6 @@ export interface MediaProcessingSnapshot {
 type MediaSSEEvent =
   | { type: "state"; data: MediaProcessingSnapshot }
   | { type: "done"; data: MediaProcessingSnapshot };
-
-const TERMINAL_STATUSES = new Set(["ready", "failed"]);
 
 function optionalString(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
@@ -59,26 +62,41 @@ function optionalTranscriptState(value: unknown): TranscriptState | undefined {
   return undefined;
 }
 
-function optionalTranscriptCoverage(value: unknown): TranscriptCoverage | undefined {
+function optionalTranscriptCoverage(
+  value: unknown,
+): TranscriptCoverage | undefined {
   if (value === undefined) return undefined;
-  if (value === null || value === "none" || value === "partial" || value === "full") {
+  if (
+    value === null ||
+    value === "none" ||
+    value === "partial" ||
+    value === "full"
+  ) {
     return value;
   }
   return undefined;
 }
 
-function requiredBoolean(record: Record<string, unknown>, key: string): boolean | null {
+function requiredBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | null {
   const value = record[key];
   return typeof value === "boolean" ? value : null;
 }
 
-function optionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
   const value = record[key];
   if (value === undefined) return undefined;
   return typeof value === "boolean" ? value : undefined;
 }
 
-function parseCapabilities(value: unknown): MediaProcessingSnapshot["capabilities"] {
+function parseCapabilities(
+  value: unknown,
+): MediaProcessingSnapshot["capabilities"] {
   if (value === undefined) return undefined;
   if (!isRecord(value)) return undefined;
   const canRead = requiredBoolean(value, "can_read");
@@ -98,10 +116,10 @@ function parseCapabilities(value: unknown): MediaProcessingSnapshot["capabilitie
     canSearch === null ||
     canPlay === null ||
     canDownloadFile === null ||
-    canDelete === undefined && "can_delete" in value ||
-    canRetry === undefined && "can_retry" in value ||
-    canRefreshSource === undefined && "can_refresh_source" in value ||
-    canRetryMetadata === undefined && "can_retry_metadata" in value
+    (canDelete === undefined && "can_delete" in value) ||
+    (canRetry === undefined && "can_retry" in value) ||
+    (canRefreshSource === undefined && "can_refresh_source" in value) ||
+    (canRetryMetadata === undefined && "can_retry_metadata" in value)
   ) {
     return undefined;
   }
@@ -114,12 +132,18 @@ function parseCapabilities(value: unknown): MediaProcessingSnapshot["capabilitie
     can_download_file: canDownloadFile,
     ...(canDelete !== undefined ? { can_delete: canDelete } : {}),
     ...(canRetry !== undefined ? { can_retry: canRetry } : {}),
-    ...(canRefreshSource !== undefined ? { can_refresh_source: canRefreshSource } : {}),
-    ...(canRetryMetadata !== undefined ? { can_retry_metadata: canRetryMetadata } : {}),
+    ...(canRefreshSource !== undefined
+      ? { can_refresh_source: canRefreshSource }
+      : {}),
+    ...(canRetryMetadata !== undefined
+      ? { can_retry_metadata: canRetryMetadata }
+      : {}),
   };
 }
 
-function parseMediaProcessingSnapshot(value: unknown): MediaProcessingSnapshot | null {
+function parseMediaProcessingSnapshot(
+  value: unknown,
+): MediaProcessingSnapshot | null {
   if (!isRecord(value)) return null;
   const processingStatus = value.processing_status;
   const updatedAt = value.updated_at;
@@ -127,25 +151,31 @@ function parseMediaProcessingSnapshot(value: unknown): MediaProcessingSnapshot |
   const failureStage = optionalString(value.failure_stage);
   const capabilities = parseCapabilities(value.capabilities);
   const transcriptState = optionalTranscriptState(value.transcript_state);
-  const transcriptCoverage = optionalTranscriptCoverage(value.transcript_coverage);
+  const transcriptCoverage = optionalTranscriptCoverage(
+    value.transcript_coverage,
+  );
   if (
     typeof processingStatus !== "string" ||
     typeof updatedAt !== "string" ||
     lastErrorCode === undefined ||
     failureStage === undefined ||
-    capabilities === undefined && "capabilities" in value ||
-    transcriptState === undefined && "transcript_state" in value ||
-    transcriptCoverage === undefined && "transcript_coverage" in value
+    (capabilities === undefined && "capabilities" in value) ||
+    (transcriptState === undefined && "transcript_state" in value) ||
+    (transcriptCoverage === undefined && "transcript_coverage" in value)
   ) {
     return null;
   }
   return {
-    processing_status: processingStatus,
+    processing_status: requireDocumentProcessingStatus(processingStatus),
     last_error_code: lastErrorCode,
     failure_stage: failureStage,
     ...(capabilities !== undefined ? { capabilities } : {}),
-    ...(transcriptState !== undefined ? { transcript_state: transcriptState } : {}),
-    ...(transcriptCoverage !== undefined ? { transcript_coverage: transcriptCoverage } : {}),
+    ...(transcriptState !== undefined
+      ? { transcript_state: transcriptState }
+      : {}),
+    ...(transcriptCoverage !== undefined
+      ? { transcript_coverage: transcriptCoverage }
+      : {}),
     updated_at: updatedAt,
   };
 }
@@ -164,7 +194,7 @@ function decodeMediaSSEEvent(type: string, data: unknown): MediaSSEEvent {
 /**
  * Subscribe to the FastAPI SSE stream that pushes `processing_status` (and
  * the surrounding capability/transcript/error fields) for one media row. The
- * stream self-terminates on a terminal status (`ready`, `failed`); the hook
+ * stream self-terminates on a terminal status (`ready_for_reading`, `failed`); the hook
  * does nothing when the initial status is already terminal. Every `state`
  * event carries the full snapshot, so reconnects are idempotent — no
  * Last-Event-ID tracking needed.
@@ -184,7 +214,7 @@ export function useMediaProcessingStatus(
     "connecting" | "open" | "error"
   >("connecting");
   const shouldStream =
-    mediaId !== null && !TERMINAL_STATUSES.has(initialStatus);
+    mediaId !== null && !isDocumentProcessingTerminal(initialStatus);
 
   useEffect(() => {
     if (!mediaId || !shouldStream) {

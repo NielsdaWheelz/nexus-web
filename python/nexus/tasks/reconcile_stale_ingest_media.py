@@ -17,7 +17,6 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
-    compute_embedding_config_hash,
     mark_content_index_failed,
     repair_ready_media_content_index_now,
 )
@@ -26,7 +25,6 @@ from nexus.services.media_processing_state import mark_failed
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
-    transcript_embedding_dimensions,
 )
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_storage_path, get_file_extension
@@ -90,7 +88,7 @@ def reconcile_stale_ingest_media_job(
     Also repairs semantic transcript backlog:
     - media_transcript_states.semantic_status in {pending, failed}
     - transcript_state in {ready, partial}
-    - active transcript version exists
+    - current transcript segments exist
     """
     settings = get_settings()
 
@@ -103,7 +101,6 @@ def reconcile_stale_ingest_media_job(
             .join(MediaFile, MediaFile.media_id == Media.id)
             .where(Media.processing_status == ProcessingStatus.pending)
             .where(Media.kind.in_(("pdf", "epub")))
-            .where(Media.file_sha256.is_(None))
             .where(
                 Media.created_at
                 < func.now()
@@ -225,7 +222,6 @@ def reconcile_stale_ingest_media_job(
                 WHERE (
                     (
                         mcis.status IN ('pending', 'failed')
-                        AND mcis.active_run_id IS NULL
                     )
                     OR (
                         mcis.status = 'indexing'
@@ -233,7 +229,7 @@ def reconcile_stale_ingest_media_job(
                     )
                   )
                   AND m.kind IN ('web_article', 'epub', 'pdf')
-                  AND m.processing_status IN ('ready_for_reading', 'embedding', 'ready')
+                  AND m.processing_status = 'ready_for_reading'
                 ORDER BY mcis.updated_at ASC, mcis.media_id ASC
                 LIMIT :limit
                 """
@@ -303,11 +299,7 @@ def reconcile_stale_ingest_media_job(
         semantic_failed = 0
         semantic_skipped = 0
         embedding_model = current_transcript_embedding_model()
-        embedding_version = embedding_model
         embedding_provider = current_transcript_embedding_provider()
-        embedding_config_hash = compute_embedding_config_hash(
-            embedding_provider, embedding_model, transcript_embedding_dimensions()
-        )
         semantic_candidates = db.execute(
             text(
                 """
@@ -317,9 +309,8 @@ def reconcile_stale_ingest_media_job(
                 WHERE m.kind = 'podcast_episode'
                   AND EXISTS (
                       SELECT 1
-                      FROM podcast_transcript_versions ptv
-                      WHERE ptv.media_id = mts.media_id
-                        AND ptv.is_active
+                      FROM podcast_transcript_segments pts
+                      WHERE pts.media_id = mts.media_id
                   )
                   AND mts.transcript_state IN ('ready', 'partial')
                   AND mts.transcript_coverage IN ('partial', 'full')
@@ -335,21 +326,10 @@ def reconcile_stale_ingest_media_job(
                               NOT EXISTS (
                                   SELECT 1
                                   FROM media_content_index_states mcis
-                                  JOIN source_snapshots ss ON ss.index_run_id = mcis.active_run_id
                                   WHERE mcis.media_id = mts.media_id
                                     AND mcis.status = 'ready'
                                     AND mcis.active_embedding_provider = :embedding_provider
                                     AND mcis.active_embedding_model = :embedding_model
-                                    AND mcis.active_embedding_version = :embedding_version
-                                    AND mcis.active_embedding_config_hash = :embedding_config_hash
-                                    AND ss.source_kind = 'transcript'
-                                    AND ss.metadata ->> 'transcript_version_id'
-                                        = (
-                                            SELECT ptv.id
-                                            FROM podcast_transcript_versions ptv
-                                            WHERE ptv.media_id = mts.media_id
-                                              AND ptv.is_active
-                                        )::text
                               )
                           )
                       )
@@ -363,8 +343,6 @@ def reconcile_stale_ingest_media_job(
                 "semantic_limit": int(settings.ingest_semantic_repair_batch_limit),
                 "embedding_provider": embedding_provider,
                 "embedding_model": embedding_model,
-                "embedding_version": embedding_version,
-                "embedding_config_hash": embedding_config_hash,
             },
         ).fetchall()
         semantic_scanned = len(semantic_candidates)

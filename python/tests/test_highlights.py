@@ -46,6 +46,7 @@ def create_media_and_fragment(
     session: Session,
     media_id: UUID | None = None,
     fragment_id: UUID | None = None,
+    kind: str = "web_article",
     processing_status: str = "ready_for_reading",
     canonical_text: str = FIXTURE_CANONICAL_TEXT,
     html_sanitized: str = FIXTURE_HTML_SANITIZED,
@@ -65,9 +66,9 @@ def create_media_and_fragment(
         session.execute(
             text("""
                 INSERT INTO media (id, kind, title, processing_status)
-                VALUES (:media_id, 'web_article', 'Test Article', :status)
+                VALUES (:media_id, :kind, 'Test Article', :status)
             """),
-            {"media_id": media_id, "status": processing_status},
+            {"media_id": media_id, "kind": kind, "status": processing_status},
         )
 
     fragment_exists = session.execute(
@@ -603,6 +604,46 @@ class TestMediaReadiness:
         assert create_resp.status_code == 409
         assert create_resp.json()["error"]["code"] == "E_MEDIA_NOT_READY"
 
+    def test_transcript_ready_media_allows_fragment_highlight_when_source_status_pending(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(
+                session,
+                kind="podcast_episode",
+                processing_status="pending",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status
+                    )
+                    VALUES (:media_id, 'ready', 'full', 'none')
+                """),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        create_resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+
+        assert create_resp.status_code == 201
+
     def test_media_not_ready_allows_list_get_delete(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -804,7 +845,6 @@ class TestLinkedHighlightNotes:
         update_note_resp = auth_client.patch(
             f"/notes/blocks/{note['id']}",
             json={
-                "base_revision": note["revision"],
                 "body_pm_json": {
                     "type": "paragraph",
                     "content": [{"type": "text", "text": "Updated note"}],
@@ -819,7 +859,6 @@ class TestLinkedHighlightNotes:
             "DELETE",
             f"/notes/blocks/{note['id']}",
             headers=auth_headers(user_id),
-            json={"base_revision": update_note_resp.json()["data"]["revision"]},
         )
         assert delete_note_resp.status_code == 204
 

@@ -111,7 +111,6 @@ function seededMedia() {
     processing_status: "failed",
     last_error_code: "E_TEST",
     retrieval_status: "ready",
-    source_version: "source:v1",
     contributors: [],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

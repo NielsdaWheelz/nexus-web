@@ -84,7 +84,6 @@ class WebSearchCitation:
         return locator
 
     def to_json(self) -> dict[str, Any]:
-        source_version = f"web_search:{self.provider}:{self.provider_request_id or self.result_ref}"
         return {
             "type": "web_result",
             "id": self.result_ref,
@@ -103,7 +102,6 @@ class WebSearchCitation:
             "rank": self.rank,
             "provider": self.provider,
             "provider_request_id": self.provider_request_id,
-            "source_version": source_version,
             "context_ref": {"type": "web_result", "id": self.result_ref},
             "media_id": None,
             "media_kind": None,
@@ -384,8 +382,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             snippet_suffix = NULL,
             locator = :locator,
             retrieval_status = :retrieval_status,
-            included_in_prompt = :included_in_prompt,
-            source_version = :source_version
+            included_in_prompt = :included_in_prompt
         WHERE id = :retrieval_id
         """
     ).bindparams(
@@ -410,8 +407,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             exact_snippet,
             locator,
             retrieval_status,
-            included_in_prompt,
-            source_version
+            included_in_prompt
         )
         VALUES (
             :tool_call_id,
@@ -428,8 +424,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             :exact_snippet,
             :locator,
             :retrieval_status,
-            :included_in_prompt,
-            :source_version
+            :included_in_prompt
         )
         RETURNING id
         """
@@ -452,8 +447,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             selection_status,
             selection_reason,
             result_ref,
-            locator,
-            source_version
+            locator
         )
         VALUES (
             :tool_call_id,
@@ -467,8 +461,7 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             :selection_status,
             :selection_reason,
             :result_ref,
-            :locator,
-            :source_version
+            :locator
         )
         """
     ).bindparams(
@@ -482,9 +475,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         score = 1.0 / max(citation.rank, 1)
         result_ref = retrieval_result_ref_json(citation.to_json())
         locator = citation.locator_json()
-        source_version = (
-            f"web_search:{citation.provider}:{citation.provider_request_id or citation.result_ref}"
-        )
         retrieval_payload = {
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,
@@ -502,7 +492,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             "locator": locator,
             "retrieval_status": "web_result",
             "included_in_prompt": False,
-            "source_version": source_version,
         }
         existing_retrieval = db.execute(select_retrieval, retrieval_payload).first()
         if existing_retrieval is None:
@@ -524,7 +513,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "selection_reason": "within_context_budget" if selected else "below_selected_limit",
                 "result_ref": result_ref,
                 "locator": locator,
-                "source_version": source_version,
             },
         )
         persisted_count = ordinal + 1

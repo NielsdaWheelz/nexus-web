@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -15,7 +14,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.services.pdf_ingest import TEXT_EXTRACT_VERSION
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -25,37 +23,12 @@ from nexus.services.semantic_chunks import (
 )
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from nexus.services.web_article_structure import (
-    WebArticleIndexBlockSpec,
     add_heading_anchors,
     build_web_article_index_blocks,
-    source_version_for_web_article,
 )
 
-CHUNKER_VERSION = "block_token_v2"
 CHUNK_MAX_TOKENS = 420
 CHUNK_OVERLAP_TOKENS = 60
-
-
-def compute_embedding_config_hash(provider: str, model: str, dimensions: int) -> str:
-    """The single definition of the embedding-config hash. Changing the separator,
-    field order, or chunker version touches exactly one site, so repair-vs-rebuild
-    decisions can never silently desynchronize."""
-    return hashlib.sha256(f"{provider}:{model}:{dimensions}:{CHUNKER_VERSION}".encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class SourceSnapshotSpec:
-    artifact_kind: str
-    artifact_ref: str
-    content_type: str
-    byte_length: int
-    source_fingerprint: str
-    content_sha256: str
-    source_version: str
-    extractor_version: str
-    parent_snapshot_id: UUID | None
-    language: str | None
-    metadata: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -76,7 +49,7 @@ class IndexableBlock:
 
 @dataclass(frozen=True)
 class ContentIndexResult:
-    run_id: UUID
+    media_id: UUID
     status: str
     chunk_count: int
 
@@ -86,21 +59,14 @@ def rebuild_media_content_index(
     *,
     media_id: UUID,
     source_kind: str,
-    source_snapshot: SourceSnapshotSpec,
     blocks: list[IndexableBlock],
     reason: str,
 ) -> ContentIndexResult:
-    run_started_at = datetime.now(UTC)
-    _validate_source_snapshot(source_snapshot)
     _validate_blocks(media_id=media_id, source_kind=source_kind, blocks=blocks)
 
     embedding_model = current_transcript_embedding_model()
     embedding_dimensions = transcript_embedding_dimensions()
     embedding_provider = current_transcript_embedding_provider()
-    embedding_version = embedding_model
-    embedding_config_hash = compute_embedding_config_hash(
-        embedding_provider, embedding_model, embedding_dimensions
-    )
 
     text_blocks = [block for block in blocks if block.canonical_text.strip()]
     chunks: list[list[tuple[IndexableBlock, int, int, int]]] = []
@@ -155,153 +121,16 @@ def rebuild_media_content_index(
         text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
         {"media_id": media_id},
     ).scalar_one()
-    previous_row = (
-        db.execute(
-            text(
-                """
-                SELECT
-                    active_run.id AS active_run_id,
-                    active_run.started_at AS active_started_at
-                FROM media_content_index_states mcis
-                LEFT JOIN content_index_runs active_run
-                  ON active_run.id = mcis.active_run_id
-                 AND active_run.state = 'ready'
-                 AND active_run.deactivated_at IS NULL
-                WHERE mcis.media_id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
+    delete_media_content_index(db, media_id=media_id)
+    _set_index_state(
+        db,
+        media_id=media_id,
+        status="indexing",
+        status_reason=reason,
+        embedding_provider=None,
+        embedding_model=None,
+        now=now,
     )
-    previous_run_id = previous_row["active_run_id"] if previous_row is not None else None
-    previous_started_at = previous_row["active_started_at"] if previous_row is not None else None
-    active_run_is_newer = (
-        previous_run_id is not None
-        and previous_started_at is not None
-        and previous_started_at > run_started_at
-    )
-
-    run_id = db.execute(
-        text(
-            """
-            INSERT INTO content_index_runs (
-                media_id,
-                state,
-                source_version,
-                extractor_version,
-                chunker_version,
-                embedding_provider,
-                embedding_model,
-                embedding_version,
-                embedding_config_hash,
-                started_at,
-                created_at
-            )
-            VALUES (
-                :media_id,
-                'indexing',
-                :source_version,
-                :extractor_version,
-                :chunker_version,
-                :embedding_provider,
-                :embedding_model,
-                :embedding_version,
-                :embedding_config_hash,
-                :started_at,
-                :now
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "source_version": source_snapshot.source_version,
-            "extractor_version": source_snapshot.extractor_version,
-            "chunker_version": CHUNKER_VERSION,
-            "embedding_provider": embedding_provider,
-            "embedding_model": embedding_model,
-            "embedding_version": embedding_version,
-            "embedding_config_hash": embedding_config_hash,
-            "started_at": run_started_at,
-            "now": now,
-        },
-    ).scalar_one()
-
-    if not active_run_is_newer:
-        _set_index_state(
-            db,
-            media_id=media_id,
-            latest_run_id=run_id,
-            active_run_id=previous_run_id,
-            status="indexing",
-            status_reason=reason,
-            embedding_provider=None,
-            embedding_model=None,
-            embedding_version=None,
-            embedding_config_hash=None,
-            now=now,
-        )
-
-    snapshot_id = db.execute(
-        text(
-            """
-            INSERT INTO source_snapshots (
-                media_id,
-                index_run_id,
-                source_kind,
-                artifact_kind,
-                artifact_ref,
-                content_type,
-                byte_length,
-                source_fingerprint,
-                source_version,
-                extractor_version,
-                content_sha256,
-                parent_snapshot_id,
-                language,
-                metadata,
-                created_at
-            )
-            VALUES (
-                :media_id,
-                :index_run_id,
-                :source_kind,
-                :artifact_kind,
-                :artifact_ref,
-                :content_type,
-                :byte_length,
-                :source_fingerprint,
-                :source_version,
-                :extractor_version,
-                :content_sha256,
-                :parent_snapshot_id,
-                :language,
-                CAST(:metadata AS jsonb),
-                :now
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "index_run_id": run_id,
-            "source_kind": source_kind,
-            "artifact_kind": source_snapshot.artifact_kind,
-            "artifact_ref": source_snapshot.artifact_ref,
-            "content_type": source_snapshot.content_type,
-            "byte_length": source_snapshot.byte_length,
-            "source_fingerprint": source_snapshot.source_fingerprint,
-            "source_version": source_snapshot.source_version,
-            "extractor_version": source_snapshot.extractor_version,
-            "content_sha256": source_snapshot.content_sha256,
-            "parent_snapshot_id": source_snapshot.parent_snapshot_id,
-            "language": source_snapshot.language,
-            "metadata": json.dumps(source_snapshot.metadata),
-            "now": now,
-        },
-    ).scalar_one()
 
     block_ids_by_idx: dict[int, UUID] = {}
     for expected_idx, block in enumerate(blocks):
@@ -310,12 +139,9 @@ def rebuild_media_content_index(
                 """
                 INSERT INTO content_blocks (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     block_idx,
                     block_kind,
                     canonical_text,
-                    text_sha256,
                     extraction_confidence,
                     source_start_offset,
                     source_end_offset,
@@ -328,12 +154,9 @@ def rebuild_media_content_index(
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :block_idx,
                     :block_kind,
                     :canonical_text,
-                    :text_sha256,
                     :extraction_confidence,
                     :source_start_offset,
                     :source_end_offset,
@@ -349,12 +172,9 @@ def rebuild_media_content_index(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": run_id,
-                "source_snapshot_id": snapshot_id,
                 "block_idx": block.block_idx,
                 "block_kind": block.block_kind,
                 "canonical_text": block.canonical_text,
-                "text_sha256": _sha256(block.canonical_text),
                 "extraction_confidence": block.extraction_confidence,
                 "source_start_offset": block.source_start_offset,
                 "source_end_offset": block.source_end_offset,
@@ -368,59 +188,16 @@ def rebuild_media_content_index(
         block_ids_by_idx[expected_idx] = block_id
 
     if not text_blocks:
-        if previous_run_id is not None and not active_run_is_newer:
-            db.execute(
-                text(
-                    """
-                    UPDATE content_index_runs
-                    SET deactivated_at = :now, superseded_by_run_id = :run_id
-                    WHERE id = :previous_run_id
-                      AND deactivated_at IS NULL
-                    """
-                ),
-                {"previous_run_id": previous_run_id, "run_id": run_id, "now": now},
-            )
-        db.execute(
-            text(
-                """
-                UPDATE content_index_runs
-                SET state = 'no_text', finished_at = :now
-                WHERE id = :run_id
-                """
-            ),
-            {"run_id": run_id, "now": now},
+        _set_index_state(
+            db,
+            media_id=media_id,
+            status="no_text",
+            status_reason="no_text",
+            embedding_provider=None,
+            embedding_model=None,
+            now=now,
         )
-        if active_run_is_newer:
-            db.execute(
-                text(
-                    """
-                    UPDATE content_index_runs
-                    SET deactivated_at = :now, superseded_by_run_id = :previous_run_id
-                    WHERE id = :run_id
-                    """
-                ),
-                {"run_id": run_id, "previous_run_id": previous_run_id, "now": now},
-            )
-        else:
-            _set_index_state(
-                db,
-                media_id=media_id,
-                latest_run_id=run_id,
-                active_run_id=None,
-                status="no_text",
-                status_reason="no_text",
-                embedding_provider=None,
-                embedding_model=None,
-                embedding_version=None,
-                embedding_config_hash=None,
-                now=now,
-            )
-        return ContentIndexResult(run_id=run_id, status="no_text", chunk_count=0)
-
-    db.execute(
-        text("UPDATE content_index_runs SET state = 'embedding' WHERE id = :run_id"),
-        {"run_id": run_id},
-    )
+        return ContentIndexResult(media_id=media_id, status="no_text", chunk_count=0)
 
     for chunk_idx, (chunk_parts, chunk_text, summary_locator, embedding) in enumerate(
         zip(chunks, chunk_texts, chunk_locators, embeddings, strict=True)
@@ -435,14 +212,11 @@ def rebuild_media_content_index(
                 """
                 INSERT INTO evidence_spans (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
                     end_block_offset,
                     span_text,
-                    span_sha256,
                     selector,
                     citation_label,
                     resolver_kind,
@@ -450,14 +224,11 @@ def rebuild_media_content_index(
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :start_block_id,
                     :end_block_id,
                     :start_block_offset,
                     :end_offset,
                     :span_text,
-                    :span_sha256,
                     CAST(:selector AS jsonb),
                     :citation_label,
                     :resolver_kind,
@@ -468,14 +239,11 @@ def rebuild_media_content_index(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": run_id,
-                "source_snapshot_id": snapshot_id,
                 "start_block_id": first_block_id,
                 "end_block_id": last_block_id,
                 "start_block_offset": first_start,
                 "end_offset": last_end,
                 "span_text": chunk_text,
-                "span_sha256": _sha256(chunk_text),
                 "selector": json.dumps(summary_locator),
                 "citation_label": citation_label,
                 "resolver_kind": _resolver_kind(source_kind),
@@ -488,14 +256,10 @@ def rebuild_media_content_index(
                 """
                 INSERT INTO content_chunks (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     primary_evidence_span_id,
                     chunk_idx,
                     source_kind,
                     chunk_text,
-                    chunk_sha256,
-                    chunker_version,
                     token_count,
                     heading_path,
                     summary_locator,
@@ -503,14 +267,10 @@ def rebuild_media_content_index(
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :evidence_span_id,
                     :chunk_idx,
                     :source_kind,
                     :chunk_text,
-                    :chunk_sha256,
-                    :chunker_version,
                     :token_count,
                     CAST(:heading_path AS jsonb),
                     CAST(:summary_locator AS jsonb),
@@ -521,14 +281,10 @@ def rebuild_media_content_index(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": run_id,
-                "source_snapshot_id": snapshot_id,
                 "evidence_span_id": evidence_span_id,
                 "chunk_idx": chunk_idx,
                 "source_kind": source_kind,
                 "chunk_text": chunk_text,
-                "chunk_sha256": _sha256(chunk_text),
-                "chunker_version": CHUNKER_VERSION,
                 "token_count": sum(int(part[3]) for part in chunk_parts),
                 "heading_path": json.dumps(list(first_block.heading_path)),
                 "summary_locator": json.dumps(summary_locator),
@@ -594,22 +350,16 @@ def rebuild_media_content_index(
                     chunk_id,
                     embedding_provider,
                     embedding_model,
-                    embedding_version,
-                    embedding_config_hash,
                     embedding_dimensions,
                     embedding_vector,
-                    embedding_sha256,
                     created_at
                 )
                 VALUES (
                     :chunk_id,
                     :embedding_provider,
                     :embedding_model,
-                    :embedding_version,
-                    :embedding_config_hash,
                     :embedding_dimensions,
                     CAST(:embedding_vector AS vector({embedding_dimensions})),
-                    :embedding_sha256,
                     :now
                 )
                 """
@@ -618,64 +368,22 @@ def rebuild_media_content_index(
                 "chunk_id": chunk_id,
                 "embedding_provider": embedding_provider,
                 "embedding_model": embedding_model,
-                "embedding_version": embedding_version,
-                "embedding_config_hash": embedding_config_hash,
                 "embedding_dimensions": embedding_dimensions,
                 "embedding_vector": to_pgvector_literal(embedding),
-                "embedding_sha256": _sha256(to_pgvector_literal(embedding)),
                 "now": now,
             },
         )
 
-    db.execute(
-        text(
-            """
-            UPDATE content_index_runs
-            SET state = 'ready',
-                finished_at = :now,
-                activated_at = CASE WHEN :active_run_is_newer THEN activated_at ELSE :now END,
-                deactivated_at = CASE WHEN :active_run_is_newer THEN :now ELSE deactivated_at END,
-                superseded_by_run_id = CASE
-                    WHEN :active_run_is_newer THEN :previous_run_id
-                    ELSE superseded_by_run_id
-                END
-            WHERE id = :run_id
-            """
-        ),
-        {
-            "run_id": run_id,
-            "previous_run_id": previous_run_id,
-            "active_run_is_newer": active_run_is_newer,
-            "now": now,
-        },
+    _set_index_state(
+        db,
+        media_id=media_id,
+        status="ready",
+        status_reason=reason,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        now=now,
     )
-    if previous_run_id is not None and not active_run_is_newer:
-        db.execute(
-            text(
-                """
-                UPDATE content_index_runs
-                SET deactivated_at = :now, superseded_by_run_id = :run_id
-                WHERE id = :previous_run_id
-                  AND deactivated_at IS NULL
-                """
-            ),
-            {"previous_run_id": previous_run_id, "run_id": run_id, "now": now},
-        )
-    if not active_run_is_newer:
-        _set_index_state(
-            db,
-            media_id=media_id,
-            latest_run_id=run_id,
-            active_run_id=run_id,
-            status="ready",
-            status_reason=reason,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            embedding_version=embedding_version,
-            embedding_config_hash=embedding_config_hash,
-            now=now,
-        )
-    return ContentIndexResult(run_id=run_id, status="ready", chunk_count=len(chunks))
+    return ContentIndexResult(media_id=media_id, status="ready", chunk_count=len(chunks))
 
 
 def rebuild_fragment_content_index(
@@ -683,7 +391,6 @@ def rebuild_fragment_content_index(
     *,
     media_id: UUID,
     source_kind: str,
-    artifact_ref: str,
     fragments: list[Any],
     reason: str,
     language: str | None = None,
@@ -721,12 +428,9 @@ def rebuild_fragment_content_index(
             }
 
     blocks: list[IndexableBlock] = []
-    joined_text_parts: list[str] = []
-    web_specs: list[WebArticleIndexBlockSpec] = []
     source_offset = 0
     for fragment in sorted(fragments, key=lambda item: int(item.idx)):
         fragment_text = str(fragment.canonical_text or "")
-        joined_text_parts.append(fragment_text)
         source_base = source_offset
         if source_kind == "web_article":
             html_sanitized = add_heading_anchors(
@@ -757,7 +461,6 @@ def rebuild_fragment_content_index(
                 locator: dict[str, object] = {
                     "type": "web_text_offsets",
                     "kind": "web_text",
-                    "version": 2,
                     "fragment_id": str(fragment.id),
                     "fragment_idx": int(fragment.idx),
                     "start_offset": spec.start_offset,
@@ -798,7 +501,6 @@ def rebuild_fragment_content_index(
                         metadata=metadata,
                     )
                 )
-                web_specs.append(spec)
             source_offset += len(fragment_text) + 2
             continue
 
@@ -823,7 +525,6 @@ def rebuild_fragment_content_index(
             locator_kind = "epub_text" if source_kind == "epub" else "web_text"
             locator: dict[str, object] = {
                 "kind": locator_kind,
-                "version": 1,
                 "fragment_id": str(fragment.id),
                 "fragment_idx": int(fragment.idx),
                 "start_offset": start_offset,
@@ -851,32 +552,10 @@ def rebuild_fragment_content_index(
             )
         source_offset += len(fragment_text) + 2
 
-    joined_text = "\n\n".join(joined_text_parts)
-    source_version = (
-        source_version_for_web_article(joined_text_parts, web_specs)
-        if source_kind == "web_article"
-        else "fragments_v1"
-    )
-    extractor_version = (
-        "web_article_structure_v1" if source_kind == "web_article" else "fragment_blocks_v1"
-    )
     return rebuild_media_content_index(
         db,
         media_id=media_id,
         source_kind=source_kind,
-        source_snapshot=SourceSnapshotSpec(
-            artifact_kind="html" if source_kind == "web_article" else "xhtml",
-            artifact_ref=artifact_ref,
-            content_type=("text/html" if source_kind == "web_article" else "application/xhtml+xml"),
-            byte_length=len(joined_text.encode("utf-8")),
-            content_sha256=_sha256(joined_text),
-            source_version=source_version,
-            extractor_version=extractor_version,
-            source_fingerprint=f"sha256:{_sha256(joined_text)}",
-            parent_snapshot_id=None,
-            language=language,
-            metadata={},
-        ),
         blocks=blocks,
         reason=reason,
     )
@@ -886,12 +565,10 @@ def rebuild_transcript_content_index(
     db: Session,
     *,
     media_id: UUID,
-    transcript_version_id: UUID,
     transcript_segments: Sequence[TranscriptSegmentInput],
     reason: str,
 ) -> ContentIndexResult:
     blocks: list[IndexableBlock] = []
-    joined_text_parts: list[str] = []
     source_offset = 0
     for segment in transcript_segments:
         text_value = segment.canonical_text.strip()
@@ -901,13 +578,10 @@ def rebuild_transcript_content_index(
             continue
         if t_end_ms <= t_start_ms:
             continue
-        if joined_text_parts:
+        if blocks:
             source_offset += 2
-        joined_text_parts.append(text_value)
         locator = {
             "kind": "transcript_time_text",
-            "version": 1,
-            "transcript_version_id": str(transcript_version_id),
             "t_start_ms": t_start_ms,
             "t_end_ms": t_end_ms,
             "text_quote": {
@@ -934,36 +608,10 @@ def rebuild_transcript_content_index(
         )
         source_offset += len(text_value)
 
-    joined_text = "\n\n".join(joined_text_parts)
     return rebuild_media_content_index(
         db,
         media_id=media_id,
         source_kind="transcript",
-        source_snapshot=SourceSnapshotSpec(
-            artifact_kind="transcript_json",
-            artifact_ref=f"podcast_transcript_versions:{transcript_version_id}",
-            content_type="application/json",
-            byte_length=len(
-                json.dumps(
-                    [
-                        {
-                            "text": segment.canonical_text,
-                            "t_start_ms": segment.t_start_ms,
-                            "t_end_ms": segment.t_end_ms,
-                            "speaker_label": segment.speaker_label,
-                        }
-                        for segment in transcript_segments
-                    ]
-                ).encode("utf-8")
-            ),
-            content_sha256=_sha256(joined_text),
-            source_version="podcast_transcript_segments_v1",
-            extractor_version="podcast_transcript_v1",
-            source_fingerprint=f"sha256:{_sha256(joined_text)}",
-            parent_snapshot_id=None,
-            language=None,
-            metadata={"transcript_version_id": str(transcript_version_id)},
-        ),
         blocks=blocks,
         reason=reason,
     )
@@ -982,13 +630,23 @@ def repair_ready_media_content_index_now(
                    m.language,
                    m.plain_text,
                    m.page_count,
-                   m.file_sha256,
                    mf.storage_path
             FROM media m
             LEFT JOIN media_file mf ON mf.media_id = m.id
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
             WHERE m.id = :media_id
-              AND m.processing_status IN ('ready_for_reading', 'embedding', 'ready')
               AND m.kind IN ('web_article', 'epub', 'pdf', 'podcast_episode')
+              AND (
+                  (
+                      m.kind IN ('web_article', 'epub', 'pdf')
+                      AND m.processing_status = 'ready_for_reading'
+                  )
+                  OR (
+                      m.kind = 'podcast_episode'
+                      AND mts.transcript_state IN ('ready', 'partial')
+                      AND mts.transcript_coverage IN ('partial', 'full')
+                  )
+              )
             """
         ),
         {"media_id": media_id},
@@ -1009,14 +667,10 @@ def repair_ready_media_content_index_now(
             ),
             {"media_id": media_id},
         ).fetchall()
-        artifact_ref = f"fragments:{fragments[0][0]}" if fragments else f"fragments:{media_id}"
-        if source_kind == "epub" and row[5]:
-            artifact_ref = str(row[5])
         return rebuild_fragment_content_index(
             db,
             media_id=media_id,
             source_kind=source_kind,
-            artifact_ref=artifact_ref,
             fragments=list(fragments),
             reason=reason,
             language=row[1],
@@ -1030,7 +684,6 @@ def repair_ready_media_content_index_now(
         media_id=media_id,
         plain_text=str(row[2] or ""),
         page_count=int(row[3] or 0),
-        file_sha256=str(row[4]) if row[4] else None,
         reason=reason,
     )
 
@@ -1041,22 +694,25 @@ def _repair_ready_transcript_content_index(
     media_id: UUID,
     reason: str,
 ) -> ContentIndexResult | None:
-    version_id = db.execute(
+    has_transcript = db.execute(
         text(
             """
-            SELECT ptv.id
+            SELECT 1
             FROM media_transcript_states mts
-            JOIN podcast_transcript_versions ptv
-              ON ptv.media_id = mts.media_id AND ptv.is_active
             WHERE mts.media_id = :media_id
               AND mts.transcript_state IN ('ready', 'partial')
               AND mts.transcript_coverage IN ('partial', 'full')
+              AND EXISTS (
+                  SELECT 1
+                  FROM podcast_transcript_segments pts
+                  WHERE pts.media_id = mts.media_id
+              )
             LIMIT 1
             """
         ),
         {"media_id": media_id},
     ).scalar()
-    if version_id is None:
+    if has_transcript is None:
         return None
 
     rows = db.execute(
@@ -1065,11 +721,10 @@ def _repair_ready_transcript_content_index(
             SELECT canonical_text, t_start_ms, t_end_ms, speaker_label
             FROM podcast_transcript_segments
             WHERE media_id = :media_id
-              AND transcript_version_id = :version_id
             ORDER BY segment_idx ASC
             """
         ),
-        {"media_id": media_id, "version_id": version_id},
+        {"media_id": media_id},
     ).fetchall()
     # Rows arrive ordered by segment_idx ASC; enumerate restores the contiguous
     # 0..N-1 index the dataclass contract carries.
@@ -1086,7 +741,6 @@ def _repair_ready_transcript_content_index(
     return rebuild_transcript_content_index(
         db,
         media_id=media_id,
-        transcript_version_id=version_id,
         transcript_segments=segments,
         reason=reason,
     )
@@ -1098,10 +752,8 @@ def _repair_ready_pdf_content_index(
     media_id: UUID,
     plain_text: str,
     page_count: int,
-    file_sha256: str | None,
     reason: str,
 ) -> ContentIndexResult:
-    source_fingerprint = f"sha256:{file_sha256}" if file_sha256 else f"media:{media_id}"
     page_rows = db.execute(
         text(
             """
@@ -1123,55 +775,86 @@ def _repair_ready_pdf_content_index(
     if not page_rows and plain_text:
         page_rows = [(1, 0, len(plain_text), None, None, None, None)]
 
+    blocks = build_pdf_indexable_blocks(
+        media_id=media_id,
+        plain_text=plain_text,
+        page_spans=page_rows,
+    )
+
+    return rebuild_media_content_index(
+        db,
+        media_id=media_id,
+        source_kind="pdf",
+        blocks=blocks,
+        reason=reason,
+    )
+
+
+def build_pdf_indexable_blocks(
+    *,
+    media_id: UUID,
+    plain_text: str,
+    page_spans: Sequence[Any],
+    extraction_method: str | None = None,
+    ocr_confidence: float | None = None,
+) -> list[IndexableBlock]:
+    """Build the single current PDF evidence JSON shape."""
+
     blocks: list[IndexableBlock] = []
-    for (
-        page_number,
-        start_offset,
-        end_offset,
-        page_label,
-        page_width,
-        page_height,
-        page_rotation_degrees,
-    ) in page_rows:
-        start = max(0, int(start_offset))
-        end = max(start, int(end_offset))
+    for page_span in page_spans:
+        page_number = _pdf_span_required_int(page_span, "page_number")
+        start = _pdf_span_required_int(page_span, "start_offset")
+        end = _pdf_span_required_int(page_span, "end_offset")
+        if page_number < 1:
+            raise ValueError("PDF page span page_number must be positive")
+        if start < 0 or end < start:
+            raise ValueError("PDF page span offsets are invalid")
         page_text = plain_text[start:end]
+        page_label_value = _field(page_span, "page_label", None)
+        page_label = str(page_label_value) if page_label_value else None
         locator = {
             "kind": "pdf_text",
-            "version": 1,
-            "source_fingerprint": source_fingerprint,
-            "page_number": int(page_number),
-            "physical_page_number": int(page_number),
-            "page_label": str(page_label) if page_label else None,
+            "page_number": page_number,
+            "physical_page_number": page_number,
+            "page_label": page_label,
             "plain_text_start_offset": start,
             "plain_text_end_offset": end,
             "page_text_start_offset": 0,
             "page_text_end_offset": len(page_text),
             "text_quote": _text_quote(plain_text, start, end),
         }
-        if page_width and page_height:
+        page_width = _pdf_span_positive_number_or_none(page_span, "page_width")
+        page_height = _pdf_span_positive_number_or_none(page_span, "page_height")
+        if page_width is not None and page_height is not None:
             locator["geometry"] = {
-                "version": 1,
                 "coordinate_space": "pdf_points",
-                "page_width": float(page_width),
-                "page_height": float(page_height),
-                "page_rotation_degrees": int(page_rotation_degrees or 0),
+                "page_width": page_width,
+                "page_height": page_height,
+                "page_rotation_degrees": _pdf_span_optional_non_negative_int(
+                    page_span,
+                    "page_rotation_degrees",
+                    default=0,
+                ),
                 "page_box": "crop",
                 "quads": [],
             }
         selector = {
             "kind": "pdf_text_quote",
-            "version": 1,
-            "source_fingerprint": source_fingerprint,
-            "page_number": int(page_number),
-            "physical_page_number": int(page_number),
-            "page_label": str(page_label) if page_label else None,
+            "page_number": page_number,
+            "physical_page_number": page_number,
+            "page_label": page_label,
             "plain_text_start_offset": start,
             "plain_text_end_offset": end,
             "page_text_start_offset": 0,
             "page_text_end_offset": len(page_text),
             "text_quote": _text_quote(plain_text, start, end),
         }
+        metadata: dict[str, object] = {
+            "page_number": page_number,
+            "page_label": page_label,
+        }
+        if extraction_method is not None:
+            metadata["extraction_method"] = extraction_method
         blocks.append(
             IndexableBlock(
                 media_id=media_id,
@@ -1179,48 +862,16 @@ def _repair_ready_pdf_content_index(
                 block_idx=len(blocks),
                 block_kind="pdf_text_block",
                 canonical_text=page_text,
-                extraction_confidence=None,
+                extraction_confidence=ocr_confidence,
                 source_start_offset=start,
                 source_end_offset=end,
                 locator=locator,
                 selector=selector,
-                heading_path=(f"p. {page_label or int(page_number)}",),
-                metadata={
-                    "source_fingerprint": source_fingerprint,
-                    "page_number": int(page_number),
-                    "page_label": str(page_label) if page_label else None,
-                },
+                heading_path=(f"p. {page_label or page_number}",),
+                metadata=metadata,
             )
         )
-
-    text_bytes = plain_text.encode("utf-8")
-    return rebuild_media_content_index(
-        db,
-        media_id=media_id,
-        source_kind="pdf",
-        source_snapshot=SourceSnapshotSpec(
-            artifact_kind="pdf_text",
-            artifact_ref=f"media:{media_id}:pdf_text",
-            content_type="text/plain",
-            byte_length=len(text_bytes),
-            content_sha256=_sha256(plain_text),
-            source_version=f"pdf_text_v{TEXT_EXTRACT_VERSION}",
-            extractor_version=f"pymupdf_text_v{TEXT_EXTRACT_VERSION}",
-            source_fingerprint=source_fingerprint,
-            parent_snapshot_id=None,
-            language=None,
-            metadata={
-                "page_count": page_count,
-                "source_fingerprint": source_fingerprint,
-                "has_text": bool(plain_text.strip()),
-                "ocr_required": not bool(plain_text.strip()),
-                "source_byte_length": None,
-                "text_extract_version": TEXT_EXTRACT_VERSION,
-            },
-        ),
-        blocks=blocks,
-        reason=reason,
-    )
+    return blocks
 
 
 def mark_content_index_failed(
@@ -1231,101 +882,27 @@ def mark_content_index_failed(
     failure_message: str,
 ) -> None:
     now = datetime.now(UTC)
-    active_run_id = db.execute(
-        text(
-            """
-            SELECT mcis.active_run_id
-            FROM media_content_index_states mcis
-            JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
-            WHERE mcis.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar()
-    latest_failed_run_id = db.execute(
-        text(
-            """
-            SELECT id
-            FROM content_index_runs
-            WHERE media_id = :media_id
-              AND (finished_at IS NULL OR state = 'failed')
-            ORDER BY
-                CASE WHEN finished_at IS NULL THEN 0 ELSE 1 END,
-                created_at DESC,
-                id DESC
-            LIMIT 1
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar()
-    db.execute(
-        text(
-            """
-            UPDATE content_index_runs
-            SET state = 'failed',
-                finished_at = :now,
-                failure_code = :failure_code,
-                failure_message = :failure_message
-            WHERE media_id = :media_id
-              AND finished_at IS NULL
-            """
-        ),
-        {
-            "media_id": media_id,
-            "failure_code": failure_code,
-            "failure_message": failure_message,
-            "now": now,
-        },
-    )
     _set_index_state(
         db,
         media_id=media_id,
-        latest_run_id=latest_failed_run_id,
-        active_run_id=active_run_id,
-        status="ready" if active_run_id is not None else "failed",
-        status_reason=failure_message,
+        status="failed",
+        status_reason=f"{failure_code}: {failure_message}"[:1000],
         embedding_provider=None,
         embedding_model=None,
-        embedding_version=None,
-        embedding_config_hash=None,
-        clear_active_embedding=active_run_id is None,
         now=now,
     )
 
 
 def deactivate_media_content_index(db: Session, *, media_id: UUID, reason: str) -> None:
     now = datetime.now(UTC)
-    active_run_id = db.execute(
-        text("SELECT active_run_id FROM media_content_index_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    ).scalar()
-    if active_run_id is not None:
-        db.execute(
-            text(
-                """
-                UPDATE content_index_runs
-                SET deactivated_at = :now
-                WHERE id = :active_run_id
-                  AND deactivated_at IS NULL
-                """
-            ),
-            {"active_run_id": active_run_id, "now": now},
-        )
+    delete_media_content_index(db, media_id=media_id)
     _set_index_state(
         db,
         media_id=media_id,
-        latest_run_id=None,
-        active_run_id=None,
         status="pending",
         status_reason=reason,
         embedding_provider=None,
         embedding_model=None,
-        embedding_version=None,
-        embedding_config_hash=None,
-        clear_active_embedding=True,
         now=now,
     )
 
@@ -1396,42 +973,21 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
     db.execute(
         text("DELETE FROM content_blocks WHERE media_id = :media_id"), {"media_id": media_id}
     )
-    db.execute(
-        text("DELETE FROM source_snapshots WHERE media_id = :media_id"), {"media_id": media_id}
-    )
-    db.execute(
-        text("DELETE FROM content_index_runs WHERE media_id = :media_id"), {"media_id": media_id}
-    )
 
 
 def _set_index_state(
     db: Session,
     *,
     media_id: UUID,
-    latest_run_id: UUID | None,
-    active_run_id: UUID | None,
     status: str,
     status_reason: str | None,
     embedding_provider: str | None,
     embedding_model: str | None,
-    embedding_version: str | None,
-    embedding_config_hash: str | None,
     now: datetime,
-    clear_active_embedding: bool = False,
 ) -> None:
-    if active_run_id is None or clear_active_embedding:
+    if status != "ready":
         embedding_provider = None
         embedding_model = None
-        embedding_version = None
-        embedding_config_hash = None
-    preserve_active_embedding = (
-        active_run_id is not None
-        and not clear_active_embedding
-        and embedding_provider is None
-        and embedding_model is None
-        and embedding_version is None
-        and embedding_config_hash is None
-    )
     exists = db.execute(
         text("SELECT 1 FROM media_content_index_states WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -1441,41 +997,20 @@ def _set_index_state(
             text(
                 """
                 UPDATE media_content_index_states
-                SET active_run_id = :active_run_id,
-                    latest_run_id = COALESCE(:latest_run_id, latest_run_id),
-                    status = :status,
+                SET status = :status,
                     status_reason = :status_reason,
-                    active_embedding_provider = CASE
-                        WHEN :preserve_active_embedding THEN active_embedding_provider
-                        ELSE :embedding_provider
-                    END,
-                    active_embedding_model = CASE
-                        WHEN :preserve_active_embedding THEN active_embedding_model
-                        ELSE :embedding_model
-                    END,
-                    active_embedding_version = CASE
-                        WHEN :preserve_active_embedding THEN active_embedding_version
-                        ELSE :embedding_version
-                    END,
-                    active_embedding_config_hash = CASE
-                        WHEN :preserve_active_embedding THEN active_embedding_config_hash
-                        ELSE :embedding_config_hash
-                    END,
+                    active_embedding_provider = :embedding_provider,
+                    active_embedding_model = :embedding_model,
                     updated_at = :now
                 WHERE media_id = :media_id
                 """
             ),
             {
                 "media_id": media_id,
-                "active_run_id": active_run_id,
-                "latest_run_id": latest_run_id,
                 "status": status,
                 "status_reason": status_reason,
                 "embedding_provider": embedding_provider,
                 "embedding_model": embedding_model,
-                "embedding_version": embedding_version,
-                "embedding_config_hash": embedding_config_hash,
-                "preserve_active_embedding": preserve_active_embedding,
                 "now": now,
             },
         )
@@ -1486,27 +1021,19 @@ def _set_index_state(
             """
             INSERT INTO media_content_index_states (
                 media_id,
-                active_run_id,
-                latest_run_id,
                 status,
                 status_reason,
                 active_embedding_provider,
                 active_embedding_model,
-                active_embedding_version,
-                active_embedding_config_hash,
                 updated_at,
                 created_at
             )
             VALUES (
                 :media_id,
-                :active_run_id,
-                :latest_run_id,
                 :status,
                 :status_reason,
                 :embedding_provider,
                 :embedding_model,
-                :embedding_version,
-                :embedding_config_hash,
                 :now,
                 :now
             )
@@ -1514,38 +1041,13 @@ def _set_index_state(
         ),
         {
             "media_id": media_id,
-            "active_run_id": active_run_id,
-            "latest_run_id": latest_run_id,
             "status": status,
             "status_reason": status_reason,
             "embedding_provider": embedding_provider,
             "embedding_model": embedding_model,
-            "embedding_version": embedding_version,
-            "embedding_config_hash": embedding_config_hash,
             "now": now,
         },
     )
-
-
-def _validate_source_snapshot(source_snapshot: SourceSnapshotSpec) -> None:
-    if not source_snapshot.artifact_kind.strip():
-        raise ValueError("SourceSnapshotSpec artifact_kind is required")
-    if not source_snapshot.artifact_ref.strip():
-        raise ValueError("SourceSnapshotSpec artifact_ref is required")
-    if not source_snapshot.content_type.strip():
-        raise ValueError("SourceSnapshotSpec content_type is required")
-    if source_snapshot.byte_length < 0:
-        raise ValueError("SourceSnapshotSpec byte_length is invalid")
-    if not source_snapshot.source_fingerprint.strip():
-        raise ValueError("SourceSnapshotSpec source_fingerprint is required")
-    if not re.fullmatch(r"[0-9a-f]{64}", source_snapshot.content_sha256):
-        raise ValueError("SourceSnapshotSpec content_sha256 is invalid")
-    if not source_snapshot.source_version.strip():
-        raise ValueError("SourceSnapshotSpec source_version is required")
-    if not source_snapshot.extractor_version.strip():
-        raise ValueError("SourceSnapshotSpec extractor_version is required")
-    if not isinstance(source_snapshot.metadata, dict):
-        raise ValueError("SourceSnapshotSpec metadata must be an object")
 
 
 def _validate_blocks(
@@ -1611,9 +1113,6 @@ def _validate_selector(
         raise ValueError(f"{context} text_quote exact does not match text")
 
     kind = selector.get("kind")
-    version = selector.get("version")
-    if not _is_int(version) or int(version) < 1:
-        raise ValueError(f"{context} version is invalid")
 
     if source_kind == "web_article":
         if kind != "web_text":
@@ -1673,9 +1172,6 @@ def _validate_pdf_selector(
     *,
     context: str,
 ) -> None:
-    source_fingerprint = selector.get("source_fingerprint")
-    if not isinstance(source_fingerprint, str) or not source_fingerprint.strip():
-        raise ValueError(f"{context} source_fingerprint is required")
     page_number = selector.get("page_number")
     physical_page_number = selector.get("physical_page_number")
     if not _is_int(page_number) or page_number < 1:
@@ -1711,9 +1207,6 @@ def _validate_pdf_selector(
 def _validate_pdf_geometry(value: object, *, context: str) -> None:
     if not isinstance(value, dict):
         raise ValueError(f"{context} geometry must be an object")
-    version = value.get("version")
-    if not _is_int(version) or version < 1:
-        raise ValueError(f"{context} geometry version is invalid")
     if value.get("coordinate_space") != "pdf_points":
         raise ValueError(f"{context} geometry coordinate_space is invalid")
     page_width = value.get("page_width")
@@ -1735,13 +1228,6 @@ def _validate_pdf_geometry(value: object, *, context: str) -> None:
 
 
 def _validate_transcript_selector(selector: dict[str, object], *, context: str) -> None:
-    raw_version_id = selector.get("transcript_version_id")
-    if not isinstance(raw_version_id, str):
-        raise ValueError(f"{context} transcript_version_id is required")
-    try:
-        UUID(raw_version_id)
-    except ValueError:
-        raise ValueError(f"{context} transcript_version_id is invalid") from None
     t_start_ms = selector.get("t_start_ms")
     t_end_ms = selector.get("t_end_ms")
     if not _is_int(t_start_ms) or not _is_int(t_end_ms):
@@ -1800,11 +1286,9 @@ def _same_locator_anchor(left: IndexableBlock, right: IndexableBlock) -> bool:
     if left_kind == "pdf_text":
         return left.locator.get("page_number") == right.locator.get("page_number")
     if left_kind == "transcript_time_text":
-        return (
-            left.locator.get("transcript_version_id") == right.locator.get("transcript_version_id")
-            and left.locator.get("t_start_ms") == right.locator.get("t_start_ms")
-            and left.locator.get("t_end_ms") == right.locator.get("t_end_ms")
-        )
+        return left.locator.get("t_start_ms") == right.locator.get(
+            "t_start_ms"
+        ) and left.locator.get("t_end_ms") == right.locator.get("t_end_ms")
     raise ValueError(f"Unsupported locator kind: {left_kind}")
 
 
@@ -1908,8 +1392,56 @@ def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str
     }
 
 
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _field(value: Any, name: str, default: object) -> object:
+    if isinstance(value, dict):
+        return value.get(name, default)
+    if hasattr(value, name):
+        return getattr(value, name)
+    try:
+        if name == "page_number":
+            return value[0]
+        if name == "start_offset":
+            return value[1]
+        if name == "end_offset":
+            return value[2]
+        if name == "page_label":
+            return value[3]
+        if name == "page_width":
+            return value[4]
+        if name == "page_height":
+            return value[5]
+        if name == "page_rotation_degrees":
+            return value[6]
+    except (IndexError, TypeError):
+        return default
+    return default
+
+
+def _pdf_span_required_int(value: Any, name: str) -> int:
+    raw = _field(value, name, None)
+    if _is_int(raw):
+        return raw
+    raise ValueError(f"PDF page span {name} must be an integer")
+
+
+def _pdf_span_optional_non_negative_int(value: Any, name: str, *, default: int) -> int:
+    raw = _field(value, name, None)
+    if raw is None:
+        return default
+    if not _is_int(raw):
+        raise ValueError(f"PDF page span {name} must be an integer")
+    if raw < 0:
+        raise ValueError(f"PDF page span {name} must be non-negative")
+    return raw
+
+
+def _pdf_span_positive_number_or_none(value: Any, name: str) -> float | None:
+    raw = _field(value, name, None)
+    if raw is None:
+        return None
+    if _is_positive_number(raw):
+        return float(raw)
+    raise ValueError(f"PDF page span {name} must be a positive number")
 
 
 def _resolver_kind(source_kind: str) -> str:

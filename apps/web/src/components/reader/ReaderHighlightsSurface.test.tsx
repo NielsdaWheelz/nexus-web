@@ -13,14 +13,13 @@ vi.mock("@/components/notes/HighlightNoteEditor", () => ({
     onSave,
   }: {
     highlightId: string;
-    note: { note_block_id: string; body_text?: string; revision: number } | null;
+    note: { note_block_id: string; body_text?: string } | null;
     onSave: (
       highlightId: string,
       noteBlockId: string | null,
       createBlockId: string,
       bodyPmJson: Record<string, unknown>,
-      baseRevision: number | null,
-    ) => Promise<{ note_block_id: string; body_text: string; revision: number }>;
+    ) => Promise<{ note_block_id: string; body_text: string }>;
   }) {
     const noteBlockId = note?.note_block_id ?? null;
     const createBlockId = noteBlockId ?? `${highlightId}-draft-block`;
@@ -42,7 +41,6 @@ vi.mock("@/components/notes/HighlightNoteEditor", () => ({
               noteBlockId,
               createBlockId,
               { type: "paragraph" },
-              note?.revision ?? null,
             );
           }}
         >
@@ -171,7 +169,6 @@ function ReaderHighlightsSurfaceHarness({
           onNoteSave={async (_highlightId, _noteBlockId, createBlockId) => ({
             note_block_id: createBlockId,
             body_text: "",
-            revision: 1,
           })}
           onNoteDelete={async () => {}}
           onOpenConversation={onOpenConversation}
@@ -192,7 +189,6 @@ function StableNoteKeyHarness({
     noteBlockId: string | null,
     createBlockId: string,
     bodyPmJson: Record<string, unknown>,
-    baseRevision: number | null,
   ) => Promise<void>;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -245,15 +241,13 @@ function StableNoteKeyHarness({
             noteBlockId,
             createBlockId,
             bodyPmJson,
-            baseRevision,
           ) => {
-            await onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson, baseRevision);
+            await onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson);
             const linkedNoteBlock = {
               note_block_id: createBlockId,
               body_pm_json: bodyPmJson,
               body_markdown: "saved",
               body_text: "saved",
-              revision: 1,
             };
             setLinkedNoteBlocks([linkedNoteBlock]);
             return linkedNoteBlock;

@@ -250,7 +250,6 @@ describe("ReaderOverviewRuler", () => {
                 {
                   note_block_id: "n1",
                   body_text: "A note about the highlight",
-                  revision: 1,
                 },
               ],
             }),
@@ -284,7 +283,7 @@ describe("ReaderOverviewRuler", () => {
             highlight: highlight("h2", {
               exact: "Second clustered",
               linked_note_blocks: [
-                { note_block_id: "n2", body_text: "Hidden note", revision: 1 },
+                { note_block_id: "n2", body_text: "Hidden note" },
               ],
             }),
             position: 0.5 + gapFraction,

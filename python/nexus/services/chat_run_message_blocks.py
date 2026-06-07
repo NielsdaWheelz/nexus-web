@@ -15,7 +15,6 @@ def message_document(role: str, content: str) -> dict[str, object]:
     text_value = content.strip()
     return {
         "type": "message_document",
-        "version": 1,
         "blocks": []
         if not text_value
         else [
@@ -76,7 +75,6 @@ def _retrieval_result_blocks_for_message(
                    mr.locator,
                    mr.retrieval_status,
                    mr.included_in_prompt,
-                   mr.source_version,
                    mr.created_at,
                    mr.citation_ordinal
             FROM message_retrievals mr
@@ -112,9 +110,8 @@ def _retrieval_result_blocks_for_message(
                 "locator": row[17],
                 "retrieval_status": row[18],
                 "included_in_prompt": bool(row[19]),
-                "source_version": row[20],
-                "created_at": row[21].isoformat() if row[21] is not None else None,
-                "citation_ordinal": row[22],
+                "created_at": row[20].isoformat() if row[20] is not None else None,
+                "citation_ordinal": row[21],
             }
         )
     return blocks

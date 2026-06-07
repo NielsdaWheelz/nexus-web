@@ -14,7 +14,6 @@ describe("toChatSSEEvent", () => {
     citation_label: null,
     context_ref: { type: "highlight", id: "highlight-1" },
     evidence_span_id: null,
-    source_version: "fragment:fragment-1:v1",
     locator: {
       type: "web_text_offsets",
       media_id: "media-1",
@@ -100,6 +99,31 @@ describe("toChatSSEEvent", () => {
             retrieval_id: "retrieval-1",
             tool_call_id: "tool-1",
             ordinal: 0,
+          },
+        ],
+      }),
+    ).toThrow("Invalid SSE payload for citation_index");
+  });
+
+  it("rejects citation index payloads with legacy identity fields", () => {
+    expect(() =>
+      toChatSSEEvent("citation_index", {
+        assistant_message_id: "msg-1",
+        source_version: "old-source:v1",
+        entries: [],
+      }),
+    ).toThrow("Invalid SSE payload for citation_index");
+
+    expect(() =>
+      toChatSSEEvent("citation_index", {
+        assistant_message_id: "msg-1",
+        entries: [
+          {
+            n: 1,
+            retrieval_id: "retrieval-1",
+            tool_call_id: "tool-1",
+            ordinal: 0,
+            transcript_version_id: "transcript-version-1",
           },
         ],
       }),

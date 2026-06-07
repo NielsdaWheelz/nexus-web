@@ -120,9 +120,8 @@ test("@real-media owner can refresh and delete real-media documents", async ({
       artifactPath: disposablePdfPath,
       filename: "svms-real-media-delete-fresh.pdf",
       mimeType: "application/pdf",
-      expectedSha256: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sha256,
+      expectedSizeBytes: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sizeBytes,
       seededMediaId: seed.fixtures.pdf.media_id,
-      seededSha256: seed.fixtures.pdf.artifact_sha256,
       artifactSalt: "reingest-delete-pdf",
     });
     deletedMediaId = deletedUpload.media_id;

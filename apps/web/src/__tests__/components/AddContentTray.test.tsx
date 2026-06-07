@@ -66,7 +66,6 @@ describe("AddContentTray", () => {
             id: "page-new",
             title: "Untitled",
             description: null,
-            revision: 1,
             blocks: [],
           },
         });
@@ -83,7 +82,6 @@ describe("AddContentTray", () => {
             body_markdown: "captured text",
             body_text: "captured text",
             collapsed: false,
-            revision: 1,
             children: [],
           },
         });

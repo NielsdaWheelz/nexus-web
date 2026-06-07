@@ -36,7 +36,6 @@ interface ApiKey {
   id: string | null;
   provider: string;
   provider_display_name: string;
-  fingerprint: string | null;
   key_fingerprint: string | null;
   status: ApiKeyStatus;
   created_at: string | null;
@@ -259,8 +258,7 @@ export default function SettingsKeysPaneBody() {
           );
           const isEditing = editing?.provider === key.provider;
           const isBusy = busyProvider === key.provider;
-          const rawFingerprint = key.key_fingerprint ?? key.fingerprint;
-          const fingerprint = rawFingerprint ? `...${rawFingerprint}` : "Not connected";
+          const fingerprint = key.key_fingerprint ? `...${key.key_fingerprint}` : "Not connected";
           const label = providerLabel(key.provider, key);
 
           return (

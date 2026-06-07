@@ -84,7 +84,6 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     replacement_trace = assert_reingest_replacement_trace(
         direct_db,
         media_id=media_id,
-        old_run_id=UUID(first_evidence_trace["active_run_id"]),
         old_chunk_id=UUID(first_search_trace["result_id"]),
         old_evidence_span_id=UUID(first_search_trace["evidence_span_id"]),
     )

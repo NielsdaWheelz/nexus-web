@@ -9,7 +9,6 @@ of the contract under test.
 
 from __future__ import annotations
 
-import hashlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -55,66 +54,24 @@ pytestmark = pytest.mark.integration
 def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> UUID:
     """Create an evidence_span anchored to a media for resolver tests.
 
-    Wires up the minimum block/source_snapshot/index_run scaffolding so the
-    span's FKs satisfy the schema. Resolver only reads ``span_text``,
-    ``citation_label``, and ``media_id`` via the join.
+    Wires up the minimum current content block so the span's FKs satisfy the
+    schema. Resolver only reads ``span_text``, ``citation_label``, and
+    ``media_id`` via the join.
     """
     from sqlalchemy import text as sql_text
 
-    index_run_id = db.execute(
-        sql_text(
-            """
-            INSERT INTO content_index_runs (
-                id, media_id, state, source_version, extractor_version, chunker_version,
-                embedding_provider, embedding_model, embedding_version, embedding_config_hash,
-                started_at, finished_at, activated_at
-            )
-            VALUES (
-                gen_random_uuid(), :media_id, 'ready', 'v1', '0', '0', 'test', 'test', '0',
-                'h', now(), now(), now()
-            )
-            RETURNING id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one()
-    source_snapshot_id = db.execute(
-        sql_text(
-            """
-            INSERT INTO source_snapshots (
-                id, media_id, index_run_id, source_kind, artifact_kind, artifact_ref,
-                content_type, byte_length, source_fingerprint, source_version,
-                extractor_version, content_sha256, metadata
-            )
-            VALUES (
-                gen_random_uuid(), :media_id, :index_run_id, 'web_article', 'html',
-                :artifact_ref, 'text/html', :byte_length, :source_fingerprint, 'v1',
-                '0', :content_sha256, '{}'::jsonb
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "index_run_id": index_run_id,
-            "artifact_ref": f"resolver-test:{media_id}",
-            "byte_length": len(text.encode("utf-8")),
-            "source_fingerprint": f"resolver-test:{uuid4()}",
-            "content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        },
-    ).scalar_one()
     block_id = db.execute(
         sql_text(
             """
             INSERT INTO content_blocks (
-                media_id, index_run_id, source_snapshot_id, block_idx, block_kind,
-                canonical_text, text_sha256, extraction_confidence,
+                media_id, block_idx, block_kind,
+                canonical_text, extraction_confidence,
                 source_start_offset, source_end_offset,
                 heading_path, locator, selector, metadata
             )
             VALUES (
-                :media_id, :index_run_id, :source_snapshot_id, 0, 'paragraph',
-                :canonical_text, :text_sha256, 1.0, 0, :source_end_offset,
+                :media_id, 0, 'paragraph',
+                :canonical_text, 1.0, 0, :source_end_offset,
                 '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
             )
             RETURNING id
@@ -122,24 +79,18 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
         ),
         {
             "media_id": media_id,
-            "index_run_id": index_run_id,
-            "source_snapshot_id": source_snapshot_id,
             "canonical_text": text,
-            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "source_end_offset": len(text),
         },
     ).scalar_one()
     span = EvidenceSpan(
         id=uuid4(),
         media_id=media_id,
-        index_run_id=index_run_id,
-        source_snapshot_id=source_snapshot_id,
         start_block_id=block_id,
         end_block_id=block_id,
         start_block_offset=0,
         end_block_offset=len(text),
         span_text=text,
-        span_sha256=hashlib.sha256(f"span:{text}".encode()).hexdigest(),
         selector={},
         citation_label="excerpt",
         resolver_kind="web",
@@ -246,7 +197,7 @@ def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "
         id=uuid4(),
         kind=MediaKind.pdf.value,
         title=title,
-        processing_status=ProcessingStatus.ready,
+        processing_status=ProcessingStatus.ready_for_reading,
         plain_text=plain_text,
         page_count=len(pages),
     )
@@ -259,7 +210,6 @@ def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "
                 page_number=page_number,
                 start_offset=start,
                 end_offset=end,
-                text_extract_version=1,
             )
         )
     add_media_to_library(db, library_id, media.id)

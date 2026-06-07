@@ -530,9 +530,10 @@ There must be no third source-retry API and no source-specific retry route.
 - `pending`: durable item accepted, no source attempt has started,
 - `extracting`: source acquisition or materialization is running,
 - `ready_for_reading`: source materialized for document reading,
-- `embedding`: source readable, search/indexing still progressing,
-- `ready`: all applicable processing complete,
 - `failed`: source acquisition/materialization failed.
+
+Search and embedding readiness live in `media_content_index_states`, not
+`media.processing_status`.
 
 `failure_stage` uses existing values:
 
@@ -577,9 +578,10 @@ After acquisition:
 - X sets provider ID to `author-thread:<x_author_id>:<conversation_id>`,
 - X quote-post children use `post:<post_id>`,
 - YouTube sets provider ID to the video ID and canonical watch URL,
-- remote files set `file_sha256` after bytes are available,
+- remote files keep their current accepted source reference and storage object,
 - generic web articles set canonical URL after redirects,
-- PDF/EPUB upload/capture sets `file_sha256` after bytes are available.
+- PDF/EPUB upload/capture publishes the current stored file object without a
+  file-hash identity.
 
 If materialization resolves to an existing canonical media item:
 
@@ -593,6 +595,11 @@ If materialization resolves to an existing canonical media item:
 No runtime compatibility branch may recognize old X provider IDs such as raw
 post IDs or `thread:<post_id>`. Existing rows must be repaired by migration or a
 one-time operator command.
+
+File byte hashes are not canonical identity in the current-only artifact model.
+The hard cutover in `current-only-artifacts-hard-cutover.md` removed
+`file_sha256` identity and upload dedupe; byte validation is size/signature
+validation only.
 
 ## Capability Contract
 
@@ -707,9 +714,9 @@ capabilities.
 
 ### Search and Reader
 
-Search and reader surfaces depend on fragments, transcript versions, PDF text, or
-EPUB nav artifacts. Failed source attempts may not have readable artifacts. They
-must render as failed media, not as missing media.
+Search and reader surfaces depend on fragments, current transcript rows, PDF
+text, or EPUB nav artifacts. Failed source attempts may not have readable
+artifacts. They must render as failed media, not as missing media.
 
 ### Storage
 

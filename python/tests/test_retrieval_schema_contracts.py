@@ -29,7 +29,6 @@ def test_media_evidence_response_accepts_current_resolver_payload():
                 "media_id": media_id,
                 "citation_label": "Source",
                 "span_text": "Exact evidence",
-                "source_version": "test-source:v1",
                 "resolver": {
                     "kind": "web",
                     "route": f"/media/{media_id}",
@@ -40,7 +39,6 @@ def test_media_evidence_response_accepts_current_resolver_payload():
                     "status": "resolved",
                     "selector": {
                         "kind": "fragment_offsets",
-                        "version": 1,
                         "fragment_id": fragment_id,
                         "start_offset": 0,
                         "end_offset": 14,
@@ -184,28 +182,23 @@ def _app_result_ref(
             {
                 "source_kind": "web_article",
                 "citation_label": "p. 1",
-                "source_version": "content_chunk:v1",
                 "locator": locator or _web_offsets_locator(),
             }
         )
     if result_type == "fragment":
         payload.update(
             {
-                "source_version": "fragment:v1",
                 "locator": locator or _web_offsets_locator(),
             }
         )
     if result_type == "contributor":
         payload["contributor_handle"] = "ada-lovelace"
-    if result_type == "page":
-        payload["source_version"] = "page:v1"
     if result_type == "note_block":
         payload.update(
             {
                 "page_id": str(uuid4()),
                 "page_title": "Page",
                 "body_text": "Note body",
-                "source_version": "note_block:v1",
                 "locator": locator or _note_block_locator(),
             }
         )
@@ -214,7 +207,6 @@ def _app_result_ref(
             {
                 "color": "yellow",
                 "exact": "Exact highlighted quote",
-                "source_version": "highlight:v1",
                 "locator": locator or _web_offsets_locator(),
             }
         )
@@ -223,7 +215,6 @@ def _app_result_ref(
             {
                 "conversation_id": str(uuid4()),
                 "seq": 1,
-                "source_version": "message:v1",
                 "locator": locator or _message_locator(),
             }
         )
@@ -350,6 +341,36 @@ def test_retrieval_locator_json_accepts_documented_variants_and_rejects_unknown(
             {
                 "type": "transcript_time_range",
                 "media_id": str(uuid4()),
+                "transcript_version_id": str(uuid4()),
+                "t_start_ms": 100,
+                "t_end_ms": 200,
+            }
+        )
+    with pytest.raises(ValidationError):
+        retrieval_locator_json(
+            {
+                "type": "audio_time_range",
+                "media_id": str(uuid4()),
+                "transcript_version_id": str(uuid4()),
+                "t_start_ms": 100,
+                "t_end_ms": 200,
+            }
+        )
+    with pytest.raises(ValidationError):
+        retrieval_locator_json(
+            {
+                "type": "video_time_range",
+                "media_id": str(uuid4()),
+                "transcript_version_id": str(uuid4()),
+                "t_start_ms": 100,
+                "t_end_ms": 200,
+            }
+        )
+    with pytest.raises(ValidationError):
+        retrieval_locator_json(
+            {
+                "type": "transcript_time_range",
+                "media_id": str(uuid4()),
                 "t_start_ms": 200,
                 "t_end_ms": 100,
             }
@@ -385,19 +406,15 @@ def test_retrieval_ref_json_rejects_unknown_variant():
         ("message", _message_locator()),
     ],
 )
-def test_retrieval_ref_json_requires_locatable_app_refs_to_carry_source_version_and_locator(
+def test_retrieval_ref_json_requires_locatable_app_refs_to_carry_locator(
     result_type: str,
     locator: dict[str, object],
 ):
     valid_ref = _app_result_ref(result_type, locator)
 
-    assert retrieval_result_ref_json(valid_ref)["source_version"] == valid_ref["source_version"]
+    assert "source_version" not in retrieval_result_ref_json(valid_ref)
     with pytest.raises(ValidationError):
-        retrieval_result_ref_json(
-            {key: value for key, value in valid_ref.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json({**valid_ref, "source_version": ""})
+        retrieval_result_ref_json({**valid_ref, "source_version": "legacy:v1"})
     with pytest.raises(ValidationError):
         retrieval_result_ref_json(
             {key: value for key, value in valid_ref.items() if key != "locator"}
@@ -445,7 +462,7 @@ def test_retrieval_ref_json_rejects_cross_variant_app_fields():
         )
 
 
-def test_retrieval_ref_json_requires_page_refs_to_carry_source_version():
+def test_retrieval_ref_json_rejects_page_source_version():
     page_id = str(uuid4())
     valid_ref = {
         "type": "page",
@@ -456,18 +473,39 @@ def test_retrieval_ref_json_requires_page_refs_to_carry_source_version():
         "snippet": "Page body",
         "deep_link": f"/notes/pages/{page_id}",
         "context_ref": {"type": "page", "id": page_id},
-        "source_version": "page:v1",
     }
 
-    assert retrieval_result_ref_json(valid_ref)["source_version"] == "page:v1"
+    assert "source_version" not in retrieval_result_ref_json(valid_ref)
     with pytest.raises(ValidationError):
-        retrieval_result_ref_json(
-            {key: value for key, value in valid_ref.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json({**valid_ref, "source_version": ""})
+        retrieval_result_ref_json({**valid_ref, "source_version": "page:v1"})
     with pytest.raises(ValidationError):
         retrieval_result_ref_json({**valid_ref, "locator": _web_offsets_locator()})
+
+
+def test_retrieval_ref_json_rejects_web_result_source_version():
+    result_id = "web:example"
+    valid_ref = {
+        "type": "web_result",
+        "id": result_id,
+        "result_type": "web_result",
+        "source_id": result_id,
+        "result_ref": result_id,
+        "title": "External source",
+        "url": "https://example.test/source",
+        "snippet": "External source snippet",
+        "deep_link": "https://example.test/source",
+        "context_ref": {"type": "web_result", "id": result_id},
+        "locator": _external_url_locator(),
+        "score": 0.8,
+        "selected": True,
+    }
+
+    serialized = retrieval_result_ref_json(valid_ref)
+
+    assert serialized["type"] == "web_result"
+    assert "source_version" not in serialized
+    with pytest.raises(ValidationError):
+        retrieval_result_ref_json({**valid_ref, "source_version": "web:v1"})
 
 
 def test_retrieval_ref_json_requires_media_context_for_episode_and_video_results():
@@ -552,15 +590,14 @@ def test_message_retrieval_out_rejects_extra_keys_and_ref_drift():
         "score": 0.8,
         "selected": True,
         "locator": result_ref["locator"],
-        "source_version": result_ref["source_version"],
         "created_at": "2026-01-01T00:00:00Z",
     }
 
-    assert MessageRetrievalOut.model_validate(payload).source_version == "message:v1"
+    assert not hasattr(MessageRetrievalOut.model_validate(payload), "source_version")
     with pytest.raises(ValidationError):
         MessageRetrievalOut.model_validate({**payload, "unexpected_field": {}})
     with pytest.raises(ValidationError):
-        MessageRetrievalOut.model_validate({**payload, "source_version": "other:v1"})
+        MessageRetrievalOut.model_validate({**payload, "source_version": "message:v1"})
     with pytest.raises(ValidationError):
         MessageRetrievalOut.model_validate({**payload, "locator": None})
     with pytest.raises(ValidationError):
@@ -606,7 +643,6 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
         {
             **_search_base("content_chunk"),
             "source_kind": "web_article",
-            "source_version": "chunk:v1",
             "evidence_span_ids": [str(uuid4())],
             "source": _search_source(),
             "citation_label": "p. 1",
@@ -615,7 +651,6 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
         {
             **_search_base("fragment"),
             "source": _search_source(),
-            "source_version": "fragment:v1",
             "locator": _web_offsets_locator(),
         },
         {
@@ -623,7 +658,6 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
             "color": "yellow",
             "exact": "Exact highlighted quote",
             "source": _search_source(),
-            "source_version": "highlight:v1",
             "locator": _web_offsets_locator(),
         },
         {
@@ -631,28 +665,24 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
             "page_id": str(uuid4()),
             "page_title": "Page",
             "body_text": "Note body",
-            "source_version": "note-block:v1",
             "locator": _note_block_locator(),
         },
         {
             **_search_base("message"),
             "conversation_id": str(uuid4()),
             "seq": 1,
-            "source_version": "message:v1",
             "locator": _message_locator(),
         },
     ],
 )
-def test_search_result_out_requires_source_version_and_locator_for_locatable_rows(
+def test_search_result_out_requires_locator_for_locatable_rows(
     payload: dict[str, object],
 ):
-    assert SEARCH_RESULT_ADAPTER.validate_python(payload).type == payload["type"]
+    result = SEARCH_RESULT_ADAPTER.validate_python(payload)
+    assert result.type == payload["type"]
+    assert "source_version" not in result.model_dump(mode="json")
     with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python(
-            {key: value for key, value in payload.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": ""})
+        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": "legacy:v1"})
     with pytest.raises(ValidationError):
         SEARCH_RESULT_ADAPTER.validate_python(
             {key: value for key, value in payload.items() if key != "locator"}
@@ -666,7 +696,6 @@ def test_search_result_out_requires_source_version_and_locator_for_locatable_row
             {
                 **_search_base("content_chunk"),
                 "source_kind": "web_article",
-                "source_version": "chunk:v1",
                 "source": _search_source(),
                 "citation_label": "p. 1",
                 "locator": _web_offsets_locator(),
@@ -679,7 +708,6 @@ def test_search_result_out_requires_source_version_and_locator_for_locatable_row
                 "page_id": str(uuid4()),
                 "page_title": "Page",
                 "body_text": "Note body",
-                "source_version": "note-block:v1",
                 "locator": _note_block_locator(),
             },
             _web_offsets_locator(),
@@ -689,7 +717,6 @@ def test_search_result_out_requires_source_version_and_locator_for_locatable_row
                 **_search_base("message"),
                 "conversation_id": str(uuid4()),
                 "seq": 1,
-                "source_version": "message:v1",
                 "locator": _message_locator(),
             },
             _web_offsets_locator(),
@@ -705,20 +732,17 @@ def test_search_result_out_rejects_locator_type_drift(
         SEARCH_RESULT_ADAPTER.validate_python({**payload, "locator": invalid_locator})
 
 
-def test_search_result_out_requires_page_source_version():
+def test_search_result_out_rejects_page_source_version():
     payload = {
         **_search_base("page"),
         "description": "Page description",
-        "source_version": "page:v1",
     }
 
-    assert SEARCH_RESULT_ADAPTER.validate_python(payload).type == "page"
+    result = SEARCH_RESULT_ADAPTER.validate_python(payload)
+    assert result.type == "page"
+    assert "source_version" not in result.model_dump(mode="json")
     with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python(
-            {key: value for key, value in payload.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": ""})
+        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": "page:v1"})
 
 
 def test_search_result_out_requires_web_result_context_and_external_url_locator():
@@ -730,7 +754,6 @@ def test_search_result_out_requires_web_result_context_and_external_url_locator(
         "result_ref": "web:example",
         "title": "External source",
         "url": "https://example.test/source",
-        "source_version": "web_search:test:v1",
         "locator": {
             "type": "external_url",
             "url": "https://example.test/source",
@@ -743,7 +766,9 @@ def test_search_result_out_requires_web_result_context_and_external_url_locator(
         "context_ref": {"type": "web_result", "id": "web:example"},
     }
 
-    assert SEARCH_RESULT_ADAPTER.validate_python(payload).type == "web_result"
+    result = SEARCH_RESULT_ADAPTER.validate_python(payload)
+    assert result.type == "web_result"
+    assert "source_version" not in result.model_dump(mode="json")
     with pytest.raises(ValidationError):
         SEARCH_RESULT_ADAPTER.validate_python(
             {**payload, "context_ref": {"type": "message", "id": "message-1"}}
@@ -751,4 +776,4 @@ def test_search_result_out_requires_web_result_context_and_external_url_locator(
     with pytest.raises(ValidationError):
         SEARCH_RESULT_ADAPTER.validate_python({**payload, "locator": _web_offsets_locator()})
     with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": ""})
+        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": "web:v1"})

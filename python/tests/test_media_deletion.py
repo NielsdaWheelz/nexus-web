@@ -53,7 +53,6 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
             session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment.id}",
             fragments=[fragment],
             reason="test",
         )
@@ -196,7 +195,6 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
             session,
             media_id=media_id,
             source_kind="web_article",
-            artifact_ref=f"fragments:{fragment.id}",
             fragments=[fragment],
             reason="test",
         )

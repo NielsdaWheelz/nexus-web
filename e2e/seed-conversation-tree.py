@@ -106,7 +106,6 @@ def add_message(
         content=content,
         message_document={
             "type": "message_document",
-            "version": 1,
             "blocks": (
                 [
                     {

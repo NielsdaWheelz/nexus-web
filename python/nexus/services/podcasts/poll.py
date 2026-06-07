@@ -252,7 +252,7 @@ def poll_active_subscriptions_once(
     # The poll is a pure scheduler: it claims each due subscription (sync_status ->
     # 'pending') and enqueues one durable per-subscription sync job, then returns. The
     # job's _claim_subscription_sync_pending makes exactly one sync run per claim, so a
-    # second poll tick (or a manual refresh) can never double-write a transcript version.
+    # second poll tick (or a manual refresh) can never double-write transcript state.
     for user_id, podcast_id in rows:
         try:
             with transaction(db):

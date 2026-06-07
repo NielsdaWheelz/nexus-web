@@ -126,28 +126,11 @@ def test_inspect_resource_audio_video_uses_active_transcript_timecodes(
     media_id = create_test_media_in_library(
         db_session, bootstrapped_user, library_id, title="Talk Episode"
     )
-    transcript_version_id = uuid4()
     first_fragment_id = uuid4()
     second_fragment_id = uuid4()
     db_session.execute(
         text("UPDATE media SET kind = :kind WHERE id = :media_id"),
         {"media_id": media_id, "kind": media_kind},
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO podcast_transcript_versions (
-                id, media_id, version_no, transcript_coverage, is_active,
-                request_reason, created_by_user_id
-            )
-            VALUES (:version_id, :media_id, 1, 'full', true, 'episode_open', :user_id)
-            """
-        ),
-        {
-            "version_id": transcript_version_id,
-            "media_id": media_id,
-            "user_id": bootstrapped_user,
-        },
     )
     db_session.execute(
         text(
@@ -177,13 +160,13 @@ def test_inspect_resource_audio_video_uses_active_transcript_timecodes(
         text(
             """
             INSERT INTO fragments (
-                id, media_id, transcript_version_id, idx, canonical_text,
+                id, media_id, idx, canonical_text,
                 html_sanitized, t_start_ms, t_end_ms
             )
             VALUES
-                (:first_id, :media_id, :version_id, 0, 'Opening transcript.',
+                (:first_id, :media_id, 0, 'Opening transcript.',
                  '<p>Opening transcript.</p>', 1000, 3000),
-                (:second_id, :media_id, :version_id, 1, 'Detailed transcript.',
+                (:second_id, :media_id, 1, 'Detailed transcript.',
                  '<p>Detailed transcript.</p>', 12000, 15000)
             """
         ),
@@ -191,7 +174,6 @@ def test_inspect_resource_audio_video_uses_active_transcript_timecodes(
             "first_id": first_fragment_id,
             "second_id": second_fragment_id,
             "media_id": media_id,
-            "version_id": transcript_version_id,
         },
     )
     db_session.commit()

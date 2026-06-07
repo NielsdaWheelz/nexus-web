@@ -1,6 +1,5 @@
 """Agent app-search tool tests."""
 
-import hashlib
 from uuid import uuid4
 
 import pytest
@@ -109,7 +108,6 @@ def test_execute_app_search_persists_retrieval_metadata(
                 SELECT exact_snippet,
                        retrieval_status,
                        included_in_prompt,
-                       source_version,
                        locator,
                        result_ref
                 FROM message_retrievals
@@ -125,7 +123,7 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert any(row[1] == "selected" for row in retrieval_rows)
         assert all(row[2] is False for row in retrieval_rows)
         assert any(row[3] for row in retrieval_rows)
-        assert all("resolver" not in row[5] for row in retrieval_rows)
+        assert all("resolver" not in row[4] for row in retrieval_rows)
 
         content_chunk_row = session.execute(
             text(
@@ -774,26 +772,25 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
     direct_db.register_cleanup("object_links", "user_id", user_id)
 
 
-def test_render_retrieved_context_requires_matching_index_run(
+def test_render_retrieved_context_requires_matching_current_evidence(
     direct_db: DirectSessionManager,
 ) -> None:
     user_id = create_test_user_id()
 
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-        library_id = create_test_library(session, user_id, "Agent Search Index Run Library")
+        library_id = create_test_library(session, user_id, "Agent Search Evidence Guard Library")
         media_id = create_searchable_media_in_library(
             session,
             user_id,
             library_id,
-            title="Index Run Guard Needle",
+            title="Evidence Guard Needle",
         )
         row = session.execute(
             text(
                 """
                 SELECT cc.id,
                        cc.media_id,
-                       cc.source_snapshot_id,
                        ccp.block_id
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
@@ -804,70 +801,30 @@ def test_render_retrieved_context_requires_matching_index_run(
             ),
             {"media_id": media_id},
         ).one()
-        other_run_id = uuid4()
-        session.execute(
-            text(
-                """
-                INSERT INTO content_index_runs (
-                    id,
-                    media_id,
-                    state,
-                    source_version,
-                    extractor_version,
-                    chunker_version,
-                    embedding_provider,
-                    embedding_model,
-                    embedding_version,
-                    embedding_config_hash,
-                    started_at
-                )
-                VALUES (
-                    :id,
-                    :media_id,
-                    'ready',
-                    'test-source',
-                    'test-extractor',
-                    'test-chunker',
-                    'test-provider',
-                    'test-model',
-                    'test-version',
-                    'test-config',
-                    now()
-                )
-                """
-            ),
-            {"id": other_run_id, "media_id": media_id},
-        )
-        span_text = "wrong index run evidence"
+        span_text = "wrong current evidence"
         mismatch_span_id = session.execute(
             text(
                 """
                 INSERT INTO evidence_spans (
                     media_id,
-                    index_run_id,
-                    source_snapshot_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
                     end_block_offset,
                     span_text,
-                    span_sha256,
                     selector,
                     citation_label,
                     resolver_kind
                 )
                 VALUES (
                     :media_id,
-                    :index_run_id,
-                    :source_snapshot_id,
                     :block_id,
                     :block_id,
                     0,
                     10,
                     :span_text,
-                    :span_sha,
                     '{}'::jsonb,
-                    'Wrong Run',
+                    'Wrong Evidence',
                     'web'
                 )
                 RETURNING id
@@ -875,21 +832,18 @@ def test_render_retrieved_context_requires_matching_index_run(
             ),
             {
                 "media_id": media_id,
-                "index_run_id": other_run_id,
-                "source_snapshot_id": row[2],
-                "block_id": row[3],
+                "block_id": row[2],
                 "span_text": span_text,
-                "span_sha": hashlib.sha256(span_text.encode("utf-8")).hexdigest(),
             },
         ).scalar_one()
         citation = RetrievalCitation(
             result_type="content_chunk",
             source_id=str(row[0]),
-            title="Index Run Guard Needle",
+            title="Evidence Guard Needle",
             source_label=None,
             snippet=span_text,
             deep_link="/media/test",
-            citation_label="Wrong Run",
+            citation_label="Wrong Evidence",
             locator=None,
             context_ref={
                 "type": "content_chunk",
@@ -897,7 +851,6 @@ def test_render_retrieved_context_requires_matching_index_run(
                 "evidence_span_ids": [str(mismatch_span_id)],
             },
             evidence_span_id=str(mismatch_span_id),
-            source_version=None,
             media_id=str(media_id),
             media_kind="web_article",
             score=1.0,

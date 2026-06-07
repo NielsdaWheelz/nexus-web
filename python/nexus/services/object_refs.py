@@ -329,10 +329,7 @@ def search_object_refs(
             JOIN media m ON m.id = cc.media_id
             JOIN visible_media vm ON vm.media_id = cc.media_id
             JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                AND mcis.active_run_id = cc.index_run_id
-            JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                AND active_run.state = 'ready'
-                AND active_run.deactivated_at IS NULL
+                AND mcis.status = 'ready'
             WHERE cc.chunk_text ILIKE :pattern
                OR m.title ILIKE :pattern
             ORDER BY cc.created_at DESC, cc.id ASC

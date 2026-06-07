@@ -288,10 +288,11 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
         text(
             """
             DELETE FROM library_intelligence_evidence e
-            USING library_intelligence_claims c, library_intelligence_versions v
+            USING library_intelligence_claims c
             WHERE e.claim_id = c.id
-              AND c.version_id = v.id
-              AND v.library_id = :library_id
+              AND c.artifact_id IN (
+                  SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
+              )
             """
         ),
         {"library_id": library_id},
@@ -299,10 +300,10 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM library_intelligence_claims c
-            USING library_intelligence_versions v
-            WHERE c.version_id = v.id
-              AND v.library_id = :library_id
+            DELETE FROM library_intelligence_claims
+            WHERE artifact_id IN (
+                SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
+            )
             """
         ),
         {"library_id": library_id},
@@ -310,10 +311,10 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM library_intelligence_nodes n
-            USING library_intelligence_versions v
-            WHERE n.version_id = v.id
-              AND v.library_id = :library_id
+            DELETE FROM library_intelligence_nodes
+            WHERE artifact_id IN (
+                SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
+            )
             """
         ),
         {"library_id": library_id},
@@ -321,27 +322,12 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM library_intelligence_sections s
-            USING library_intelligence_versions v
-            WHERE s.version_id = v.id
-              AND v.library_id = :library_id
+            DELETE FROM library_intelligence_sections
+            WHERE artifact_id IN (
+                SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
+            )
             """
         ),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text(
-            """
-            UPDATE library_intelligence_artifacts
-            SET active_version_id = NULL,
-                updated_at = now()
-            WHERE library_id = :library_id
-            """
-        ),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text("DELETE FROM library_intelligence_versions WHERE library_id = :library_id"),
         {"library_id": library_id},
     )
     db.execute(
@@ -349,22 +335,7 @@ def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
         {"library_id": library_id},
     )
     db.execute(
-        text(
-            """
-            DELETE FROM library_source_set_items i
-            USING library_source_set_versions s
-            WHERE i.source_set_version_id = s.id
-              AND s.library_id = :library_id
-            """
-        ),
-        {"library_id": library_id},
-    )
-    db.execute(
         text("DELETE FROM library_intelligence_artifacts WHERE library_id = :library_id"),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text("DELETE FROM library_source_set_versions WHERE library_id = :library_id"),
         {"library_id": library_id},
     )
 

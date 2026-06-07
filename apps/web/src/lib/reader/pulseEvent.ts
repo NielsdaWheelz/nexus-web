@@ -12,7 +12,6 @@ export interface ReaderPulseTarget {
   evidenceSpanId?: string;
   locator: RetrievalLocator;
   snippet: string | null;
-  sourceVersion: string;
   highlightBehavior: "pulse";
   focusBehavior: "scroll_into_view";
 }
@@ -37,7 +36,6 @@ export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget 
     isOptionalString(value.evidenceSpanId) &&
     isRetrievalLocator(value.locator) &&
     (typeof value.snippet === "string" || value.snippet === null) &&
-    typeof value.sourceVersion === "string" &&
     value.highlightBehavior === "pulse" &&
     value.focusBehavior === "scroll_into_view"
   );

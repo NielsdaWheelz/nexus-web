@@ -21,7 +21,6 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
-    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -62,16 +61,12 @@ class ProcessingStatus(str, PyEnum):
         pending: Created, waiting for job pickup
         extracting: Extraction requested and in-flight or queued
         ready_for_reading: Minimum readable artifacts exist
-        embedding: Readable; embedding job in-flight or queued
-        ready: All processing complete
         failed: Terminal failure recorded
     """
 
     pending = "pending"
     extracting = "extracting"
     ready_for_reading = "ready_for_reading"
-    embedding = "embedding"
-    ready = "ready"
     failed = "failed"
 
 
@@ -79,7 +74,7 @@ class FailureStage(str, PyEnum):
     """Stage at which processing failed.
 
     Used to determine reset behavior on retry. `metadata` is a soft warning
-    set by enrich_metadata; it coexists with processing_status='ready'
+    set by enrich_metadata; it coexists with readable media
     rather than implying a terminal failure.
     """
 
@@ -238,12 +233,6 @@ class Page(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    revision: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("1"),
-        default=1,
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -257,7 +246,6 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
-        CheckConstraint("revision >= 1", name="ck_pages_revision_positive"),
     )
 
 
@@ -336,12 +324,6 @@ class NoteBlock(Base):
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    revision: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("1"),
-        default=1,
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -365,7 +347,6 @@ class NoteBlock(Base):
             "char_length(order_key) BETWEEN 1 AND 64",
             name="ck_note_blocks_order_key_length",
         ),
-        CheckConstraint("revision >= 1", name="ck_note_blocks_revision_positive"),
     )
 
 
@@ -549,8 +530,6 @@ class ObjectSearchDocument(Base):
     body_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
     route_path: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    index_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     index_status: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -591,11 +570,6 @@ class ObjectSearchDocument(Base):
             name="ck_osd_route_path_length",
         ),
         CheckConstraint(
-            "char_length(content_hash) BETWEEN 1 AND 128",
-            name="ck_osd_content_hash_length",
-        ),
-        CheckConstraint("index_version > 0", name="ck_osd_index_version"),
-        CheckConstraint(
             "index_status IN ('pending_embedding', 'ready')",
             name="ck_osd_index_status",
         ),
@@ -603,8 +577,7 @@ class ObjectSearchDocument(Base):
             "user_id",
             "object_type",
             "object_id",
-            "index_version",
-            name="uix_osd_object_ref_version",
+            name="uix_osd_object_ref",
         ),
     )
 
@@ -633,8 +606,6 @@ class ObjectSearchEmbedding(Base):
     object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
     embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
-    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    index_version: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -658,16 +629,10 @@ class ObjectSearchEmbedding(Base):
             name="ck_ose_model_length",
         ),
         CheckConstraint("embedding_dimensions > 0", name="ck_ose_dimensions"),
-        CheckConstraint(
-            "char_length(content_hash) BETWEEN 1 AND 128",
-            name="ck_ose_content_hash_length",
-        ),
-        CheckConstraint("index_version > 0", name="ck_ose_index_version"),
         UniqueConstraint(
             "search_document_id",
             "embedding_model",
-            "index_version",
-            name="uix_ose_document_model_version",
+            name="uix_ose_document_model",
         ),
         Index("ix_ose_model", "user_id", "embedding_model"),
     )
@@ -799,7 +764,6 @@ class Media(Base):
     # URL and file identity fields
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    file_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_playback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Provider identity fields
@@ -875,6 +839,15 @@ class Media(Base):
                 "AND processing_started_at IS NOT NULL"
             ),
         ),
+        Index(
+            "idx_media_stale_pending_upload_cleanup",
+            "created_at",
+            "processing_started_at",
+            "id",
+            postgresql_where=text(
+                "processing_status = 'pending' AND kind IN ('pdf', 'epub') AND file_sha256 IS NULL"
+            ),
+        ),
     )
 
     # Relationships
@@ -925,21 +898,8 @@ class Media(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
-    transcript_versions: Mapped[list["PodcastTranscriptVersion"]] = relationship(
-        "PodcastTranscriptVersion",
-        back_populates="media",
-        cascade="all, delete-orphan",
-    )
     content_chunks: Mapped[list["ContentChunk"]] = relationship(
         "ContentChunk",
-        back_populates="media",
-    )
-    source_snapshots: Mapped[list["SourceSnapshot"]] = relationship(
-        "SourceSnapshot",
-        back_populates="media",
-    )
-    content_index_runs: Mapped[list["ContentIndexRun"]] = relationship(
-        "ContentIndexRun",
         back_populates="media",
     )
     content_index_state: Mapped["MediaContentIndexState | None"] = relationship(
@@ -1488,11 +1448,6 @@ class Fragment(Base):
         ForeignKey("media.id", ondelete="CASCADE"),
         nullable=False,
     )
-    transcript_version_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
     html_sanitized: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1522,10 +1477,6 @@ class Fragment(Base):
 
     # Relationships
     media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
-    transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
-        "PodcastTranscriptVersion",
-        back_populates="fragments",
-    )
 
 
 class LibraryEntry(Base):
@@ -1592,143 +1543,8 @@ class LibraryEntry(Base):
     podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
 
 
-class LibrarySourceSetVersion(Base):
-    """Versioned source inventory snapshot for library intelligence."""
-
-    __tablename__ = "library_source_set_versions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=False,
-    )
-    source_set_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    source_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
-    schema_version: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("source_count >= 0", name="ck_library_source_sets_source_count"),
-        CheckConstraint("chunk_count >= 0", name="ck_library_source_sets_chunk_count"),
-        CheckConstraint(
-            "char_length(source_set_hash) BETWEEN 1 AND 128",
-            name="ck_library_source_sets_hash_length",
-        ),
-        CheckConstraint(
-            "char_length(prompt_version) BETWEEN 1 AND 128",
-            name="ck_library_source_sets_prompt_version_length",
-        ),
-        CheckConstraint(
-            "char_length(schema_version) BETWEEN 1 AND 128",
-            name="ck_library_source_sets_schema_version_length",
-        ),
-        UniqueConstraint(
-            "library_id",
-            "source_set_hash",
-            "prompt_version",
-            "schema_version",
-            name="uix_library_source_sets_version",
-        ),
-        Index("idx_library_source_sets_library_created", "library_id", "created_at"),
-    )
-
-    items: Mapped[list["LibrarySourceSetItem"]] = relationship(
-        "LibrarySourceSetItem",
-        back_populates="source_set_version",
-    )
-
-
-class LibrarySourceSetItem(Base):
-    """One source row captured in a library source-set version."""
-
-    __tablename__ = "library_source_set_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    source_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_source_set_versions.id"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=True,
-    )
-    podcast_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        nullable=True,
-    )
-    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    media_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    readiness_state: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    included: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    exclusion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_updated_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "(media_id IS NOT NULL AND podcast_id IS NULL) "
-            "OR (media_id IS NULL AND podcast_id IS NOT NULL)",
-            name="ck_library_source_set_items_one_source",
-        ),
-        CheckConstraint(
-            "source_kind IN ('media', 'podcast')",
-            name="ck_library_source_set_items_source_kind",
-        ),
-        CheckConstraint("chunk_count >= 0", name="ck_library_source_set_items_chunk_count"),
-        CheckConstraint(
-            "(included = true AND exclusion_reason IS NULL) "
-            "OR (included = false AND exclusion_reason IS NOT NULL)",
-            name="ck_library_source_set_items_inclusion_reason",
-        ),
-        UniqueConstraint(
-            "source_set_version_id",
-            "media_id",
-            name="uix_library_source_set_items_media",
-        ),
-        UniqueConstraint(
-            "source_set_version_id",
-            "podcast_id",
-            name="uix_library_source_set_items_podcast",
-        ),
-        Index(
-            "idx_library_source_set_items_version_included",
-            "source_set_version_id",
-            "included",
-        ),
-    )
-
-    source_set_version: Mapped["LibrarySourceSetVersion"] = relationship(
-        "LibrarySourceSetVersion",
-        back_populates="items",
-    )
-
-
 class LibraryIntelligenceArtifact(Base):
-    """Current artifact pointer for one library intelligence artifact kind."""
+    """Current library intelligence artifact for one library and artifact kind."""
 
     __tablename__ = "library_intelligence_artifacts"
 
@@ -1743,63 +1559,7 @@ class LibraryIntelligenceArtifact(Base):
         nullable=False,
     )
     artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    active_version_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_versions.id", deferrable=True, initially="DEFERRED"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "artifact_kind IN ('overview')",
-            name="ck_library_intelligence_artifacts_kind",
-        ),
-        UniqueConstraint(
-            "library_id",
-            "artifact_kind",
-            name="uix_library_intelligence_artifacts_library_kind",
-        ),
-    )
-
-
-class LibraryIntelligenceVersion(Base):
-    """Published or attempted version of a library intelligence artifact."""
-
-    __tablename__ = "library_intelligence_versions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    artifact_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_artifacts.id"),
-        nullable=False,
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=False,
-    )
-    source_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_source_set_versions.id"),
-        nullable=False,
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    artifact_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="building")
     generator_model_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("models.id"),
@@ -1821,47 +1581,32 @@ class LibraryIntelligenceVersion(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('building', 'active', 'failed', 'superseded', 'stale')",
-            name="ck_library_intelligence_versions_status",
+            "artifact_kind IN ('overview')",
+            name="ck_library_intelligence_artifacts_kind",
         ),
         CheckConstraint(
-            "artifact_version >= 1",
-            name="ck_library_intelligence_versions_version_positive",
-        ),
-        CheckConstraint(
-            "char_length(prompt_version) BETWEEN 1 AND 128",
-            name="ck_library_intelligence_versions_prompt_version_length",
+            "status IN ('building', 'active', 'failed', 'stale')",
+            name="ck_library_intelligence_artifacts_status",
         ),
         CheckConstraint(
             "(status = 'active' AND published_at IS NOT NULL) OR (status != 'active')",
-            name="ck_library_intelligence_versions_active_published",
+            name="ck_library_intelligence_artifacts_active_published",
         ),
         CheckConstraint(
             "(invalid_reason IS NULL AND invalidated_at IS NULL) "
             "OR (invalid_reason IS NOT NULL AND invalidated_at IS NOT NULL)",
-            name="ck_library_intelligence_versions_invalid_pair",
+            name="ck_library_intelligence_artifacts_invalid_pair",
         ),
         UniqueConstraint(
-            "artifact_id",
-            "artifact_version",
-            name="uix_library_intelligence_versions_artifact_version",
-        ),
-        UniqueConstraint(
-            "artifact_id",
-            "source_set_version_id",
-            "prompt_version",
-            name="uix_library_intelligence_versions_source_prompt",
-        ),
-        Index(
-            "idx_library_intelligence_versions_library_status",
             "library_id",
-            "status",
+            "artifact_kind",
+            name="uix_library_intelligence_artifacts_library_kind",
         ),
     )
 
 
 class LibraryIntelligenceSection(Base):
-    """Rendered section in one library intelligence version."""
+    """Rendered section in the current library intelligence artifact."""
 
     __tablename__ = "library_intelligence_sections"
 
@@ -1870,9 +1615,9 @@ class LibraryIntelligenceSection(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    version_id: Mapped[UUID] = mapped_column(
+    artifact_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_versions.id"),
+        ForeignKey("library_intelligence_artifacts.id"),
         nullable=False,
     )
     section_kind: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1903,12 +1648,12 @@ class LibraryIntelligenceSection(Base):
             name="ck_library_intelligence_sections_metadata_object",
         ),
         UniqueConstraint(
-            "version_id",
+            "artifact_id",
             "section_kind",
             name="uix_library_intelligence_sections_kind",
         ),
         UniqueConstraint(
-            "version_id",
+            "artifact_id",
             "ordinal",
             name="uix_library_intelligence_sections_ordinal",
         ),
@@ -1916,7 +1661,7 @@ class LibraryIntelligenceSection(Base):
 
 
 class LibraryIntelligenceNode(Base):
-    """Topic, source, tension, or question node in one artifact version."""
+    """Topic, source, tension, or question node in the current artifact."""
 
     __tablename__ = "library_intelligence_nodes"
 
@@ -1925,9 +1670,9 @@ class LibraryIntelligenceNode(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    version_id: Mapped[UUID] = mapped_column(
+    artifact_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_versions.id"),
+        ForeignKey("library_intelligence_artifacts.id"),
         nullable=False,
     )
     node_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1959,10 +1704,10 @@ class LibraryIntelligenceNode(Base):
             "jsonb_typeof(metadata) = 'object'",
             name="ck_library_intelligence_nodes_metadata_object",
         ),
-        UniqueConstraint("version_id", "slug", name="uix_library_intelligence_nodes_slug"),
+        UniqueConstraint("artifact_id", "slug", name="uix_library_intelligence_nodes_slug"),
         Index(
-            "idx_library_intelligence_nodes_version_type",
-            "version_id",
+            "idx_library_intelligence_nodes_artifact_type",
+            "artifact_id",
             "node_type",
         ),
     )
@@ -1978,9 +1723,9 @@ class LibraryIntelligenceClaim(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    version_id: Mapped[UUID] = mapped_column(
+    artifact_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("library_intelligence_versions.id"),
+        ForeignKey("library_intelligence_artifacts.id"),
         nullable=False,
     )
     node_id: Mapped[UUID | None] = mapped_column(
@@ -2031,9 +1776,9 @@ class LibraryIntelligenceClaim(Base):
         ),
         CheckConstraint("ordinal >= 0", name="ck_library_intelligence_claims_ordinal"),
         UniqueConstraint(
-            "version_id",
+            "artifact_id",
             "ordinal",
-            name="uix_library_intelligence_claims_version_ordinal",
+            name="uix_library_intelligence_claims_artifact_ordinal",
         ),
     )
 
@@ -2106,11 +1851,6 @@ class LibraryIntelligenceBuild(Base):
         ForeignKey("libraries.id"),
         nullable=False,
     )
-    source_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_source_set_versions.id"),
-        nullable=False,
-    )
     artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2156,9 +1896,16 @@ class LibraryIntelligenceBuild(Base):
             "(status = 'failed' AND error_code IS NOT NULL) OR (status != 'failed')",
             name="ck_library_intelligence_builds_failed_error",
         ),
-        UniqueConstraint(
-            "idempotency_key",
-            name="uix_library_intelligence_builds_idempotency_key",
+        CheckConstraint(
+            "char_length(idempotency_key) BETWEEN 1 AND 256",
+            name="ck_library_intelligence_builds_idempotency_key_length",
+        ),
+        Index(
+            "uix_library_intelligence_builds_inflight",
+            "library_id",
+            "artifact_kind",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
         ),
         Index(
             "idx_library_intelligence_builds_library_status",
@@ -2699,83 +2446,8 @@ class PodcastTranscriptionUsageDaily(Base):
     )
 
 
-class PodcastTranscriptVersion(Base):
-    """Immutable transcript artifact version for a media item."""
-
-    __tablename__ = "podcast_transcript_versions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    transcript_coverage: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default=TranscriptCoverage.full.value,
-    )
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
-    created_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("media_id", "version_no", name="uq_podcast_transcript_versions_media_no"),
-        CheckConstraint(
-            "version_no >= 1",
-            name="ck_podcast_transcript_versions_version_no_positive",
-        ),
-        CheckConstraint(
-            "transcript_coverage IN ('none', 'partial', 'full')",
-            name="ck_podcast_transcript_versions_coverage",
-        ),
-        CheckConstraint(
-            "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue', 'rss_feed'"
-            ")",
-            name="ck_podcast_transcript_versions_request_reason",
-        ),
-        Index(
-            "uix_podcast_transcript_versions_media_active",
-            "media_id",
-            unique=True,
-            postgresql_where=text("is_active"),
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="transcript_versions")
-    segments: Mapped[list["PodcastTranscriptSegment"]] = relationship(
-        "PodcastTranscriptSegment",
-        back_populates="transcript_version",
-        cascade="all, delete-orphan",
-    )
-    fragments: Mapped[list["Fragment"]] = relationship(
-        "Fragment",
-        back_populates="transcript_version",
-    )
-
-
 class PodcastTranscriptSegment(Base):
-    """Segment artifact persisted per transcript version."""
+    """Current transcript segment persisted for a media item."""
 
     __tablename__ = "podcast_transcript_segments"
 
@@ -2783,11 +2455,6 @@ class PodcastTranscriptSegment(Base):
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
-    )
-    transcript_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
-        nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2807,9 +2474,9 @@ class PodcastTranscriptSegment(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "transcript_version_id",
+            "media_id",
             "segment_idx",
-            name="uq_podcast_transcript_segments_version_idx",
+            name="uq_podcast_transcript_segments_media_idx",
         ),
         CheckConstraint(
             "segment_idx >= 0",
@@ -2827,119 +2494,7 @@ class PodcastTranscriptSegment(Base):
         ),
     )
 
-    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
-        "PodcastTranscriptVersion", back_populates="segments"
-    )
     media: Mapped["Media"] = relationship("Media")
-
-
-class ContentIndexRun(Base):
-    """One versioned evidence-index attempt for a media item."""
-
-    __tablename__ = "content_index_runs"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    state: Mapped[str] = mapped_column(Text, nullable=False)
-    source_version: Mapped[str] = mapped_column(Text, nullable=False)
-    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
-    chunker_version: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_version: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    activated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    deactivated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    superseded_by_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('pending', 'extracting', 'indexing', 'embedding', 'ready', "
-            "'no_text', 'ocr_required', 'failed')",
-            name="ck_content_index_runs_state",
-        ),
-        Index("ix_content_index_runs_media", "media_id"),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="content_index_runs")
-
-
-class SourceSnapshot(Base):
-    """Immutable source artifact used by a content index run."""
-
-    __tablename__ = "source_snapshots"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    index_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-    )
-    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    artifact_ref: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    byte_length: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    source_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    source_version: Mapped[str] = mapped_column(Text, nullable=False)
-    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
-    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
-    parent_snapshot_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("source_snapshots.id"),
-        nullable=True,
-    )
-    language: Mapped[str | None] = mapped_column(Text, nullable=True)
-    snapshot_metadata: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("byte_length >= 0", name="ck_source_snapshots_byte_length"),
-        CheckConstraint(
-            "char_length(btrim(source_fingerprint)) > 0",
-            name="ck_source_snapshots_fingerprint",
-        ),
-        CheckConstraint("char_length(content_sha256) = 64", name="ck_source_snapshots_sha"),
-        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_source_snapshots_metadata"),
-        Index("ix_source_snapshots_media_run", "media_id", "index_run_id"),
-        Index(
-            "ix_source_snapshots_transcript_run_version",
-            "index_run_id",
-            text("(metadata ->> 'transcript_version_id')"),
-            postgresql_where=text("source_kind = 'transcript'"),
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="source_snapshots")
 
 
 class ContentBlock(Base):
@@ -2953,18 +2508,9 @@ class ContentBlock(Base):
         server_default=text("gen_random_uuid()"),
     )
     media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    index_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-    )
-    source_snapshot_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("source_snapshots.id"),
-    )
     block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     block_kind: Mapped[str] = mapped_column(Text, nullable=False)
     canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     source_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -2993,7 +2539,6 @@ class ContentBlock(Base):
         CheckConstraint(
             "source_end_offset >= source_start_offset", name="ck_content_blocks_offsets"
         ),
-        CheckConstraint("char_length(text_sha256) = 64", name="ck_content_blocks_sha"),
         CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_blocks_heading"),
         CheckConstraint("jsonb_typeof(locator) = 'object'", name="ck_content_blocks_locator"),
         CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_content_blocks_selector"),
@@ -3003,8 +2548,8 @@ class ContentBlock(Base):
             "(extraction_confidence >= 0 AND extraction_confidence <= 1)",
             name="ck_content_blocks_extraction_confidence",
         ),
-        UniqueConstraint("index_run_id", "block_idx", name="uq_content_blocks_run_idx"),
-        Index("ix_content_blocks_media_run", "media_id", "index_run_id"),
+        UniqueConstraint("media_id", "block_idx", name="uq_content_blocks_media_idx"),
+        Index("ix_content_blocks_media_idx", "media_id", "block_idx"),
     )
 
 
@@ -3019,14 +2564,6 @@ class EvidenceSpan(Base):
         server_default=text("gen_random_uuid()"),
     )
     media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    index_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-    )
-    source_snapshot_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("source_snapshots.id"),
-    )
     start_block_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("content_blocks.id"),
@@ -3038,7 +2575,6 @@ class EvidenceSpan(Base):
     start_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     span_text: Mapped[str] = mapped_column(Text, nullable=False)
-    span_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     citation_label: Mapped[str] = mapped_column(Text, nullable=False)
     resolver_kind: Mapped[str] = mapped_column(Text, nullable=False)
@@ -3054,13 +2590,12 @@ class EvidenceSpan(Base):
             "start_block_id <> end_block_id OR end_block_offset >= start_block_offset",
             name="ck_evidence_spans_offsets",
         ),
-        CheckConstraint("char_length(span_sha256) = 64", name="ck_evidence_spans_sha"),
         CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_evidence_spans_selector"),
         CheckConstraint(
             "resolver_kind IN ('web', 'epub', 'pdf', 'transcript')",
             name="ck_evidence_spans_resolver",
         ),
-        Index("ix_evidence_spans_media_run", "media_id", "index_run_id"),
+        Index("ix_evidence_spans_media", "media_id"),
     )
 
 
@@ -3075,14 +2610,6 @@ class ContentChunk(Base):
         server_default=text("gen_random_uuid()"),
     )
     media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    index_run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-    )
-    source_snapshot_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("source_snapshots.id"),
-    )
     primary_evidence_span_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("evidence_spans.id"),
@@ -3091,8 +2618,6 @@ class ContentChunk(Base):
     chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_sha256: Mapped[str] = mapped_column(Text, nullable=False)
-    chunker_version: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     heading_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     summary_locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
@@ -3108,15 +2633,13 @@ class ContentChunk(Base):
             "source_kind IN ('web_article', 'epub', 'pdf', 'transcript')",
             name="ck_content_chunks_source_kind",
         ),
-        CheckConstraint("char_length(chunk_sha256) = 64", name="ck_content_chunks_sha"),
         CheckConstraint("token_count >= 0", name="ck_content_chunks_token_count"),
         CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_chunks_heading"),
         CheckConstraint(
             "jsonb_typeof(summary_locator) = 'object'", name="ck_content_chunks_locator"
         ),
-        UniqueConstraint("index_run_id", "chunk_idx", name="uq_content_chunks_run_idx"),
-        Index("ix_content_chunks_media_run", "media_id", "index_run_id"),
-        Index("ix_content_chunks_run_idx", "index_run_id", "chunk_idx"),
+        UniqueConstraint("media_id", "chunk_idx", name="uq_content_chunks_media_idx"),
+        Index("ix_content_chunks_media_idx", "media_id", "chunk_idx"),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="content_chunks")
@@ -3176,11 +2699,8 @@ class ContentEmbedding(Base):
     chunk_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_chunks.id"))
     embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
     embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_version: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
     embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_vector: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
-    embedding_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3189,13 +2709,10 @@ class ContentEmbedding(Base):
 
     __table_args__ = (
         CheckConstraint("embedding_dimensions > 0", name="ck_content_embeddings_dimensions"),
-        CheckConstraint("char_length(embedding_sha256) = 64", name="ck_content_embeddings_sha"),
         Index(
             "ix_content_embeddings_model",
             "embedding_provider",
             "embedding_model",
-            "embedding_version",
-            "embedding_config_hash",
         ),
     )
 
@@ -3215,22 +2732,10 @@ class MediaContentIndexState(Base):
         ForeignKey("media.id"),
         nullable=False,
     )
-    active_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-        nullable=True,
-    )
-    latest_run_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_index_runs.id"),
-        nullable=True,
-    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_embedding_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-    active_embedding_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    active_embedding_config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3252,7 +2757,7 @@ class MediaContentIndexState(Base):
             "ix_media_content_index_states_repair_waiting",
             "updated_at",
             "media_id",
-            postgresql_where=text("status IN ('pending', 'failed') AND active_run_id IS NULL"),
+            postgresql_where=text("status IN ('pending', 'failed')"),
         ),
         Index(
             "ix_media_content_index_states_repair_indexing",
@@ -3534,8 +3039,8 @@ class HighlightFragmentAnchor(Base):
 class HighlightPdfAnchor(Base):
     """PDF geometry anchor subtype (1:1 with highlights).
 
-    Stores page-space geometry metadata, duplicate-detection fingerprint,
-    and persisted quote-match metadata for PDF highlights.
+    Stores page-space geometry metadata and persisted quote-match metadata
+    for PDF highlights.
     """
 
     __tablename__ = "highlight_pdf_anchors"
@@ -3551,11 +3056,8 @@ class HighlightPdfAnchor(Base):
         nullable=False,
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    geometry_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    geometry_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     sort_top: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     sort_left: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    plain_text_match_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     plain_text_match_status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default="pending"
     )
@@ -3570,16 +3072,11 @@ class HighlightPdfAnchor(Base):
 
     __table_args__ = (
         CheckConstraint("page_number >= 1", name="ck_hpa_page_number"),
-        CheckConstraint("geometry_version >= 1", name="ck_hpa_geometry_version"),
         CheckConstraint("rect_count >= 1", name="ck_hpa_rect_count"),
         CheckConstraint(
             "plain_text_match_status IN "
             "('pending', 'unique', 'ambiguous', 'no_match', 'empty_exact')",
             name="ck_hpa_match_status",
-        ),
-        CheckConstraint(
-            "plain_text_match_version IS NULL OR plain_text_match_version >= 1",
-            name="ck_hpa_match_version",
         ),
         CheckConstraint(
             "(plain_text_start_offset IS NULL OR plain_text_start_offset >= 0) "
@@ -3644,7 +3141,6 @@ class PdfPageTextSpan(Base):
     page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    text_extract_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     page_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
     page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -3659,7 +3155,6 @@ class PdfPageTextSpan(Base):
         CheckConstraint("page_number >= 1", name="ck_ppts_page_number"),
         CheckConstraint("start_offset >= 0", name="ck_ppts_start_offset"),
         CheckConstraint("end_offset >= start_offset", name="ck_ppts_offsets_valid"),
-        CheckConstraint("text_extract_version >= 1", name="ck_ppts_extract_version"),
         CheckConstraint("page_width IS NULL OR page_width > 0", name="ck_ppts_page_width"),
         CheckConstraint("page_height IS NULL OR page_height > 0", name="ck_ppts_page_height"),
         CheckConstraint(
@@ -4036,7 +3531,7 @@ class Message(Base):
     message_document: Mapped[dict[str, object]] = mapped_column(
         JSONB,
         nullable=False,
-        server_default=text("""'{"type":"message_document","version"\\:1,"blocks":[]}'::jsonb"""),
+        server_default=text("""'{"type":"message_document","blocks":[]}'::jsonb"""),
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -4255,7 +3750,6 @@ class MessageLLM(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    stable_prefix_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_usage: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
@@ -4520,7 +4014,6 @@ class MessageRetrieval(Base):
         nullable=False,
         server_default="false",
     )
-    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     citation_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -4653,7 +4146,6 @@ class MessageRetrievalCandidateLedger(Base):
     selection_reason: Mapped[str] = mapped_column(Text, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4900,14 +4392,12 @@ class ChatPromptAssembly(Base):
         ForeignKey("models.id"),
         nullable=False,
     )
-    stable_prefix_hash: Mapped[str] = mapped_column(Text, nullable=False)
     cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
-    provider_request_hash: Mapped[str] = mapped_column(Text, nullable=False)
     max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -4945,14 +4435,6 @@ class ChatPromptAssembly(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "char_length(stable_prefix_hash) BETWEEN 1 AND 128",
-            name="ck_chat_prompt_assemblies_stable_prefix_hash_length",
-        ),
-        CheckConstraint(
-            "char_length(provider_request_hash) BETWEEN 1 AND 128",
-            name="ck_chat_prompt_assemblies_provider_request_hash_length",
-        ),
         CheckConstraint(
             """
             max_context_tokens > 0
@@ -5879,7 +5361,6 @@ class EpubResource(Base):
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sha256: Mapped[str] = mapped_column(Text, nullable=False)
     fallback_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     properties: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -5900,7 +5381,6 @@ class EpubResource(Base):
             name="ck_epub_resources_asset_key_length",
         ),
         CheckConstraint("size_bytes >= 0", name="ck_epub_resources_size_non_negative"),
-        CheckConstraint("char_length(sha256) = 64", name="ck_epub_resources_sha256_length"),
         Index("ix_epub_resources_media", "media_id"),
     )
 
@@ -6168,42 +5648,6 @@ class WorkspaceSession(Base):
     )
 
 
-class OracleCorpusSetVersion(Base):
-    """Versioned, immutable oracle corpus release."""
-
-    __tablename__ = "oracle_corpus_set_versions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    version: Mapped[str] = mapped_column(Text, nullable=False)
-    label: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(version) BETWEEN 1 AND 128",
-            name="ck_oracle_corpus_versions_version_length",
-        ),
-        CheckConstraint(
-            "char_length(label) BETWEEN 1 AND 200",
-            name="ck_oracle_corpus_versions_label_length",
-        ),
-        CheckConstraint(
-            "char_length(embedding_model) BETWEEN 1 AND 128",
-            name="ck_oracle_corpus_versions_embedding_model_length",
-        ),
-        UniqueConstraint("version", name="uix_oracle_corpus_versions_version"),
-    )
-
-
 class OracleCorpusWork(Base):
     """Curated public-domain work in the oracle corpus."""
 
@@ -6213,11 +5657,6 @@ class OracleCorpusWork(Base):
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
-    )
-    corpus_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_set_versions.id"),
-        nullable=False,
     )
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -6234,11 +5673,7 @@ class OracleCorpusWork(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(slug) BETWEEN 1 AND 160", name="ck_oracle_works_slug_length"),
-        UniqueConstraint(
-            "corpus_set_version_id",
-            "slug",
-            name="uix_oracle_works_version_slug",
-        ),
+        UniqueConstraint("slug", name="uix_oracle_works_slug"),
     )
 
 
@@ -6251,11 +5686,6 @@ class OracleCorpusPassage(Base):
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
-    )
-    corpus_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_set_versions.id"),
-        nullable=False,
     )
     work_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -6300,7 +5730,7 @@ class OracleCorpusPassage(Base):
             name="ck_oracle_passages_embedding_model_length",
         ),
         UniqueConstraint("work_id", "passage_index", name="uix_oracle_passages_work_index"),
-        Index("idx_oracle_passages_version_embedding", "corpus_set_version_id", "embedding_model"),
+        Index("idx_oracle_passages_embedding", "embedding_model"),
     )
 
 
@@ -6313,11 +5743,6 @@ class OracleCorpusImage(Base):
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
-    )
-    corpus_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_set_versions.id"),
-        nullable=False,
     )
     source_repository: Mapped[str] = mapped_column(Text, nullable=False)
     source_page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -6332,7 +5757,6 @@ class OracleCorpusImage(Base):
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sha256: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
@@ -6353,7 +5777,7 @@ class OracleCorpusImage(Base):
             name="ck_oracle_images_embedding_model_length",
         ),
         CheckConstraint(
-            r"storage_key ~ '^oracle/plates/[0-9a-f]{64}\.(jpg|png|webp)$'",
+            r"storage_key ~ '^oracle/plates/[a-z0-9][a-z0-9._-]{0,191}\.(jpg|png|webp)$'",
             name="ck_oracle_images_storage_key_shape",
         ),
         CheckConstraint(
@@ -6361,12 +5785,6 @@ class OracleCorpusImage(Base):
             name="ck_oracle_images_content_type",
         ),
         CheckConstraint("byte_size > 0", name="ck_oracle_images_byte_size_positive"),
-        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_oracle_images_sha256_hex"),
-        CheckConstraint(
-            "substring(storage_key from "
-            r"'^oracle/plates/([0-9a-f]{64})\.(jpg|png|webp)$') = sha256",
-            name="ck_oracle_images_storage_key_sha256_match",
-        ),
         CheckConstraint(
             """(
                 (content_type = 'image/jpeg' AND storage_key LIKE '%.jpg')
@@ -6375,12 +5793,8 @@ class OracleCorpusImage(Base):
             )""",
             name="ck_oracle_images_storage_key_content_type_match",
         ),
-        UniqueConstraint(
-            "corpus_set_version_id",
-            "source_url",
-            name="uix_oracle_images_version_source_url",
-        ),
-        Index("idx_oracle_images_version_embedding", "corpus_set_version_id", "embedding_model"),
+        UniqueConstraint("source_url", name="uix_oracle_images_source_url"),
+        Index("idx_oracle_images_embedding", "embedding_model"),
     )
 
 
@@ -6399,11 +5813,6 @@ class OracleReading(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    corpus_set_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_corpus_set_versions.id"),
-        nullable=False,
-    )
     folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
     folio_motto: Mapped[str | None] = mapped_column(Text, nullable=True)
     folio_motto_gloss: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -6411,8 +5820,6 @@ class OracleReading(Base):
     argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
-    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_request_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     generator_model_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("models.id"),
@@ -6445,14 +5852,6 @@ class OracleReading(Base):
         CheckConstraint(
             "char_length(btrim(question_text)) BETWEEN 1 AND 280",
             name="ck_oracle_readings_question_length",
-        ),
-        CheckConstraint(
-            "char_length(prompt_version) BETWEEN 1 AND 64",
-            name="ck_oracle_readings_prompt_version_length",
-        ),
-        CheckConstraint(
-            "provider_request_hash IS NULL OR char_length(provider_request_hash) BETWEEN 1 AND 128",
-            name="ck_oracle_readings_provider_request_hash_length",
         ),
         CheckConstraint(
             "(status = 'complete' AND completed_at IS NOT NULL) OR status != 'complete'",
@@ -6504,7 +5903,6 @@ class OracleReadingPassage(Base):
     )
     phase: Mapped[str] = mapped_column(Text, nullable=False)
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     exact_snippet: Mapped[str] = mapped_column(Text, nullable=False)
     locator_label: Mapped[str] = mapped_column(Text, nullable=False)
     locator: Mapped[dict[str, object]] = mapped_column(
@@ -6530,10 +5928,6 @@ class OracleReadingPassage(Base):
         CheckConstraint(
             "phase IN ('descent', 'ordeal', 'ascent')",
             name="ck_oracle_reading_passages_phase",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_oracle_reading_passages_source_ref_object",
         ),
         CheckConstraint(
             "jsonb_typeof(locator) = 'object'",

@@ -41,7 +41,6 @@ export interface SearchBaseResult {
     type: SearchType;
     id: string;
     evidence_span_ids?: string[];
-    source_version?: string | null;
     locator?: RetrievalLocator | null;
   };
 }
@@ -70,7 +69,6 @@ export interface SearchContentChunkResult extends SearchBaseResult {
   type: "content_chunk";
   media_id: string;
   media_kind: string;
-  source_version: string;
   citation_label: string;
   source: SearchSourceMetadata;
   locator: RetrievalLocator;
@@ -78,7 +76,6 @@ export interface SearchContentChunkResult extends SearchBaseResult {
 
 export interface SearchFragmentResult extends SearchBaseResult {
   type: "fragment";
-  source_version: string;
   citation_label: string | null;
   locator: RetrievalLocator;
   source: SearchSourceMetadata;
@@ -90,7 +87,6 @@ export interface SearchNoteBlockResult extends SearchBaseResult {
   page_title: string;
   body_text: string;
   highlight_excerpt: string | null;
-  source_version: string;
   locator: RetrievalLocator;
 }
 
@@ -98,7 +94,6 @@ export interface SearchHighlightResult extends SearchBaseResult {
   type: "highlight";
   color: string;
   exact: string;
-  source_version: string;
   citation_label: string | null;
   locator: RetrievalLocator;
   source: SearchSourceMetadata;
@@ -107,21 +102,18 @@ export interface SearchHighlightResult extends SearchBaseResult {
 export interface SearchPageResult extends SearchBaseResult {
   type: "page";
   description: string | null;
-  source_version: string;
 }
 
 export interface SearchMessageResult extends SearchBaseResult {
   type: "message";
   conversation_id: string;
   seq: number;
-  source_version: string;
   locator: RetrievalLocator;
 }
 
 export interface SearchEvidenceSpanResult extends SearchBaseResult {
   type: "evidence_span";
   evidence_span_id: string;
-  source_version: string;
   citation_label: string;
   locator: RetrievalLocator;
   source: SearchSourceMetadata;
@@ -143,7 +135,6 @@ export interface SearchWebResult extends SearchBaseResult {
   source_name: string | null;
   rank: number | null;
   provider: string | null;
-  source_version: string;
   locator: Extract<RetrievalLocator, { type: "external_url" }>;
   selected: boolean;
 }
@@ -178,7 +169,6 @@ export interface SearchResultRowViewModel {
     type: SearchType;
     id: string;
     evidenceSpanIds: string[];
-    sourceVersion?: string;
     locator?: RetrievalLocator;
   } | null;
   typeLabel: string;

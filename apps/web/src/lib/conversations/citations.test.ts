@@ -28,7 +28,6 @@ const retrieval = {
   section_label: "Section",
   exact_snippet: "matched source text",
   retrieval_status: "retrieved",
-  source_version: "fragment:fragment-1:v1",
 } satisfies MessageRetrieval;
 
 function assistantMessage(): ConversationMessage {
@@ -70,7 +69,6 @@ describe("buildCitations", () => {
           media_id: "media-1",
           locator,
           snippet: "matched source text",
-          source_version: "fragment:fragment-1:v1",
           highlight_behavior: "pulse",
           focus_behavior: "scroll_into_view",
           status: "retrieved",

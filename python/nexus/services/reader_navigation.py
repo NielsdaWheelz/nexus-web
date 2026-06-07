@@ -14,7 +14,7 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.services.capabilities import READABLE_PROCESSING_STATUSES
+from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import get_epub_navigation_for_viewer
 
 
@@ -41,25 +41,21 @@ def get_media_navigation_for_viewer(
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports reader navigation")
         error.status_code = 409
         raise error
-    if status not in READABLE_PROCESSING_STATUSES:
+    if not is_document_status_ready(status):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
-    active = db.execute(
+    ready = db.execute(
         text(
             """
-            SELECT active_run.id, active_run.source_version
+            SELECT 1
             FROM media_content_index_states mcis
-            JOIN content_index_runs active_run
-              ON active_run.id = mcis.active_run_id
-             AND active_run.state = 'ready'
-             AND active_run.deactivated_at IS NULL
             WHERE mcis.media_id = :media_id
               AND mcis.status = 'ready'
             """
         ),
         {"media_id": media_id},
     ).fetchone()
-    if active is None:
+    if ready is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media navigation is not ready")
 
     rows = db.execute(
@@ -68,17 +64,14 @@ def get_media_navigation_for_viewer(
             SELECT cb.canonical_text,
                    cb.block_idx,
                    cb.locator,
-                   cb.metadata,
-                   ss.source_version
+                   cb.metadata
             FROM content_blocks cb
-            JOIN source_snapshots ss ON ss.id = cb.source_snapshot_id
             WHERE cb.media_id = :media_id
-              AND cb.index_run_id = :run_id
               AND cb.block_kind = 'heading'
             ORDER BY cb.block_idx ASC
             """
         ),
-        {"media_id": media_id, "run_id": active[0]},
+        {"media_id": media_id},
     ).fetchall()
 
     sections: list[ReaderNavigationSectionOut] = []
@@ -104,14 +97,12 @@ def get_media_navigation_for_viewer(
                 anchor_id=locator.get("anchor_id")
                 if isinstance(locator.get("anchor_id"), str)
                 else None,
-                source_version=str(row[4]) if row[4] else str(active[1]),
             )
         )
 
     return MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
-        source_version=str(active[1]),
         sections=sections,
         toc_nodes=_toc_nodes(sections),
         landmarks=[],
@@ -132,7 +123,6 @@ def _toc_nodes(sections: list[ReaderNavigationSectionOut]) -> list[ReaderNavigat
             level=section.level,
             depth=depth,
             section_id=section.section_id,
-            source_version=section.source_version,
             children=[],
         )
         while stack and stack[-1][0] >= depth:

@@ -319,9 +319,7 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
                        ml.cache_write_input_tokens,
                        ml.cache_read_input_tokens,
                        ml.provider_usage,
-                       ml.stable_prefix_hash AS message_stable_prefix_hash,
-                       cpa.prompt_block_manifest,
-                       cpa.stable_prefix_hash AS assembly_stable_prefix_hash
+                       cpa.prompt_block_manifest
                 FROM message_llm ml
                 JOIN chat_prompt_assemblies cpa
                   ON cpa.assistant_message_id = ml.message_id
@@ -337,7 +335,6 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     assert row.cache_write_input_tokens == 0
     assert row.cache_read_input_tokens == 0
     assert row.provider_usage["total_tokens"] == 11
-    assert row.message_stable_prefix_hash == row.assembly_stable_prefix_hash
     assert "Summarize the current notes." not in str(row.prompt_block_manifest)
 
 

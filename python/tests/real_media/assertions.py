@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from uuid import UUID
 
 from sqlalchemy import text
@@ -54,7 +53,7 @@ def assert_fragment_content_contains(
         "media_id": str(media_id),
         "fragment_id": str(row["id"]),
         "expected_text": expected_text,
-        "canonical_text_sha256": hashlib.sha256(row["canonical_text"].encode()).hexdigest(),
+        "canonical_text_length": len(row["canonical_text"]),
     }
 
 
@@ -71,35 +70,23 @@ def assert_complete_evidence_trace(
                     """
                     SELECT
                         mcis.status,
-                        mcis.active_run_id,
-                        cir.state,
-                        cir.embedding_provider,
-                        cir.embedding_model,
-                        cir.embedding_config_hash,
-                        (
-                            SELECT count(*)
-                            FROM source_snapshots ss
-                            WHERE ss.media_id = :media_id
-                              AND ss.index_run_id = mcis.active_run_id
-                        ) AS snapshot_count,
+                        mcis.active_embedding_provider AS embedding_provider,
+                        mcis.active_embedding_model AS embedding_model,
                         (
                             SELECT count(*)
                             FROM content_blocks cb
                             WHERE cb.media_id = :media_id
-                              AND cb.index_run_id = mcis.active_run_id
                         ) AS block_count,
                         (
                             SELECT count(*)
                             FROM content_chunks cc
                             WHERE cc.media_id = :media_id
-                              AND cc.index_run_id = mcis.active_run_id
                               AND cc.source_kind = :source_kind
                         ) AS chunk_count,
                         (
                             SELECT count(*)
                             FROM evidence_spans es
                             WHERE es.media_id = :media_id
-                              AND es.index_run_id = mcis.active_run_id
                               AND es.resolver_kind = :resolver_kind
                         ) AS evidence_count,
                         (
@@ -107,13 +94,10 @@ def assert_complete_evidence_trace(
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
                             WHERE cc.media_id = :media_id
-                              AND cc.index_run_id = mcis.active_run_id
-                              AND ce.embedding_provider = cir.embedding_provider
-                              AND ce.embedding_model = cir.embedding_model
-                              AND ce.embedding_version = cir.embedding_version
-                              AND ce.embedding_config_hash = cir.embedding_config_hash
+                              AND cc.source_kind = :source_kind
+                              AND ce.embedding_provider = mcis.active_embedding_provider
+                              AND ce.embedding_model = mcis.active_embedding_model
                               AND ce.embedding_dimensions > 0
-                              AND char_length(ce.embedding_sha256) = 64
                         ) AS embedding_count
                         ,
                         (
@@ -121,17 +105,16 @@ def assert_complete_evidence_trace(
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
                             WHERE cc.media_id = :media_id
-                              AND cc.index_run_id = mcis.active_run_id
+                              AND cc.source_kind = :source_kind
                         ) AS embedding_dimension_count,
                         (
                             SELECT max(ce.embedding_dimensions)
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
                             WHERE cc.media_id = :media_id
-                              AND cc.index_run_id = mcis.active_run_id
+                              AND cc.source_kind = :source_kind
                         ) AS embedding_dimensions
                     FROM media_content_index_states mcis
-                    JOIN content_index_runs cir ON cir.id = mcis.active_run_id
                     WHERE mcis.media_id = :media_id
                     """
                 ),
@@ -147,11 +130,8 @@ def assert_complete_evidence_trace(
         expected_embedding_model = current_transcript_embedding_model()
         expected_embedding_provider = current_transcript_embedding_provider()
         assert row["status"] == "ready", row
-        assert row["state"] == "ready", row
         assert row["embedding_provider"] == expected_embedding_provider, row
         assert row["embedding_model"] == expected_embedding_model, row
-        assert row["embedding_config_hash"], row
-        assert row["snapshot_count"] > 0, row
         assert row["block_count"] > 0, row
         assert row["chunk_count"] > 0, row
         assert row["evidence_count"] == row["chunk_count"], row
@@ -159,50 +139,20 @@ def assert_complete_evidence_trace(
         assert row["embedding_dimension_count"] == 1, row
         assert row["embedding_dimensions"] > 0, row
 
-        source_snapshot_rows = (
-            session.execute(
-                text(
-                    """
-                    SELECT
-                        id,
-                        source_kind,
-                        artifact_kind,
-                        artifact_ref,
-                        content_type,
-                        byte_length,
-                        source_fingerprint,
-                        source_version,
-                        extractor_version,
-                        content_sha256,
-                        language
-                    FROM source_snapshots
-                    WHERE media_id = :media_id
-                      AND index_run_id = :active_run_id
-                    ORDER BY id ASC
-                    """
-                ),
-                {"media_id": media_id, "active_run_id": row["active_run_id"]},
-            )
-            .mappings()
-            .all()
-        )
-        assert source_snapshot_rows, f"media {media_id} had no source snapshots in active run"
-
         block_rows = (
             session.execute(
                 text(
                     """
-                    SELECT id, source_snapshot_id, block_idx, block_kind,
-                           canonical_text, text_sha256,
+                    SELECT id, block_idx, block_kind,
+                           canonical_text,
                            source_start_offset, source_end_offset,
                            locator, selector
                     FROM content_blocks
                     WHERE media_id = :media_id
-                      AND index_run_id = :active_run_id
                     ORDER BY block_idx ASC
                     """
                 ),
-                {"media_id": media_id, "active_run_id": row["active_run_id"]},
+                {"media_id": media_id},
             )
             .mappings()
             .all()
@@ -211,9 +161,6 @@ def assert_complete_evidence_trace(
         for block in block_rows:
             assert block["source_start_offset"] >= previous_end, block
             assert block["source_end_offset"] >= block["source_start_offset"], block
-            assert (
-                hashlib.sha256(block["canonical_text"].encode()).hexdigest() == block["text_sha256"]
-            ), block
             assert isinstance(block["locator"], dict) and block["locator"], block
             assert isinstance(block["selector"], dict) and block["selector"], block
             previous_end = block["source_end_offset"]
@@ -226,10 +173,8 @@ def assert_complete_evidence_trace(
                         cc.id,
                         cc.primary_evidence_span_id,
                         cc.chunk_text,
-                        cc.chunk_sha256,
                         cc.token_count,
                         es.span_text,
-                        es.span_sha256,
                         es.selector,
                         es.citation_label,
                         string_agg(
@@ -247,28 +192,21 @@ def assert_complete_evidence_trace(
                     JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
                     JOIN content_blocks cb ON cb.id = ccp.block_id
                     WHERE cc.media_id = :media_id
-                      AND cc.index_run_id = :active_run_id
+                      AND cc.source_kind = :source_kind
                     GROUP BY cc.id, cc.primary_evidence_span_id, cc.chunk_text,
-                             cc.chunk_sha256, cc.token_count, es.span_text,
-                             es.span_sha256, es.selector, es.citation_label
+                             cc.token_count, es.span_text, es.selector, es.citation_label
                     ORDER BY cc.chunk_idx
                     """
                 ),
-                {"media_id": media_id, "active_run_id": row["active_run_id"]},
+                {"media_id": media_id, "source_kind": source_kind},
             )
             .mappings()
             .all()
         )
-        assert chunk_rows, f"media {media_id} had no chunks in active run"
+        assert chunk_rows, f"media {media_id} had no current chunks"
         for chunk in chunk_rows:
             assert chunk["reconstructed"] == chunk["chunk_text"], chunk
             assert chunk["span_text"] == chunk["chunk_text"], chunk
-            assert (
-                hashlib.sha256(chunk["chunk_text"].encode()).hexdigest() == chunk["chunk_sha256"]
-            ), chunk
-            assert (
-                hashlib.sha256(chunk["span_text"].encode()).hexdigest() == chunk["span_sha256"]
-            ), chunk
 
         part_rows = (
             session.execute(
@@ -286,56 +224,35 @@ def assert_complete_evidence_trace(
                     FROM content_chunk_parts ccp
                     JOIN content_chunks cc ON cc.id = ccp.chunk_id
                     WHERE cc.media_id = :media_id
-                      AND cc.index_run_id = :active_run_id
+                      AND cc.source_kind = :source_kind
                     ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                     """
                 ),
-                {"media_id": media_id, "active_run_id": row["active_run_id"]},
+                {"media_id": media_id, "source_kind": source_kind},
             )
             .mappings()
             .all()
         )
-        assert part_rows, f"media {media_id} had no chunk parts in active run"
+        assert part_rows, f"media {media_id} had no current chunk parts"
 
     return {
         "media_id": str(media_id),
-        "active_run_id": str(row["active_run_id"]),
         "source_kind": source_kind,
         "resolver_kind": resolver_kind,
         "embedding_provider": row["embedding_provider"],
         "embedding_model": row["embedding_model"],
         "embedding_dimensions": row["embedding_dimensions"],
-        "embedding_config_hash": row["embedding_config_hash"],
-        "snapshot_count": row["snapshot_count"],
         "block_count": row["block_count"],
         "chunk_count": row["chunk_count"],
         "evidence_count": row["evidence_count"],
         "embedding_count": row["embedding_count"],
         "chunk_ids": [str(chunk["id"]) for chunk in chunk_rows],
         "evidence_span_ids": [str(chunk["primary_evidence_span_id"]) for chunk in chunk_rows],
-        "source_snapshots": [
-            {
-                "id": str(snapshot["id"]),
-                "source_kind": snapshot["source_kind"],
-                "artifact_kind": snapshot["artifact_kind"],
-                "artifact_ref": snapshot["artifact_ref"],
-                "content_type": snapshot["content_type"],
-                "byte_length": snapshot["byte_length"],
-                "source_fingerprint": snapshot["source_fingerprint"],
-                "source_version": snapshot["source_version"],
-                "extractor_version": snapshot["extractor_version"],
-                "content_sha256": snapshot["content_sha256"],
-                "language": snapshot["language"],
-            }
-            for snapshot in source_snapshot_rows
-        ],
         "content_blocks": [
             {
                 "id": str(block["id"]),
-                "source_snapshot_id": str(block["source_snapshot_id"]),
                 "block_idx": block["block_idx"],
                 "block_kind": block["block_kind"],
-                "text_sha256": block["text_sha256"],
                 "source_start_offset": block["source_start_offset"],
                 "source_end_offset": block["source_end_offset"],
                 "locator": block["locator"],
@@ -347,7 +264,6 @@ def assert_complete_evidence_trace(
             {
                 "id": str(chunk["id"]),
                 "primary_evidence_span_id": str(chunk["primary_evidence_span_id"]),
-                "chunk_sha256": chunk["chunk_sha256"],
                 "token_count": chunk["token_count"],
             }
             for chunk in chunk_rows
@@ -368,7 +284,6 @@ def assert_complete_evidence_trace(
         "evidence_spans": [
             {
                 "id": str(chunk["primary_evidence_span_id"]),
-                "span_sha256": chunk["span_sha256"],
                 "selector": chunk["selector"],
                 "citation_label": chunk["citation_label"],
             }
@@ -392,13 +307,10 @@ def assert_pdf_ocr_required_trace(
                         m.plain_text,
                         mcis.status,
                         mcis.status_reason,
-                        mcis.latest_run_id,
-                        cir.state,
                         (
                             SELECT count(*)
                             FROM content_blocks
                             WHERE media_id = :media_id
-                              AND index_run_id = mcis.latest_run_id
                         ) AS block_count,
                         (
                             SELECT count(*)
@@ -413,7 +325,6 @@ def assert_pdf_ocr_required_trace(
                         ) AS embedding_count
                     FROM media m
                     JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                    JOIN content_index_runs cir ON cir.id = mcis.latest_run_id
                     WHERE m.id = :media_id
                     """
                 ),
@@ -427,7 +338,6 @@ def assert_pdf_ocr_required_trace(
         assert row["plain_text"] is None, row
         assert row["status"] == "ocr_required", row
         assert row["status_reason"] == "ocr_required", row
-        assert row["state"] == "ocr_required", row
         assert row["block_count"] > 0, row
         assert row["chunk_count"] == 0, row
         assert row["embedding_count"] == 0, row
@@ -439,12 +349,11 @@ def assert_pdf_ocr_required_trace(
                     SELECT canonical_text, locator, selector
                     FROM content_blocks
                     WHERE media_id = :media_id
-                      AND index_run_id = :run_id
                     ORDER BY block_idx ASC
                     LIMIT 1
                     """
                 ),
-                {"media_id": media_id, "run_id": row["latest_run_id"]},
+                {"media_id": media_id},
             )
             .mappings()
             .one()
@@ -455,10 +364,8 @@ def assert_pdf_ocr_required_trace(
 
     return {
         "media_id": str(media_id),
-        "latest_run_id": str(row["latest_run_id"]),
         "status": row["status"],
         "status_reason": row["status_reason"],
-        "state": row["state"],
         "block_count": row["block_count"],
         "chunk_count": row["chunk_count"],
         "embedding_count": row["embedding_count"],
@@ -469,7 +376,6 @@ def assert_reingest_replacement_trace(
     direct_db: DirectSessionManager,
     *,
     media_id: UUID,
-    old_run_id: UUID,
     old_chunk_id: UUID,
     old_evidence_span_id: UUID,
 ) -> dict:
@@ -479,12 +385,7 @@ def assert_reingest_replacement_trace(
                 text(
                     """
                     SELECT
-                        mcis.active_run_id AS new_run_id,
-                        (
-                            SELECT count(*)
-                            FROM content_index_runs
-                            WHERE id = :old_run_id
-                        ) AS old_run_count,
+                        mcis.status,
                         (
                             SELECT count(*)
                             FROM content_chunks
@@ -501,7 +402,6 @@ def assert_reingest_replacement_trace(
                 ),
                 {
                     "media_id": media_id,
-                    "old_run_id": old_run_id,
                     "old_chunk_id": old_chunk_id,
                     "old_evidence_span_id": old_evidence_span_id,
                 },
@@ -509,15 +409,13 @@ def assert_reingest_replacement_trace(
             .mappings()
             .one()
         )
-        assert row["new_run_id"] != old_run_id, row
-        assert row["old_run_count"] == 0, row
+        assert row["status"] == "ready", row
         assert row["old_chunk_count"] == 0, row
         assert row["old_span_count"] == 0, row
 
     return {
         "media_id": str(media_id),
-        "old_run_id": str(old_run_id),
-        "new_run_id": str(row["new_run_id"]),
+        "status": row["status"],
         "old_chunk_id": str(old_chunk_id),
         "old_evidence_span_id": str(old_evidence_span_id),
         "old_artifacts_removed": True,
@@ -618,7 +516,6 @@ def assert_search_and_resolver(
         "context_ref": result["context_ref"],
         "evidence_span_id": evidence_span_id,
         "resolver": resolved["resolver"],
-        "span_sha256": hashlib.sha256(resolved["span_text"].encode()).hexdigest(),
         "span_text_length": len(resolved["span_text"]),
     }
 
@@ -678,9 +575,9 @@ def assert_saved_highlight_trace(
         "page_number": row["page_number"],
         "start_offset": row["start_offset"],
         "end_offset": row["end_offset"],
-        "exact_sha256": hashlib.sha256(row["exact"].encode()).hexdigest(),
-        "prefix_sha256": hashlib.sha256(str(row["prefix"] or "").encode()).hexdigest(),
-        "suffix_sha256": hashlib.sha256(str(row["suffix"] or "").encode()).hexdigest(),
+        "exact_length": len(row["exact"]),
+        "prefix_length": len(str(row["prefix"] or "")),
+        "suffix_length": len(str(row["suffix"] or "")),
         "color": row["color"],
     }
 
@@ -705,7 +602,7 @@ def assert_export_trace(
                         hfa.fragment_id,
                         hfa.start_offset
                     FROM media_content_index_states mcis
-                    JOIN content_blocks cb ON cb.index_run_id = mcis.active_run_id
+                    JOIN content_blocks cb ON cb.media_id = mcis.media_id
                     JOIN highlights h ON h.id = :highlight_id
                     JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
                     WHERE mcis.media_id = :media_id
@@ -746,7 +643,7 @@ def assert_export_trace(
 
     return {
         "canonical_path": canonical_files[0]["path"],
-        "canonical_sha256": hashlib.sha256(block_text.encode()).hexdigest(),
+        "canonical_text_length": len(block_text),
         "highlight_id": str(highlight_id),
         "highlight_path": highlight_files[0]["path"],
         "highlight_exact": row["highlight_exact"],
@@ -785,11 +682,6 @@ def assert_library_removed_evidence_trace(
                         ) AS media_count,
                         (
                             SELECT count(*)
-                            FROM content_index_runs
-                            WHERE media_id = :media_id
-                        ) AS index_run_count,
-                        (
-                            SELECT count(*)
                             FROM content_chunks
                             WHERE media_id = :media_id
                         ) AS chunk_count,
@@ -798,8 +690,7 @@ def assert_library_removed_evidence_trace(
                             FROM evidence_spans
                             WHERE media_id = :media_id
                         ) AS evidence_count,
-                        mcis.status,
-                        mcis.active_run_id
+                        mcis.status
                     FROM media_content_index_states mcis
                     WHERE mcis.media_id = :media_id
                     """
@@ -812,7 +703,6 @@ def assert_library_removed_evidence_trace(
     assert row["removed_library_entry_count"] == 0, row
     assert row["default_intrinsic_count"] == 1, row
     assert row["media_count"] == 1, row
-    assert row["index_run_count"] > 0, row
     assert row["chunk_count"] > 0, row
     assert row["evidence_count"] > 0, row
     assert row["status"] == "ready", row
@@ -820,11 +710,9 @@ def assert_library_removed_evidence_trace(
     return {
         "media_id": str(media_id),
         "library_id": str(library_id),
-        "active_run_id": str(row["active_run_id"]),
         "removed_library_entry_count": row["removed_library_entry_count"],
         "default_intrinsic_count": row["default_intrinsic_count"],
         "media_count": row["media_count"],
-        "index_run_count": row["index_run_count"],
         "chunk_count": row["chunk_count"],
         "evidence_count": row["evidence_count"],
         "status": row["status"],
@@ -864,8 +752,6 @@ def assert_media_deleted_evidence_trace(
                     """
                     SELECT
                         (SELECT count(*) FROM media WHERE id = :media_id) AS media_count,
-                        (SELECT count(*) FROM content_index_runs WHERE media_id = :media_id)
-                            AS index_run_count,
                         (SELECT count(*) FROM content_chunks WHERE media_id = :media_id)
                             AS chunk_count,
                         (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id)
@@ -878,7 +764,6 @@ def assert_media_deleted_evidence_trace(
             .one()
         )
     assert counts["media_count"] == 0, counts
-    assert counts["index_run_count"] == 0, counts
     assert counts["chunk_count"] == 0, counts
     assert counts["evidence_count"] == 0, counts
     return dict(counts)

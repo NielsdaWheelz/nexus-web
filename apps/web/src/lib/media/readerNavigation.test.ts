@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  isReadableStatus,
   normalizeReaderNavigationToc,
   parseReaderNavigationHrefAnchorId,
   type MediaNavigationResponse,
@@ -83,7 +82,6 @@ describe("MediaNavigationResponse", () => {
       data: {
         media_id: "media-1",
         kind: "web_article",
-        source_version: "web_article:fragments:abc",
         sections: [],
         toc_nodes: [],
         landmarks: [],
@@ -93,18 +91,5 @@ describe("MediaNavigationResponse", () => {
 
     expect(payload.data.landmarks).toEqual([]);
     expect(payload.data.page_list).toEqual([]);
-  });
-});
-
-describe("isReadableStatus", () => {
-  it("accepts reader-ready statuses", () => {
-    expect(isReadableStatus("ready_for_reading")).toBe(true);
-    expect(isReadableStatus("embedding")).toBe(true);
-    expect(isReadableStatus("ready")).toBe(true);
-  });
-
-  it("rejects non-reader statuses", () => {
-    expect(isReadableStatus("pending")).toBe(false);
-    expect(isReadableStatus("failed")).toBe(false);
   });
 });

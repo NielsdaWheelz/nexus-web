@@ -31,13 +31,14 @@ from nexus.schemas.highlights import (
     PdfBoundsUpdate,
     TypedHighlightOut,
 )
+from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
     project_highlights_with_links,
-    require_media_ready_or_409,
 )
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
+    CanonicalQuad,
     GeometryValidationError,
     canonicalize_geometry,
     derive_duplicate_lock_key,
@@ -97,6 +98,11 @@ def _get_page_span(db: Session, media_id: UUID, page_number: int) -> PdfPageText
     )
 
 
+def _require_pdf_media_ready_or_409(media: Media) -> None:
+    if not is_document_status_ready(media.processing_status.value):
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
+
+
 def _compute_write_time_match(
     db: Session,
     media: Media,
@@ -116,7 +122,6 @@ def _compute_write_time_match(
     if not is_pdf_quote_text_ready(db, media.id):
         return {
             "match_status": "pending",
-            "match_version": None,
             "start_offset": None,
             "end_offset": None,
             "prefix": "",
@@ -145,7 +150,6 @@ def _compute_write_time_match(
         )
         return {
             "match_status": outcome.match_status,
-            "match_version": outcome.match_version,
             "start_offset": outcome.start_offset,
             "end_offset": outcome.end_offset,
             "prefix": outcome.prefix,
@@ -164,7 +168,6 @@ def _compute_write_time_match(
     fields = match_result_to_persistence_fields(result)
     return {
         "match_status": fields["plain_text_match_status"],
-        "match_version": fields["plain_text_match_version"],
         "start_offset": fields["plain_text_start_offset"],
         "end_offset": fields["plain_text_end_offset"],
         "prefix": result.prefix,
@@ -175,6 +178,55 @@ def _compute_write_time_match(
 # ---------------------------------------------------------------------------
 # Canonical effective-state comparison
 # ---------------------------------------------------------------------------
+
+
+def _stored_quads_match(
+    stored_quads: list[HighlightPdfQuad],
+    canonical_quads: tuple[CanonicalQuad, ...],
+) -> bool:
+    ordered_quads = sorted(stored_quads, key=lambda q: q.quad_idx)
+    if len(ordered_quads) != len(canonical_quads):
+        return False
+
+    for stored, canonical in zip(ordered_quads, canonical_quads, strict=True):
+        if (
+            stored.x1 != canonical.x1
+            or stored.y1 != canonical.y1
+            or stored.x2 != canonical.x2
+            or stored.y2 != canonical.y2
+            or stored.x3 != canonical.x3
+            or stored.y3 != canonical.y3
+            or stored.x4 != canonical.x4
+            or stored.y4 != canonical.y4
+        ):
+            return False
+    return True
+
+
+def _find_duplicate_pdf_anchor(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    canonical: CanonicalGeometry,
+    exclude_highlight_id: UUID | None = None,
+) -> HighlightPdfAnchor | None:
+    query = (
+        db.query(Highlight)
+        .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
+        .filter(
+            Highlight.user_id == viewer_id,
+            HighlightPdfAnchor.media_id == media_id,
+            HighlightPdfAnchor.page_number == canonical.page_number,
+            HighlightPdfAnchor.rect_count == canonical.rect_count,
+        )
+    )
+    if exclude_highlight_id is not None:
+        query = query.filter(Highlight.id != exclude_highlight_id)
+
+    for candidate in query.all():
+        if _stored_quads_match(candidate.pdf_quads, canonical.quads):
+            return candidate.pdf_anchor
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +252,10 @@ def compare_effective_state(
     if pa is None:
         return EffectiveStateComparison(is_noop=False, requires_full_path=True)
 
-    if pa.geometry_fingerprint != canonical.fingerprint:
+    if pa.page_number != canonical.page_number:
+        return EffectiveStateComparison(is_noop=False, requires_full_path=False)
+
+    if not _stored_quads_match(highlight.pdf_quads, canonical.quads):
         return EffectiveStateComparison(is_noop=False, requires_full_path=False)
 
     effective_color = new_color if new_color is not None else highlight.color
@@ -208,9 +263,6 @@ def compare_effective_state(
         return EffectiveStateComparison(is_noop=False, requires_full_path=False)
 
     if new_exact != highlight.exact:
-        return EffectiveStateComparison(is_noop=False, requires_full_path=False)
-
-    if pa.page_number != canonical.page_number:
         return EffectiveStateComparison(is_noop=False, requires_full_path=False)
 
     return EffectiveStateComparison(is_noop=True, requires_full_path=False)
@@ -229,7 +281,7 @@ def create_pdf_highlight(
 ) -> TypedHighlightOut:
     """Create a PDF geometry highlight."""
     media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    require_media_ready_or_409(media.processing_status.value)
+    _require_pdf_media_ready_or_409(media)
     _validate_page_number(req.page_number, media.page_count)
 
     try:
@@ -250,23 +302,11 @@ def create_pdf_highlight(
         viewer_id,
         media_id,
         canonical.page_number,
-        canonical.geometry_version,
-        canonical.fingerprint,
+        canonical.quads,
     )
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    existing = (
-        db.query(HighlightPdfAnchor)
-        .join(Highlight, Highlight.id == HighlightPdfAnchor.highlight_id)
-        .filter(
-            Highlight.user_id == viewer_id,
-            HighlightPdfAnchor.media_id == media_id,
-            HighlightPdfAnchor.page_number == canonical.page_number,
-            HighlightPdfAnchor.geometry_version == canonical.geometry_version,
-            HighlightPdfAnchor.geometry_fingerprint == canonical.fingerprint,
-        )
-        .first()
-    )
+    existing = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical)
     if existing is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
@@ -286,11 +326,8 @@ def create_pdf_highlight(
         highlight_id=highlight.id,
         media_id=media_id,
         page_number=canonical.page_number,
-        geometry_version=canonical.geometry_version,
-        geometry_fingerprint=canonical.fingerprint,
         sort_top=canonical.sort_top,
         sort_left=canonical.sort_left,
-        plain_text_match_version=match_fields["match_version"],
         plain_text_match_status=match_fields["match_status"],
         plain_text_start_offset=match_fields["start_offset"],
         plain_text_end_offset=match_fields["end_offset"],
@@ -372,7 +409,7 @@ def update_pdf_highlight_bounds(
     if media is None or media.kind != "pdf":
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    require_media_ready_or_409(media.processing_status.value)
+    _require_pdf_media_ready_or_409(media)
     _validate_page_number(bounds.page_number, media.page_count)
 
     try:
@@ -409,24 +446,16 @@ def update_pdf_highlight_bounds(
         viewer_id,
         highlight.anchor_media_id,
         canonical.page_number,
-        canonical.geometry_version,
-        canonical.fingerprint,
+        canonical.quads,
     )
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    # Duplicate check excludes the highlight being updated.
-    dup = (
-        db.query(HighlightPdfAnchor)
-        .join(Highlight, Highlight.id == HighlightPdfAnchor.highlight_id)
-        .filter(
-            Highlight.user_id == viewer_id,
-            HighlightPdfAnchor.media_id == highlight.anchor_media_id,
-            HighlightPdfAnchor.page_number == canonical.page_number,
-            HighlightPdfAnchor.geometry_version == canonical.geometry_version,
-            HighlightPdfAnchor.geometry_fingerprint == canonical.fingerprint,
-            Highlight.id != highlight.id,
-        )
-        .first()
+    dup = _find_duplicate_pdf_anchor(
+        db,
+        viewer_id,
+        highlight.anchor_media_id,
+        canonical,
+        exclude_highlight_id=highlight.id,
     )
     if dup is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
@@ -449,13 +478,10 @@ def update_pdf_highlight_bounds(
 
     pa = highlight.pdf_anchor
     pa.page_number = canonical.page_number
-    pa.geometry_version = canonical.geometry_version
-    pa.geometry_fingerprint = canonical.fingerprint
     pa.sort_top = canonical.sort_top
     pa.sort_left = canonical.sort_left
     pa.rect_count = canonical.rect_count
     pa.plain_text_match_status = match_fields["match_status"]
-    pa.plain_text_match_version = match_fields["match_version"]
     pa.plain_text_start_offset = match_fields["start_offset"]
     pa.plain_text_end_offset = match_fields["end_offset"]
 

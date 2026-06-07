@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from llm_calling.types import LLMRequest, ReasoningEffort, Turn
 
-from nexus.hashing import stable_json_hash
 from nexus.services.prompt_budget import (
     ContextBudgetError,
     PromptBlock,
@@ -36,9 +35,7 @@ class PromptTurn:
 @dataclass(frozen=True)
 class PromptPlan:
     turns: tuple[PromptTurn, ...]
-    stable_prefix_hash: str
     cacheable_input_tokens_estimate: int
-    provider_request_hash: str
 
     def blocks(self) -> tuple[PromptBlock, ...]:
         return tuple(block for turn in self.turns for block in turn.blocks)
@@ -48,9 +45,7 @@ class PromptPlan:
 
     def manifest(self) -> dict[str, object]:
         return {
-            "stable_prefix_hash": self.stable_prefix_hash,
             "cacheable_input_tokens_estimate": self.cacheable_input_tokens_estimate,
-            "provider_request_hash": self.provider_request_hash,
             "blocks": [
                 block.manifest_entry(ordinal=index, included=True)
                 for index, block in enumerate(self.blocks())
@@ -95,12 +90,8 @@ def build_prompt_plan(
     dynamic_system_blocks: Sequence[PromptBlock],
     history_blocks: Sequence[PromptBlock],
     current_user_block: PromptBlock,
-    cache_identity: Mapping[str, object],
-    model_name: str,
-    max_tokens: int,
-    reasoning_effort: str,
 ) -> PromptPlan:
-    """Build the ordered prompt plan and its non-text hashes."""
+    """Build the ordered prompt plan."""
 
     stable = tuple(stable_blocks)
     dynamic = tuple(dynamic_system_blocks)
@@ -112,32 +103,9 @@ def build_prompt_plan(
     turns.extend(PromptTurn(role=block.role, blocks=(block,)) for block in history)
     turns.append(PromptTurn(role="user", blocks=(current_user_block,)))
 
-    stable_prefix_hash = stable_json_hash(
-        {
-            "block_hashes": [block.stable_hash for block in stable],
-        }
-    )
-    provider_request_hash = stable_json_hash(
-        {
-            "cache_identity": dict(cache_identity),
-            "stable_prefix_hash": stable_prefix_hash,
-            "model_name": model_name,
-            "max_tokens": max_tokens,
-            "reasoning_effort": reasoning_effort,
-            "turns": [
-                {
-                    "role": turn.role,
-                    "block_hashes": [block.stable_hash for block in turn.blocks],
-                }
-                for turn in turns
-            ],
-        }
-    )
     return PromptPlan(
         turns=tuple(turns),
-        stable_prefix_hash=stable_prefix_hash,
         cacheable_input_tokens_estimate=estimate_block_tokens(stable),
-        provider_request_hash=provider_request_hash,
     )
 
 
@@ -175,7 +143,7 @@ def build_llm_request_from_plan(
         max_tokens=max_tokens,
         temperature=0.7,
         reasoning_effort=cast(ReasoningEffort, reasoning_effort),
-        prompt_cache_key=plan.stable_prefix_hash if provider == "openai" else None,
+        prompt_cache_key=None,
     )
 
 

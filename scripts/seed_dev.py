@@ -531,7 +531,6 @@ def main() -> None:
                     page_number=1,
                     start_offset=0,
                     end_offset=25,
-                    text_extract_version=1,
                 )
             )
             db.add(
@@ -540,7 +539,6 @@ def main() -> None:
                     page_number=2,
                     start_offset=27,
                     end_offset=423,
-                    text_extract_version=1,
                 )
             )
             db.add(
@@ -549,7 +547,6 @@ def main() -> None:
                     page_number=3,
                     start_offset=425,
                     end_offset=len(pdf_plain_text),
-                    text_extract_version=1,
                 )
             )
             db.flush()

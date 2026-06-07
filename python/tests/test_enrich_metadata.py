@@ -560,7 +560,7 @@ class TestEnrichMetadata:
                         created_by_user_id
                     ) VALUES (
                         :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready', :user_id
+                        'ready_for_reading', :user_id
                     )
                     """
                 ),
@@ -617,8 +617,8 @@ class TestEnrichMetadata:
         assert len(last_error_message) <= 1000, (
             f"Expected message capped at 1000 chars, got len={len(last_error_message)}"
         )
-        assert processing_status == "ready", (
-            f"Expected processing_status unchanged='ready', got {processing_status!r}"
+        assert processing_status == "ready_for_reading", (
+            f"Expected processing_status unchanged='ready_for_reading', got {processing_status!r}"
         )
 
     def test_parse_failure_records_metadata_failure(
@@ -640,7 +640,7 @@ class TestEnrichMetadata:
                         created_by_user_id
                     ) VALUES (
                         :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready', :user_id
+                        'ready_for_reading', :user_id
                     )
                     """
                 ),
@@ -684,7 +684,7 @@ class TestEnrichMetadata:
                 {"id": media_id},
             ).fetchone()
 
-        assert row == ("metadata", "E_METADATA_PARSE_FAILED", "ready"), (
+        assert row == ("metadata", "E_METADATA_PARSE_FAILED", "ready_for_reading"), (
             f"Expected metadata failure recorded with parse-failed code, got {row}"
         )
 
@@ -708,7 +708,7 @@ class TestEnrichMetadata:
                         last_error_message
                     ) VALUES (
                         :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready', :user_id, 'metadata', 'E_METADATA_PARSE_FAILED',
+                        'ready_for_reading', :user_id, 'metadata', 'E_METADATA_PARSE_FAILED',
                         'previous failure'
                     )
                     """
@@ -801,7 +801,7 @@ class TestEnrichMetadata:
                         last_error_message
                     ) VALUES (
                         :id, 'web_article', 'Real Title', 'https://example.com/a',
-                        'ready', :user_id, 'metadata', 'E_FOO', 'prior'
+                        'ready_for_reading', :user_id, 'metadata', 'E_FOO', 'prior'
                     )
                     """
                 ),
@@ -847,7 +847,7 @@ class TestEnrichMetadata:
                 {"id": media_id},
             ).fetchone()
 
-        assert row == (None, None, None, "ready"), (
+        assert row == (None, None, None, "ready_for_reading"), (
             f"Expected prior metadata failure cleared (status unchanged), got {row}"
         )
 
@@ -874,7 +874,7 @@ class TestEnrichMetadata:
                         created_by_user_id
                     ) VALUES (
                         :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready', :user_id
+                        'ready_for_reading', :user_id
                     )
                     """
                 ),

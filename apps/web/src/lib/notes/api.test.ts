@@ -35,7 +35,6 @@ describe("notes api", () => {
               id: "page-today",
               title: "May 6, 2026",
               description: null,
-              revision: 1,
               blocks: [],
             },
           },
@@ -56,7 +55,6 @@ describe("notes api", () => {
             body_markdown: "capture",
             body_text: "capture",
             collapsed: false,
-            revision: 1,
             children: [],
           },
         });
@@ -80,7 +78,7 @@ describe("notes api", () => {
     );
   });
 
-  it("sends the document save shape and normalizes revisions", async () => {
+  it("sends the current document save shape", async () => {
     let requestBody: Record<string, unknown> | null = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
@@ -94,7 +92,6 @@ describe("notes api", () => {
             id: "page-1",
             title: "Page",
             description: null,
-            revision: 3,
             blocks: [
               {
                 id: "block-1",
@@ -106,7 +103,6 @@ describe("notes api", () => {
                 body_markdown: "body",
                 body_text: "body",
                 collapsed: false,
-                revision: 2,
                 children: [],
               },
             ],
@@ -117,7 +113,6 @@ describe("notes api", () => {
 
     const result = await saveNotePageDocument("page-1", {
       clientMutationId: "mutation-1",
-      basePageRevision: 2,
       focusBlockId: null,
       topLevelParentBlockId: null,
       blocks: [
@@ -129,15 +124,13 @@ describe("notes api", () => {
           blockKind: "bullet",
           bodyPmJson: { type: "paragraph" },
           collapsed: false,
-          baseRevision: 1,
         },
       ],
-      deletedBlocks: [{ id: "block-2", baseRevision: 1 }],
+      deletedBlocks: ["block-2"],
     });
 
     expect(requestBody).toEqual({
       client_mutation_id: "mutation-1",
-      base_page_revision: 2,
       focus_block_id: null,
       top_level_parent_block_id: null,
       blocks: [
@@ -149,12 +142,37 @@ describe("notes api", () => {
           block_kind: "bullet",
           body_pm_json: { type: "paragraph" },
           collapsed: false,
-          base_revision: 1,
         },
       ],
-      deleted_blocks: [{ id: "block-2", base_revision: 1 }],
+      deleted_blocks: ["block-2"],
     });
-    expect(result.page.revision).toBe(3);
-    expect(result.page.blocks[0]?.revision).toBe(2);
+    expect(result.page.blocks[0]?.id).toBe("block-1");
+  });
+
+  it("rejects legacy revision fields in note responses", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        data: {
+          clientMutationId: "mutation-1",
+          page: {
+            id: "page-1",
+            title: "Page",
+            description: null,
+            revision: 7,
+            blocks: [],
+          },
+        },
+      }),
+    );
+
+    await expect(
+      saveNotePageDocument("page-1", {
+        clientMutationId: "mutation-1",
+        focusBlockId: null,
+        topLevelParentBlockId: null,
+        blocks: [],
+        deletedBlocks: [],
+      }),
+    ).rejects.toThrow("note page includes legacy artifact identity");
   });
 });

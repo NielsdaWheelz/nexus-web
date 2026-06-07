@@ -39,8 +39,6 @@ _READY_STATES = frozenset(
     {
         ProcessingStatus.pending,
         ProcessingStatus.ready_for_reading,
-        ProcessingStatus.embedding,
-        ProcessingStatus.ready,
     }
 )
 

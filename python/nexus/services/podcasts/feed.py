@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -241,10 +240,8 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
         except OSError as exc:
             logger.warning("podcast_feed_fixture_unavailable", page_url=page_url, error=str(exc))
             return [], None
-        if len(content) != 1_397 or hashlib.sha256(content).hexdigest() != (
-            "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043"
-        ):
-            logger.warning("podcast_feed_fixture_hash_mismatch", page_url=page_url)
+        if len(content) != 1_397:
+            logger.warning("podcast_feed_fixture_size_mismatch", page_url=page_url)
             return [], None
         return _parse_feed_episode_page(content, page_url)
 
@@ -285,6 +282,18 @@ def _parse_feed_episode_page(
 
     next_page_url = _extract_feed_next_page_url(root, page_url)
     return episodes, next_page_url
+
+
+def _feed_fallback_episode_id(title: str, published_at: str | None) -> str:
+    title_part = _feed_identity_slug(title)
+    published_part = _feed_identity_slug(published_at)
+    return f"feed-title-{title_part}-published-{published_part}"
+
+
+def _feed_identity_slug(value: object) -> str:
+    normalized = " ".join(str(value or "").strip().casefold().split())
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+    return slug or "missing"
 
 
 def _episode_from_feed_item(
@@ -346,8 +355,7 @@ def _episode_from_feed_item(
 
     provider_episode_id = guid or audio_url
     if not provider_episode_id:
-        seed = f"{title}|{published_at or ''}"
-        provider_episode_id = f"feed-{hashlib.sha1(seed.encode()).hexdigest()}"
+        provider_episode_id = _feed_fallback_episode_id(title, published_at)
 
     chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
     transcript_refs = _extract_rss_transcript_refs_from_feed_item(item, base_url=base_url)

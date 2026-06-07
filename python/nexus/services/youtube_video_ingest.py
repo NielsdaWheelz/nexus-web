@@ -16,9 +16,9 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.transcript_segments import normalize_transcript_segments
-from nexus.services.transcripts.versions import (
+from nexus.services.transcripts.current import (
     set_media_transcript_state,
-    write_transcript_version,
+    write_current_transcript,
 )
 from nexus.services.youtube_identity import classify_youtube_url
 from nexus.services.youtube_transcripts import fetch_youtube_transcript
@@ -107,14 +107,12 @@ def run_youtube_video_ingest(
 
         if transcript_status == "completed" and transcript_segments:
             now = datetime.now(UTC)
-            write_transcript_version(
+            write_current_transcript(
                 db,
                 media_id=media_id,
-                created_by_user_id=actor_user_id,
                 request_reason="episode_open",
                 transcript_coverage="full",
                 transcript_segments=transcript_segments,
-                fragment_strategy="replace",
                 mark_media_ready=mark_media_ready,
                 now=now,
             )

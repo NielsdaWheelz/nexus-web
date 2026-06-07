@@ -282,9 +282,10 @@ Oracle plate images are public owned assets, not product data:
    and `X-Request-ID`, and attaches `X-Nexus-Internal`.
 4. FastAPI admits `/oracle/plates/{id}` only after internal-header verification;
    there is no viewer context and no bearer auth.
-5. `services/oracle_plates.py` resolves immutable DB metadata, validates the
-   content-addressed storage contract, returns `304` from metadata when the ETag
-   matches, and reads storage through integrity-checked helpers for `200`.
+5. `services/oracle_plates.py` resolves current DB-owned plate metadata,
+   validates the stable storage-key contract, returns `304` from route metadata
+   when the ETag matches, and reads storage with byte-size verification for
+   `200`.
 
 ### 5.3 The SSE exception (streaming)
 
@@ -319,10 +320,10 @@ autogenerate).
 
 Conventions throughout: UUID `id` PKs (`gen_random_uuid()`), `timestamptz` with
 `now()` defaults, heavy `CHECK`/`UNIQUE`/partial indexes encoding business rules,
-JSONB columns (with `jsonb_typeof` checks), `pgvector` columns fixed at **256
-dimensions**, and a recurring **versioned-artifact** pattern (immutable versioned
-rows with supersession) for content-index runs, transcript versions, library
-intelligence, and the oracle corpus.
+JSONB columns (with `jsonb_typeof` checks), and `pgvector` columns fixed at
+**256 dimensions**. Readable content artifacts are current-only: reprocessing
+replaces the current evidence rows instead of preserving app-level versions,
+hashes, fingerprints, or supersession chains.
 
 The tables group into these domains:
 
@@ -332,11 +333,10 @@ The tables group into these domains:
 `reader_profiles`, `workspace_sessions`, `command_palette_usages`.
 
 **Media / ingestion** — `media` (the central readable entity), `media_file`
-(private original-file object metadata), `source_snapshots` +
-`content_index_runs` (versioned extraction/index runs),
-`project_gutenberg_catalog`, `user_media_deletions`.
+(private original-file object metadata), `project_gutenberg_catalog`,
+`user_media_deletions`.
 
-**Reader content / fragments** — `fragments` (immutable render units carrying
+**Reader content / fragments** — `fragments` (current render units carrying
 `canonical_text` + `html_sanitized`), `fragment_blocks`, EPUB structure
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
 `epub_resources` for private extracted asset object metadata),
@@ -354,8 +354,9 @@ The tables group into these domains:
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
 `library_invitations`, `default_library_intrinsics`,
 `default_library_closure_edges`, `default_library_backfill_jobs`, and the
-versioned **library-intelligence** subgraph (`library_source_set_versions`,
-`library_intelligence_artifacts`/`_versions`/`_sections`/`_nodes`/`_claims`/`_evidence`).
+current **library-intelligence** subgraph (`library_intelligence_artifacts`,
+`library_intelligence_sections`, `library_intelligence_nodes`,
+`library_intelligence_claims`, `library_intelligence_evidence`).
 
 **Contributors** — `contributors` (canonical identity, self-FK for merges),
 `contributor_aliases`, `contributor_external_ids`, `contributor_credits`,
@@ -378,16 +379,15 @@ machinery: `chat_runs`, `chat_run_events` (append-only SSE log),
 `podcast_subscription_libraries`, `podcast_episodes` (PK = `media_id`),
 `podcast_episode_chapters`, `podcast_listening_states`, `playback_queue_items`,
 `podcast_transcription_jobs`, `podcast_transcription_usage_daily`,
-`podcast_transcript_versions` + `_segments`.
+`podcast_transcript_segments`.
 
 **Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
 stream-token replay claims.
 
-**Oracle** — `oracle_corpus_set_versions`, `oracle_corpus_works`,
-`oracle_corpus_passages` (PGVector 256), `oracle_corpus_images` (PGVector 256 +
-public owned plate object metadata), `oracle_readings`,
-`oracle_reading_passages`, `oracle_reading_events`.
+**Oracle** — `oracle_corpus_works`, `oracle_corpus_passages` (PGVector 256),
+`oracle_corpus_images` (PGVector 256 + public owned plate object metadata),
+`oracle_readings`, `oracle_reading_passages`, `oracle_reading_events`.
 
 > Two things to know when reasoning about the schema: (1) `background_jobs` is
 > invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
@@ -525,10 +525,10 @@ search page, the chat `app_search` agent tool (RAG), and object-ref resolution f
 notes.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
-  media flows `fragment → content_blocks → chunks → embeddings`, recorded as a
-  versioned **content index run** with an `embedding_config_hash`
-  (`provider:model:dims:chunker`). The active run is tracked in
-  `media_content_index_states`; superseding runs deactivate the prior one.
+  media flows `fragment → content_blocks → chunks → embeddings`. The current
+  index state is tracked in `media_content_index_states` with the active
+  embedding provider/model; rebuilds replace current blocks, chunks, spans, and
+  embeddings for the media.
 - **Retrieval** is hybrid: a vector ANN arm (cosine over pgvector, joined on the
   *active* embedding config) **UNION** a lexical FTS arm, reranked by a weighted
   score (lexical hit + semantic similarity + recency), filtered by a similarity
@@ -590,9 +590,10 @@ capability-owned:
   queued source attempts; it is called by `media_source_ingest.py`, not
   registered as a separate source-acquisition job lane.
 - `remote_file_client.py`: PDF/EPUB URL outbound policy, SSRF-safe streaming to
-  storage, hashing, and validation for queued source attempts.
-- `epub_assets.py`: private EPUB resource asset authorization and integrity
-  reads.
+  storage, byte-size accounting, and signature validation for queued source
+  attempts.
+- `epub_assets.py`: private EPUB resource asset authorization and byte-size
+  checked reads.
 - `listening_state.py`: podcast listening-state CRUD and batch updates.
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: every processing-state transition, including
@@ -601,9 +602,10 @@ capability-owned:
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
 readiness lives on the separate `media_content_index_states` machine.
-`failure_stage ∈ {extract, transcribe, embed, metadata, other}`; only `source`
-and `metadata` are user-retryable. `failure_stage='metadata'` and `'embed'` are
-soft warnings that coexist with readable media.
+`failure_stage ∈ {upload, extract, transcribe, embed, metadata, other}`. Source
+retryability is derived from the latest `media_source_attempts` row and
+capability projection; `source` is not a `failure_stage`. `failure_stage='metadata'`
+and `'embed'` are soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/upload/init` + `POST /media/{id}/ingest`, and
@@ -640,15 +642,15 @@ The core idea is two coordinate systems, both **codepoint-based**:
 - **Reflowable formats** (web/transcript/EPUB): a position is
   `(fragment_id, offset)` where `offset` is a Unicode codepoint index into that
   fragment's `canonical_text`. `canonical_text` is produced by a browser-equivalent
-  HTML5 parse (`services/canonicalize.py`) and is **immutable after
-  `ready_for_reading`**, so the frontend DOM-text walk
+  HTML5 parse (`services/canonicalize.py`) and is **stable for the current
+  artifact after `ready_for_reading`**, so the frontend DOM-text walk
   (`lib/highlights/canonicalCursor.ts`) yields identical offsets regardless of
   typography. The frontend canonicalizer must byte-match the Python one;
   `validateCanonicalText` is a hard gate.
 - **PDF**: a locator is `(page_number, geometry quads)` plus a match into
   `media.plain_text` via `pdf_page_text_spans`. Highlight geometry is canonical
-  page-space quads, quantized and fingerprinted for duplicate detection
-  (`services/pdf_highlight_geometry.py`); PDF writes serialize on advisory locks.
+  page-space quads; duplicate detection uses the current anchor rows and PDF writes
+  serialize on advisory locks (`services/pdf_highlight_geometry.py`).
 
 EPUB ingestion (`services/epub_ingest.py`) produces fragments + a `EpubNavLocation`
 per section, where the `section_id` is the path-encodable `href_path[#fragment]`
@@ -658,9 +660,9 @@ or page/zoom (PDF), never pixels.
 
 EPUB resource assets use a private media asset lane:
 `/api/media/[id]/assets/[...assetKey]` → FastAPI `/media/{id}/assets/{assetKey}`.
-`services/epub_assets.py` authorizes the viewer, resolves immutable
+`services/epub_assets.py` authorizes the viewer, resolves current
 `epub_resources` storage metadata, releases the DB session, then reads the object
-through integrity-checked storage helpers. EPUB assets are not in Next Image
+through byte-size-checked storage helpers. EPUB assets are not in Next Image
 `images.localPatterns`.
 
 **Highlights** (`services/highlights.py`): a selection becomes a stored highlight
@@ -695,10 +697,11 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   over SSE and reconciles via `GET /chat-runs/{id}` on each stream boundary.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
   token-budgeted, lane-ordered plan (system → scope → attached context → retrieved
-  evidence → web evidence → history → current user). The system prompt is the only
-  cache-stable prefix (drives OpenAI `prompt_cache_key`). Attached references
-  render as numbered `<resources>`; the transient `<reader_selection>` (a highlight
-  the user is asking about) is bind-only and never numbered.
+  evidence → web evidence → history → current user). The prompt plan stores
+  token counts, lane metadata, and text-free block manifests, but no prompt hashes
+  and no provider cache key. Attached references render as numbered `<resources>`;
+  the transient `<reader_selection>` (a highlight the user is asking about) is
+  bind-only and never numbered.
 - **Cancellation/crash**: cancel sets a flag the worker polls; a `delta` without a
   `done` (crashed mid-stream) is detected and finalized as interrupted/retryable.
 - **Models** (`llm_catalog.py`, `services/models.py`): a curated catalog gates
@@ -712,24 +715,25 @@ push a reader target (`lib/conversations/*`).
 
 ### 8.4 Oracle
 
-An agentic "reading" feature over a curated, versioned **public-domain literary
-corpus. `services/oracle.py` owns reading generation: question validation,
-corpus/library retrieval, plate selection, LLM prompt/call, parse, persistence,
-and SSE event emission. A short question → retrieve corpus passages (+ the
-user's library) and pick a plate image → one LLM call produces a structured
-three-phase interpretation → stream + persist as `oracle_reading_events` +
-citation "folios". It has its **own** retrieval/prompt/persistence and does
-**not** use the four chat agent tools, but it **reuses the SSE transport**.
+An agentic "reading" feature over one current curated **public-domain literary
+corpus**. `services/oracle.py` owns reading generation: question validation,
+current corpus/library retrieval, plate selection, LLM prompt/call, parse,
+persistence, and SSE event emission. A short question → retrieve corpus passages
+(+ the user's library) and pick a plate image → one LLM call produces a
+structured three-phase interpretation → stream + persist as
+`oracle_reading_events` + citation "folios". It has its **own**
+retrieval/prompt/persistence and does **not** use the four chat agent tools, but
+it **reuses the SSE transport**.
 
 Oracle plate bytes and URLs are separate owned assets. `services/oracle_plates.py`
-owns `oracle_plate_url`, DB metadata lookup, content-addressed storage-key
-validation, ETag metadata, and integrity-checked storage reads. The public image
-route is `/api/oracle/plates/[id]` in Next.js → `/oracle/plates/{id}` in FastAPI.
-It is cookie-free, internal-header-protected, and safe for Next Image
-optimization. The LLM emits only integer candidate indices + prose; all citation
-text comes from the retrieved candidates (output that leaks source text fails the
-parse). Frontend lives in the separate `app/(oracle)/` route group (outside the
-pane system).
+owns `oracle_plate_url`, DB metadata lookup, stable DB-owned plate storage-key
+validation, image-id ETag metadata, and byte-size-checked storage reads. The
+public image route is `/api/oracle/plates/[id]` in Next.js →
+`/oracle/plates/{id}` in FastAPI. It is cookie-free, internal-header-protected,
+and safe for Next Image optimization. The LLM emits only integer candidate
+indices + prose; all citation text comes from the retrieved candidates (output
+that leaks source text fails the parse). Frontend lives in the separate
+`app/(oracle)/` route group (outside the pane system).
 
 ### 8.5 Libraries, sharing & the default-library closure
 
@@ -762,10 +766,11 @@ predicates in `auth/permissions.py`; the search/object readers read
   media row survives in the default library if it has *either*. On invite-accept, a
   durable `default_library_backfill_jobs` row catches up historical content (the
   worker honors live revocation by locking the membership row).
-- **Library Intelligence** (`services/library_intelligence.py`) is a versioned,
-  source-grounded synthesis artifact per library (claims/evidence/sections graph).
-  The build is currently a **deterministic compiler**, not yet LLM-backed; source
-  drift marks the active version `stale`.
+- **Library Intelligence** (`services/library_intelligence.py`) is one current,
+  source-grounded synthesis artifact per library/kind (claims/evidence/sections
+  graph). The build is currently a **deterministic compiler**, not yet
+  LLM-backed; source or membership drift marks the current artifact `stale` and
+  queues a replacement build when no build is already inflight.
 
 ### 8.6 Contributors
 
@@ -798,8 +803,8 @@ A block-based outliner (`services/notes.py`). `pages` (ordinary + daily) hold a
 tree of `note_blocks`; each block's `body_pm_json` (ProseMirror) is the source of
 truth, with derived `body_markdown`/`body_text`. Sibling order is a dense,
 recomputed `%010d` rank in `order_key` (not fractional). Full outliner ops
-(create/update/split/merge/move, batched document patches with per-block + per-page
-revision concurrency tokens, quick-capture into daily notes). Inline `object_ref`
+(create/update/split/merge/move, batched document patches with current-row
+conditional updates, quick-capture into daily notes). Inline `object_ref`
 nodes sync into `object_links` edges; highlights get a `note_about` backlink. Every
 page/block projects into the `object_search_documents` index. Frontend:
 `components/notes/ProseMirrorOutlineEditor.tsx` + `lib/notes/prosemirror/*`.
@@ -986,14 +991,15 @@ The things most likely to bite you, distilled:
    talks to FastAPI directly, with a single-use stream token minted per connect.
 3. **Private and public asset lanes are different.** `/api/media/image` and EPUB
    assets are viewer-authenticated and unoptimized; `/api/oracle/plates/[id]` is
-   cookie-free, internal-header-protected, content-addressed, and optimizable.
+   cookie-free, internal-header-protected, DB-owned by stable storage key, and
+   optimizable.
 4. **`services/media.py` is catalog/hydration, not an ingest catch-all.** URL
    ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
    and processing transitions have named owners.
 5. **`ready_for_reading` is the document success terminal**; search/embedding
-   readiness is a *separate* state machine. Only `source` + `metadata` are
-   user-retryable stages.
-6. **Reader offsets are Unicode codepoints into immutable `canonical_text`.** The
+   readiness is a *separate* state machine. Source-attempt retry and metadata
+   retry are user-visible retry capabilities; `source` is not a `failure_stage`.
+6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.
 7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
@@ -1007,9 +1013,9 @@ The things most likely to bite you, distilled:
    reconciler + manual retry.
 11. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
    (storage) effects after the DB commit.
-12. **pgvector is fixed at 256 dims**; the chunk ANN only matches embeddings whose
-    config-hash equals the media's *active* config — a model change silently drops
-    a media from semantic search until re-indexed.
+12. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
+    provider/model rows. A model change requires rebuilding current embeddings
+    before semantic search should depend on them.
 13. **Frontend routing is the pane system, not `children`.** Behavior lives in
     `*PaneBody.tsx`; the URL is a projection of the active pane.
 14. **Migrations are hand-written**; `models.py` and the live DB can drift —

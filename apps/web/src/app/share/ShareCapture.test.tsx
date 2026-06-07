@@ -37,7 +37,6 @@ function noteBlock() {
     body_markdown: "plain note",
     body_text: "plain note",
     collapsed: false,
-    revision: 1,
     children: [],
   };
 }

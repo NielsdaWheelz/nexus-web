@@ -20,8 +20,8 @@ Routes and UI clients do not enqueue `ingest_epub` directly.
 EPUB resources are served through
 `/api/media/[id]/assets/[...assetKey]` → `/media/{id}/assets/{assetKey}`. The
 route is viewer-authenticated. `epub_assets.py` authorizes the viewer, resolves
-immutable `epub_resources` storage metadata, releases the DB session, then reads
-storage through integrity-checked helpers.
+current `epub_resources` storage metadata, releases the DB session, then reads
+storage through byte-size-checked helpers.
 
 EPUB assets are private media assets. They are not public owned assets and must
 not be added to Next Image `images.localPatterns`.

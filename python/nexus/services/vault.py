@@ -6,7 +6,6 @@ from the server; highlight/page Markdown bodies are the local editing surface.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -231,7 +230,7 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
                 {visible_media_ids_cte_sql()}
             )
             SELECT m.id, m.kind, m.title, m.canonical_source_url, m.processing_status,
-                   m.file_sha256, m.page_count, mf.storage_path, mf.content_type
+                   m.page_count, mf.storage_path, mf.content_type
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
             LEFT JOIN media_file mf ON mf.media_id = m.id
@@ -327,10 +326,6 @@ def _sync_highlight_content(
         return False, "Highlight does not exist or is not owned by this user"
     if highlight.anchor_kind not in {"fragment_offsets", "pdf_page_geometry"}:
         return False, "Unsupported highlight anchor kind"
-
-    local_hash = _highlight_hash(metadata, body)
-    if local_hash == metadata.get("last_synced_sha256"):
-        return False, None
 
     server_updated_at = _highlight_server_updated_at(highlight)
     if str(metadata.get("server_updated_at") or "") != server_updated_at:
@@ -484,9 +479,10 @@ def _apply_highlight_changes(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlights require pdf_page_geometry selectors",
             )
-        exported = _highlight_hash(_metadata_for_highlight(highlight), body)
-        local = _highlight_hash(metadata, body)
-        if exported != local and str(metadata.get("exact") or "") != highlight.exact:
+        server_metadata = _metadata_for_highlight(highlight)
+        if str(metadata.get("exact") or "") != highlight.exact or metadata.get(
+            "page"
+        ) != server_metadata.get("page"):
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "PDF geometry highlight selectors must be edited in the reader",
@@ -571,9 +567,6 @@ def _sync_page_content(
     if page is None or page.user_id != viewer_id:
         return False, "Page does not exist or is not owned by this user"
 
-    local_hash = _page_hash(metadata, body)
-    if local_hash == metadata.get("last_synced_sha256"):
-        return False, None
     if str(metadata.get("server_updated_at") or "") != page.updated_at.isoformat():
         return False, "Server page changed since this file was exported"
     if _as_bool(metadata.get("deleted")):
@@ -617,7 +610,7 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
                 """
                 SELECT cb.canonical_text, cb.locator
                 FROM media_content_index_states mcis
-                JOIN content_blocks cb ON cb.index_run_id = mcis.active_run_id
+                JOIN content_blocks cb ON cb.media_id = mcis.media_id
                 WHERE mcis.media_id = :media_id
                   AND mcis.status = 'ready'
                   AND cb.canonical_text <> ''
@@ -635,7 +628,6 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
 def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
     body = _highlight_note_body(db, highlight)
-    metadata["last_synced_sha256"] = _highlight_hash(metadata, body)
     return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
 
 
@@ -650,7 +642,6 @@ def _page_file(db: Session, page: Page) -> tuple[str, str]:
         "deleted": False,
     }
     body = _page_body(db, page)
-    metadata["last_synced_sha256"] = _page_hash(metadata, body)
     return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
 
 
@@ -1125,7 +1116,6 @@ def _media_markdown(
         "media_handle": media_handle,
         "kind": str(row["kind"]),
         "title": str(row["title"]),
-        "source_sha256": str(row["file_sha256"] or ""),
         "immutable_source": True,
     }
     lines = [
@@ -1174,44 +1164,6 @@ def _joined_block_text(content_blocks: list[dict[str, object]]) -> str:
 
 def _joined_fragment_html(fragments: list[Fragment]) -> str:
     return "\n".join(fragment.html_sanitized for fragment in fragments)
-
-
-def _highlight_hash(metadata: dict[str, object], body: str) -> str:
-    return _stable_hash(
-        {
-            key: metadata.get(key)
-            for key in (
-                "media_handle",
-                "selector_kind",
-                "fragment_handle",
-                "page",
-                "start_offset",
-                "end_offset",
-                "color",
-                "deleted",
-                "exact",
-                "prefix",
-                "suffix",
-            )
-        },
-        body,
-    )
-
-
-def _page_hash(metadata: dict[str, object], body: str) -> str:
-    return _stable_hash(
-        {
-            "title": metadata.get("title"),
-            "deleted": metadata.get("deleted"),
-        },
-        body,
-    )
-
-
-def _stable_hash(metadata: dict[str, object], body: str) -> str:
-    return hashlib.sha256(
-        (json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n" + body).encode("utf-8")
-    ).hexdigest()
 
 
 def _read_frontmatter(text_content: str) -> tuple[dict[str, object], str]:

@@ -45,7 +45,6 @@ from nexus.services.retrieval_citation import (
     citation_from_search_result,
     insert_retrieval_row,
     strict_citation_locator,
-    strict_citation_source_version,
 )
 from nexus.services.search import hash_query, parse_scope, search
 from nexus.timestamps import format_timestamp_ms
@@ -485,13 +484,9 @@ def _scoped_content_chunk_empty_status(
             JOIN media m ON m.id = cc.media_id
             JOIN visible_media vm ON vm.media_id = cc.media_id
             JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                AND mcis.active_run_id = cc.index_run_id
-            JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                AND active_run.state = 'ready'
-                AND active_run.deactivated_at IS NULL
+                AND mcis.status = 'ready'
             JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
                 AND es.media_id = cc.media_id
-                AND es.index_run_id = cc.index_run_id
             WHERE TRUE
             {scope_filter}
             {content_kind_filter}
@@ -674,8 +669,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             selection_status,
             selection_reason,
             result_ref,
-            locator,
-            source_version
+            locator
         )
         VALUES (
             :tool_call_id,
@@ -689,8 +683,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             :selection_status,
             :selection_reason,
             :result_ref,
-            :locator,
-            :source_version
+            :locator
         )
         """
     ).bindparams(
@@ -702,7 +695,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     for ordinal, citation in enumerate(run.citations):
         selected = citation.source_id in selected_ids
         locator = strict_citation_locator(citation)
-        source_version = strict_citation_source_version(citation)
         result_ref = retrieval_result_ref_json(citation.result_ref_json())
         retrieval_id = insert_retrieval_row(
             db,
@@ -727,7 +719,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "selection_reason": "within_context_budget" if selected else "below_selected_limit",
                 "result_ref": result_ref,
                 "locator": locator,
-                "source_version": source_version,
             },
         )
         persisted_count = ordinal + 1
@@ -994,8 +985,6 @@ def _append_citation_source_xml(lines: list[str], citation: RetrievalCitation) -
             f"{xml_escape(json.dumps(citation.locator, sort_keys=True, separators=(',', ':'), default=str))}"
             "</source_locator>"
         )
-    if citation.source_version:
-        lines.append(f"<source_version>{xml_escape(citation.source_version)}</source_version>")
 
 
 def _render_content_chunk_context(
@@ -1021,7 +1010,9 @@ def _render_content_chunk_context(
             FROM content_chunks cc
             JOIN evidence_spans es ON es.id = :evidence_span_id
                 AND es.media_id = cc.media_id
-                AND es.index_run_id = cc.index_run_id
+                AND es.id = cc.primary_evidence_span_id
+            JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                AND mcis.status = 'ready'
             JOIN media m ON m.id = cc.media_id
             WHERE cc.id = :chunk_id
             """

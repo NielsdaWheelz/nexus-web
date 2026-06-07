@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from uuid import UUID
@@ -18,7 +16,6 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.schemas.library_intelligence import (
-    LibraryIntelligenceArtifactFreshnessOut,
     LibraryIntelligenceArtifactOut,
     LibraryIntelligenceBuildOut,
     LibraryIntelligenceClaimOut,
@@ -30,8 +27,6 @@ from nexus.schemas.library_intelligence import (
 )
 
 ARTIFACT_KIND = "overview"
-PROMPT_VERSION = "LibraryIntelligence.V1"
-SCHEMA_VERSION = "LibraryIntelligenceSchema.V1"
 BUILD_JOB_KIND = "library_intelligence_build_job"
 
 
@@ -41,14 +36,14 @@ def get_library_intelligence(
     library_id: UUID,
 ) -> LibraryIntelligenceOut:
     _require_member(db, viewer_id, library_id)
-    source_set = _ensure_current_source_set(db, library_id)
+    source_set = _current_source_set(db, library_id)
     active = _load_active_artifact(db, library_id)
 
     if active is None:
         build = (
             _plan_build(db, library_id, source_set, queue_empty=False)[0]
             if int(source_set["source_count"]) > 0
-            else _latest_build(db, library_id, source_set["id"])
+            else _latest_build(db, library_id)
         )
         status = (
             "building"
@@ -64,28 +59,23 @@ def get_library_intelligence(
             artifact=LibraryIntelligenceArtifactOut(
                 kind=ARTIFACT_KIND,
                 status=cast(Any, status),
-                freshness=LibraryIntelligenceArtifactFreshnessOut(
-                    current_source_set_version_id=source_set["id"],
-                    current_source_set_hash=str(source_set["source_set_hash"]),
-                ),
             ),
             sections=[],
-            coverage=_coverage_for_source_set(db, source_set["id"]),
+            coverage=_coverage_for_items(cast(Sequence[Mapping[str, Any]], source_set["items"])),
             build=_build_out(build),
         )
 
-    active_source_set = _source_set_by_id(db, active["source_set_version_id"])
     status = "current"
-    if (
-        active["status"] != "active"
-        or active_source_set["id"] != source_set["id"]
-        or active["prompt_version"] != source_set["prompt_version"]
-    ):
+    if active["status"] != "active" or _artifact_is_stale(active, source_set):
         status = "stale"
-        _mark_active_stale(db, active["id"])
+        _mark_current_artifact_stale(db, active["id"])
 
-    build = _latest_build(db, library_id, source_set["id"])
-    if build is None and status == "stale" and int(source_set["source_count"]) > 0:
+    build = _latest_build(db, library_id)
+    if (
+        status == "stale"
+        and int(source_set["source_count"]) > 0
+        and _inflight_build(db, library_id) is None
+    ):
         build = _plan_build(db, library_id, source_set, queue_empty=False)[0]
 
     return LibraryIntelligenceOut(
@@ -97,20 +87,10 @@ def get_library_intelligence(
         artifact=LibraryIntelligenceArtifactOut(
             kind=ARTIFACT_KIND,
             status=cast(Any, status),
-            active_version_id=active["id"],
-            source_set_version_id=active_source_set["id"],
-            prompt_version=active["prompt_version"],
-            schema_version=active_source_set["schema_version"],
             published_at=active["published_at"],
-            freshness=LibraryIntelligenceArtifactFreshnessOut(
-                current_source_set_version_id=source_set["id"],
-                active_source_set_version_id=active_source_set["id"],
-                current_source_set_hash=str(source_set["source_set_hash"]),
-                active_source_set_hash=str(active_source_set["source_set_hash"]),
-            ),
         ),
-        sections=_sections_for_version(db, active["id"]),
-        coverage=_coverage_for_source_set(db, source_set["id"]),
+        sections=_sections_for_current_artifact_content(db, active["id"]),
+        coverage=_coverage_for_items(cast(Sequence[Mapping[str, Any]], source_set["items"])),
         build=_build_out(build),
     )
 
@@ -121,7 +101,7 @@ def refresh_library_intelligence(
     library_id: UUID,
 ) -> LibraryIntelligenceRefreshOut:
     _require_member(db, viewer_id, library_id)
-    source_set = _ensure_current_source_set(db, library_id)
+    source_set = _current_source_set(db, library_id)
     build, idempotent = _plan_build(db, library_id, source_set, queue_empty=True)
     return LibraryIntelligenceRefreshOut(
         build_id=build["id"],
@@ -139,8 +119,8 @@ def run_library_intelligence_build(db: Session, build_id: UUID) -> dict[str, obj
             return {"status": "skipped", "reason": "already_succeeded"}
 
         _update_build(db, build_id, status="running", phase="source_set", started=True)
-        source_set = _source_set_by_id(db, build["source_set_version_id"])
-        items = _source_set_items(db, source_set["id"])
+        source_set = _current_source_set(db, build["library_id"])
+        items = cast(Sequence[Mapping[str, Any]], source_set["items"])
         if int(source_set["source_count"]) == 0:
             _update_build(db, build_id, status="succeeded", phase="complete", finished=True)
             return {"status": "succeeded", "empty_library": True}
@@ -164,11 +144,10 @@ def run_library_intelligence_build(db: Session, build_id: UUID) -> dict[str, obj
         snippets = {_source_key(item): _first_snippet(db, item) for item in included_items[:20]}
 
         _update_build(db, build_id, status="running", phase="publish")
-        version_id = _publish_artifact(
+        artifact_id = _publish_current_artifact(
             db,
             build_id=build_id,
             library_id=build["library_id"],
-            source_set=source_set,
             sections=sections,
             included_items=included_items,
             snippets=snippets,
@@ -180,13 +159,13 @@ def run_library_intelligence_build(db: Session, build_id: UUID) -> dict[str, obj
             phase="complete",
             finished=True,
             diagnostics={
-                "version_id": str(version_id),
+                "artifact_id": str(artifact_id),
                 "source_count": int(source_set["source_count"]),
                 "chunk_count": int(source_set["chunk_count"]),
                 "included_source_count": len(included_items),
             },
         )
-        return {"status": "succeeded", "version_id": str(version_id)}
+        return {"status": "succeeded", "artifact_id": str(artifact_id)}
 
 
 def mark_library_intelligence_build_failed(
@@ -200,124 +179,64 @@ def mark_library_intelligence_build_failed(
         _fail_build_in_transaction(db, build_id, error_code=error_code, message=message)
 
 
+def invalidate_library_intelligence(
+    db: Session,
+    library_id: UUID,
+    *,
+    reason: str = "source_changed",
+) -> None:
+    result = db.execute(
+        text(
+            """
+            UPDATE library_intelligence_artifacts
+            SET status = 'stale',
+                invalidated_at = COALESCE(invalidated_at, now()),
+                invalid_reason = COALESCE(invalid_reason, :reason),
+                updated_at = now()
+            WHERE library_id = :library_id
+              AND artifact_kind = :artifact_kind
+              AND status = 'active'
+            """
+        ),
+        {
+            "library_id": library_id,
+            "artifact_kind": ARTIFACT_KIND,
+            "reason": reason,
+        },
+    )
+    assert result.rowcount in {
+        0,
+        1,
+    }  # justify-service-invariant-check: one current artifact per library/kind.
+
+
 def _require_member(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     if not is_library_member(db, viewer_id, library_id):
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
 
-def _ensure_current_source_set(db: Session, library_id: UUID) -> Mapping[str, Any]:
+def _current_source_set(db: Session, library_id: UUID) -> Mapping[str, Any]:
     inventory = _load_inventory(db, library_id)
-    if not inventory:
-        existing = _latest_source_set(db, library_id)
-        if existing is not None:
-            return existing
+    updated_values = [
+        item["source_updated_at"] for item in inventory if item["source_updated_at"] is not None
+    ]
+    return {
+        "source_count": len(inventory),
+        "chunk_count": sum(int(item["chunk_count"]) for item in inventory),
+        "updated_at": max(updated_values, default=None),
+        "items": inventory,
+    }
 
-    source_set_hash = _source_set_hash(inventory)
-    source_count = len(inventory)
-    chunk_count = sum(int(item["chunk_count"]) for item in inventory)
 
-    with transaction(db):
-        existing = (
-            db.execute(
-                text(
-                    """
-                SELECT *
-                FROM library_source_set_versions
-                WHERE library_id = :library_id
-                  AND source_set_hash = :source_set_hash
-                  AND prompt_version = :prompt_version
-                  AND schema_version = :schema_version
-                FOR UPDATE
-                """
-                ),
-                {
-                    "library_id": library_id,
-                    "source_set_hash": source_set_hash,
-                    "prompt_version": PROMPT_VERSION,
-                    "schema_version": SCHEMA_VERSION,
-                },
-            )
-            .mappings()
-            .first()
-        )
-        if existing is not None:
-            return existing
-
-        source_set = (
-            db.execute(
-                text(
-                    """
-                INSERT INTO library_source_set_versions (
-                    library_id,
-                    source_set_hash,
-                    source_count,
-                    chunk_count,
-                    prompt_version,
-                    schema_version
-                )
-                VALUES (
-                    :library_id,
-                    :source_set_hash,
-                    :source_count,
-                    :chunk_count,
-                    :prompt_version,
-                    :schema_version
-                )
-                RETURNING *
-                """
-                ),
-                {
-                    "library_id": library_id,
-                    "source_set_hash": source_set_hash,
-                    "source_count": source_count,
-                    "chunk_count": chunk_count,
-                    "prompt_version": PROMPT_VERSION,
-                    "schema_version": SCHEMA_VERSION,
-                },
-            )
-            .mappings()
-            .one()
-        )
-
-        for item in inventory:
-            result = db.execute(
-                text(
-                    """
-                    INSERT INTO library_source_set_items (
-                        source_set_version_id,
-                        media_id,
-                        podcast_id,
-                        source_kind,
-                        title,
-                        media_kind,
-                        readiness_state,
-                        chunk_count,
-                        included,
-                        exclusion_reason,
-                        source_updated_at
-                    )
-                    VALUES (
-                        :source_set_version_id,
-                        :media_id,
-                        :podcast_id,
-                        :source_kind,
-                        :title,
-                        :media_kind,
-                        :readiness_state,
-                        :chunk_count,
-                        :included,
-                        :exclusion_reason,
-                        :source_updated_at
-                    )
-                    """
-                ),
-                {
-                    **item,
-                    "source_set_version_id": source_set["id"],
-                },
-            )
-            assert result.rowcount == 1  # justify-service-invariant-check: one source item insert.
-        return source_set
+def _artifact_is_stale(
+    artifact: Mapping[str, Any],
+    source_set: Mapping[str, Any],
+) -> bool:
+    source_updated_at = source_set["updated_at"]
+    published_at = artifact["published_at"]
+    return source_updated_at is not None and (
+        published_at is None or source_updated_at > published_at
+    )
 
 
 def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
@@ -342,9 +261,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             FROM library_entries le
             JOIN media m ON m.id = le.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
-                AND cc.index_run_id = mcis.active_run_id
             WHERE le.library_id = :library_id
               AND le.media_id IS NOT NULL
             GROUP BY le.position, le.media_id, m.title, m.kind, m.processing_status, m.updated_at
@@ -381,9 +298,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             LEFT JOIN podcast_episodes pe ON pe.podcast_id = p.id
             LEFT JOIN media m ON m.id = pe.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
-                AND cc.index_run_id = mcis.active_run_id
             WHERE le.library_id = :library_id
               AND le.podcast_id IS NOT NULL
             GROUP BY le.position, le.podcast_id, p.title, p.updated_at
@@ -402,7 +317,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
 def _media_inventory_item(row: Mapping[str, Any]) -> dict[str, object]:
     text_count = int(row["content_chunk_count"])
     processing_status = str(row["processing_status"])
-    included = processing_status in {"ready", "ready_for_reading"} and text_count > 0
+    included = processing_status == "ready_for_reading" and text_count > 0
     return {
         "media_id": row["media_id"],
         "podcast_id": None,
@@ -442,87 +357,15 @@ def _exclusion_reason(processing_status: str, text_count: int) -> str:
     return "source_not_ready"
 
 
-def _source_set_hash(items: Sequence[Mapping[str, object]]) -> str:
-    payload = [
-        {
-            "media_id": str(item["media_id"]) if item["media_id"] is not None else None,
-            "podcast_id": str(item["podcast_id"]) if item["podcast_id"] is not None else None,
-            "source_kind": item["source_kind"],
-            "title": item["title"],
-            "media_kind": item["media_kind"],
-            "readiness_state": item["readiness_state"],
-            "chunk_count": item["chunk_count"],
-            "included": item["included"],
-            "source_updated_at": (
-                item["source_updated_at"].isoformat()
-                if hasattr(item["source_updated_at"], "isoformat")
-                else item["source_updated_at"]
-            ),
-        }
-        for item in items
-    ]
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def _latest_source_set(db: Session, library_id: UUID) -> Mapping[str, Any] | None:
-    return (
-        db.execute(
-            text(
-                """
-            SELECT *
-            FROM library_source_set_versions
-            WHERE library_id = :library_id
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """
-            ),
-            {"library_id": library_id},
-        )
-        .mappings()
-        .first()
-    )
-
-
-def _source_set_by_id(db: Session, source_set_id: UUID) -> Mapping[str, Any]:
-    return (
-        db.execute(
-            text("SELECT * FROM library_source_set_versions WHERE id = :source_set_id"),
-            {"source_set_id": source_set_id},
-        )
-        .mappings()
-        .one()
-    )
-
-
-def _source_set_items(db: Session, source_set_id: UUID) -> list[Mapping[str, Any]]:
-    return list(
-        db.execute(
-            text(
-                """
-                SELECT *
-                FROM library_source_set_items
-                WHERE source_set_version_id = :source_set_id
-                ORDER BY included DESC, title ASC, id ASC
-                """
-            ),
-            {"source_set_id": source_set_id},
-        )
-        .mappings()
-        .all()
-    )
-
-
 def _load_active_artifact(db: Session, library_id: UUID) -> Mapping[str, Any] | None:
     return (
         db.execute(
             text(
                 """
-            SELECT v.*
-            FROM library_intelligence_artifacts a
-            JOIN library_intelligence_versions v ON v.id = a.active_version_id
-            WHERE a.library_id = :library_id
-              AND a.artifact_kind = :artifact_kind
+            SELECT *
+            FROM library_intelligence_artifacts
+            WHERE library_id = :library_id
+              AND artifact_kind = :artifact_kind
             """
             ),
             {"library_id": library_id, "artifact_kind": ARTIFACT_KIND},
@@ -535,7 +378,6 @@ def _load_active_artifact(db: Session, library_id: UUID) -> Mapping[str, Any] | 
 def _latest_build(
     db: Session,
     library_id: UUID,
-    source_set_id: UUID,
 ) -> Mapping[str, Any] | None:
     return (
         db.execute(
@@ -544,7 +386,6 @@ def _latest_build(
             SELECT *
             FROM library_intelligence_builds
             WHERE library_id = :library_id
-              AND source_set_version_id = :source_set_id
               AND artifact_kind = :artifact_kind
             ORDER BY created_at DESC, id DESC
             LIMIT 1
@@ -552,7 +393,6 @@ def _latest_build(
             ),
             {
                 "library_id": library_id,
-                "source_set_id": source_set_id,
                 "artifact_kind": ARTIFACT_KIND,
             },
         )
@@ -568,21 +408,17 @@ def _plan_build(
     *,
     queue_empty: bool,
 ) -> tuple[Mapping[str, Any], bool]:
-    existing = _build_by_idempotency_key(db, _build_idempotency_key(library_id, source_set))
+    existing = _inflight_build(db, library_id)
     if existing is not None:
         return existing, True
     if int(source_set["source_count"]) == 0 and not queue_empty:
-        latest = _latest_build(db, library_id, source_set["id"])
+        latest = _latest_build(db, library_id)
         if latest is not None:
             return latest, True
 
     try:
         with transaction(db):
-            existing = _build_by_idempotency_key(
-                db,
-                _build_idempotency_key(library_id, source_set),
-                for_update=True,
-            )
+            existing = _inflight_build(db, library_id, for_update=True)
             if existing is not None:
                 return existing, True
 
@@ -592,7 +428,6 @@ def _plan_build(
                         """
                     INSERT INTO library_intelligence_builds (
                         library_id,
-                        source_set_version_id,
                         artifact_kind,
                         status,
                         idempotency_key,
@@ -601,7 +436,6 @@ def _plan_build(
                     )
                     VALUES (
                         :library_id,
-                        :source_set_version_id,
                         :artifact_kind,
                         'pending',
                         :idempotency_key,
@@ -613,9 +447,8 @@ def _plan_build(
                     ),
                     {
                         "library_id": library_id,
-                        "source_set_version_id": source_set["id"],
                         "artifact_kind": ARTIFACT_KIND,
-                        "idempotency_key": _build_idempotency_key(library_id, source_set),
+                        "idempotency_key": _build_idempotency_key(library_id),
                     },
                 )
                 .mappings()
@@ -632,19 +465,19 @@ def _plan_build(
             return build, False
     except IntegrityError:
         db.rollback()
-        existing = _build_by_idempotency_key(db, _build_idempotency_key(library_id, source_set))
+        existing = _inflight_build(db, library_id)
         if existing is not None:
             return existing, True
         raise
 
 
-def _build_idempotency_key(library_id: UUID, source_set: Mapping[str, Any]) -> str:
-    return f"{library_id}:{source_set['id']}:{ARTIFACT_KIND}:{source_set['prompt_version']}"
+def _build_idempotency_key(library_id: UUID) -> str:
+    return f"{library_id}:{ARTIFACT_KIND}"
 
 
-def _build_by_idempotency_key(
+def _inflight_build(
     db: Session,
-    idempotency_key: str,
+    library_id: UUID,
     *,
     for_update: bool = False,
 ) -> Mapping[str, Any] | None:
@@ -655,11 +488,15 @@ def _build_by_idempotency_key(
                 f"""
             SELECT *
             FROM library_intelligence_builds
-            WHERE idempotency_key = :idempotency_key
+            WHERE library_id = :library_id
+              AND artifact_kind = :artifact_kind
+              AND status IN ('pending', 'running')
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
             {suffix}
             """
             ),
-            {"idempotency_key": idempotency_key},
+            {"library_id": library_id, "artifact_kind": ARTIFACT_KIND},
         )
         .mappings()
         .first()
@@ -684,9 +521,7 @@ def _build_by_id_for_update(db: Session, build_id: UUID) -> Mapping[str, Any] | 
     )
 
 
-def _coverage_for_source_set(
-    db: Session, source_set_id: UUID
-) -> list[LibraryIntelligenceCoverageOut]:
+def _coverage_for_items(items: Sequence[Mapping[str, Any]]) -> list[LibraryIntelligenceCoverageOut]:
     return [
         LibraryIntelligenceCoverageOut(
             media_id=row["media_id"],
@@ -700,22 +535,24 @@ def _coverage_for_source_set(
             exclusion_reason=row["exclusion_reason"],
             source_updated_at=row["source_updated_at"],
         )
-        for row in _source_set_items(db, source_set_id)
+        for row in sorted(items, key=lambda item: (not bool(item["included"]), str(item["title"])))
     ]
 
 
-def _sections_for_version(db: Session, version_id: UUID) -> list[LibraryIntelligenceSectionOut]:
+def _sections_for_current_artifact_content(
+    db: Session, artifact_id: UUID
+) -> list[LibraryIntelligenceSectionOut]:
     rows = (
         db.execute(
             text(
                 """
             SELECT id, section_kind, title, body, ordinal, metadata
             FROM library_intelligence_sections
-            WHERE version_id = :version_id
+            WHERE artifact_id = :artifact_id
             ORDER BY ordinal ASC
             """
             ),
-            {"version_id": version_id},
+            {"artifact_id": artifact_id},
         )
         .mappings()
         .all()
@@ -810,21 +647,21 @@ def _build_out(build: Mapping[str, Any] | None) -> LibraryIntelligenceBuildOut |
     )
 
 
-def _mark_active_stale(db: Session, version_id: UUID) -> None:
+def _mark_current_artifact_stale(db: Session, artifact_id: UUID) -> None:
     with transaction(db):
         result = db.execute(
             text(
                 """
-                UPDATE library_intelligence_versions
+                UPDATE library_intelligence_artifacts
                 SET status = 'stale',
                     invalidated_at = COALESCE(invalidated_at, now()),
-                    invalid_reason = COALESCE(invalid_reason, 'source_set_changed'),
+                    invalid_reason = COALESCE(invalid_reason, 'source_changed'),
                     updated_at = now()
-                WHERE id = :version_id
+                WHERE id = :artifact_id
                   AND status = 'active'
                 """
             ),
-            {"version_id": version_id},
+            {"artifact_id": artifact_id},
         )
         assert result.rowcount in {
             0,
@@ -918,8 +755,12 @@ def _compile_sections(
         {
             "section_kind": "recent_changes",
             "title": "Recent Changes",
-            "body": f"This artifact was compiled from source set {source_set['source_set_hash']}.",
-            "metadata": {"source_set_hash": str(source_set["source_set_hash"])},
+            "body": "This artifact reflects the current readable sources in the library.",
+            "metadata": {
+                "source_count": source_count,
+                "included_source_count": len(included),
+                "excluded_source_count": len(excluded),
+            },
         },
     ]
 
@@ -964,12 +805,11 @@ def _first_snippet(db: Session, item: Mapping[str, Any]) -> Mapping[str, object]
     )
 
 
-def _publish_artifact(
+def _publish_current_artifact(
     db: Session,
     *,
     build_id: UUID,
     library_id: UUID,
-    source_set: Mapping[str, Any],
     sections: Sequence[Mapping[str, object]],
     included_items: Sequence[Mapping[str, Any]],
     snippets: Mapping[str, Mapping[str, object] | None],
@@ -995,8 +835,8 @@ def _publish_artifact(
             db.execute(
                 text(
                     """
-                INSERT INTO library_intelligence_artifacts (library_id, artifact_kind)
-                VALUES (:library_id, :artifact_kind)
+                INSERT INTO library_intelligence_artifacts (library_id, artifact_kind, status)
+                VALUES (:library_id, :artifact_kind, 'building')
                 RETURNING *
                 """
                 ),
@@ -1006,73 +846,8 @@ def _publish_artifact(
             .one()
         )
 
-    existing_version = (
-        db.execute(
-            text(
-                """
-            SELECT id
-            FROM library_intelligence_versions
-            WHERE artifact_id = :artifact_id
-              AND source_set_version_id = :source_set_version_id
-              AND prompt_version = :prompt_version
-            FOR UPDATE
-            """
-            ),
-            {
-                "artifact_id": artifact["id"],
-                "source_set_version_id": source_set["id"],
-                "prompt_version": source_set["prompt_version"],
-            },
-        )
-        .mappings()
-        .first()
-    )
-    if existing_version is not None:
-        _activate_version(db, artifact["id"], existing_version["id"])
-        return existing_version["id"]
-
-    next_version = int(
-        db.execute(
-            text(
-                """
-                SELECT COALESCE(MAX(artifact_version), 0) + 1
-                FROM library_intelligence_versions
-                WHERE artifact_id = :artifact_id
-                """
-            ),
-            {"artifact_id": artifact["id"]},
-        ).scalar_one()
-    )
-    version_id = db.execute(
-        text(
-            """
-            INSERT INTO library_intelligence_versions (
-                artifact_id,
-                library_id,
-                source_set_version_id,
-                status,
-                artifact_version,
-                prompt_version
-            )
-            VALUES (
-                :artifact_id,
-                :library_id,
-                :source_set_version_id,
-                'building',
-                :artifact_version,
-                :prompt_version
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "artifact_id": artifact["id"],
-            "library_id": library_id,
-            "source_set_version_id": source_set["id"],
-            "artifact_version": next_version,
-            "prompt_version": source_set["prompt_version"],
-        },
-    ).scalar_one()
+    artifact_id = artifact["id"]
+    _prepare_current_artifact(db, artifact_id)
 
     section_ids: dict[str, UUID] = {}
     for ordinal, section in enumerate(sections):
@@ -1081,7 +856,7 @@ def _publish_artifact(
                 text(
                     """
                 INSERT INTO library_intelligence_sections (
-                    version_id,
+                    artifact_id,
                     section_kind,
                     title,
                     body,
@@ -1089,7 +864,7 @@ def _publish_artifact(
                     metadata
                 )
                 VALUES (
-                    :version_id,
+                    :artifact_id,
                     :section_kind,
                     :title,
                     :body,
@@ -1100,7 +875,7 @@ def _publish_artifact(
                 """
                 ).bindparams(bindparam("metadata", type_=JSONB)),
                 {
-                    "version_id": version_id,
+                    "artifact_id": artifact_id,
                     "section_kind": section["section_kind"],
                     "title": section["title"],
                     "body": section["body"],
@@ -1117,17 +892,17 @@ def _publish_artifact(
         snippet = snippets.get(_source_key(item))
         if snippet is None:
             continue
-        node_id = _insert_source_node(db, version_id, item, snippet)
+        node_id = _insert_source_node(db, artifact_id, item, snippet)
         claim_id = _insert_supported_source_claim(
             db,
-            version_id=version_id,
+            artifact_id=artifact_id,
             node_id=node_id,
             section_id=section_ids["key_sources"],
             item=item,
         )
         _insert_evidence(db, claim_id, item, snippet)
 
-    _activate_version(db, artifact["id"], version_id)
+    _activate_current_artifact(db, artifact_id)
     result = db.execute(
         text(
             """
@@ -1137,15 +912,62 @@ def _publish_artifact(
             WHERE id = :build_id
             """
         ).bindparams(bindparam("diagnostics", type_=JSONB)),
-        {"build_id": build_id, "diagnostics": {"published_version_id": str(version_id)}},
+        {"build_id": build_id, "diagnostics": {"published_artifact_id": str(artifact["id"])}},
     )
     assert result.rowcount == 1  # justify-service-invariant-check: build row is locked by caller.
-    return version_id
+    return artifact_id
+
+
+def _prepare_current_artifact(db: Session, artifact_id: UUID) -> None:
+    _clear_artifact_content_children(db, artifact_id)
+    result = db.execute(
+        text(
+            """
+            UPDATE library_intelligence_artifacts
+            SET status = 'building',
+                published_at = NULL,
+                invalidated_at = NULL,
+                invalid_reason = NULL,
+                updated_at = now()
+            WHERE id = :artifact_id
+            """
+        ),
+        {"artifact_id": artifact_id},
+    )
+    assert (
+        result.rowcount == 1
+    )  # justify-service-invariant-check: artifact row is locked by caller.
+
+
+def _clear_artifact_content_children(db: Session, artifact_id: UUID) -> None:
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_evidence e
+            USING library_intelligence_claims c
+            WHERE e.claim_id = c.id
+              AND c.artifact_id = :artifact_id
+            """
+        ),
+        {"artifact_id": artifact_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_claims WHERE artifact_id = :artifact_id"),
+        {"artifact_id": artifact_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_nodes WHERE artifact_id = :artifact_id"),
+        {"artifact_id": artifact_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_sections WHERE artifact_id = :artifact_id"),
+        {"artifact_id": artifact_id},
+    )
 
 
 def _insert_source_node(
     db: Session,
-    version_id: UUID,
+    artifact_id: UUID,
     item: Mapping[str, Any],
     snippet: Mapping[str, object],
 ) -> UUID:
@@ -1154,7 +976,7 @@ def _insert_source_node(
             text(
                 """
             INSERT INTO library_intelligence_nodes (
-                version_id,
+                artifact_id,
                 node_type,
                 slug,
                 title,
@@ -1162,7 +984,7 @@ def _insert_source_node(
                 metadata
             )
             VALUES (
-                :version_id,
+                :artifact_id,
                 'source',
                 :slug,
                 :title,
@@ -1173,7 +995,7 @@ def _insert_source_node(
             """
             ).bindparams(bindparam("metadata", type_=JSONB)),
             {
-                "version_id": version_id,
+                "artifact_id": artifact_id,
                 "slug": _source_key(item),
                 "title": item["title"],
                 "body": _short_snippet(str(snippet["canonical_text"])),
@@ -1192,7 +1014,7 @@ def _insert_source_node(
 def _insert_supported_source_claim(
     db: Session,
     *,
-    version_id: UUID,
+    artifact_id: UUID,
     node_id: UUID,
     section_id: UUID,
     item: Mapping[str, Any],
@@ -1203,17 +1025,17 @@ def _insert_supported_source_claim(
                 """
                 SELECT COUNT(*)
                 FROM library_intelligence_claims
-                WHERE version_id = :version_id
+                WHERE artifact_id = :artifact_id
                 """
             ),
-            {"version_id": version_id},
+            {"artifact_id": artifact_id},
         ).scalar_one()
     )
     return db.execute(
         text(
             """
             INSERT INTO library_intelligence_claims (
-                version_id,
+                artifact_id,
                 node_id,
                 section_id,
                 claim_text,
@@ -1222,7 +1044,7 @@ def _insert_supported_source_claim(
                 ordinal
             )
             VALUES (
-                :version_id,
+                :artifact_id,
                 :node_id,
                 :section_id,
                 :claim_text,
@@ -1234,7 +1056,7 @@ def _insert_supported_source_claim(
             """
         ),
         {
-            "version_id": version_id,
+            "artifact_id": artifact_id,
             "node_id": node_id,
             "section_id": section_id,
             "claim_text": f'The library includes the source "{item["title"]}".',
@@ -1288,59 +1110,20 @@ def _insert_evidence(
     assert result.rowcount == 1  # justify-service-invariant-check: evidence insert is one row.
 
 
-def _activate_version(db: Session, artifact_id: UUID, version_id: UUID) -> None:
-    old_active = db.execute(
-        text(
-            """
-            SELECT active_version_id
-            FROM library_intelligence_artifacts
-            WHERE id = :artifact_id
-            FOR UPDATE
-            """
-        ),
-        {"artifact_id": artifact_id},
-    ).scalar_one()
-    if old_active is not None and old_active != version_id:
-        result = db.execute(
-            text(
-                """
-                UPDATE library_intelligence_versions
-                SET status = 'superseded',
-                    updated_at = now()
-                WHERE id = :old_active
-                """
-            ),
-            {"old_active": old_active},
-        )
-        assert (
-            result.rowcount == 1
-        )  # justify-service-invariant-check: selected active version exists.
-
-    result = db.execute(
-        text(
-            """
-            UPDATE library_intelligence_versions
-            SET status = 'active',
-                published_at = COALESCE(published_at, now()),
-                invalidated_at = NULL,
-                invalid_reason = NULL,
-                updated_at = now()
-            WHERE id = :version_id
-            """
-        ),
-        {"version_id": version_id},
-    )
-    assert result.rowcount == 1  # justify-service-invariant-check: version inserted by caller.
+def _activate_current_artifact(db: Session, artifact_id: UUID) -> None:
     result = db.execute(
         text(
             """
             UPDATE library_intelligence_artifacts
-            SET active_version_id = :version_id,
-                updated_at = now()
+            SET status = 'active',
+                published_at = clock_timestamp(),
+                invalidated_at = NULL,
+                invalid_reason = NULL,
+                updated_at = clock_timestamp()
             WHERE id = :artifact_id
             """
         ),
-        {"artifact_id": artifact_id, "version_id": version_id},
+        {"artifact_id": artifact_id},
     )
     assert result.rowcount == 1  # justify-service-invariant-check: artifact row locked by caller.
 

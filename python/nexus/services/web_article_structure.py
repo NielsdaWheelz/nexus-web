@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -40,7 +38,6 @@ class WebArticlePreparedFragment:
     canonical_text: str
     fragment_blocks: list[FragmentBlockSpec]
     index_blocks: list[WebArticleIndexBlockSpec]
-    source_fingerprint_material: str
 
 
 @dataclass(frozen=True)
@@ -71,7 +68,6 @@ def prepare_web_article_fragment(
             canonical_text=canonical_text,
             fragment_blocks=[FragmentBlockSpec(0, 0, 0, True)],
             index_blocks=[],
-            source_fingerprint_material="[]",
         )
     index_blocks = build_web_article_index_blocks(
         html_sanitized=html_sanitized,
@@ -84,7 +80,6 @@ def prepare_web_article_fragment(
         canonical_text=canonical_text,
         fragment_blocks=_fragment_blocks(canonical_text, index_blocks),
         index_blocks=index_blocks,
-        source_fingerprint_material=_fingerprint_material(index_blocks),
     )
 
 
@@ -167,14 +162,6 @@ def build_web_article_index_blocks(
             )
         )
     return blocks
-
-
-def source_version_for_web_article(
-    canonical_texts: list[str],
-    blocks: list[WebArticleIndexBlockSpec],
-) -> str:
-    material = "\n\n".join(canonical_texts) + "\n" + _fingerprint_material(blocks)
-    return f"web_article:fragments:{hashlib.sha256(material.encode()).hexdigest()}"
 
 
 def _headings(
@@ -285,21 +272,3 @@ def _inner_html(root: HtmlElement) -> str:
     parts = [root.text or ""]
     parts.extend(tostring(child, encoding="unicode", method="html") for child in root)
     return "".join(parts)
-
-
-def _fingerprint_material(blocks: list[WebArticleIndexBlockSpec]) -> str:
-    return json.dumps(
-        [
-            {
-                "kind": block.block_kind,
-                "start": block.start_offset,
-                "end": block.end_offset,
-                "level": block.heading_level,
-                "section": block.section_id,
-                "path": list(block.heading_path),
-            }
-            for block in blocks
-        ],
-        sort_keys=True,
-        separators=(",", ":"),
-    )

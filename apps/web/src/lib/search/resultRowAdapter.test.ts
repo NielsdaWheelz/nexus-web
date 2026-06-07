@@ -110,7 +110,6 @@ describe("fetchSearchResultPage", () => {
             page_title: "Deep Work Notes",
             body_text: "note body text",
             highlight_excerpt: null,
-            source_version: "note_block:note-1:revision:1",
             locator: {
               type: "note_block_offsets",
               page_id: "page-1",
@@ -131,7 +130,6 @@ describe("fetchSearchResultPage", () => {
             deep_link: "/pages/page-1",
             context_ref: { type: "page", id: "page-1" },
             description: "Project page",
-            source_version: "page:page-1:revision:1",
           },
           {
             type: "fragment",
@@ -177,7 +175,6 @@ describe("fetchSearchResultPage", () => {
               published_date: null,
             },
             deep_link: "/media/media-pdf-1#evidence-span-1",
-            source_version: "pdf-source:v1",
             citation_label: "p. 12",
             context_ref: {
               type: "content_chunk",
@@ -216,7 +213,7 @@ describe("fetchSearchResultPage", () => {
     });
   });
 
-  it("rejects locator drift and malformed PDF geometry", async () => {
+  it("rejects locator drift, legacy versions, and malformed PDF geometry", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     async function expectInvalidRow(row: Record<string, unknown>) {
       fetchMock.mockResolvedValueOnce(
@@ -247,7 +244,6 @@ describe("fetchSearchResultPage", () => {
       page_title: "Notes",
       body_text: "note body text",
       highlight_excerpt: null,
-      source_version: "note_block:note-1:revision:1",
       locator: {
         type: "web_text_offsets",
         media_id: "media-1",
@@ -286,6 +282,54 @@ describe("fetchSearchResultPage", () => {
         media_id: "media-pdf-1",
         page_number: 12,
         exact: "section text",
+        quads: [
+          { x1: 1, y1: 2, x2: 3, y2: 2, x3: 3, y3: 4, x4: 1, y4: 4 },
+        ],
+      },
+    });
+
+    await expectInvalidRow({
+      type: "page",
+      id: "page-legacy",
+      score: 0.72,
+      snippet: "legacy page",
+      title: "Legacy Page",
+      source_label: "page",
+      media_id: null,
+      media_kind: null,
+      deep_link: "/pages/page-legacy",
+      context_ref: { type: "page", id: "page-legacy", revision: 2 },
+      description: "Old page shape",
+    });
+
+    await expectInvalidRow({
+      type: "content_chunk",
+      id: "chunk-7",
+      score: 0.88,
+      snippet: "section text",
+      title: "PDF Source",
+      source_label: "PDF Source - p. 12",
+      media_id: "media-pdf-1",
+      media_kind: "pdf",
+      source: {
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        title: "PDF Source",
+        contributors: [],
+        published_date: null,
+      },
+      deep_link: "/media/media-pdf-1#evidence-span-1",
+      citation_label: "p. 12",
+      context_ref: {
+        type: "content_chunk",
+        id: "chunk-7",
+        evidence_span_ids: ["span-1"],
+      },
+      locator: {
+        type: "pdf_page_geometry",
+        media_id: "media-pdf-1",
+        page_number: 12,
+        exact: "section text",
         quads: [{ x1: 1 }],
       },
     });
@@ -311,7 +355,6 @@ describe("fetchSearchResultPage", () => {
             source_name: "Example",
             rank: 1,
             provider: "test",
-            source_version: "web_search:test:provider-request-1",
             selected: true,
             source_label: "Example",
             media_id: null,
@@ -377,7 +420,6 @@ describe("fetchSearchResultPage", () => {
             context_ref: { type: "highlight", id: "highlight-1" },
             color: "yellow",
             exact: "important saved quote",
-            source_version: "highlight:highlight-1",
             locator: {
               type: "web_text_offsets",
               media_id: "media-1",
@@ -437,7 +479,6 @@ describe("fetchSearchResultPage", () => {
             media_kind: "web_article",
             deep_link: "/media/media-1#fragment-fragment-1",
             context_ref: { type: "fragment", id: "fragment-1" },
-            source_version: "fragment:fragment-1",
             citation_label: "fragment 1",
             locator: {
               type: "web_text_offsets",

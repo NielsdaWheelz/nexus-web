@@ -113,7 +113,10 @@ async def test_cursor_closes_cleanly_when_read_returns_terminal():
 @pytest.mark.asyncio
 async def test_snapshot_emits_state_then_done_without_id_lines():
     snapshots = iter(
-        [({"processing_status": "pending"}, False), ({"processing_status": "ready"}, True)]
+        [
+            ({"processing_status": "pending"}, False),
+            ({"processing_status": "ready_for_reading"}, True),
+        ]
     )
     listener = _FakeListener()
     chunks = [
@@ -123,7 +126,7 @@ async def test_snapshot_emits_state_then_done_without_id_lines():
         )
     ]
     assert chunks[0] == 'event: state\ndata: {"processing_status":"pending"}\n\n'
-    assert chunks[1] == 'event: state\ndata: {"processing_status":"ready"}\n\n'
+    assert chunks[1] == 'event: state\ndata: {"processing_status":"ready_for_reading"}\n\n'
     assert chunks[2].startswith("event: done")
     assert all("id:" not in chunk for chunk in chunks)
     assert listener.closed_reason == "terminal"
