@@ -10,6 +10,7 @@ pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SYNC_ENV_SCRIPT = _REPO_ROOT / "deploy" / "hetzner" / "sync-env.sh"
+_WORKER_ENV_EXAMPLE = _REPO_ROOT / "deploy" / "env" / "env-prod-worker.example"
 _SAFE_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
     "library_intelligence_artifact_generate,media_unit_build,"
@@ -140,6 +141,25 @@ def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
     assert result.returncode != 0
     assert "WORKER_ALLOWED_JOB_KINDS is not the safe production allowlist" in result.stderr
     assert "scp must not run" not in result.stderr
+
+
+def test_worker_env_example_matches_safe_allowlist():
+    """The operator-copied example must not drift from the safe allowlist.
+
+    Operators ``cp env-prod-worker.example env-prod-worker`` per the deploy
+    READMEs, so a stale ``WORKER_ALLOWED_JOB_KINDS`` here makes ``sync-env.sh``
+    abort with "is not the safe production allowlist".
+    """
+    example_value: str | None = None
+    for line in _WORKER_ENV_EXAMPLE.read_text().splitlines():
+        if line.startswith("WORKER_ALLOWED_JOB_KINDS="):
+            example_value = line.split("=", 1)[1]
+            break
+
+    assert example_value is not None, (
+        f"WORKER_ALLOWED_JOB_KINDS not found in {_WORKER_ENV_EXAMPLE}"
+    )
+    assert example_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
 
 
 def test_hetzner_sync_rejects_removed_x_expansion_knob(tmp_path: Path):

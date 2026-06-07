@@ -27,6 +27,7 @@ from nexus.services.media_intelligence import (
     get_media_unit,
     run_media_unit_build,
 )
+from nexus.services.search.query import SearchQuery
 from tests.helpers import auth_headers, create_test_user_id
 
 # =============================================================================
@@ -449,7 +450,11 @@ class TestAppSearchSummaryEnrichment:
             text("SELECT created_by_user_id FROM media WHERE id = :mid"),
             {"mid": media_id},
         ).scalar_one()
-        response = search(db_session, user_id, "Searchable Abstract", types=["media"])
+        response = search(
+            db_session,
+            viewer_id=user_id,
+            query=SearchQuery(text="Searchable Abstract", result_types=("media",)),
+        )
         media_results = [r for r in response.results if getattr(r, "type", None) == "media"]
         assert media_results, "expected the media title hit"
         assert media_results[0].source.summary_md == "The ready abstract."
@@ -464,7 +469,11 @@ class TestAppSearchSummaryEnrichment:
             text("SELECT created_by_user_id FROM media WHERE id = :mid"),
             {"mid": media_id},
         ).scalar_one()
-        response = search(db_session, user_id, "No Abstract", types=["media"])
+        response = search(
+            db_session,
+            viewer_id=user_id,
+            query=SearchQuery(text="No Abstract", result_types=("media",)),
+        )
         media_results = [r for r in response.results if getattr(r, "type", None) == "media"]
         assert media_results
         assert media_results[0].source.summary_md is None

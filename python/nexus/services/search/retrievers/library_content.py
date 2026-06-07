@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import NotFoundError
-from nexus.services.locator_resolver import resolve_evidence_span
+from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
     CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
     CONTENT_CHUNK_MIN_ANN_CANDIDATES,
@@ -18,7 +18,6 @@ from nexus.services.search.constants import (
 )
 from nexus.services.search.projection import (
     _direct_fragment_locator,
-    _locator_from_resolved_evidence,
     _require_resolved_evidence,
     _snippet_around_query,
     _truncate_snippet,
@@ -328,7 +327,7 @@ def _search_content_chunks(
                 source_kind=str(row[8]),
                 evidence_span_ids=evidence_span_ids,
                 citation_label=str(resolution["citation_label"]),
-                locator=_locator_from_resolved_evidence(
+                locator=locator_from_resolution(
                     resolution,
                     media_id=row[1],
                     media_kind=str(row[2] or ""),
@@ -503,7 +502,7 @@ def _search_evidence_spans(
             _require_resolved_evidence(resolution)
         except NotFoundError:
             continue
-        locator = _locator_from_resolved_evidence(
+        locator = locator_from_resolution(
             resolution,
             media_id=row[1],
             media_kind=str(row[4]),
