@@ -1,7 +1,7 @@
 """contributor sort_name invariant and directory index
 
-Revision ID: 0137
-Revises: 0136
+Revision ID: 0139
+Revises: 0138
 Create Date: 2026-06-05
 
 Make contributors.sort_name a NOT NULL invariant (backfilled from display_name) and add the
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0137"
-down_revision: str | Sequence[str] | None = "0136"
+revision: str = "0139"
+down_revision: str | Sequence[str] | None = "0138"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -26,4 +26,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("Hard cutover: 0137 is not reversible")
+    raise NotImplementedError("Hard cutover: 0139 is not reversible")
