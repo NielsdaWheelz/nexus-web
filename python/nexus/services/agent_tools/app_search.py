@@ -24,6 +24,7 @@ from nexus.auth.permissions import (
     can_read_highlight,
     can_read_media,
     visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
 )
 from nexus.coerce import parse_uuid
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -32,7 +33,7 @@ from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_result_ref_json,
 )
-from nexus.services.contributor_credits import normalize_contributor_role
+from nexus.services.contributor_taxonomy import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.resource_resolver import (
     SEARCH_SCOPE_RESOURCE_URI_SCHEMES,
@@ -1117,26 +1118,11 @@ def _render_podcast_context(
 ) -> str | None:
     row = db.execute(
         text(
-            """
+            f"""
             SELECT p.title, p.description, p.website_url
             FROM podcasts p
             WHERE p.id = :podcast_id
-              AND (
-                    EXISTS (
-                        SELECT 1
-                        FROM podcast_subscriptions ps
-                        WHERE ps.podcast_id = p.id
-                          AND ps.user_id = :viewer_id
-                          AND ps.status = 'active'
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                        FROM library_entries le
-                        JOIN memberships m ON m.library_id = le.library_id
-                                          AND m.user_id = :viewer_id
-                        WHERE le.podcast_id = p.id
-                    )
-              )
+              AND p.id IN ({visible_podcast_ids_cte_sql()})
             """
         ),
         {"viewer_id": viewer_id, "podcast_id": podcast_id},

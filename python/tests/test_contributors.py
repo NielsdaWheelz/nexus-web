@@ -1518,12 +1518,17 @@ def test_tombstone_rejects_persisted_contributor_refs(db_session):
         ),
         {
             "tool_call_id": tool_call_id,
-            "source_id": f"contributor:{handle}",
-            "context_ref": f'{{"type":"contributor","id":"contributor:{handle}"}}',
+            # The real retrieval-citation contract: a contributor ref keys on the bare
+            # handle (search._result_context_ref / RetrievalCitation.result_ref_json),
+            # not a "contributor:"-prefixed string.
+            "source_id": handle,
+            "context_ref": f'{{"type":"contributor","id":"{handle}"}}',
             "result_ref": (
-                '{"result_type":"contributor",'
-                f'"source_id":"contributor:{handle}",'
-                f'"context_ref":{{"type":"contributor","id":"contributor:{handle}"}}}}'
+                '{"type":"contributor",'
+                f'"id":"{handle}",'
+                '"result_type":"contributor",'
+                f'"source_id":"{handle}",'
+                f'"context_ref":{{"type":"contributor","id":"{handle}"}}}}'
             ),
         },
     )

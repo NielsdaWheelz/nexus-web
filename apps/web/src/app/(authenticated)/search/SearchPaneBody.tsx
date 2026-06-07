@@ -21,6 +21,10 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import SearchResultRow from "@/components/search/SearchResultRow";
+import {
+  CONTRIBUTOR_ROLE_FILTERS as SEARCH_ROLE_FILTERS,
+  CONTRIBUTOR_CONTENT_KIND_FILTERS as SEARCH_CONTENT_KIND_FILTERS,
+} from "@/lib/contributors/vocab";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
@@ -51,27 +55,6 @@ const SEARCH_TYPE_LABELS: Record<SearchType, string> = {
   conversation: "Conversations",
   web_result: "Web",
 };
-
-const SEARCH_ROLE_FILTERS = [
-  ["author", "Authors"],
-  ["editor", "Editors"],
-  ["translator", "Translators"],
-  ["host", "Hosts"],
-  ["guest", "Guests"],
-  ["narrator", "Narrators"],
-  ["creator", "Creators"],
-  ["producer", "Producers"],
-  ["channel", "Channels"],
-] as const;
-
-const SEARCH_CONTENT_KIND_FILTERS = [
-  ["web_article", "Articles"],
-  ["pdf", "PDFs"],
-  ["epub", "EPUBs"],
-  ["video", "Videos"],
-  ["podcast_episode", "Episodes"],
-  ["podcast", "Podcasts"],
-] as const;
 
 const SEARCH_TYPE_SET = new Set<string>(ALL_SEARCH_TYPES);
 

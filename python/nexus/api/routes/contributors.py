@@ -1,6 +1,6 @@
 """Contributor routes."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -12,11 +12,18 @@ from nexus.responses import ok, success_response
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorExternalIdCreateRequest,
+    ContributorMergeRequest,
     ContributorSplitRequest,
 )
 from nexus.services import contributors as contributors_service
 
 router = APIRouter(prefix="/contributors", tags=["contributors"])
+
+
+def _csv_frozenset(value: str | None) -> frozenset[str]:
+    if not value:
+        return frozenset()
+    return frozenset(item.strip() for item in value.split(",") if item.strip())
 
 
 @router.get("")
@@ -35,6 +42,34 @@ def search_contributors(
     return success_response(
         {"contributors": [contributor.model_dump(mode="json") for contributor in contributors]}
     )
+
+
+@router.get("/directory")
+def list_contributor_directory(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    q: str | None = Query(default=None, max_length=200),
+    roles: str | None = Query(default=None),
+    kinds: str | None = Query(default=None),
+    content_kinds: str | None = Query(default=None),
+    statuses: str | None = Query(default=None),
+    sort: Literal["works", "name"] = Query(default="works"),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=40, ge=1, le=50),
+) -> dict:
+    page = contributors_service.list_contributors(
+        db,
+        viewer_id=viewer.user_id,
+        q=q,
+        roles=_csv_frozenset(roles),
+        kinds=_csv_frozenset(kinds),
+        content_kinds=_csv_frozenset(content_kinds),
+        statuses=_csv_frozenset(statuses),
+        sort=sort,
+        cursor=cursor,
+        limit=limit,
+    )
+    return ok(page)
 
 
 @router.get("/{contributor_handle}")
@@ -169,5 +204,22 @@ def tombstone_contributor(
         actor_user_id=viewer.user_id,
         actor_roles=viewer.roles,
         contributor_handle=contributor_handle,
+    )
+    return ok(contributor)
+
+
+@router.post("/{contributor_handle}/merge", status_code=201)
+def merge_contributor(
+    contributor_handle: str,
+    request: ContributorMergeRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    contributor = contributors_service.merge_contributor(
+        db,
+        actor_user_id=viewer.user_id,
+        actor_roles=viewer.roles,
+        contributor_handle=contributor_handle,
+        request=request,
     )
     return ok(contributor)

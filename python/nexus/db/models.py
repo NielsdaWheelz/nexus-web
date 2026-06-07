@@ -1123,7 +1123,7 @@ class Contributor(Base):
     )
     handle: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    sort_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_name: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unverified")
     disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)

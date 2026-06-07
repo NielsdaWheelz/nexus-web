@@ -17,7 +17,7 @@ export interface ContributorSummary {
   handle: string;
   contributor_handle?: string;
   display_name: string;
-  sort_name?: string | null;
+  sort_name: string;
   kind?: string | null;
   status?: string | null;
   disambiguation?: string | null;
@@ -27,6 +27,7 @@ export interface ContributorSummary {
 }
 
 export interface ContributorAlias {
+  id?: string;
   alias: string;
   alias_kind?: string | null;
   sort_name?: string | null;
@@ -35,6 +36,7 @@ export interface ContributorAlias {
 }
 
 export interface ContributorExternalId {
+  id?: string;
   authority: string;
   external_key: string;
   external_url?: string | null;
@@ -53,4 +55,35 @@ export interface ContributorWork {
   publisher?: string | null;
   description?: string | null;
   source?: string | null;
+}
+
+export interface FacetCount {
+  value: string;
+  count: number;
+}
+
+export interface ContributorDirectoryFacets {
+  roles: FacetCount[];
+  kinds: FacetCount[];
+  content_kinds: FacetCount[];
+  statuses: FacetCount[];
+}
+
+export interface ContributorDirectoryEntry {
+  handle: string;
+  href: string;
+  display_name: string;
+  sort_name: string;
+  kind: string;
+  status: string;
+  disambiguation?: string | null;
+  work_count: number;
+  roles: string[];
+  content_kinds: string[];
+}
+
+export interface ContributorDirectoryPage {
+  entries: ContributorDirectoryEntry[];
+  facets: ContributorDirectoryFacets;
+  page: { has_more: boolean; next_cursor: string | null };
 }

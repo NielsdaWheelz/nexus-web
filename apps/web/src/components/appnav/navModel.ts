@@ -39,6 +39,13 @@ export const NAV_MODEL: NavDestination[] = [
     slot: "primary",
     match: { exact: ["/libraries"], prefix: ["/libraries/"] },
   },
+  {
+    id: "authors",
+    label: "Authors",
+    href: "/authors",
+    slot: "primary",
+    match: { exact: ["/authors"], prefix: ["/authors/"] },
+  },
   { id: "browse", label: "Browse", href: "/browse", slot: "primary" },
   {
     id: "podcasts",

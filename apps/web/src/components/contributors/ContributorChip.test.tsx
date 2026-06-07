@@ -30,6 +30,7 @@ describe("ContributorChip", () => {
         contributor={{
           handle: "octavia-butler",
           display_name: "Octavia E. Butler",
+          sort_name: "Octavia E. Butler",
         }}
       />,
     );

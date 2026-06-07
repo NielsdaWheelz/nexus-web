@@ -22,6 +22,7 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   podcasts: () => import("@/app/(authenticated)/podcasts/PodcastsPaneBody"),
   podcastDetail: () => import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
+  authors: () => import("@/app/(authenticated)/authors/AuthorsPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
   page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),

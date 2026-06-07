@@ -15,7 +15,10 @@ from nexus.auth.permissions import (
     can_read_conversation,
     can_read_highlight,
     can_read_media,
+    visible_content_credit_rows_sql,
+    visible_contributor_ids_cte_sql,
     visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
 )
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
@@ -145,26 +148,11 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
     if ref.object_type == "podcast":
         row = db.execute(
             text(
-                """
+                f"""
                 SELECT p.id, p.title, p.description
                 FROM podcasts p
                 WHERE p.id = :id
-                  AND (
-                        EXISTS (
-                            SELECT 1
-                            FROM podcast_subscriptions ps
-                            WHERE ps.podcast_id = p.id
-                              AND ps.user_id = :viewer_id
-                              AND ps.status = 'active'
-                        )
-                        OR EXISTS (
-                            SELECT 1
-                            FROM library_entries le
-                            JOIN memberships m ON m.library_id = le.library_id
-                                              AND m.user_id = :viewer_id
-                            WHERE le.podcast_id = p.id
-                        )
-                  )
+                  AND p.id IN ({visible_podcast_ids_cte_sql()})
                 """
             ),
             {"viewer_id": viewer_id, "id": ref.object_id},
@@ -311,29 +299,14 @@ def search_object_refs(
 
     podcast_rows = db.execute(
         text(
-            """
+            f"""
             SELECT p.id
             FROM podcasts p
             WHERE (
                     p.title ILIKE :pattern
                     OR COALESCE(p.description, '') ILIKE :pattern
                   )
-              AND (
-                    EXISTS (
-                        SELECT 1
-                        FROM podcast_subscriptions ps
-                        WHERE ps.podcast_id = p.id
-                          AND ps.user_id = :viewer_id
-                          AND ps.status = 'active'
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                        FROM library_entries le
-                        JOIN memberships m ON m.library_id = le.library_id
-                                          AND m.user_id = :viewer_id
-                        WHERE le.podcast_id = p.id
-                    )
-              )
+              AND p.id IN ({visible_podcast_ids_cte_sql()})
             ORDER BY p.title ASC, p.id ASC
             LIMIT :limit
             """
@@ -403,52 +376,8 @@ def search_object_refs(
         text(
             f"""
             WITH
-                visible_media AS ({visible_media_ids_cte_sql()}),
-                visible_podcasts AS (
-                    SELECT ps.podcast_id
-                    FROM podcast_subscriptions ps
-                    WHERE ps.user_id = :viewer_id
-                      AND ps.status = 'active'
-
-                    UNION
-
-                    SELECT le.podcast_id
-                    FROM library_entries le
-                    JOIN memberships m ON m.library_id = le.library_id
-                                      AND m.user_id = :viewer_id
-                    WHERE le.podcast_id IS NOT NULL
-                ),
-                visible_contributor_credits AS (
-                    SELECT cc.*
-                    FROM contributor_credits cc
-                    LEFT JOIN visible_media vm ON vm.media_id = cc.media_id
-                    LEFT JOIN visible_podcasts vp ON vp.podcast_id = cc.podcast_id
-                    WHERE vm.media_id IS NOT NULL
-                       OR vp.podcast_id IS NOT NULL
-                       OR cc.project_gutenberg_catalog_ebook_id IS NOT NULL
-                ),
-                visible_contributor_object_links AS (
-                    SELECT ol.a_id AS contributor_id
-                    FROM object_links ol
-                    WHERE ol.user_id = :viewer_id
-                      AND ol.a_type = 'contributor'
-
-                    UNION
-
-                    SELECT ol.b_id AS contributor_id
-                    FROM object_links ol
-                    WHERE ol.user_id = :viewer_id
-                      AND ol.b_type = 'contributor'
-                ),
-                visible_contributors AS (
-                    SELECT contributor_id
-                    FROM visible_contributor_credits
-
-                    UNION
-
-                    SELECT contributor_id
-                    FROM visible_contributor_object_links
-                ),
+                visible_contributor_credits AS ({visible_content_credit_rows_sql()}),
+                visible_contributors AS ({visible_contributor_ids_cte_sql()}),
                 alias_text AS (
                     SELECT contributor_id, string_agg(alias, ' ') AS aliases
                     FROM contributor_aliases

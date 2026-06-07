@@ -37,6 +37,7 @@ export type PaneRouteId =
   | "podcasts"
   | "podcastDetail"
   | "search"
+  | "authors"
   | "author"
   | "notes"
   | "page"
@@ -176,6 +177,14 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     id: "search",
     pattern: ["search"],
     staticTitle: "Search",
+    titleMode: "static",
+    bodyMode: "standard",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
+    id: "authors",
+    pattern: ["authors"],
+    staticTitle: "Authors",
     titleMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
