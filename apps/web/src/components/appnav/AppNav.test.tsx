@@ -5,6 +5,7 @@ import AppNav from "./AppNav";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
@@ -62,7 +63,7 @@ function renderNav(
         <MobileChromeProvider>
           <WorkspaceStoreProvider
             workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialHref="/libraries"
+            initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
           >
             <AppNav />
           </WorkspaceStoreProvider>
