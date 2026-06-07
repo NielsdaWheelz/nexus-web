@@ -64,7 +64,7 @@ This cutover fixes all four together because they touch the same files and the s
   - Cursor pagination ("Load more").
   - Click a row → existing `/authors/{handle}` detail pane.
 - The **detail pane gains curation** (curator-gated): manage aliases, manage external IDs, **split**, **tombstone**, and the new **merge into another contributor** (single-select picker). Duplicates are reconcilable where you notice them.
-- **Bidirectional pivot:** author detail → "Search this author's works" deep-links to `/search?contributor_handles={handle}`; search/result contributor rows → author detail (already true via chips).
+- **Bidirectional pivot:** author detail → "Search this author's works" deep-links to `/search?authors={handle}`; search/result contributor rows → author detail (already true via chips).
 - A **merged** contributor's handle transparently resolves to its canonical survivor (authority-control "use X" redirect), with a subtle "formerly …" note.
 
 Non-visible but required: ingest keeps writing credits as today; all identity writes are append-audited in `contributor_identity_events`.
@@ -379,7 +379,7 @@ _do_merge:
 
 ### Pane bodies
 - `app/(authenticated)/authors/AuthorsPaneBody.tsx` (new): `useResource` → `fetchContributorDirectory(params)`; **facet/sort/query state lives in the URL** via `usePaneSearchParams` + `usePaneRouter.replace(buildAuthorsHref(...))` (a small `useUrlMultiSelect` helper) — **not `useStringIdSet`** (which is ephemeral). Rows via `AppList`/`AppListItem` with a work-count `<Pill>`; "Load more" on `page.has_more`; `<PaneLoadingState>`/`<FeedbackNotice>`.
-- `app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx`: add curator section — alias/external-id add+delete, split, tombstone, and **merge** via a new single-select **`ContributorPicker`** (Finding 12) in a `useDialogOverlay` dialog → `mergeContributor(source, target)` → navigate to canonical. Add "Search this author's works" → `/search?contributor_handles={handle}`. "formerly …" note when the loaded handle was merged.
+- `app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx`: add curator section — alias/external-id add+delete, split, tombstone, and **merge** via a new single-select **`ContributorPicker`** (Finding 12) in a `useDialogOverlay` dialog → `mergeContributor(source, target)` → navigate to canonical. Add "Search this author's works" → `/search?authors={handle}`. "formerly …" note when the loaded handle was merged.
 
 ### Components / hooks
 - `lib/contributors/useContributorSearch.ts` (new): debounced `fetchContributors`; powers both `ContributorFilter` (multi) and `ContributorPicker` (single). (C9)
@@ -391,7 +391,7 @@ _do_merge:
 
 ## 12. How it composes with other systems
 
-- **Search.** Shares the visibility predicate, FTS expr, and the canonical-ID resolver; the pivot deep-links to `/search?contributor_handles=…`.
+- **Search.** Shares the visibility predicate, FTS expr, and the canonical-ID resolver; the pivot deep-links to `/search?authors=…`.
 - **Libraries.** Visibility derives from library membership/closure (`visible_media_ids_cte_sql`); the directory is a *people lens* over the same corpus.
 - **Notes / object_links.** A pinned contributor is directory-visible without a credit; merge keeps links valid via canonicalization; split moves links through the object_links owner.
 - **Chat.** Persisted refs are immutable; merge leaves a redirect; the only chat-table read (tombstone safety) is owned by the chat domain.
@@ -436,7 +436,7 @@ _do_merge:
 - **AC2.** Directory lists visible contributors with correct visibility-scoped `work_count`; default sort works-desc then `sort_name`; A–Z toggle works; cursor paging returns stable, non-overlapping pages for both sort modes.
 - **AC3.** Facets filter and show counts; selections are URL-encoded and survive reload; typeahead narrows.
 - **AC4.** A contributor with no visible credit/object-link is absent; an object-link-only contributor is present (unified predicate, incl. `object_refs`).
-- **AC5.** Row → `/authors/{handle}`; "Search this author's works" → `/search?contributor_handles={handle}` with results.
+- **AC5.** Row → `/authors/{handle}`; "Search this author's works" → `/search?authors={handle}` with results.
 - **AC6.** Merge repoints credits/aliases/external-ids (deduped), writes a confirmed merge-alias for the source name, marks source `merged`→`merged_into=target`, flattens prior chains, writes a `merge` event, returns/navigates to canonical; re-opening the source handle resolves to target with "formerly …".
 - **AC7.** Merge dedup: equivalent credit dropped not duplicated; duplicate `(authority, external_key)` dropped (no unique violation); merge runs under SERIALIZABLE and survives a simulated serialization conflict via retry.
 - **AC8.** `object_links` rows are **not** modified by merge; a note pinned to the source still resolves (canonical) post-merge; split's link move goes through `object_refs.repoint_contributor_object_links`.

@@ -434,8 +434,7 @@ def assert_search_and_resolver(
         params={
             "q": query,
             "scope": f"media:{media_id}",
-            "types": "content_chunk",
-            "semantic": "false",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=headers,
@@ -449,13 +448,14 @@ def assert_search_and_resolver(
     assert matches, f"search did not return indexed content_chunk for {media_id}"
 
     result = matches[0]
+    # Hybrid retrieval (FTS ∪ vector ANN) is always on; a second request exercises
+    # the same path and confirms the indexed chunk is still surfaced.
     semantic_response = auth_client.get(
         "/search",
         params={
             "q": query,
             "scope": f"media:{media_id}",
-            "types": "content_chunk",
-            "semantic": "true",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=headers,
@@ -730,8 +730,7 @@ def assert_no_search_results(
         params={
             "q": query,
             "scope": f"media:{media_id}",
-            "types": "content_chunk",
-            "semantic": "false",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=headers,

@@ -173,7 +173,7 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
         params={
             "q": "SOFIA",
             "scope": f"media:{media_id}",
-            "types": "content_chunk",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=outsider_headers,
@@ -192,8 +192,7 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
         "/search",
         params={
             "q": "SOFIA",
-            "types": "content_chunk",
-            "semantic": "false",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=owner_headers,
@@ -270,7 +269,7 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
         params={
             "q": "SOFIA",
             "scope": f"library:{library_id}",
-            "types": "content_chunk",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=headers,
@@ -296,7 +295,7 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
         params={
             "q": "SOFIA",
             "scope": f"library:{library_id}",
-            "types": "content_chunk",
+            "kinds": "documents",
             "limit": 5,
         },
         headers=headers,

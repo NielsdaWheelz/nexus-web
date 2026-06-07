@@ -39,9 +39,8 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
       titleClassName={styles.title}
       description={row.typeLabel}
       descriptionClassName={styles.type}
-      meta={row.sourceMeta ?? row.scoreLabel}
+      meta={row.sourceMeta}
       metaClassName={styles.meta}
-      trailing={<span className={styles.score}>{row.scoreLabel}</span>}
       actions={
         row.contributorCredits.length > 0 ? (
           <ContributorCreditList

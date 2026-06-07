@@ -206,13 +206,13 @@ def _insert_read_tool_call(
             INSERT INTO message_tool_calls (
                 conversation_id, user_message_id, assistant_message_id,
                 tool_name, tool_call_index,
-                scope, semantic, requested_types, result_refs, selected_context_refs,
+                scope, requested_types, result_refs, selected_context_refs,
                 provider_request_ids, status
             )
             VALUES (
                 :conversation_id, :user_message_id, :assistant_message_id,
                 'read_resource', :tool_call_index,
-                'read_resource', false, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
                 '[]'::jsonb, 'complete'
             )
             RETURNING id
@@ -439,13 +439,13 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
                 INSERT INTO message_tool_calls (
                     conversation_id, user_message_id, assistant_message_id,
                     tool_name, tool_call_index,
-                    scope, semantic, requested_types, result_refs, selected_context_refs,
+                    scope, requested_types, result_refs, selected_context_refs,
                     provider_request_ids, status
                 )
                 VALUES (
                     :conversation_id, :user_message_id, :assistant_message_id,
                     'read_resource', 1,
-                    'read_resource', false, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                    'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
                     '[]'::jsonb, 'complete'
                 )
                 RETURNING id
@@ -618,13 +618,13 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
                 INSERT INTO message_tool_calls (
                     conversation_id, user_message_id, assistant_message_id,
                     tool_name, tool_call_index,
-                    scope, semantic, requested_types, result_refs, selected_context_refs,
+                    scope, requested_types, result_refs, selected_context_refs,
                     provider_request_ids, status
                 )
                 VALUES (
                     :conversation_id, :user_message_id, :assistant_message_id,
                     'read_resource', 1,
-                    'read_resource', false, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                    'read_resource', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
                     '[]'::jsonb, 'complete'
                 )
                 RETURNING id

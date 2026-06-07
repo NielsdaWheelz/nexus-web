@@ -17,6 +17,25 @@
   border-color: var(--accent);
 }
 
+button.chip.pressable {
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background var(--duration-fast) var(--ease-glide),
+    border-color var(--duration-fast) var(--ease-glide),
+    color var(--duration-fast) var(--ease-glide);
+}
+
+button.chip.pressable:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+button.chip.pressable:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .sizeSm {
   height: var(--size-xs);
 }

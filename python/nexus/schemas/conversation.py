@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
+from nexus.schemas.search import SEARCH_RESULT_TYPES
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -27,24 +28,6 @@ MESSAGE_ROLES = Literal["user", "assistant", "system"]
 
 # Valid message statuses - must match DB constraint
 MESSAGE_STATUSES = Literal["pending", "complete", "error"]
-
-# Valid assistant app-search result types - must match message_retrievals.result_type
-APP_SEARCH_RESULT_TYPES = Literal[
-    "page",
-    "note_block",
-    "highlight",
-    "media",
-    "podcast",
-    "episode",
-    "video",
-    "content_chunk",
-    "fragment",
-    "message",
-    "contributor",
-    "evidence_span",
-    "conversation",
-    "web_result",
-]
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
@@ -121,7 +104,7 @@ class MessageDocumentRetrievalResultBlock(BaseModel):
     tool_call_index: int | None = Field(default=None, ge=0)
     ordinal: int | None = Field(default=None, ge=0)
     citation_ordinal: int | None = Field(default=None, ge=1)
-    result_type: APP_SEARCH_RESULT_TYPES
+    result_type: SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None
     evidence_span_id: UUID | None = None
@@ -211,7 +194,7 @@ class MessageRetrievalOut(BaseModel):
     id: UUID
     tool_call_id: UUID
     ordinal: int
-    result_type: APP_SEARCH_RESULT_TYPES
+    result_type: SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None
     evidence_span_id: UUID | None = None
@@ -282,7 +265,6 @@ class ChatRunToolCallEventPayload(BaseModel):
     status: MESSAGE_TOOL_STATUSES
     scope: str = Field(min_length=1)
     types: list[str]
-    semantic: bool
     filters: dict[str, Any]
     error_code: str | None = None
 
@@ -388,7 +370,7 @@ class MessageRetrievalCandidateLedgerOut(BaseModel):
     tool_call_id: UUID
     retrieval_id: UUID | None = None
     ordinal: int
-    result_type: APP_SEARCH_RESULT_TYPES
+    result_type: SEARCH_RESULT_TYPES
     source_id: str
     score: float | None = None
     selected: bool

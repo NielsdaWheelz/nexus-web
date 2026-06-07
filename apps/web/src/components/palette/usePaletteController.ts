@@ -14,8 +14,9 @@ import { useKeybindings } from "@/lib/keybindingsProvider";
 import { createNotePage } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
-import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
-import { ALL_SEARCH_TYPES, type SearchResultRowViewModel } from "@/lib/search/types";
+import { fetchSearchResultPage } from "@/lib/search/searchApi";
+import { searchQueryFromInput } from "@/lib/search/query";
+import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { resolveWorkspacePaneTitle, useWorkspaceStore } from "@/lib/workspace/store";
@@ -163,9 +164,7 @@ export function usePaletteController(): PaletteController {
     const controller = new AbortController();
     setSearchLoading(true);
     const timer = window.setTimeout(() => {
-      void fetchSearchResultPage({
-        query: intent.term,
-        selectedTypes: new Set(ALL_SEARCH_TYPES),
+      void fetchSearchResultPage(searchQueryFromInput(intent.term), {
         limit: 5,
         cursor: null,
         signal: controller.signal,

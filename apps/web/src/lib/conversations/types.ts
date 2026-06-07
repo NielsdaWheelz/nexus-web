@@ -107,7 +107,6 @@ export interface MessageToolCall {
   query_hash?: string | null;
   scope?: string;
   requested_types?: string[];
-  semantic?: boolean;
   result_refs?: MessageRetrievalResultRef[];
   selected_context_refs?: RetrievalContextRef[];
   provider_request_ids?: string[];

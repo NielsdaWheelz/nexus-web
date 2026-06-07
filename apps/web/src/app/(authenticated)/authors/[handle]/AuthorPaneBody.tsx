@@ -528,13 +528,13 @@ export default function AuthorPaneBody() {
               <div className={styles.worksHeader}>
                 <h2>Works</h2>
                 <a
-                  href={`/search?contributor_handles=${encodeURIComponent(
+                  href={`/search?authors=${encodeURIComponent(
                     data.contributor.handle,
                   )}`}
                   onClick={(event) => {
                     event.preventDefault();
                     paneRouter.push(
-                      `/search?contributor_handles=${encodeURIComponent(
+                      `/search?authors=${encodeURIComponent(
                         data.contributor.handle,
                       )}`,
                     );

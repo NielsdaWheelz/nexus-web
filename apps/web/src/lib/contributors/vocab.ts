@@ -2,6 +2,25 @@
 // the author detail pane, and search. Facet values come from the backend; these map them to
 // friendly labels and provide the ordered filter lists used as static filter chips.
 
+// The full contributor-role taxonomy (mirrors the backend contributor_taxonomy
+// CONTRIBUTOR_ROLES). The single FE owner of the role vocab: the search operator parser
+// validates `role:` tokens against it, and CONTRIBUTOR_ROLE_FILTERS is the user-facing
+// directory subset of it (publisher/organization/unknown are valid roles but not facets).
+export const CONTRIBUTOR_ROLES: ReadonlySet<string> = new Set([
+  "author",
+  "editor",
+  "translator",
+  "host",
+  "guest",
+  "narrator",
+  "creator",
+  "producer",
+  "publisher",
+  "channel",
+  "organization",
+  "unknown",
+]);
+
 export const CONTRIBUTOR_ROLE_FILTERS: ReadonlyArray<readonly [string, string]> = [
   ["author", "Authors"],
   ["editor", "Editors"],

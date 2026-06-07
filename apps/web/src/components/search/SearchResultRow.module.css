@@ -37,11 +37,6 @@
   line-height: var(--leading-snug);
 }
 
-.score {
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-}
-
 .actions {
   padding-right: var(--space-3);
   display: flex;

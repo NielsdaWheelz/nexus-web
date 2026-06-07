@@ -37,7 +37,7 @@ test.describe("workspace pane minimize", () => {
     await expect(
       workspacePaneButton(page, /^Search\b.*Minimized\. Restore\./)
     ).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByPlaceholder("Search your Nexus content...")).toBeHidden();
+    await expect(page.getByLabel("Search content")).toBeHidden();
 
     // Same pinned device id, same session row: a reload re-restores the saved
     // layout, proving the minimized state persists in the server session store.
@@ -46,6 +46,6 @@ test.describe("workspace pane minimize", () => {
     await expect(
       workspacePaneButton(page, /^Search\b.*Minimized\. Restore\./)
     ).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByPlaceholder("Search your Nexus content...")).toBeHidden();
+    await expect(page.getByLabel("Search content")).toBeHidden();
   });
 });

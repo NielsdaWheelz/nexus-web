@@ -142,7 +142,6 @@ class WebSearchRun:
             "status": "running",
             "scope": "public_web",
             "types": [self.result_type],
-            "semantic": False,
         }
 
     def retrieval_result_event(self) -> dict[str, Any]:
@@ -266,7 +265,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 query_hash,
                 scope,
                 requested_types,
-                semantic,
                 result_refs,
                 selected_context_refs,
                 provider_request_ids,
@@ -283,7 +281,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 :query_hash,
                 'public_web',
                 :requested_types,
-                false,
                 :result_refs,
                 :selected_context_refs,
                 :provider_request_ids,
@@ -325,7 +322,6 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             SET query_hash = :query_hash,
                 scope = 'public_web',
                 requested_types = :requested_types,
-                semantic = false,
                 result_refs = :result_refs,
                 selected_context_refs = :selected_context_refs,
                 provider_request_ids = :provider_request_ids,

@@ -520,19 +520,26 @@ Other identity surfaces:
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
-One core `search()` (`services/search.py`) serves three surfaces: the in-app
-search page, the chat `app_search` agent tool (RAG), and object-ref resolution for
-notes.
+One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
+three surfaces: the in-app search page, the chat `app_search` agent tool (RAG), and
+object-ref resolution for notes. The request is a single typed `SearchQuery` value
+object parsed at the edge; the user-facing taxonomy is **six kinds** (Documents,
+Notes, Highlights, Conversations, People, Web) folding the internal result types,
+with operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
+result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
+`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`. The current
   index state is tracked in `media_content_index_states` with the active
   embedding provider/model; rebuilds replace current blocks, chunks, spans, and
   embeddings for the media.
-- **Retrieval** is hybrid: a vector ANN arm (cosine over pgvector, joined on the
-  *active* embedding config) **UNION** a lexical FTS arm, reranked by a weighted
-  score (lexical hit + semantic similarity + recency), filtered by a similarity
-  floor, then resolved through the locator resolver. For chat, candidates are
+- **Retrieval** is hybrid — and hybrid is an *invariant*, not a per-request toggle:
+  a vector ANN arm (cosine over pgvector, joined on the *active* embedding config)
+  **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
+  similarity + recency), filtered by a similarity floor, then resolved through the
+  locator resolver. There is no `semantic` flag; the query embedding is built once
+  for any semantic-capable kind regardless of structured filters. For chat, candidates are
   selected under a context-char budget and every candidate/rerank/selection
   decision is written to ledger tables; selected rows become `message_retrievals`
   citation rows via the single validated writer `retrieval_citation.insert_retrieval_row`.
@@ -827,7 +834,10 @@ integration, and 15s listening-state persistence.
 ### 8.9 Search surfaces & command palette
 
 The same `search()` backs the `/search` results page (`SearchPaneBody`), inline
-palette results, and the chat `app_search` tool. The **command palette**
+palette results, and the chat `app_search` tool — the page and the palette `@` lane
+share one frontend query model (`lib/search`: `parseSearchInput` → `SearchQuery` →
+`fetchSearchResultPage`), so an identical input yields identical results and "See
+all" round-trips through the URL. The **command palette**
 (`components/CommandPalette.tsx`) aggregates open tabs, frecency-ranked recents
 (`command_palette` service), static nav/create commands, and live search results,
 ranked by `commandRanking.ts` and executed via `requestOpenInAppPane`. The

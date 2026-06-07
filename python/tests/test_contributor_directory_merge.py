@@ -27,6 +27,7 @@ from nexus.services.contributors import (
     run_identity_write,
 )
 from nexus.services.search import search
+from nexus.services.search.query import SearchQuery
 from tests.factories import (
     add_media_to_library,
     create_test_media,
@@ -342,10 +343,11 @@ def test_search_by_merged_handle_returns_target_works(db_session):
     response = search(
         db_session,
         viewer_id=viewer_id,
-        q="",
-        scope="all",
-        types=["media"],
-        contributor_handles=[source_handle],
+        query=SearchQuery(
+            text="",
+            result_types=("media",),
+            authors=(source_handle,),
+        ),
     )
 
     media_ids = {
@@ -703,7 +705,9 @@ def test_object_link_only_contributor_appears_in_directory_and_search(db_session
     # R6: the object-link-only contributor is now findable by unscoped FTS search (it was
     # previously excluded). Contributor search is query-driven, so search by its name.
     response = search(
-        db_session, viewer_id=viewer_id, q=distinctive, scope="all", types=["contributor"]
+        db_session,
+        viewer_id=viewer_id,
+        query=SearchQuery(text=distinctive, result_types=("contributor",)),
     )
     search_handles = {getattr(result, "contributor_handle", None) for result in response.results}
     assert handle in search_handles

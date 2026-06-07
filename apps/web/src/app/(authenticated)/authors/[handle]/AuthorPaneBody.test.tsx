@@ -229,7 +229,7 @@ describe("AuthorPaneBody", () => {
     expect(await screen.findByRole("heading", { name: "Pivot Author" })).toBeVisible();
     expect(
       screen.getByRole("link", { name: /Search this author's works/ }),
-    ).toHaveAttribute("href", "/search?contributor_handles=pivot-author");
+    ).toHaveAttribute("href", "/search?authors=pivot-author");
   });
 
   it("shows a 'Formerly' note when the URL handle was merged away", async () => {

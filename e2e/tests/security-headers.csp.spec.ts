@@ -146,7 +146,7 @@ test.describe("major routes load with zero CSP violations (enforced)", () => {
       "/search",
     );
     await expect(
-      activeWorkspacePane(page).getByPlaceholder("Search your Nexus content..."),
+      activeWorkspacePane(page).getByLabel("Search content"),
     ).toBeVisible({ timeout: 15_000 });
     await expectNoCspViolations(page);
   });

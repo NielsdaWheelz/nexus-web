@@ -16,13 +16,14 @@ import {
   gotoSinglePaneWorkspace,
 } from "../workspace";
 
-const CONTENT_KIND_LABELS = {
-  epub: "EPUBs",
-  pdf: "PDFs",
-  podcast_episode: "Episodes",
-  video: "Videos",
-  web_article: "Articles",
-} as const;
+// The real-media storage content-kinds these helpers seed and search for.
+const REAL_MEDIA_CONTENT_KINDS = [
+  "epub",
+  "pdf",
+  "podcast_episode",
+  "video",
+  "web_article",
+] as const;
 
 const ROOT_DIR = path.resolve(__dirname, "..", "..", "..");
 const REAL_MEDIA_FIXTURE_DIR = path.join(
@@ -46,7 +47,7 @@ export const FRESH_REAL_MEDIA_FIXTURES = {
   },
 } as const;
 
-export type RealMediaContentKind = keyof typeof CONTENT_KIND_LABELS;
+export type RealMediaContentKind = (typeof REAL_MEDIA_CONTENT_KINDS)[number];
 
 const REAL_MEDIA_WORKSPACE_DEVICE_ID = "real-media-e2e";
 let realMediaWorkspaceSequence = 0;
@@ -385,15 +386,36 @@ export async function drainRealMediaWorkerForMediaReady(
   };
 }
 
+// Storage content-kind → the public MediaFormat the search API now accepts.
+const STORAGE_KIND_TO_FORMAT: Record<RealMediaContentKind, string> = {
+  epub: "epub",
+  pdf: "pdf",
+  podcast_episode: "episode",
+  video: "video",
+  web_article: "article",
+};
+
+// Public MediaFormat → the applied-filter chip label rendered by the search surface
+// (mirrors MEDIA_FORMAT_LABELS in apps/web/src/lib/search/kinds.ts).
+const MEDIA_FORMAT_CHIP_LABELS: Record<string, string> = {
+  article: "Articles",
+  pdf: "PDFs",
+  epub: "EPUBs",
+  video: "Videos",
+  episode: "Episodes",
+  podcast: "Podcasts",
+};
+
 export async function searchRealMediaEvidenceThroughUi(
   page: Page,
   query: string,
   contentKind: RealMediaContentKind,
 ): Promise<RealMediaSearchResponseBody> {
+  const format = STORAGE_KIND_TO_FORMAT[contentKind];
   const searchUrl = `/search?${new URLSearchParams({
     q: query,
-    types: "content_chunk",
-    content_kinds: contentKind,
+    kinds: "documents",
+    formats: format,
   })}`;
   const responsePromise = page.waitForResponse(
     (response) => {
@@ -404,24 +426,26 @@ export async function searchRealMediaEvidenceThroughUi(
       return (
         url.pathname === "/api/search" &&
         url.searchParams.get("q") === query &&
-        url.searchParams.get("types") === "content_chunk" &&
-        url.searchParams.get("content_kinds") === contentKind
+        url.searchParams.get("kinds") === "documents" &&
+        url.searchParams.get("formats") === format
       );
     },
     { timeout: 60_000 },
   );
   await gotoRealMediaSinglePane(page, searchUrl);
   const searchPane = activeWorkspacePane(page);
+  // The intent-model surface: Documents is the active kind chip (pressable button),
+  // and the format renders as a removable chip in the applied-filter bar.
   await expect(
     searchPane
-      .getByRole("group", { name: "Result types" })
-      .getByRole("checkbox", { name: "Evidence", exact: true }),
-  ).toBeChecked();
+      .getByRole("group", { name: "Result kinds" })
+      .getByRole("button", { name: "Documents", pressed: true }),
+  ).toBeVisible();
   await expect(
     searchPane
-      .getByRole("group", { name: "Content kinds" })
-      .getByLabel(CONTENT_KIND_LABELS[contentKind]),
-  ).toBeChecked();
+      .getByRole("group", { name: "Applied filters" })
+      .getByText(MEDIA_FORMAT_CHIP_LABELS[format], { exact: true }),
+  ).toBeVisible();
 
   await expect(searchPane.getByLabel("Search content")).toHaveValue(query);
   const response = await responsePromise;
@@ -429,7 +453,7 @@ export async function searchRealMediaEvidenceThroughUi(
     response.ok(),
     `visible search for ${contentKind} should succeed`,
   ).toBeTruthy();
-  await expect(searchPane.getByText("Searching...")).toBeHidden({
+  await expect(searchPane.getByText("Searching…")).toBeHidden({
     timeout: 15_000,
   });
   const body = (await response.json()) as { results: RealMediaSearchResult[] };

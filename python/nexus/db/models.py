@@ -3852,7 +3852,6 @@ class MessageToolCall(Base):
         nullable=False,
         server_default=text("'[]'::jsonb"),
     )
-    semantic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     result_refs: Mapped[list[dict[str, object]]] = mapped_column(
         JSONB,
         nullable=False,

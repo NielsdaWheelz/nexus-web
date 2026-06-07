@@ -571,6 +571,51 @@ class TestMigrationUpgradeDowngrade:
         assert "Hard cutover: 0137 is not reversible" in combined
         reset_test_schema()
 
+    def test_0140_drops_message_tool_calls_semantic_column(self):
+        """Search hybrid-invariant cutover (§11/D-14): 0140 drops the dead ``semantic``
+        toggle column and retains ``requested_types``."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+
+        def has_column(column: str) -> bool:
+            with Session(engine) as session:
+                return (
+                    session.execute(
+                        text(
+                            """
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'message_tool_calls'
+                              AND column_name = :column
+                            """
+                        ),
+                        {"column": column},
+                    ).first()
+                    is not None
+                )
+
+        try:
+            assert run_alembic_command("upgrade 0139").returncode == 0
+            assert has_column("semantic"), "semantic column should exist at 0139"
+
+            assert run_alembic_command("upgrade 0140").returncode == 0
+            assert not has_column("semantic"), "0140 must drop message_tool_calls.semantic"
+            assert has_column("requested_types"), "0140 must retain requested_types"
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_0140_downgrade_is_blocked(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0140").returncode == 0
+
+        result = run_alembic_command("downgrade 0139")
+
+        assert result.returncode != 0
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "no downgrade path" in combined or "NotImplementedError" in combined
+        reset_test_schema()
+
     def test_0107_canonicalizes_reader_selection_context_snapshots(self):
         """Reader-selection context snapshots are upgraded from legacy camelCase keys."""
         reset_test_schema()

@@ -187,6 +187,40 @@ def visible_contributor_ids_cte_sql() -> str:
     """
 
 
+def visible_conversation_ids_cte_sql() -> str:
+    """Conversation IDs visible to a viewer (binds :viewer_id, returns conversation_id).
+
+    The SQL set-membership twin of :func:`can_read_conversation`; co-located here so the
+    two forms of the same rule cannot drift. A conversation is visible iff:
+    - owner_user_id = viewer_id, OR
+    - sharing = 'public', OR
+    - sharing = 'library' AND a conversation_share targets a library where both viewer
+      AND owner are current members (dual-membership check).
+    """
+    return """
+        SELECT c.id AS conversation_id
+        FROM conversations c
+        WHERE c.owner_user_id = :viewer_id
+
+        UNION
+
+        SELECT c.id AS conversation_id
+        FROM conversations c
+        WHERE c.sharing = 'public'
+
+        UNION
+
+        SELECT c.id AS conversation_id
+        FROM conversations c
+        JOIN conversation_shares cs ON cs.conversation_id = c.id
+        JOIN memberships vm ON vm.library_id = cs.library_id
+                            AND vm.user_id = :viewer_id
+        JOIN memberships om ON om.library_id = cs.library_id
+                            AND om.user_id = c.owner_user_id
+        WHERE c.sharing = 'library'
+    """
+
+
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
     """Check if viewer can read a conversation under visibility rules.
 

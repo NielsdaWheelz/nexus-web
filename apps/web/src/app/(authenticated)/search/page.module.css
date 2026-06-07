@@ -10,36 +10,23 @@
   gap: var(--space-3);
 }
 
-.searchRow {
-  display: flex;
-  gap: var(--space-2);
-}
-
 .searchInputField {
-  flex: 1;
+  width: 100%;
 }
 
-/* Type filters */
-.filters {
+/* Refinement row: the + Format menu and the author picker. */
+.refineRow {
   display: flex;
-  gap: var(--space-4);
   flex-wrap: wrap;
-  padding: 0;
-  margin: 0;
-  border: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
 }
 
-.filterLabel {
+.emptyResults {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-
-.filterLabel input[type="checkbox"] {
-  accent-color: var(--accent);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
 .resultRows {

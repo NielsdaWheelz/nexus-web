@@ -5,6 +5,8 @@ from sqlalchemy import text
 
 from nexus.services import search as search_service
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.search.query import SearchQuery, SearchScope
+from nexus.services.search.scope import parse_scope
 from tests.factories import create_test_media_in_library
 
 
@@ -74,19 +76,25 @@ def test_contributor_search_credit_text_is_limited_to_media_scope(
         ],
     )
 
+    visible_kind, visible_scope_id = parse_scope(f"media:{visible_media_id}")
+    hidden_kind, hidden_scope_id = parse_scope(f"media:{hidden_in_scope_media_id}")
     visible_scope_results = search_service.search(
         db_session,
         user_id,
-        q="Hidden Scope",
-        scope=f"media:{visible_media_id}",
-        types=["contributor"],
+        SearchQuery(
+            text="Hidden Scope",
+            scope=SearchScope(kind=visible_kind, id=visible_scope_id),
+            result_types=("contributor",),
+        ),
     )
     hidden_scope_results = search_service.search(
         db_session,
         user_id,
-        q="Hidden Scope",
-        scope=f"media:{hidden_in_scope_media_id}",
-        types=["contributor"],
+        SearchQuery(
+            text="Hidden Scope",
+            scope=SearchScope(kind=hidden_kind, id=hidden_scope_id),
+            result_types=("contributor",),
+        ),
     )
 
     assert visible_scope_results.results == []

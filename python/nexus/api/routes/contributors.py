@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
@@ -21,9 +22,7 @@ router = APIRouter(prefix="/contributors", tags=["contributors"])
 
 
 def _csv_frozenset(value: str | None) -> frozenset[str]:
-    if not value:
-        return frozenset()
-    return frozenset(item.strip() for item in value.split(",") if item.strip())
+    return frozenset(parse_comma_list(value) or ())
 
 
 @router.get("")

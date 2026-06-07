@@ -321,18 +321,18 @@ def test_execute_app_search_persists_normalized_executed_filters(
             planned_query="Mixed Filter Needle",
             planned_types=["media"],
             planned_filters={
-                "contributor_handles": [contributor_handle.upper()],
+                "authors": [contributor_handle.upper()],
                 "roles": ["HOST"],
-                "content_kinds": ["WEB_ARTICLE"],
+                "formats": ["WEB_ARTICLE"],
             },
         )
 
         assert run is not None
         assert run.status == "complete"
         assert run.filters == {
-            "contributor_handles": [contributor_handle],
+            "authors": [contributor_handle],
             "roles": ["host"],
-            "content_kinds": ["web_article"],
+            "formats": ["web_article"],
         }
         assert any(citation.source_id == str(media_id) for citation in run.citations)
 
@@ -569,7 +569,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert run.retrieval_result_event()["results"] == []
         assert 'status="no_results"' in run.context_text
         assert 'status="no_indexed_evidence"' not in run.context_text
-        assert "&quot;content_kinds&quot;" in run.context_text
+        assert "&quot;formats&quot;" in run.context_text
 
         tool_row = session.execute(
             text(

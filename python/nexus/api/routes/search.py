@@ -2,46 +2,59 @@
 
 Routes are transport-only:
 - Extract viewer_user_id from request.state
+- Parse query params → SearchQuery at the boundary
 - Call exactly one service function
 - Return success(...) or raise ApiError
 
 No domain logic or raw DB access in routes.
 
-This endpoint implements keyword search across all user-visible content
-using PostgreSQL full-text search. Visibility follows canonical predicates.
+This endpoint implements hybrid search across all user-visible content using
+PostgreSQL full-text search plus vector ANN. Visibility follows canonical predicates.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.search import SearchResponse
-from nexus.services import search as search_service
+from nexus.services.search import search as search_service
+from nexus.services.search.constants import DEFAULT_LIMIT, MAX_LIMIT
+from nexus.services.search.query import build_search_query
+from nexus.services.search.scope import scope_from_uri
 
 router = APIRouter(tags=["search"])
+
+# Params removed by the search intent-model cutover. Stale links carrying any of
+# these must fail loud (400) rather than silently broaden to an all-kinds search.
+_DELETED_SEARCH_PARAMS = ("types", "content_kinds", "contributor_handles", "semantic")
 
 
 @router.get("/search", response_model=SearchResponse, response_model_by_alias=False)
 def search(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     q: str = Query(default="", min_length=0, description="Search query string"),
     scope: str = Query(
         default="all", description="Search scope (all, media:<id>, library:<id>, conversation:<id>)"
     ),
-    types: str | None = Query(
+    kinds: str | None = Query(
         default=None,
         description=(
-            "Comma-separated list of types to search "
-            "(media, podcast, episode, video, content_chunk, fragment, contributor, page, "
-            "note_block, highlight, message, evidence_span, conversation, web_result)"
+            "Comma-separated user kinds (documents, notes, highlights, conversations, "
+            "people, web). Omitted ⇒ all kinds; explicitly empty ⇒ no results."
         ),
     ),
-    contributor_handles: str | None = Query(
+    formats: str | None = Query(
+        default=None,
+        description="Comma-separated document formats (article, pdf, epub, video, episode, podcast).",
+    ),
+    authors: str | None = Query(
         default=None,
         description="Comma-separated contributor handles to filter credited content.",
     ),
@@ -49,24 +62,19 @@ def search(
         default=None,
         description="Comma-separated contributor credit roles to filter credited content.",
     ),
-    content_kinds: str | None = Query(
-        default=None,
-        description="Comma-separated media/content kinds to filter credited content.",
-    ),
-    semantic: bool = Query(
-        default=True,
-        description="Enable hybrid semantic ranking for searchable content.",
-    ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(
-        default=20, ge=1, le=50, description="Maximum results per page (default 20, max 50)"
+        default=DEFAULT_LIMIT,
+        ge=1,
+        le=MAX_LIMIT,
+        description=f"Maximum results per page (default {DEFAULT_LIMIT}, max {MAX_LIMIT})",
     ),
 ) -> dict:
     """Search across all visible content.
 
-    Keyword search using PostgreSQL full-text search. Returns mixed typed
-    results from media titles, podcast metadata, content chunks, notes,
-    and messages.
+    Hybrid retrieval (full-text ∪ vector ANN) across documents, notes, highlights,
+    conversations, people, and web results. Refinement is by kind, format, author,
+    and role filters; retrieval mode is never user-controlled.
 
     **Scopes:**
     - `all` - All visible content
@@ -74,51 +82,28 @@ def search(
     - `library:<id>` - Content anchored to media in that library
     - `conversation:<id>` - Messages within that conversation
 
-    **Types:**
-    - `media` - Search media titles
-    - `podcast` - Search visible podcast metadata
-    - `episode` - Search podcast episode media
-    - `video` - Search video media
-    - `content_chunk` - Search indexed document and transcript chunks
-    - `fragment` - Search readable source fragments
-    - `page` - Search note pages
-    - `note_block` - Search note blocks
-    - `highlight` - Search saved source highlights
-    - `message` - Search conversation messages
-    - `web_result` - Search persisted public-web retrievals from visible conversations
-
-    **Visibility:**
-    - Search never returns invisible content
-    - Media/content chunks visible via canonical provenance
-      (non-default membership, intrinsic, closure)
-    - Notes visible when owned by the viewer
-    - Messages visible via conversation visibility (owner, public, or library-shared dual membership)
-    - Pending messages are never searchable
-
-    **Query Parsing:**
-    - Uses `websearch_to_tsquery` for natural query syntax
-    - Supports quoted phrases, `-` exclusions, implicit AND
-    - Queries < 2 chars return empty results
-    - All-stopword queries return empty results
-
-    **Pagination:**
-    - Offset-based cursor encoded as base64url JSON
-    - Page size configurable (default 20, max 50)
-
-    Returns 404 for unauthorized scope (prevents existence leakage).
-    Returns 200 with empty results for short or all-stopword queries.
+    Returns 400 for removed legacy params (`types`, `content_kinds`,
+    `contributor_handles`, `semantic`), 404 for unauthorized scope (prevents
+    existence leakage), and 200 with empty results when there is neither a usable
+    full-text query nor a structured filter.
     """
-    result = search_service.search(
-        db=db,
-        viewer_id=viewer.user_id,
-        q=q,
-        scope=scope,
-        types=parse_comma_list(types),
-        contributor_handles=parse_comma_list(contributor_handles),
-        roles=parse_comma_list(roles),
-        content_kinds=parse_comma_list(content_kinds),
-        semantic=semantic,
+    present_deleted = [param for param in _DELETED_SEARCH_PARAMS if param in request.query_params]
+    if present_deleted:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Unsupported search params: {', '.join(present_deleted)}. "
+            "Use kinds/formats/authors/roles.",
+        )
+
+    query = build_search_query(
+        text=q,
+        raw_kinds=parse_comma_list(kinds),
+        raw_formats=parse_comma_list(formats),
+        raw_authors=parse_comma_list(authors),
+        raw_roles=parse_comma_list(roles),
+        scope=scope_from_uri(scope),
         cursor=cursor,
         limit=limit,
     )
+    result = search_service(db=db, viewer_id=viewer.user_id, query=query)
     return result.model_dump(mode="json")

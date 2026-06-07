@@ -73,7 +73,6 @@ function makeSearchResult(
     sourceMeta: null,
     contributorCredits: [],
     noteBody: null,
-    scoreLabel: "",
     ...partial,
   };
 }
@@ -323,7 +322,18 @@ describe("buildPaletteItems — see-all item", () => {
     const items = buildPaletteItems(ctx({ intent: { lane: "all", term: "foo & bar", raw: "foo & bar" } }));
     const seeAll = items.find((i) => i.id === "see-all-search");
     expect(seeAll).toBeDefined();
-    expect((seeAll!.target as { href: string }).href).toBe("/search?q=foo%20%26%20bar");
+    // searchHref serializes via URLSearchParams (space → "+"), the same encoding the
+    // inline lane and /search round-trip through.
+    expect((seeAll!.target as { href: string }).href).toBe("/search?q=foo+%26+bar");
+  });
+
+  it("serializes operators into structured params (round-trips like the inline lane)", () => {
+    const items = buildPaletteItems(
+      ctx({ intent: { lane: "all", term: "format:pdf le-guin", raw: "format:pdf le-guin" } }),
+    );
+    const seeAll = items.find((i) => i.id === "see-all-search");
+    expect(seeAll).toBeDefined();
+    expect((seeAll!.target as { href: string }).href).toBe("/search?q=le-guin&formats=pdf");
   });
 
   it("is absent when term.length < 2", () => {

@@ -1021,7 +1021,7 @@ class TestChatRunTooling:
         }
         for tool_name in ("app_search", "web_search"):
             ChatRunToolCallEventPayload.model_validate(
-                {**common, "tool_name": tool_name, "types": [], "semantic": True, "filters": {}}
+                {**common, "tool_name": tool_name, "types": [], "filters": {}}
             )
             ChatRunRetrievalResultEventPayload.model_validate(
                 {
@@ -1619,12 +1619,12 @@ class TestCitationReferenceWriteThrough:
                     INSERT INTO message_tool_calls (
                         id, conversation_id, user_message_id, assistant_message_id,
                         tool_name, tool_call_index, query_hash, scope,
-                        requested_types, semantic, status
+                        requested_types, status
                     )
                     VALUES (
                         :tool_call_id, :conversation_id, :user_message_id,
                         :assistant_message_id, 'app_search', 1, 'sha-citation-test',
-                        'all', '["content_chunk"]'::jsonb, false, 'complete'
+                        'all', '["content_chunk"]'::jsonb, 'complete'
                     )
                     """
                 ),

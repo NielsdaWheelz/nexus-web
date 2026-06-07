@@ -1,0 +1,644 @@
+import { describe, expect, it } from "vitest";
+import { normalizeSearchResult } from "./normalizeSearchResult";
+import { adaptSearchResultRow } from "./searchViewModel";
+
+// These exercise the real validator + adapter with no mocks: normalizeSearchResult
+// narrows an untrusted payload, adaptSearchResultRow shapes the row view model.
+// A row that survives normalize is the same row the API page would render.
+
+function adapt(row: Record<string, unknown>) {
+  const normalized = normalizeSearchResult(row);
+  expect(normalized).not.toBeNull();
+  // biome/ts: normalized is non-null past the assertion above.
+  return adaptSearchResultRow(normalized!);
+}
+
+const HOST_CREDIT = {
+  contributor_handle: "host",
+  contributor_display_name: "Host",
+  credited_name: "Host",
+  role: "author",
+  source: "test",
+  href: "/authors/host",
+};
+
+const PDF_GEOMETRY_LOCATOR = {
+  type: "pdf_page_geometry",
+  media_id: "media-pdf-1",
+  page_number: 12,
+  exact: "section text",
+  quads: [{ x1: 1, y1: 2, x2: 3, y2: 2, x3: 3, y3: 4, x4: 1, y4: 4 }],
+};
+
+describe("normalizeSearchResult happy-path adaptation", () => {
+  it("adapts a content_chunk row using backend citation label and deep link", () => {
+    const row = adapt({
+      type: "content_chunk",
+      id: "chunk-7",
+      score: 0.88,
+      snippet: "section <b>text</b>",
+      title: "PDF Source",
+      source_label: "PDF Source - p. 12",
+      media_id: "media-pdf-1",
+      media_kind: "pdf",
+      source: {
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        title: "PDF Source",
+        contributors: [],
+        published_date: null,
+      },
+      deep_link: "/media/media-pdf-1#evidence-span-1",
+      citation_label: "p. 12",
+      context_ref: {
+        type: "content_chunk",
+        id: "chunk-7",
+        evidence_span_ids: ["span-1"],
+      },
+      locator: PDF_GEOMETRY_LOCATOR,
+    });
+
+    expect(row).toMatchObject({
+      key: "content_chunk-chunk-7",
+      href: "/media/media-pdf-1#evidence-span-1",
+      type: "content_chunk",
+      typeLabel: "p. 12",
+      primaryText: "section text",
+      sourceMeta: "PDF Source - p. 12",
+      contextRef: {
+        type: "content_chunk",
+        id: "chunk-7",
+        evidenceSpanIds: ["span-1"],
+      },
+    });
+    expect(row.snippetSegments).toEqual([
+      { text: "section ", emphasized: false },
+      { text: "text", emphasized: true },
+    ]);
+  });
+
+  it("adapts a highlight row as a source-backed result", () => {
+    const row = adapt({
+      type: "highlight",
+      id: "highlight-1",
+      score: 0.94,
+      snippet: "<b>important</b> saved quote",
+      title: "Reader Source",
+      source_label: "Reader Source - web article",
+      media_id: "media-1",
+      media_kind: "web_article",
+      deep_link: "/media/media-1#highlight-highlight-1",
+      context_ref: { type: "highlight", id: "highlight-1" },
+      color: "yellow",
+      exact: "important saved quote",
+      locator: {
+        type: "web_text_offsets",
+        media_id: "media-1",
+        media_kind: "web_article",
+        fragment_id: "fragment-1",
+        start_offset: 0,
+        end_offset: 21,
+        text_quote_selector: { exact: "important saved quote" },
+      },
+      source: {
+        media_id: "media-1",
+        media_kind: "web_article",
+        title: "Reader Source",
+        contributors: [],
+        published_date: null,
+      },
+    });
+
+    expect(row).toMatchObject({
+      key: "highlight-highlight-1",
+      href: "/media/media-1#highlight-highlight-1",
+      type: "highlight",
+      primaryText: "important saved quote",
+      sourceMeta: "Reader Source - web article",
+      contextRef: { type: "highlight", id: "highlight-1", evidenceSpanIds: [] },
+    });
+  });
+
+  it("adapts a fragment row as a first-class source-backed result", () => {
+    const row = adapt({
+      type: "fragment",
+      id: "fragment-1",
+      score: 0.87,
+      snippet: "<b>fragment</b> source text",
+      title: "Reader Source",
+      source_label: "Reader Source - section 2",
+      media_id: "media-1",
+      media_kind: "web_article",
+      deep_link: "/media/media-1#fragment-fragment-1",
+      context_ref: { type: "fragment", id: "fragment-1" },
+      citation_label: "fragment 1",
+      locator: {
+        type: "web_text_offsets",
+        media_id: "media-1",
+        media_kind: "web_article",
+        fragment_id: "fragment-1",
+        start_offset: 0,
+        end_offset: 20,
+        text_quote_selector: { exact: "fragment source text" },
+      },
+      source: {
+        media_id: "media-1",
+        media_kind: "web_article",
+        title: "Reader Source",
+        contributors: [],
+        published_date: null,
+      },
+    });
+
+    expect(row).toMatchObject({
+      key: "fragment-fragment-1",
+      href: "/media/media-1#fragment-fragment-1",
+      type: "fragment",
+      primaryText: "fragment source text",
+      sourceMeta: "Reader Source - section 2",
+    });
+  });
+
+  it("adapts episode and video rows that collapse onto the media context type", () => {
+    const episode = adapt({
+      type: "episode",
+      id: "episode-media-1",
+      score: 0.86,
+      snippet: "episode transcript match",
+      title: "Memory Episode",
+      source_label: "Memory Episode - podcast episode",
+      media_id: "episode-media-1",
+      media_kind: "podcast_episode",
+      deep_link: "/media/episode-media-1",
+      context_ref: { type: "media", id: "episode-media-1" },
+      source: {
+        media_id: "episode-media-1",
+        media_kind: "podcast_episode",
+        title: "Memory Episode",
+        contributors: [],
+        published_date: null,
+      },
+    });
+    expect(episode).toMatchObject({
+      key: "episode-episode-media-1",
+      type: "episode",
+      typeLabel: "episode",
+      primaryText: "Memory Episode",
+      contextRef: { type: "media", id: "episode-media-1", evidenceSpanIds: [] },
+    });
+
+    const video = adapt({
+      type: "video",
+      id: "video-media-1",
+      score: 0.84,
+      snippet: "video transcript match",
+      title: "Lecture Video",
+      source_label: "Lecture Video - video",
+      media_id: "video-media-1",
+      media_kind: "video",
+      deep_link: "/media/video-media-1",
+      context_ref: { type: "media", id: "video-media-1" },
+      source: {
+        media_id: "video-media-1",
+        media_kind: "video",
+        title: "Lecture Video",
+        contributors: [],
+        published_date: null,
+      },
+    });
+    expect(video).toMatchObject({
+      key: "video-video-media-1",
+      type: "video",
+      typeLabel: "video",
+      primaryText: "Lecture Video",
+    });
+  });
+
+  it("adapts a podcast row and normalizes its contributor credits", () => {
+    const row = adapt({
+      type: "podcast",
+      id: "podcast-1",
+      score: 0.77,
+      snippet: "systems thinking weekly",
+      title: "Systems Thinking Weekly",
+      source_label: "Systems Thinking Weekly - Host",
+      media_id: null,
+      media_kind: null,
+      deep_link: "/podcasts/podcast-1",
+      context_ref: { type: "podcast", id: "podcast-1" },
+      contributors: [HOST_CREDIT],
+    });
+
+    expect(row).toMatchObject({
+      href: "/podcasts/podcast-1",
+      type: "podcast",
+      primaryText: "Systems Thinking Weekly",
+      sourceMeta: "Systems Thinking Weekly - Host",
+    });
+    expect(row.contributorCredits).toEqual([
+      {
+        contributor_handle: "host",
+        contributor_display_name: "Host",
+        credited_name: "Host",
+        role: "author",
+        raw_role: null,
+        ordinal: null,
+        source_ref: null,
+        confidence: null,
+        source: "test",
+        href: "/authors/host",
+      },
+    ]);
+  });
+
+  it("adapts a contributor row to an author-labeled result", () => {
+    const row = adapt({
+      type: "contributor",
+      id: "ursula-le-guin",
+      score: 0.94,
+      snippet: "Ursula K. Le Guin",
+      title: "Ursula K. Le Guin",
+      source_label: "contributor",
+      media_id: null,
+      media_kind: null,
+      deep_link: "/authors/ursula-le-guin",
+      context_ref: {
+        type: "contributor",
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+      contributor_handle: "ursula-le-guin",
+      contributor: {
+        handle: "ursula-le-guin",
+        display_name: "Ursula K. Le Guin",
+        status: "verified",
+      },
+    });
+
+    expect(row).toMatchObject({
+      href: "/authors/ursula-le-guin",
+      type: "contributor",
+      typeLabel: "author",
+      primaryText: "Ursula K. Le Guin",
+      sourceMeta: "verified",
+    });
+  });
+
+  it("adapts a web_result row as displayable resolvable evidence", () => {
+    const row = adapt({
+      type: "web_result",
+      id: "retrieval-web-1",
+      result_type: "web_result",
+      score: 0.77,
+      snippet: "Calypso <b>archive</b> public evidence snippet",
+      source_id: "web:calypso",
+      result_ref: "web:calypso",
+      title: "Calypso Archive Source",
+      url: "https://example.com/calypso",
+      display_url: "example.com/calypso",
+      extra_snippets: [],
+      published_at: null,
+      source_name: "Example",
+      rank: 1,
+      provider: "test",
+      selected: true,
+      source_label: "Example",
+      media_id: null,
+      media_kind: null,
+      deep_link: "https://example.com/calypso",
+      context_ref: { type: "web_result", id: "retrieval-web-1" },
+      locator: {
+        type: "external_url",
+        url: "https://example.com/calypso",
+        title: "Calypso Archive Source",
+        display_url: "example.com/calypso",
+      },
+    });
+
+    expect(row).toMatchObject({
+      key: "web_result-retrieval-web-1",
+      href: "https://example.com/calypso",
+      type: "web_result",
+      typeLabel: "web result",
+      primaryText: "Calypso Archive Source",
+      sourceMeta: "Example",
+      mediaId: null,
+    });
+    expect(row.snippetSegments).toEqual([
+      { text: "Calypso ", emphasized: false },
+      { text: "archive", emphasized: true },
+      { text: " public evidence snippet", emphasized: false },
+    ]);
+  });
+
+  it("adapts a note_block row exposing the note body", () => {
+    const row = adapt({
+      type: "note_block",
+      id: "note-1",
+      score: 0.91,
+      snippet: "note <b>match</b>",
+      title: "Deep Work Notes",
+      source_label: "note",
+      media_id: null,
+      media_kind: null,
+      deep_link: "/notes/note-1",
+      context_ref: { type: "note_block", id: "note-1" },
+      page_id: "page-1",
+      page_title: "Deep Work Notes",
+      body_text: "note body text",
+      highlight_excerpt: null,
+      locator: {
+        type: "note_block_offsets",
+        page_id: "page-1",
+        block_id: "note-1",
+        start_offset: 0,
+        end_offset: 14,
+      },
+    });
+
+    expect(row).toMatchObject({
+      type: "note_block",
+      primaryText: "note body text",
+      sourceMeta: "Deep Work Notes",
+      noteBody: "note body text",
+    });
+  });
+});
+
+describe("normalizeSearchResult structural rejections", () => {
+  it("rejects non-object / missing base-field payloads", () => {
+    expect(normalizeSearchResult(null)).toBeNull();
+    expect(normalizeSearchResult("nope")).toBeNull();
+    expect(normalizeSearchResult({ type: "page", id: 7 })).toBeNull();
+    expect(
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        // missing deep_link + context_ref
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects an unknown result type", () => {
+    expect(
+      normalizeSearchResult({
+        type: "galaxy",
+        id: "x",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: null,
+        media_id: null,
+        media_kind: null,
+        deep_link: "/x",
+        context_ref: { type: "page", id: "x" },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("normalizeSearchResult locator / type-mismatch rejections", () => {
+  it("rejects a note_block whose locator is a media (web_text_offsets) locator", () => {
+    expect(
+      normalizeSearchResult({
+        type: "note_block",
+        id: "note-1",
+        score: 0.91,
+        snippet: "note match",
+        title: "Notes",
+        source_label: "note",
+        media_id: null,
+        media_kind: null,
+        deep_link: "/notes/note-1",
+        context_ref: { type: "note_block", id: "note-1" },
+        page_id: "page-1",
+        page_title: "Notes",
+        body_text: "note body text",
+        highlight_excerpt: null,
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 14,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a content_chunk whose context_ref type drifts from the row type", () => {
+    expect(
+      normalizeSearchResult({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        deep_link: "/media/media-pdf-1#evidence-span-1",
+        citation_label: "p. 12",
+        context_ref: { type: "fragment", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        locator: PDF_GEOMETRY_LOCATOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a content_chunk with no evidence_span_ids", () => {
+    expect(
+      normalizeSearchResult({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        deep_link: "/media/media-pdf-1#evidence-span-1",
+        citation_label: "p. 12",
+        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: [] },
+        locator: PDF_GEOMETRY_LOCATOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a web_result whose locator is not an external_url", () => {
+    expect(
+      normalizeSearchResult({
+        type: "web_result",
+        id: "retrieval-web-1",
+        result_type: "web_result",
+        score: 0.77,
+        snippet: "snippet",
+        source_id: "web:calypso",
+        result_ref: "web:calypso",
+        title: "Calypso Archive Source",
+        url: "https://example.com/calypso",
+        display_url: "example.com/calypso",
+        extra_snippets: [],
+        published_at: null,
+        source_name: "Example",
+        rank: 1,
+        provider: "test",
+        selected: true,
+        source_label: "Example",
+        media_id: null,
+        media_kind: null,
+        deep_link: "https://example.com/calypso",
+        context_ref: { type: "web_result", id: "retrieval-web-1" },
+        locator: {
+          type: "note_block_offsets",
+          page_id: "page-1",
+          block_id: "note-1",
+          start_offset: 0,
+          end_offset: 14,
+        },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("normalizeSearchResult legacy artifact identity rejections", () => {
+  it("rejects a row carrying a top-level legacy source_version key", () => {
+    expect(
+      normalizeSearchResult({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        deep_link: "/media/media-pdf-1#evidence-span-1",
+        source_version: "pdf-source:v1",
+        citation_label: "p. 12",
+        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        locator: PDF_GEOMETRY_LOCATOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a row carrying a nested legacy revision key in context_ref", () => {
+    expect(
+      normalizeSearchResult({
+        type: "page",
+        id: "page-legacy",
+        score: 0.72,
+        snippet: "legacy page",
+        title: "Legacy Page",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        deep_link: "/pages/page-legacy",
+        context_ref: { type: "page", id: "page-legacy", revision: 2 },
+        description: "Old page shape",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
+  it("rejects a pdf_page_geometry locator with malformed quads", () => {
+    expect(
+      normalizeSearchResult({
+        type: "content_chunk",
+        id: "chunk-7",
+        score: 0.88,
+        snippet: "section text",
+        title: "PDF Source",
+        source_label: "PDF Source - p. 12",
+        media_id: "media-pdf-1",
+        media_kind: "pdf",
+        source: {
+          media_id: "media-pdf-1",
+          media_kind: "pdf",
+          title: "PDF Source",
+          contributors: [],
+          published_date: null,
+        },
+        deep_link: "/media/media-pdf-1#evidence-span-1",
+        citation_label: "p. 12",
+        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        locator: { ...PDF_GEOMETRY_LOCATOR, quads: [{ x1: 1 }] },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("normalizeSearchResult contributor-credit rejections", () => {
+  it("rejects a podcast row whose contributor credit is missing href", () => {
+    expect(
+      normalizeSearchResult({
+        type: "podcast",
+        id: "podcast-bad-credit",
+        score: 0.64,
+        snippet: "bad credit",
+        title: "Bad Credit",
+        source_label: "Bad Credit",
+        media_id: null,
+        media_kind: null,
+        deep_link: "/podcasts/podcast-bad-credit",
+        context_ref: { type: "podcast", id: "podcast-bad-credit" },
+        contributors: [
+          {
+            contributor_handle: "missing-href",
+            contributor_display_name: "Missing Href",
+            credited_name: "Missing Href",
+            role: "host",
+            source: "test",
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a media row whose source.contributors is not an array", () => {
+    expect(
+      normalizeSearchResult({
+        type: "media",
+        id: "media-1",
+        score: 0.8,
+        snippet: "match",
+        title: "Book",
+        source_label: "Book",
+        media_id: "media-1",
+        media_kind: "epub",
+        deep_link: "/media/media-1",
+        context_ref: { type: "media", id: "media-1" },
+        source: {
+          media_id: "media-1",
+          media_kind: "epub",
+          title: "Book",
+          contributors: "not-an-array",
+          published_date: null,
+        },
+      }),
+    ).toBeNull();
+  });
+});

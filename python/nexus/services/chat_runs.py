@@ -356,12 +356,12 @@ def _persist_attached_citations(
                 """
                 INSERT INTO message_tool_calls (
                     conversation_id, user_message_id, assistant_message_id, tool_name,
-                    tool_call_index, scope, semantic, requested_types, result_refs,
+                    tool_call_index, scope, requested_types, result_refs,
                     selected_context_refs, provider_request_ids, status
                 )
                 VALUES (
                     :conversation_id, :user_message_id, :assistant_message_id,
-                    'attached_resources', 0, 'attached_context', false, '[]'::jsonb,
+                    'attached_resources', 0, 'attached_context', '[]'::jsonb,
                     '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'complete'
                 )
                 RETURNING id
@@ -486,7 +486,6 @@ def _persist_tool_call_trace(
                     tool_name,
                     tool_call_index,
                     scope,
-                    semantic,
                     result_refs,
                     selected_context_refs,
                     provider_request_ids,
@@ -500,7 +499,6 @@ def _persist_tool_call_trace(
                     :tool_name,
                     :tool_call_index,
                     'conversation_references',
-                    false,
                     CAST(:payload AS JSONB),
                     '[]'::jsonb,
                     '[]'::jsonb,
@@ -520,7 +518,6 @@ def _persist_tool_call_trace(
             UPDATE message_tool_calls
             SET tool_name = :tool_name,
                 scope = 'conversation_references',
-                semantic = false,
                 result_refs = CAST(:payload AS JSONB),
                 selected_context_refs = '[]'::jsonb,
                 provider_request_ids = '[]'::jsonb,

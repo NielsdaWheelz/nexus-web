@@ -14,6 +14,8 @@ import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
+import { searchQueryFromInput } from "@/lib/search/query";
+import { searchHref } from "@/lib/search/searchParams";
 
 export interface PalettePane {
   id: string;
@@ -189,13 +191,19 @@ function askItem(ctx: PaletteContext, base: PaletteItem[]): PaletteItem | null {
 function seeAllItem(ctx: PaletteContext): PaletteItem | null {
   const text = ctx.intent.term;
   if (text.length < 2) return null;
+  // Serialize the same SearchQuery the inline lane fetched (operators absorbed into
+  // structured params), so "See all" round-trips identically to /search (§7.4/AC-7).
   return {
     id: "see-all-search",
     title: `See all results for "${text}"`,
     keywords: [],
     sectionId: "search-results",
     icon: Search,
-    target: { kind: "href", href: `/search?q=${encodeURIComponent(text)}`, externalShell: false },
+    target: {
+      kind: "href",
+      href: searchHref(searchQueryFromInput(text)),
+      externalShell: false,
+    },
     source: "search",
     rank: {},
     pin: "last",

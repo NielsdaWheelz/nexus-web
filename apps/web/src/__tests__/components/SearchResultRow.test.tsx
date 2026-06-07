@@ -20,7 +20,6 @@ describe("SearchResultRow", () => {
       snippetSegments: [],
       sourceMeta: "Deep Work Notes",
       noteBody: "note body text",
-      scoreLabel: "score 0.91",
       contributorCredits: [],
     };
 
@@ -52,7 +51,6 @@ describe("SearchResultRow", () => {
       ],
       sourceMeta: "Deep Work Notes",
       noteBody: "note body text",
-      scoreLabel: "score 0.91",
       contributorCredits: [],
     };
 
@@ -85,7 +83,6 @@ describe("SearchResultRow", () => {
       ],
       sourceMeta: "Deep Work Notes — Cal Newport",
       noteBody: null,
-      scoreLabel: "score 0.42",
       contributorCredits: [],
     };
 
@@ -112,7 +109,6 @@ describe("SearchResultRow", () => {
       snippetSegments: [],
       sourceMeta: "example.com",
       noteBody: null,
-      scoreLabel: "score 0.40",
       contributorCredits: [],
     };
 
@@ -126,7 +122,7 @@ describe("SearchResultRow", () => {
     expect(screen.getByText("example.com")).toBeInTheDocument();
   });
 
-  it("renders message metadata without duplicate score text", () => {
+  it("renders message metadata", () => {
     const row: SearchResultRowViewModel = {
       key: "message-msg-1",
       href: "/conversations/conv-1",
@@ -138,7 +134,6 @@ describe("SearchResultRow", () => {
       snippetSegments: [],
       sourceMeta: "message #12",
       noteBody: null,
-      scoreLabel: "score 0.31",
       contributorCredits: [],
     };
 
@@ -149,6 +144,5 @@ describe("SearchResultRow", () => {
       "/conversations/conv-1"
     );
     expect(screen.getByText("message #12")).toBeInTheDocument();
-    expect(screen.getAllByText("score 0.31")).toHaveLength(1);
   });
 });

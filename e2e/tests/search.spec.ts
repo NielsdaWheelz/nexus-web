@@ -38,20 +38,13 @@ type SeedName =
   | "epub-media.json"
   | "youtube-media.json";
 
-const RESULT_TYPE_LABELS = [
-  "Authors",
-  "Media",
-  "Podcasts",
-  "Episodes",
-  "Videos",
-  "Evidence",
-  "Fragments",
-  "Pages",
+// The six user-facing kind chips (intent-model surface). All active by default.
+const SEARCH_KIND_LABELS = [
+  "Documents",
   "Notes",
   "Highlights",
-  "Messages",
-  "Evidence spans",
   "Conversations",
+  "People",
   "Web",
 ];
 
@@ -75,30 +68,10 @@ async function searchFor(
     "/search",
   );
   const searchPane = activeWorkspacePane(page);
-  const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
+  // Live, debounced search — no submit button; filling the box drives the query.
+  const searchInput = searchPane.getByLabel("Search content");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
-  await searchInput.press("Enter");
-}
-
-async function setOnlyEvidenceSpanFilter(page: Page): Promise<void> {
-  const resultTypes = activeWorkspacePane(page).getByRole("group", {
-    name: "Result types",
-  });
-  for (const label of RESULT_TYPE_LABELS) {
-    const checkbox = resultTypes.getByRole("checkbox", {
-      name: label,
-      exact: true,
-    });
-    if ((await checkbox.count()) === 0) {
-      continue;
-    }
-    if (label === "Evidence spans") {
-      await checkbox.check();
-    } else {
-      await checkbox.uncheck();
-    }
-  }
 }
 
 async function clickCitationResult(
@@ -117,13 +90,13 @@ async function clickCitationResult(
     workspaceE2eDeviceId(testInfo, "e2e-search"),
     "/search",
   );
-  await setOnlyEvidenceSpanFilter(page);
 
+  // Evidence spans are folded into the default Documents kind; the evidence-span
+  // citation row is selected by its #evidence- deep link, no type filter needed.
   const searchPane = activeWorkspacePane(page);
-  const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
+  const searchInput = searchPane.getByLabel("Search content");
   await expect(searchInput).toBeVisible();
   await searchInput.fill(query);
-  await searchInput.press("Enter");
 
   const citationLink = searchPane
     .locator(`a[href*="/media/${mediaId}#evidence-"]`)
@@ -169,29 +142,30 @@ test.describe("search", () => {
     await expect(activeWorkspacePane(page).getByText("No results found.")).toBeVisible();
   });
 
-  test("explicit empty type filters return no results", async ({ page }, testInfo) => {
+  test("deselecting all kinds returns no results", async ({ page }, testInfo) => {
     await gotoSinglePaneWorkspace(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-search"),
       "/search",
     );
     const searchPane = activeWorkspacePane(page);
-    const searchInput = searchPane.getByPlaceholder("Search your Nexus content...");
+    const searchInput = searchPane.getByLabel("Search content");
     await expect(searchInput).toBeVisible();
 
-    const resultTypes = searchPane.getByRole("group", { name: "Result types" });
-    for (const label of RESULT_TYPE_LABELS) {
-      const checkbox = resultTypes.getByRole("checkbox", {
+    // Deselecting every kind chip is the explicit-empty case (⇒ no results, not all).
+    const kinds = searchPane.getByRole("group", { name: "Result kinds" });
+    for (const label of SEARCH_KIND_LABELS) {
+      const chip = kinds.getByRole("button", {
         name: label,
         exact: true,
+        pressed: true,
       });
-      if ((await checkbox.count()) > 0) {
-        await checkbox.uncheck();
+      if ((await chip.count()) > 0) {
+        await chip.click();
       }
     }
 
     await searchInput.fill("e2e non-pdf");
-    await searchInput.press("Enter");
 
     await expect(searchPane.getByText("No results found.")).toBeVisible();
   });

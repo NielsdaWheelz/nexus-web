@@ -7,7 +7,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { isRecord } from "@/lib/validation";
 import {
-  ALL_SEARCH_TYPES,
+  RESULT_TYPE_VALUES,
   type SearchApiResult,
   type SearchSourceMetadata,
   type SearchType,
@@ -158,7 +158,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   }
   if (
     typeof contextRef.type !== "string" ||
-    !ALL_SEARCH_TYPES.includes(contextRef.type as SearchType) ||
+    !RESULT_TYPE_VALUES.includes(contextRef.type as SearchType) ||
     typeof contextRef.id !== "string"
   ) {
     return null;

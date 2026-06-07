@@ -40,11 +40,11 @@ from nexus.services.content_indexing import (
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.search import (
-    _snippet_around_query,
-    _truncate_snippet,
     get_search_result,
     search,
 )
+from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
+from nexus.services.search.query import SearchQuery
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
@@ -200,7 +200,7 @@ class TestBasicSearch:
         direct_db.register_cleanup("highlights", "id", highlight_id)
 
         fragment_response = auth_client.get(
-            "/search?q=unique+epub+fragment+needle&types=content_chunk",
+            "/search?q=unique+epub+fragment+needle&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert fragment_response.status_code == 200, (
@@ -217,7 +217,7 @@ class TestBasicSearch:
         assert epub_fragment_row["deep_link"].startswith(f"/media/{media_id}")
 
         note_block_response = auth_client.get(
-            "/search?q=unique+epub+note+needle&types=note_block",
+            "/search?q=unique+epub+note+needle&kinds=notes",
             headers=auth_headers(user_id),
         )
         assert note_block_response.status_code == 200, (
@@ -358,7 +358,7 @@ class TestBasicSearch:
             session.commit()
 
         response = auth_client.get(
-            "/search?q=needle+transcript&types=episode,video", headers=auth_headers(user_id)
+            "/search?q=needle+transcript&kinds=documents", headers=auth_headers(user_id)
         )
         assert response.status_code == 200, (
             f"expected media search to succeed, got {response.status_code}: {response.text}"
@@ -464,7 +464,7 @@ class TestBasicSearch:
             session.commit()
 
         response = auth_client.get(
-            "/search?q=needle+transcript+fragment&types=content_chunk",
+            "/search?q=needle+transcript+fragment&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -497,7 +497,7 @@ class TestBasicSearch:
         assert len(fragment_results) >= 1
 
         direct_response = auth_client.get(
-            "/search?q=searchable+content&types=fragment",
+            "/search?q=searchable+content&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert direct_response.status_code == 200
@@ -544,7 +544,7 @@ class TestBasicSearch:
         }
 
         page_response = auth_client.get(
-            "/search?q=note+databases&types=page",
+            "/search?q=note+databases&kinds=notes",
             headers=auth_headers(user_id),
         )
         assert page_response.status_code == 200
@@ -553,7 +553,7 @@ class TestBasicSearch:
         assert "source_version" not in page_results[0]
 
         highlight_response = auth_client.get(
-            "/search?q=test+exact&types=highlight",
+            "/search?q=test+exact&kinds=highlights",
             headers=auth_headers(user_id),
         )
         assert highlight_response.status_code == 200
@@ -598,7 +598,7 @@ class TestBasicSearch:
         direct_db.register_cleanup("highlights", "id", highlight_id)
 
         response = auth_client.get(
-            "/search?q=unindexed&types=highlight",
+            "/search?q=unindexed&kinds=highlights",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200
@@ -927,8 +927,10 @@ class TestSearchScopes:
 class TestSearchTypeFiltering:
     """Tests for search type filtering."""
 
-    def test_type_filter_media_only(self, auth_client, direct_db: DirectSessionManager):
-        """Type filter returns only specified types."""
+    def test_kind_filter_documents_includes_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Documents kind returns document-family results including media."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -941,16 +943,29 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        response = auth_client.get("/search?q=python&types=media", headers=auth_headers(user_id))
+        response = auth_client.get(
+            "/search?q=python&kinds=documents", headers=auth_headers(user_id)
+        )
 
         assert response.status_code == 200
         data = response.json()
-        # All results should be media type
+        # Documents kind folds in the document family (media, content_chunk, ...).
+        document_types = {
+            "media",
+            "episode",
+            "video",
+            "podcast",
+            "content_chunk",
+            "fragment",
+            "evidence_span",
+        }
         for result in data["results"]:
-            assert result["type"] == "media"
+            assert result["type"] in document_types
+        media_results = [r for r in data["results"] if r["type"] == "media"]
+        assert any(r["id"] == str(media_id) for r in media_results)
 
-    def test_type_filter_multiple_types(self, auth_client, direct_db: DirectSessionManager):
-        """Multiple types filter works correctly."""
+    def test_kind_filter_documents_family(self, auth_client, direct_db: DirectSessionManager):
+        """Documents kind constrains results to the document family."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -962,19 +977,28 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=test&types=media,content_chunk", headers=auth_headers(user_id)
+            "/search?q=test&kinds=documents", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 200
         data = response.json()
-        # Results should be media or fragment only
+        # Results should be within the document family (media, content_chunk, ...).
+        document_types = {
+            "media",
+            "episode",
+            "video",
+            "podcast",
+            "content_chunk",
+            "fragment",
+            "evidence_span",
+        }
         for result in data["results"]:
-            assert result["type"] in ("media", "content_chunk")
+            assert result["type"] in document_types
 
-    def test_invalid_types_return_invalid_request(
+    def test_invalid_kinds_return_invalid_request(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Unknown type values fail fast instead of being ignored."""
+        """Unknown kind values fail fast instead of being ignored."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -986,44 +1010,63 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=test&types=media,invalid_type,content_chunk", headers=auth_headers(user_id)
+            "/search?q=test&kinds=documents,invalid_kind,notes", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_only_invalid_types_return_invalid_request(
+    @pytest.mark.parametrize(
+        "deleted_param",
+        ["types=media", "content_kinds=pdf", "contributor_handles=le-guin", "semantic=true"],
+    )
+    def test_deleted_filter_params_are_rejected(self, auth_client, deleted_param):
+        """AC-5/D-13: every param the cutover removed fails loud (400) rather than being
+        ignored (which would silently broaden a stale link to an all-kinds search). The
+        rejection is at the route edge, before any search runs."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.get(
+            f"/search?q=removed+param+control&{deleted_param}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_only_invalid_kinds_return_invalid_request(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Reject a type filter made only of unsupported values."""
+        """Reject a kind filter made only of unsupported values."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_searchable_media(session, user_id, title="Unknown Type Control")
+            media_id = create_searchable_media(session, user_id, title="Unknown Kind Control")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=unknown+type+control&types=totally_invalid",
+            "/search?q=unknown+kind+control&kinds=totally_invalid",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_type_filter_empty_returns_no_results(
+    def test_kind_filter_empty_returns_no_results(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Explicit empty type filter should return no results (not fallback-to-all)."""
+        """Explicit empty kind filter should return no results (not fallback-to-all)."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             media_id = create_searchable_media(
-                session, user_id, title="Empty Type Filter Needle Title"
+                session, user_id, title="Empty Kind Filter Needle Title"
             )
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -1031,18 +1074,71 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=empty+type+filter+needle&types=",
+            "/search?q=empty+kind+filter+needle&kinds=",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 200, (
-            f"Expected 200 for explicit empty types filter, got {response.status_code}: {response.text}"
+            f"Expected 200 for explicit empty kinds filter, got {response.status_code}: {response.text}"
         )
         data = response.json()
         assert data["results"] == [], (
-            "Expected no results when explicit empty types filter is provided; "
+            "Expected no results when explicit empty kinds filter is provided; "
             f"got {len(data['results'])} results: {data['results']}"
         )
+
+    def test_format_filter_makes_notes_unrepresentable(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC-4/D-6: a media-format filter collapses effective kinds to Documents
+        server-side, so ``kinds=notes&formats=pdf`` ("Notes + PDFs") yields nothing even
+        though the note matches the query under ``kinds=notes`` alone."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Implied Kind Article")
+            highlight_id, note_block_id = create_test_highlight_note(
+                session, user_id, media_id, body="Implied kind needle about manuscripts"
+            )
+
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        notes_only = auth_client.get(
+            "/search?q=implied+kind+needle&kinds=notes", headers=auth_headers(user_id)
+        )
+        assert notes_only.status_code == 200, notes_only.text
+        assert any(r["type"] == "note_block" for r in notes_only.json()["results"]), (
+            "the seeded note must be found under kinds=notes"
+        )
+
+        notes_pdf = auth_client.get(
+            "/search?q=implied+kind+needle&kinds=notes&formats=pdf",
+            headers=auth_headers(user_id),
+        )
+        assert notes_pdf.status_code == 200, notes_pdf.text
+        assert notes_pdf.json()["results"] == [], (
+            "a media-format filter must collapse Notes to no results (notes ∩ documents = ∅)"
+        )
+
+    @pytest.mark.parametrize("bad_filter", ["formats=not_a_format", "roles=not_a_role"])
+    def test_out_of_vocab_filters_are_rejected(self, auth_client, bad_filter):
+        """D-11: query-time format/role validation is strict — out-of-vocab values 400
+        (unlike ingestion's lenient normalize-to-unknown)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.get(
+            f"/search?q=anything&{bad_filter}", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 # =============================================================================
@@ -1178,7 +1274,7 @@ class TestSearchPagination:
             )
 
             response = auth_client.get(
-                "/search?q=cursor+check&types=content_chunk&cursor=invalid!!!cursor",
+                "/search?q=cursor+check&kinds=documents&cursor=invalid!!!cursor",
                 headers=auth_headers(user_id),
             )
 
@@ -1207,7 +1303,7 @@ class TestSearchPagination:
             )
 
             response = auth_client.get(
-                "/search?q=the+and&types=content_chunk",
+                "/search?q=the+and&kinds=documents",
                 headers=auth_headers(user_id),
             )
 
@@ -1239,14 +1335,16 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=unique+title&types=media", headers=auth_headers(user_id)
+            "/search?q=unique+title&kinds=documents", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["results"]) >= 1
 
-        result = data["results"][0]
+        result = next(
+            r for r in data["results"] if r["type"] == "media" and r["id"] == str(media_id)
+        )
         assert "id" in result
         assert "type" in result
         assert "score" in result
@@ -1290,7 +1388,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=contributor+wire+contract&types=media",
+            "/search?q=contributor+wire+contract&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -1321,14 +1419,15 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=canonical+text&types=content_chunk", headers=auth_headers(user_id)
+            "/search?q=canonical+text&kinds=documents", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 200
         data = response.json()
 
-        if len(data["results"]) >= 1:
-            result = data["results"][0]
+        content_chunk_results = [r for r in data["results"] if r["type"] == "content_chunk"]
+        if len(content_chunk_results) >= 1:
+            result = content_chunk_results[0]
             assert result["type"] == "content_chunk"
             assert "source" in result
             assert result["source"]["media_id"] == str(media_id)
@@ -1411,7 +1510,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=stale+run+search&types=content_chunk",
+            "/search?q=stale+run+search&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -1468,7 +1567,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=canonical+text&types=content_chunk",
+            "/search?q=canonical+text&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -1536,14 +1635,17 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         response = auth_client.get(
-            "/search?q=unique+searchable+message&types=message", headers=auth_headers(user_id)
+            "/search?q=unique+searchable+message&kinds=conversations",
+            headers=auth_headers(user_id),
         )
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["results"]) >= 1
 
-        result = data["results"][0]
+        result = next(
+            r for r in data["results"] if r["type"] == "message" and r["id"] == str(message_id)
+        )
         assert result["type"] == "message"
         assert "conversation_id" in result
         assert "seq" in result
@@ -1579,14 +1681,14 @@ class TestSearchResultFormat:
                 text("""
                     INSERT INTO message_tool_calls (
                         id, conversation_id, user_message_id, assistant_message_id,
-                        tool_name, tool_call_index, scope, requested_types, semantic,
+                        tool_name, tool_call_index, scope, requested_types,
                         result_refs, selected_context_refs, provider_request_ids,
                         status
                     )
                     VALUES (
                         :tool_call_id, :conversation_id, :user_message_id,
                         :assistant_message_id, 'web_search', 1, 'public_web',
-                        '["web_result"]'::jsonb, false, '[]'::jsonb, '[]'::jsonb,
+                        '["web_result"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
                         '["provider-request-1"]'::jsonb, 'complete'
                     )
                 """),
@@ -1658,7 +1760,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
 
         response = auth_client.get(
-            "/search?q=calypso+archive&types=web_result",
+            "/search?q=calypso+archive&kinds=web",
             headers=auth_headers(user_id),
         )
 
@@ -1724,8 +1826,10 @@ class TestSearchResultFormat:
                 search(
                     db=session,
                     viewer_id=user_id,
-                    q="calypso archive",
-                    types=["web_result"],
+                    query=SearchQuery(
+                        text="calypso archive",
+                        result_types=("web_result",),
+                    ),
                 )
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
@@ -1797,7 +1901,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=harmonica&types=note_block",
+            "/search?q=harmonica&kinds=notes",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -1843,7 +1947,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("pages", "id", page_id)
 
         response = auth_client.get(
-            "/search?q=trellis&types=page",
+            "/search?q=trellis&kinds=notes",
             headers=auth_headers(user_id),
         )
 
@@ -2102,7 +2206,7 @@ class TestSearchConversationScope:
         direct_db.register_cleanup("libraries", "id", library_id)
 
         response = auth_client.get(
-            f"/search?q=scope+alignment+content&scope=conversation:{conversation_id}&types=message",
+            f"/search?q=scope+alignment+content&scope=conversation:{conversation_id}&kinds=conversations",
             headers=auth_headers(user_b),
         )
 
@@ -2156,7 +2260,7 @@ class TestSearchConversationScope:
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         response = auth_client.get(
-            f"/search?q=scoped+media+needle&scope=conversation:{conversation_id}&types=media",
+            f"/search?q=scoped+media+needle&scope=conversation:{conversation_id}&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -2199,7 +2303,7 @@ class TestSearchNoteBlockOwnership:
         direct_db.register_cleanup("libraries", "id", library_id)
 
         response = auth_client.get(
-            "/search?q=xylophone&types=note_block", headers=auth_headers(user_b)
+            "/search?q=xylophone&kinds=notes", headers=auth_headers(user_b)
         )
 
         assert response.status_code == 200
@@ -2238,7 +2342,7 @@ class TestSearchNoteBlockOwnership:
 
         # The note is not visible even before revocation because notes are user-owned.
         resp_before = auth_client.get(
-            "/search?q=trombone&types=note_block", headers=auth_headers(user_b)
+            "/search?q=trombone&kinds=notes", headers=auth_headers(user_b)
         )
         assert resp_before.status_code == 200
         before_ids = [r["id"] for r in resp_before.json()["results"]]
@@ -2257,7 +2361,7 @@ class TestSearchNoteBlockOwnership:
 
         # Verify invisible after revocation
         resp_after = auth_client.get(
-            "/search?q=trombone&types=note_block", headers=auth_headers(user_b)
+            "/search?q=trombone&kinds=notes", headers=auth_headers(user_b)
         )
         assert resp_after.status_code == 200
         after_ids = [r["id"] for r in resp_after.json()["results"]]
@@ -2309,7 +2413,7 @@ class TestSearchLibraryScopeMessages:
         direct_db.register_cleanup("libraries", "id", l2)
 
         response = auth_client.get(
-            f"/search?q=xylophonist&scope=library:{l1}&types=message",
+            f"/search?q=xylophonist&scope=library:{l1}&kinds=conversations",
             headers=auth_headers(user_b),
         )
 
@@ -2347,7 +2451,7 @@ class TestSearchLibraryScopeMessages:
         direct_db.register_cleanup("libraries", "id", l1)
 
         response = auth_client.get(
-            f"/search?q=xylophone&scope=library:{l1}&types=message",
+            f"/search?q=xylophone&scope=library:{l1}&kinds=conversations",
             headers=auth_headers(user_a),
         )
 
@@ -2392,7 +2496,7 @@ class TestSearchLibraryScopeMessages:
         direct_db.register_cleanup("libraries", "id", l1)
 
         response = auth_client.get(
-            f"/search?q=xylophone&scope=library:{l1}&types=message",
+            f"/search?q=xylophone&scope=library:{l1}&kinds=conversations",
             headers=auth_headers(user_a),
         )
 
@@ -2683,7 +2787,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2709,7 +2813,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&semantic=true",
+            "/search?q=transformer+attention",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2730,7 +2834,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2750,7 +2854,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=false",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2795,7 +2899,7 @@ class TestSemanticTranscriptChunkSearch:
         assert state[2] is None
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=false",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2833,7 +2937,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 503, (
@@ -2857,10 +2961,10 @@ class TestSemanticTranscriptChunkSearch:
         def missing_key(_text: str) -> tuple[str, list[float]]:
             raise ApiError(ApiErrorCode.E_LLM_NO_KEY, "OPENAI_API_KEY is required.")
 
-        monkeypatch.setattr("nexus.services.search.build_text_embedding", missing_key)
+        monkeypatch.setattr("nexus.services.search.embedding.build_text_embedding", missing_key)
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -2899,6 +3003,41 @@ class TestSemanticTranscriptChunkSearch:
         )
         assert route.call_count == 1
 
+    @respx.mock
+    def test_structured_filter_does_not_bypass_query_embedding(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """AC-6/G4/D-5: hybrid is an invariant — a structured filter never downgrades a
+        semantic-capable kind to lexical-only. The query embedding (the ANN arm) is built
+        for the identical query both with and without a filter."""
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        self._use_openai_embedding_provider(monkeypatch)
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            200,
+            json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+        )
+
+        bare = auth_client.get(
+            "/search?q=transformer+attention", headers=auth_headers(user_id)
+        )
+        assert bare.status_code == 200, bare.text
+        assert route.call_count == 1
+
+        # A media-format filter keeps Documents (content_chunk) in scope, so the embedding
+        # must still be built — proving the filter did not bypass the ANN arm.
+        filtered = auth_client.get(
+            "/search?q=transformer+attention&formats=pdf", headers=auth_headers(user_id)
+        )
+        assert filtered.status_code == 200, filtered.text
+        assert route.call_count == 2
+
     def test_default_semantic_search_filters_unrelated_content_chunks(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -2909,7 +3048,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=astronomy+nebula&types=content_chunk",
+            "/search?q=astronomy+nebula&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -2946,7 +3085,7 @@ class TestSemanticTranscriptChunkSearch:
             session.commit()
 
         response = auth_client.get(
-            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            "/search?q=xyznonexistent12345&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -2994,7 +3133,7 @@ class TestSemanticTranscriptChunkSearch:
             session.commit()
 
         response = auth_client.get(
-            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            "/search?q=xyznonexistent12345&kinds=documents",
             headers=auth_headers(user_id),
         )
 
@@ -3030,7 +3169,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -3070,7 +3209,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -3369,7 +3508,7 @@ class TestSearchTranscriptNavigation:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=anchor+remap+needle&types=note_block",
+            "/search?q=anchor+remap+needle&kinds=notes",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (

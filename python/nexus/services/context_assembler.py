@@ -714,7 +714,7 @@ def _load_tool_events(
         text(
             """
             SELECT id, assistant_message_id, tool_name, tool_call_index, scope,
-                   requested_types, semantic, status, error_code, latency_ms
+                   requested_types, status, error_code, latency_ms
             FROM message_tool_calls
             WHERE assistant_message_id = :assistant_message_id
             ORDER BY tool_call_index ASC
@@ -733,10 +733,9 @@ def _load_tool_events(
                 "assistant_message_id": str(row[1]),
                 "tool_name": row[2],
                 "tool_call_index": row[3],
-                "status": row[7],
+                "status": row[6],
                 "scope": row[4],
                 "types": row[5] or [],
-                "semantic": bool(row[6]),
             }
         )
         result_events.append(
@@ -745,11 +744,11 @@ def _load_tool_events(
                 "assistant_message_id": str(row[1]),
                 "tool_name": row[2],
                 "tool_call_index": row[3],
-                "status": row[7],
-                "error_code": row[8],
+                "status": row[6],
+                "error_code": row[7],
                 "result_count": len(retrievals),
                 "selected_count": len(selected),
-                "latency_ms": row[9],
+                "latency_ms": row[8],
                 "citations": [retrieval["result_ref"] for retrieval in selected],
             }
         )

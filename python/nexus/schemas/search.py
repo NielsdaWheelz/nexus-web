@@ -11,7 +11,7 @@ Search returns mixed typed results from different content types:
 - messages (content)
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -19,7 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 
-# Valid search result types
+# Valid search result types — the canonical result-discriminant authority for the
+# whole codebase (HTTP response union, chat telemetry, retriever dispatch). The
+# runtime tuple/set below are derived from the Literal so the two can never drift.
 SEARCH_RESULT_TYPES = Literal[
     "media",
     "podcast",
@@ -37,8 +39,10 @@ SEARCH_RESULT_TYPES = Literal[
     "web_result",
 ]
 
-# Valid search scopes
-SEARCH_SCOPE_PREFIXES = ("all", "media:", "library:", "conversation:")
+# Runtime view of SEARCH_RESULT_TYPES (declaration order preserved) for iteration,
+# default-all expansion, and membership checks. Single authority; do not redefine.
+ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)
+VALID_RESULT_TYPES: frozenset[str] = frozenset(ALL_RESULT_TYPES)
 
 
 # =============================================================================

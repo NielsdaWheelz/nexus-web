@@ -46,7 +46,16 @@ from nexus.services.retrieval_citation import (
     insert_retrieval_row,
     strict_citation_locator,
 )
-from nexus.services.search import hash_query, parse_scope, search
+from nexus.services.search import search
+from nexus.services.search.batch import search_scopes
+from nexus.services.search.query import SearchQuery
+from nexus.services.search.scope import (
+    ScopeUnsupported,
+    parse_scope,
+    scope_filter_sql,
+    scope_from_uri,
+)
+from nexus.services.search.telemetry import hash_query
 from nexus.timestamps import format_timestamp_ms
 
 logger = get_logger(__name__)
@@ -99,7 +108,6 @@ class AppSearchRun:
     query_hash: str
     scope: str
     requested_types: list[str]
-    semantic: bool
     citations: list[RetrievalCitation]
     selected_citations: list[RetrievalCitation]
     context_text: str
@@ -121,7 +129,6 @@ class AppSearchRun:
             "status": "running",
             "scope": self.scope,
             "types": self.requested_types,
-            "semantic": self.semantic,
             "filters": self.filters,
         }
 
@@ -163,7 +170,6 @@ def execute_app_search(
     query = planned_query
     requested_types = [str(result_type) for result_type in planned_types]
     filters = _normalize_app_search_filters(planned_filters)
-    semantic = True
     start = time.monotonic()
     status = "complete"
     error_code = None
@@ -195,7 +201,6 @@ def execute_app_search(
             query_hash=hash_query(query),
             scope="all",
             requested_types=requested_types,
-            semantic=semantic,
             citations=[],
             selected_citations=[],
             context_text=context_text,
@@ -215,33 +220,27 @@ def execute_app_search(
     # one scope, or "all" when no scopes apply.
     scope = ",".join(resolved_scopes) if resolved_scopes else "all"
 
+    base_query = SearchQuery(
+        text=query,
+        result_types=tuple(requested_types),
+        authors=tuple(filters["authors"]),
+        roles=tuple(filters["roles"]),
+        storage_kinds=tuple(filters["formats"]),
+        limit=APP_SEARCH_LIMIT,
+    )
     try:
         if resolved_scopes:
-            citations = _search_across_scopes(
+            response = search_scopes(
                 db,
-                viewer_id=viewer_id,
-                query=query,
-                scopes=resolved_scopes,
-                requested_types=requested_types,
-                filters=filters,
-                semantic=semantic,
+                viewer_id,
+                base_query,
+                [scope_from_uri(scope_uri) for scope_uri in resolved_scopes],
             )
         else:
-            response = search(
-                db=db,
-                viewer_id=viewer_id,
-                q=query,
-                scope="all",
-                types=requested_types,
-                contributor_handles=filters["contributor_handles"],
-                roles=filters["roles"],
-                content_kinds=filters["content_kinds"],
-                semantic=semantic,
-                limit=APP_SEARCH_LIMIT,
-            )
-            citations = [
-                citation_from_search_result(result, filters=filters) for result in response.results
-            ]
+            response = search(db, viewer_id, base_query)
+        citations = [
+            citation_from_search_result(result, filters=filters) for result in response.results
+        ]
         context_text, context_chars, selected = render_retrieved_context_blocks(
             db,
             viewer_id=viewer_id,
@@ -288,7 +287,6 @@ def execute_app_search(
         query_hash=hash_query(query),
         scope=scope,
         requested_types=requested_types,
-        semantic=semantic,
         citations=citations,
         selected_citations=selected,
         context_text=context_text,
@@ -360,52 +358,6 @@ def _is_search_scope_uri(uri: str) -> bool:
     )
 
 
-def _search_across_scopes(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query: str,
-    scopes: Sequence[str],
-    requested_types: list[str],
-    filters: dict[str, Any],
-    semantic: bool,
-) -> list[RetrievalCitation]:
-    """Loop search() per scope and merge results.
-
-    `search.parse_scope` accepts only one scope at a time; for multi-scope
-    calls we union results across scopes, dedupe by `(result_type, id)`,
-    sort by score descending, and cap at `APP_SEARCH_LIMIT`.
-    """
-    merged: dict[tuple[str, str], RetrievalCitation] = {}
-    for scope_uri in scopes:
-        response = search(
-            db=db,
-            viewer_id=viewer_id,
-            q=query,
-            scope=scope_uri,
-            types=requested_types,
-            contributor_handles=filters["contributor_handles"],
-            roles=filters["roles"],
-            content_kinds=filters["content_kinds"],
-            semantic=semantic,
-            limit=APP_SEARCH_LIMIT,
-        )
-        for result in response.results:
-            citation = citation_from_search_result(result, filters=filters)
-            key = (citation.result_type, citation.source_id)
-            existing = merged.get(key)
-            if existing is None or (
-                citation.score is not None
-                and (existing.score is None or citation.score > existing.score)
-            ):
-                merged[key] = citation
-    sorted_citations = sorted(
-        merged.values(),
-        key=lambda c: (-(c.score if c.score is not None else 0.0), c.source_id),
-    )
-    return sorted_citations[:APP_SEARCH_LIMIT]
-
-
 def _empty_status_for_scopes(
     db: Session,
     *,
@@ -437,31 +389,26 @@ def _scoped_content_chunk_empty_status(
     filters: dict[str, Any],
 ) -> str:
     scope_type, scope_id = parse_scope(scope)
-    params: dict[str, Any] = {"viewer_id": viewer_id, "scope_id": scope_id}
-    if scope_type == "media":
-        scope_filter = "AND cc.media_id = :scope_id"
-    else:
-        # `scope_type == "library"`. Callers only pass media:/library: URIs.
-        scope_filter = """
-            AND cc.media_id IN (
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :scope_id
-                  AND media_id IS NOT NULL
-            )
-        """
+    # Reuse the §4.6 scope owner so this probe filters identically to the content_chunk
+    # retriever. Callers only pass media:/library: URIs, so the unscoped/UNSUPPORTED cells
+    # are unreachable here.
+    scope_clause = scope_filter_sql(scope_type, scope_id, "content_chunk")
+    if isinstance(scope_clause, ScopeUnsupported):
+        return "no_indexed_evidence"
+    scope_filter, scope_params = scope_clause
+    params: dict[str, Any] = {"viewer_id": viewer_id, **scope_params}
 
     content_kind_filter = ""
-    if filters["content_kinds"]:
-        content_kind_filter = "AND m.kind = ANY(:content_kinds)"
-        params["content_kinds"] = filters["content_kinds"]
+    if filters["formats"]:
+        content_kind_filter = "AND m.kind = ANY(:format_kinds)"
+        params["format_kinds"] = filters["formats"]
 
     contributor_credit_filter = ""
-    if filters["contributor_handles"] or filters["roles"]:
+    if filters["authors"] or filters["roles"]:
         credit_clauses = ["cc_filter.media_id = m.id"]
-        if filters["contributor_handles"]:
-            credit_clauses.append("c_filter.handle = ANY(:contributor_handles)")
-            params["contributor_handles"] = filters["contributor_handles"]
+        if filters["authors"]:
+            credit_clauses.append("c_filter.handle = ANY(:author_handles)")
+            params["author_handles"] = filters["authors"]
         if filters["roles"]:
             credit_clauses.append("cc_filter.role = ANY(:roles)")
             params["roles"] = filters["roles"]
@@ -500,14 +447,19 @@ def _scoped_content_chunk_empty_status(
 
 
 def _normalize_app_search_filters(filters: Mapping[str, object] | None) -> dict[str, Any]:
-    normalized = {
-        "contributor_handles": [],
+    """Normalize the chat planner's extracted filters. ``formats`` carries storage
+    content-kind values (web_article/podcast_episode/…, the storage vocabulary — NOT the
+    public HTTP MediaFormat vocab), so it is folded as-is and fed straight to the
+    retrievers' storage-kind parameter; ``roles`` go through the lenient ingestion
+    normalizer (the chat path is model-driven, not the strict HTTP edge)."""
+    normalized: dict[str, list[str]] = {
+        "authors": [],
         "roles": [],
-        "content_kinds": [],
+        "formats": [],
     }
     if not filters:
         return normalized
-    for key in ("contributor_handles", "roles", "content_kinds"):
+    for key in ("authors", "roles", "formats"):
         raw_values = filters.get(key)
         if isinstance(raw_values, str):
             values = [raw_values]
@@ -565,7 +517,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 query_hash,
                 scope,
                 requested_types,
-                semantic,
                 result_refs,
                 selected_context_refs,
                 provider_request_ids,
@@ -582,7 +533,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 :query_hash,
                 :scope,
                 :requested_types,
-                :semantic,
                 :result_refs,
                 :selected_context_refs,
                 '[]'::jsonb,
@@ -608,7 +558,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "query_hash": run.query_hash,
                 "scope": run.scope,
                 "requested_types": run.requested_types,
-                "semantic": run.semantic,
                 "result_refs": result_refs,
                 "selected_context_refs": selected_context_refs,
                 "latency_ms": run.latency_ms,
@@ -624,7 +573,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             SET query_hash = :query_hash,
                 scope = :scope,
                 requested_types = :requested_types,
-                semantic = :semantic,
                 result_refs = :result_refs,
                 selected_context_refs = :selected_context_refs,
                 latency_ms = :latency_ms,
@@ -645,7 +593,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "query_hash": run.query_hash,
                 "scope": run.scope,
                 "requested_types": run.requested_types,
-                "semantic": run.semantic,
                 "result_refs": result_refs,
                 "selected_context_refs": selected_context_refs,
                 "latency_ms": run.latency_ms,
@@ -781,7 +728,6 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             "status": run.status,
             "metadata": {
                 "selected_limit": APP_SEARCH_SELECTED_LIMIT,
-                "semantic": run.semantic,
                 "scope": run.scope,
             },
         },

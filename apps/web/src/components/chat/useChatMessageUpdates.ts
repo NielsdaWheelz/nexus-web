@@ -239,7 +239,6 @@ export function useChatMessageUpdates({
             status: data.status,
             scope: data.scope,
             requested_types: data.types,
-            semantic: data.semantic,
           };
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,

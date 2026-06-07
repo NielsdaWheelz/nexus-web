@@ -67,7 +67,6 @@ export interface SSEToolCallEvent {
     status: ChatToolStatus;
     scope: string;
     types: string[];
-    semantic: boolean;
     filters: Record<string, unknown>;
     freshness_days?: number | null;
     allowed_domains?: string[];
@@ -183,7 +182,6 @@ function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
       "status",
       "scope",
       "types",
-      "semantic",
       "filters",
       "freshness_days",
       "allowed_domains",
@@ -200,7 +198,6 @@ function parseToolCallData(data: unknown): SSEToolCallEvent["data"] {
     typeof data.scope !== "string" ||
     !Array.isArray(data.types) ||
     !data.types.every((item) => typeof item === "string") ||
-    typeof data.semantic !== "boolean" ||
     !isRecord(data.filters) ||
     (data.freshness_days !== undefined &&
       data.freshness_days !== null &&

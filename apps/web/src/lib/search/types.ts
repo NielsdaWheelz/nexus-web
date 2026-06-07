@@ -1,7 +1,9 @@
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
-export const ALL_SEARCH_TYPES = [
+// Canonical internal result-type discriminants (the response union tags). Kept as
+// the validator for normalizeSearchResult — NOT a user-facing filter taxonomy.
+export const RESULT_TYPE_VALUES = [
   "contributor",
   "media",
   "podcast",
@@ -18,7 +20,7 @@ export const ALL_SEARCH_TYPES = [
   "web_result",
 ] as const;
 
-export type SearchType = (typeof ALL_SEARCH_TYPES)[number];
+export type SearchType = (typeof RESULT_TYPE_VALUES)[number];
 
 export interface SearchSourceMetadata {
   media_id: string;
@@ -180,18 +182,6 @@ export interface SearchResultRowViewModel {
   sourceMeta: string | null;
   contributorCredits: ContributorCredit[];
   noteBody: string | null;
-  scoreLabel: string;
-}
-
-export interface FetchSearchResultPageInput {
-  query: string;
-  selectedTypes: ReadonlySet<SearchType>;
-  contributorHandles?: readonly string[];
-  roles?: readonly string[];
-  contentKinds?: readonly string[];
-  limit: number;
-  cursor?: string | null;
-  signal?: AbortSignal;
 }
 
 export interface SearchResultPage {

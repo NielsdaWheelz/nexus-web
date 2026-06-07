@@ -1,59 +1,6 @@
-import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { normalizeSearchResult } from "./normalizeSearchResult";
-import {
-  ALL_SEARCH_TYPES,
-  type FetchSearchResultPageInput,
-  type SearchApiResult,
-  type SearchResponseShape,
-  type SearchResultPage,
-  type SearchResultRowViewModel,
-} from "./types";
-
-function buildSearchQueryParams({
-  query,
-  selectedTypes,
-  contributorHandles = [],
-  roles = [],
-  contentKinds = [],
-  limit,
-  cursor = null,
-}: FetchSearchResultPageInput): URLSearchParams {
-  const params = new URLSearchParams({
-    q: query.trim(),
-    limit: String(limit),
-  });
-
-  const orderedSelectedTypes = ALL_SEARCH_TYPES.filter((type) =>
-    selectedTypes.has(type),
-  );
-  if (orderedSelectedTypes.length === 0) {
-    params.set("types", "");
-  } else {
-    params.set("types", orderedSelectedTypes.join(","));
-  }
-  if (cursor) {
-    params.set("cursor", cursor);
-  }
-  const handles = contributorHandles
-    .map((handle) => handle.trim())
-    .filter(Boolean);
-  if (handles.length > 0) {
-    params.set("contributor_handles", handles.join(","));
-  }
-  const normalizedRoles = roles.map((role) => role.trim()).filter(Boolean);
-  if (normalizedRoles.length > 0) {
-    params.set("roles", normalizedRoles.join(","));
-  }
-  const normalizedContentKinds = contentKinds
-    .map((contentKind) => contentKind.trim())
-    .filter(Boolean);
-  if (normalizedContentKinds.length > 0) {
-    params.set("content_kinds", normalizedContentKinds.join(","));
-  }
-
-  return params;
-}
+import type { SearchApiResult, SearchResultRowViewModel } from "./types";
 
 function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
@@ -211,7 +158,7 @@ function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
   return [];
 }
 
-function adaptSearchResultRow(
+export function adaptSearchResultRow(
   result: SearchApiResult,
 ): SearchResultRowViewModel {
   return {
@@ -246,11 +193,10 @@ function adaptSearchResultRow(
     sourceMeta: buildSourceMeta(result),
     contributorCredits: getContributorCredits(result),
     noteBody: result.type === "note_block" ? result.body_text : null,
-    scoreLabel: `score ${result.score.toFixed(2)}`,
   };
 }
 
-function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
+export function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
   return results.map((result) => {
     const normalized = normalizeSearchResult(result);
     if (!normalized) {
@@ -258,43 +204,4 @@ function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
     }
     return adaptSearchResultRow(normalized);
   });
-}
-
-function requireSearchResults(results: unknown): unknown[] {
-  if (!Array.isArray(results)) {
-    throw new Error("Search API response is missing results");
-  }
-  return results;
-}
-
-export async function fetchSearchResultPage({
-  query,
-  selectedTypes,
-  contributorHandles = [],
-  roles = [],
-  contentKinds = [],
-  limit,
-  cursor = null,
-  signal,
-}: FetchSearchResultPageInput): Promise<SearchResultPage> {
-  const response = await apiFetch<SearchResponseShape>(
-    `/api/search?${buildSearchQueryParams({
-      query,
-      selectedTypes,
-      contributorHandles,
-      roles,
-      contentKinds,
-      limit,
-      cursor,
-    }).toString()}`,
-    { signal },
-  );
-
-  return {
-    rows: adaptSearchResults(requireSearchResults(response.results)),
-    nextCursor:
-      typeof response.page?.next_cursor === "string"
-        ? response.page.next_cursor
-        : null,
-  };
 }
