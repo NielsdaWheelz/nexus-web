@@ -16,6 +16,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "library_intelligence_build_job",
         "podcast_sync_subscription_job",
         "podcast_reindex_semantic_job",
+        "page_reindex_job",
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",
         "sync_gutenberg_catalog_job",

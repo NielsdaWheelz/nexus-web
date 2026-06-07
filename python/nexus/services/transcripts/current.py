@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
-    deactivate_media_content_index,
+    IndexOwner,
+    deactivate_content_index,
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
@@ -123,7 +124,9 @@ def write_current_transcript(
             },
         )
 
-    deactivate_media_content_index(db, media_id=media_id, reason="transcript_replacement")
+    deactivate_content_index(
+        db, owner=IndexOwner("media", media_id), reason="transcript_replacement"
+    )
     semantic_status: Literal["ready", "failed"] = "ready"
     semantic_error_code: str | None = None
     try:
@@ -151,7 +154,7 @@ def write_current_transcript(
         )
         mark_content_index_failed(
             db,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             failure_code=semantic_error_code,
             failure_message=str(exc),
         )

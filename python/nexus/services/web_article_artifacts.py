@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, FragmentBlock, Highlight, HighlightFragmentAnchor
-from nexus.services.content_indexing import delete_media_content_index
+from nexus.services.content_indexing import IndexOwner, delete_content_index
 
 
 def delete_web_article_artifacts(
@@ -19,7 +19,7 @@ def delete_web_article_artifacts(
 ) -> None:
     """Delete rewriteable web-article artifacts for a media row."""
     if include_content_index:
-        delete_media_content_index(db, media_id=media_id)
+        delete_content_index(db, owner=IndexOwner("media", media_id))
 
     fragment_ids = (
         db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()

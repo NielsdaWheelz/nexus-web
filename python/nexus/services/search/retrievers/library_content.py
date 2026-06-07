@@ -32,7 +32,11 @@ from nexus.services.search.results import (
     _RankedFragmentResult,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
-from nexus.services.search.sql import contributor_credits_rollup_cte_sql
+from nexus.services.search.sql import (
+    contributor_credits_rollup_cte_sql,
+    hybrid_content_chunk_tail_sql,
+    query_embedding_cte_sql,
+)
 from nexus.services.semantic_chunks import (
     to_pgvector_literal,
     transcript_embedding_dimensions,
@@ -103,17 +107,13 @@ def _search_content_chunks(
     params.update(scope_params)
 
     if semantic_query_embedding is not None:
-        query = f"""
-            WITH
-                visible_media AS ({visible_media_ids_cte_sql()}),
+        leading_ctes = f"""visible_media AS ({visible_media_ids_cte_sql()}),
                 media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")}),
-                query_embedding AS (
-                    SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
-                ),
+                {query_embedding_cte_sql(embedding_dims)},
                 eligible_chunks AS (
                     SELECT
                         cc.id,
-                        cc.media_id,
+                        cc.owner_id AS media_id,
                         m.kind,
                         m.title,
                         m.published_date,
@@ -133,47 +133,21 @@ def _search_content_chunks(
                         mcis.active_embedding_provider,
                         mcis.active_embedding_model
                     FROM content_chunks cc
-                    JOIN media m ON m.id = cc.media_id
-                    JOIN visible_media vm ON vm.media_id = cc.media_id
-                    JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                    JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                    JOIN visible_media vm ON vm.media_id = cc.owner_id
+                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                        AND mcis.owner_id = cc.owner_id
                         AND mcis.status = 'ready'
                     LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                     WHERE TRUE
                     {scope_filter}
                     {content_kind_filter}
                     {contributor_credit_filter}
-                ),
-                semantic_candidates AS (
-                    SELECT ec.id
-                    FROM eligible_chunks ec
-                    JOIN content_embeddings ce ON ce.chunk_id = ec.id
-                        AND ce.embedding_provider = ec.active_embedding_provider
-                        AND ce.embedding_model = ec.active_embedding_model
-                        AND ce.embedding_dimensions = {embedding_dims}
-                    JOIN query_embedding qe ON true
-                    WHERE ec.active_embedding_provider = :query_embedding_provider
-                      AND ec.active_embedding_model = :query_embedding_model
-                    ORDER BY ce.embedding_vector <=> qe.embedding ASC, ec.id ASC
-                    LIMIT :ann_limit
-                ),
-                lexical_candidates AS (
-                    SELECT ec.id
-                    FROM eligible_chunks ec
-                    WHERE ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query)
-                    ORDER BY
-                        ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query)) DESC,
-                        ec.id ASC
-                    LIMIT :ann_limit
-                ),
-                candidate_ids AS (
-                    SELECT id FROM semantic_candidates
-                    UNION
-                    SELECT id FROM lexical_candidates
-                ),
-                scored_candidates AS (
-                    SELECT
-                        ec.id,
-                        ec.media_id,
+                )"""
+        query = hybrid_content_chunk_tail_sql(
+            leading_ctes=leading_ctes,
+            embedding_dims=embedding_dims,
+            scored_passthrough_columns="""ec.media_id,
                         ec.kind,
                         ec.title,
                         ec.published_date,
@@ -183,25 +157,8 @@ def _search_content_chunks(
                         ec.source_kind,
                         ec.primary_evidence_span_id,
                         ec.summary_locator,
-                        ec.created_at,
-                        CASE
-                            WHEN ce.chunk_id IS NULL THEN 0.0
-                            ELSE (1 - (ce.embedding_vector <=> qe.embedding))
-                        END AS semantic_similarity,
-                        ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
-                            AS lexical_score
-                    FROM candidate_ids ci
-                    JOIN eligible_chunks ec ON ec.id = ci.id
-                    JOIN query_embedding qe ON true
-                    LEFT JOIN content_embeddings ce ON ce.chunk_id = ec.id
-                        AND ce.embedding_provider = ec.active_embedding_provider
-                        AND ce.embedding_model = ec.active_embedding_model
-                        AND ce.embedding_dimensions = {embedding_dims}
-                        AND ec.active_embedding_provider = :query_embedding_provider
-                        AND ec.active_embedding_model = :query_embedding_model
-                )
-            SELECT
-                id,
+                        ec.created_at,""",
+            final_select_columns="""id,
                 media_id,
                 kind,
                 title,
@@ -211,25 +168,10 @@ def _search_content_chunks(
                 snippet,
                 source_kind,
                 primary_evidence_span_id,
-                summary_locator,
-                (
-                    (0.45 * CASE WHEN lexical_score > 0.0 THEN 1.0 ELSE 0.0 END)
-                    + (0.35 * GREATEST(semantic_similarity, 0.0))
-                    + (0.15 * GREATEST(lexical_score, 0.0))
-                    + (
-                        0.05 * GREATEST(
-                            0.0,
-                            1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
-                        )
-                    )
-                ) AS raw_score
-            FROM scored_candidates
-            WHERE
-                lexical_score > 0.0
-                OR semantic_similarity >= :min_semantic_similarity
-            ORDER BY raw_score DESC, id ASC
-            LIMIT :limit
-        """
+                summary_locator,""",
+            order_by_id="id",
+            include_recency_decay=True,
+        )
     else:
         query = f"""
             WITH
@@ -238,7 +180,7 @@ def _search_content_chunks(
                 lexical_candidates AS (
                     SELECT
                         cc.id,
-                        cc.media_id,
+                        cc.owner_id AS media_id,
                         m.kind,
                         m.title,
                         m.published_date,
@@ -258,9 +200,10 @@ def _search_content_chunks(
                             ts_rank_cd(cc.chunk_text_tsv, websearch_to_tsquery('english', :query))
                         ELSE 0.0 END AS lexical_score
                     FROM content_chunks cc
-                    JOIN media m ON m.id = cc.media_id
-                    JOIN visible_media vm ON vm.media_id = cc.media_id
-                    JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                    JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                    JOIN visible_media vm ON vm.media_id = cc.owner_id
+                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                        AND mcis.owner_id = cc.owner_id
                         AND mcis.status = 'ready'
                     LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                     WHERE
@@ -306,7 +249,6 @@ def _search_content_chunks(
             resolution = resolve_evidence_span(
                 db,
                 viewer_id=viewer_id,
-                media_id=row[1],
                 evidence_span_id=row[9],
             )
         except NotFoundError:
@@ -396,7 +338,8 @@ def _search_fragments(
                 ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                 LIMIT 1
             ) nav ON true
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
+            LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                AND mcis.owner_id = f.media_id
                 AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', f.canonical_text) @@ websearch_to_tsquery('english', :query)
@@ -461,7 +404,7 @@ def _search_evidence_spans(
                 media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT
                 es.id,
-                es.media_id,
+                es.owner_id AS media_id,
                 es.span_text,
                 es.citation_label,
                 m.kind,
@@ -479,8 +422,8 @@ def _search_evidence_spans(
                     'MaxWords=50, MinWords=10, MaxFragments=1'
                 ) AS snippet
             FROM evidence_spans es
-            JOIN visible_media vm ON vm.media_id = es.media_id
-            JOIN media m ON m.id = es.media_id
+            JOIN visible_media vm ON vm.media_id = es.owner_id AND es.owner_kind = 'media'
+            JOIN media m ON m.id = es.owner_id
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector('english', es.span_text)
                   @@ websearch_to_tsquery('english', :query)
@@ -497,7 +440,6 @@ def _search_evidence_spans(
             resolution = resolve_evidence_span(
                 db,
                 viewer_id=viewer_id,
-                media_id=row[1],
                 evidence_span_id=row[0],
             )
             _require_resolved_evidence(resolution)

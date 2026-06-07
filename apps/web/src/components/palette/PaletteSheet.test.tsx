@@ -7,6 +7,7 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
@@ -66,7 +67,7 @@ function renderPalette() {
         <FeedbackProvider>
           <WorkspaceStoreProvider
             workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialHref="/libraries"
+            initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
           >
             <CommandPalette />
           </WorkspaceStoreProvider>

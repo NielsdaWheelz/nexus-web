@@ -172,9 +172,9 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
         row = db.execute(
             text(
                 """
-                SELECT cc.id, cc.media_id, cc.chunk_text, m.title
+                SELECT cc.id, cc.owner_id AS media_id, cc.chunk_text, m.title
                 FROM content_chunks cc
-                JOIN media m ON m.id = cc.media_id
+                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
                 WHERE cc.id = :id
                 """
             ),
@@ -208,9 +208,9 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
         row = db.execute(
             text(
                 """
-                SELECT es.id, es.media_id, es.span_text, es.citation_label, m.title
+                SELECT es.id, es.owner_id AS media_id, es.span_text, es.citation_label, m.title
                 FROM evidence_spans es
-                JOIN media m ON m.id = es.media_id
+                JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
                 WHERE es.id = :id
                 """
             ),
@@ -326,9 +326,9 @@ def search_object_refs(
             WITH visible_media AS ({visible_media_ids_cte_sql()})
             SELECT cc.id
             FROM content_chunks cc
-            JOIN media m ON m.id = cc.media_id
-            JOIN visible_media vm ON vm.media_id = cc.media_id
-            JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            JOIN visible_media vm ON vm.media_id = cc.owner_id AND cc.owner_kind = 'media'
+            JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
                 AND mcis.status = 'ready'
             WHERE cc.chunk_text ILIKE :pattern
                OR m.title ILIKE :pattern
@@ -483,7 +483,7 @@ def search_object_refs(
             )
             SELECT es.id
             FROM evidence_spans es
-            JOIN visible_media vm ON vm.media_id = es.media_id
+            JOIN visible_media vm ON vm.media_id = es.owner_id AND es.owner_kind = 'media'
             WHERE es.span_text ILIKE :pattern
                OR es.citation_label ILIKE :pattern
             ORDER BY es.created_at DESC, es.id ASC

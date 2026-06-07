@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import { dispatchNotePulse, dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import { setPendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -51,14 +52,32 @@ export function MessageRow({
   const display = useRenderEnvironment();
   const activateTarget = useCallback(
     (target: ReaderSourceTarget, event?: React.MouseEvent) => {
-      dispatchReaderPulse({
-        mediaId: target.media_id,
-        evidenceSpanId: target.evidence_span_id ?? undefined,
-        locator: target.locator,
-        snippet: target.snippet,
-        highlightBehavior: target.highlight_behavior,
-        focusBehavior: target.focus_behavior,
-      });
+      if (target.kind === "note") {
+        const notePulse = {
+          pageId: target.page_id,
+          blockId: target.block_id,
+          startOffset: target.start_offset,
+          endOffset: target.end_offset,
+          snippet: target.snippet,
+          highlightBehavior: target.highlight_behavior,
+          focusBehavior: target.focus_behavior,
+        } as const;
+        // Live channel for the already-open-on-this-page case...
+        dispatchNotePulse(notePulse);
+        // ...plus a pending activation that survives a pane mount so the
+        // headline cross-pane flow (cite a note -> click -> jump) works once
+        // the target notes pane mounts and consumes it.
+        setPendingNoteActivation(notePulse);
+      } else {
+        dispatchReaderPulse({
+          mediaId: target.media_id,
+          evidenceSpanId: target.evidence_span_id ?? undefined,
+          locator: target.locator,
+          snippet: target.snippet,
+          highlightBehavior: target.highlight_behavior,
+          focusBehavior: target.focus_behavior,
+        });
+      }
       onReaderSourceActivate?.(target, event);
     },
     [onReaderSourceActivate],

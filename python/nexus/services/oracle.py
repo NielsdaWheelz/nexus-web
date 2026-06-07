@@ -884,9 +884,9 @@ def _viewer_has_searchable_media(db: Session, *, viewer_id: UUID) -> bool:
                 SELECT EXISTS (
                     SELECT 1
                     FROM visible_media vm
-                    JOIN media_content_index_states mcis ON mcis.media_id = vm.media_id
+                    JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = vm.media_id
                         AND mcis.status = 'ready'
-                    JOIN content_chunks cc ON cc.media_id = vm.media_id
+                    JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = vm.media_id
                     WHERE btrim(cc.chunk_text) <> ''
                     LIMIT 1
                 )
@@ -1158,17 +1158,18 @@ def _retrieve_user_library_passages(
         query_embedding=query_embedding,
     )
     chosen: list[_Candidate] = []
-    used_media: set[str] = set()
+    used_owners: set[tuple[str, str]] = set()
     ranked = sorted(
         content_chunks,
         key=lambda candidate: (-candidate.score, candidate.exact_snippet),
     )
     for candidate in ranked:
-        media_id = str(candidate.source.get("media_id") or "")
-        if media_id and media_id in used_media:
+        owner_id = str(candidate.source.get("media_id") or "")
+        owner_key = (str(candidate.source.get("owner_kind") or "media"), owner_id)
+        if owner_id and owner_key in used_owners:
             continue
-        if media_id:
-            used_media.add(media_id)
+        if owner_id:
+            used_owners.add(owner_key)
         chosen.append(candidate)
         if len(chosen) >= ORACLE_USER_LIBRARY_CANDIDATES:
             break
@@ -1189,12 +1190,12 @@ def _retrieve_user_content_chunks(
         query_embedding=query_embedding,
     )
     chosen: list[_Candidate] = []
-    used_semantic_media: set[str] = set()
+    used_semantic_owners: set[tuple[str, str]] = set()
     for row in semantic_rows:
-        media_id = str(row["media_id"])
-        if media_id in used_semantic_media:
+        owner_key = (str(row["owner_kind"]), str(row["media_id"]))
+        if owner_key in used_semantic_owners:
             continue
-        used_semantic_media.add(media_id)
+        used_semantic_owners.add(owner_key)
         chosen.append(
             _candidate_from_content_chunk_row(
                 row,
@@ -1225,19 +1226,20 @@ def _retrieve_user_content_chunks_by_embedding(
                     )
                 SELECT
                     cc.id AS content_chunk_id,
-                    cc.media_id,
+                    cc.owner_kind,
+                    cc.owner_id AS media_id,
                     cc.chunk_idx,
                     cc.chunk_text,
                     cc.source_kind,
                     cc.heading_path,
                     cc.summary_locator,
                     cc.primary_evidence_span_id,
-                    m.title AS media_title,
+                    COALESCE(m.title, pg.title, 'Untitled note') AS media_title,
                     (1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_score
                 FROM content_chunks cc
-                JOIN media m ON m.id = cc.media_id
-                JOIN visible_media vm ON vm.media_id = cc.media_id
-                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                LEFT JOIN pages pg ON pg.id = cc.owner_id AND cc.owner_kind = 'page'
+                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
                     AND mcis.status = 'ready'
                 JOIN content_embeddings ce ON ce.chunk_id = cc.id
                     AND ce.embedding_provider = mcis.active_embedding_provider
@@ -1247,6 +1249,11 @@ def _retrieve_user_content_chunks_by_embedding(
                 JOIN query_embedding qe ON true
                 WHERE btrim(cc.chunk_text) <> ''
                   AND mcis.active_embedding_model = :query_embedding_model
+                  AND (
+                    (cc.owner_kind = 'media' AND cc.owner_id IN (SELECT media_id FROM visible_media))
+                    OR (cc.owner_kind = 'page' AND cc.owner_id IN (
+                        SELECT id FROM pages WHERE user_id = :viewer_id))
+                  )
                 ORDER BY ce.embedding_vector <=> qe.embedding ASC, cc.id ASC
                 LIMIT 200
                 """
@@ -1338,6 +1345,7 @@ def _user_content_chunk_reference(
     source = {
         "type": "user_media",
         "media_id": str(row["media_id"]),
+        "owner_kind": str(row["owner_kind"]),
         "title": media_title,
         "content_source_kind": str(row["source_kind"]),
     }

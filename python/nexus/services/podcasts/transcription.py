@@ -35,6 +35,7 @@ from nexus.schemas.media import (
 from nexus.services.billing import get_transcription_usage
 from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.content_indexing import (
+    IndexOwner,
     mark_content_index_failed,
     rebuild_transcript_content_index,
 )
@@ -108,8 +109,8 @@ def _semantic_index_requires_repair(
                 mcis.status,
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model
-            FROM media_content_index_states mcis
-            WHERE mcis.media_id = :media_id
+            FROM content_index_states mcis
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -1348,8 +1349,8 @@ def repair_podcast_transcript_semantic_index_now(
                       AND (
                           NOT EXISTS (
                               SELECT 1
-                              FROM media_content_index_states mcis
-                              WHERE mcis.media_id = mts.media_id
+                              FROM content_index_states mcis
+                              WHERE mcis.owner_kind = 'media' AND mcis.owner_id = mts.media_id
                                 AND mcis.status = 'ready'
                                 AND mcis.active_embedding_provider = :embedding_provider
                                 AND mcis.active_embedding_model = :embedding_model
@@ -1452,7 +1453,7 @@ def repair_podcast_transcript_semantic_index_now(
         error_code = exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
         mark_content_index_failed(
             db,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             failure_code=error_code,
             failure_message=str(exc),
         )

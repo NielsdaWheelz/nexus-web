@@ -350,6 +350,21 @@ class NoteBlock(Base):
     )
 
 
+# Canonical sibling render order within one parent: the order the reader shows blocks.
+# Single owner reused by the reader, search indexer, vault export, and markdown so
+# search/export order always equals render order.
+NOTE_BLOCK_SIBLING_ORDER = (
+    NoteBlock.order_key.asc(),
+    NoteBlock.created_at.asc(),
+    NoteBlock.id.asc(),
+)
+
+
+def note_block_sibling_sort_key(block: NoteBlock) -> tuple[str, datetime, UUID]:
+    """In-memory mirror of NOTE_BLOCK_SIBLING_ORDER for client-side sibling sorting."""
+    return (block.order_key, block.created_at, block.id)
+
+
 class ObjectLink(Base):
     """User-owned relationship between two typed object refs."""
 
@@ -504,137 +519,6 @@ class PinnedObjectRef(Base):
             "id",
             postgresql_where=text("deleted_at IS NULL"),
         ),
-    )
-
-
-class ObjectSearchDocument(Base):
-    """Searchable projection for ObjectRef-backed knowledge objects."""
-
-    __tablename__ = "object_search_documents"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    object_type: Mapped[str] = mapped_column(Text, nullable=False)
-    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    parent_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    parent_object_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    title_text: Mapped[str] = mapped_column(Text, nullable=False)
-    body_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    search_text: Mapped[str] = mapped_column(Text, nullable=False)
-    route_path: Mapped[str] = mapped_column(Text, nullable=False)
-    index_status: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="pending_embedding",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "object_type IN ('page', 'note_block')",
-            name="ck_object_search_documents_type",
-        ),
-        CheckConstraint(
-            "parent_object_type IS NULL OR parent_object_type IN ('page')",
-            name="ck_osd_parent_object_type",
-        ),
-        CheckConstraint(
-            "(parent_object_type IS NULL) = (parent_object_id IS NULL)",
-            name="ck_osd_parent_shape",
-        ),
-        CheckConstraint(
-            "char_length(title_text) BETWEEN 1 AND 300",
-            name="ck_osd_title_text_length",
-        ),
-        CheckConstraint("char_length(search_text) >= 1", name="ck_osd_search_text_length"),
-        CheckConstraint(
-            "char_length(route_path) BETWEEN 1 AND 500",
-            name="ck_osd_route_path_length",
-        ),
-        CheckConstraint(
-            "index_status IN ('pending_embedding', 'ready')",
-            name="ck_osd_index_status",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "object_type",
-            "object_id",
-            name="uix_osd_object_ref",
-        ),
-    )
-
-
-class ObjectSearchEmbedding(Base):
-    """Optional semantic embedding for an object-search document."""
-
-    __tablename__ = "object_search_embeddings"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    search_document_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("object_search_documents.id"),
-        nullable=False,
-    )
-    object_type: Mapped[str] = mapped_column(Text, nullable=False)
-    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "object_type IN ('page', 'note_block')",
-            name="ck_ose_object_type",
-        ),
-        CheckConstraint(
-            "char_length(embedding_model) BETWEEN 1 AND 128",
-            name="ck_ose_model_length",
-        ),
-        CheckConstraint("embedding_dimensions > 0", name="ck_ose_dimensions"),
-        UniqueConstraint(
-            "search_document_id",
-            "embedding_model",
-            name="uix_ose_document_model",
-        ),
-        Index("ix_ose_model", "user_id", "embedding_model"),
     )
 
 
@@ -896,15 +780,6 @@ class Media(Base):
         "MediaTranscriptState",
         back_populates="media",
         cascade="all, delete-orphan",
-        uselist=False,
-    )
-    content_chunks: Mapped[list["ContentChunk"]] = relationship(
-        "ContentChunk",
-        back_populates="media",
-    )
-    content_index_state: Mapped["MediaContentIndexState | None"] = relationship(
-        "MediaContentIndexState",
-        back_populates="media",
         uselist=False,
     )
     transcript_request_audits: Mapped[list["PodcastTranscriptRequestAudit"]] = relationship(
@@ -2507,7 +2382,8 @@ class ContentBlock(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     block_kind: Mapped[str] = mapped_column(Text, nullable=False)
     canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2548,8 +2424,9 @@ class ContentBlock(Base):
             "(extraction_confidence >= 0 AND extraction_confidence <= 1)",
             name="ck_content_blocks_extraction_confidence",
         ),
-        UniqueConstraint("media_id", "block_idx", name="uq_content_blocks_media_idx"),
-        Index("ix_content_blocks_media_idx", "media_id", "block_idx"),
+        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_content_blocks_owner_kind"),
+        UniqueConstraint("owner_kind", "owner_id", "block_idx", name="uq_content_blocks_owner_idx"),
+        Index("ix_content_blocks_owner_idx", "owner_kind", "owner_id", "block_idx"),
     )
 
 
@@ -2563,7 +2440,8 @@ class EvidenceSpan(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     start_block_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("content_blocks.id"),
@@ -2592,10 +2470,11 @@ class EvidenceSpan(Base):
         ),
         CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_evidence_spans_selector"),
         CheckConstraint(
-            "resolver_kind IN ('web', 'epub', 'pdf', 'transcript')",
+            "resolver_kind IN ('web', 'epub', 'pdf', 'transcript', 'note')",
             name="ck_evidence_spans_resolver",
         ),
-        Index("ix_evidence_spans_media", "media_id"),
+        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_evidence_spans_owner_kind"),
+        Index("ix_evidence_spans_owner", "owner_kind", "owner_id"),
     )
 
 
@@ -2609,7 +2488,8 @@ class ContentChunk(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     primary_evidence_span_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("evidence_spans.id"),
@@ -2630,7 +2510,7 @@ class ContentChunk(Base):
     __table_args__ = (
         CheckConstraint("chunk_idx >= 0", name="ck_content_chunks_chunk_idx_non_negative"),
         CheckConstraint(
-            "source_kind IN ('web_article', 'epub', 'pdf', 'transcript')",
+            "source_kind IN ('web_article', 'epub', 'pdf', 'transcript', 'note')",
             name="ck_content_chunks_source_kind",
         ),
         CheckConstraint("token_count >= 0", name="ck_content_chunks_token_count"),
@@ -2638,11 +2518,10 @@ class ContentChunk(Base):
         CheckConstraint(
             "jsonb_typeof(summary_locator) = 'object'", name="ck_content_chunks_locator"
         ),
-        UniqueConstraint("media_id", "chunk_idx", name="uq_content_chunks_media_idx"),
-        Index("ix_content_chunks_media_idx", "media_id", "chunk_idx"),
+        CheckConstraint("owner_kind IN ('media', 'page')", name="ck_content_chunks_owner_kind"),
+        UniqueConstraint("owner_kind", "owner_id", "chunk_idx", name="uq_content_chunks_owner_idx"),
+        Index("ix_content_chunks_owner_idx", "owner_kind", "owner_id", "chunk_idx"),
     )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="content_chunks")
 
 
 class ContentChunkPart(Base):
@@ -2717,21 +2596,18 @@ class ContentEmbedding(Base):
     )
 
 
-class MediaContentIndexState(Base):
-    """Active evidence index pointer for a media item."""
+class ContentIndexState(Base):
+    """Active evidence index pointer for a content owner (media or page)."""
 
-    __tablename__ = "media_content_index_states"
+    __tablename__ = "content_index_states"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_embedding_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2748,26 +2624,29 @@ class MediaContentIndexState(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("media_id", name="uq_media_content_index_states_media"),
+        UniqueConstraint("owner_kind", "owner_id", name="uq_content_index_states_owner"),
+        CheckConstraint(
+            "owner_kind IN ('media', 'page')", name="ck_content_index_states_owner_kind"
+        ),
         CheckConstraint(
             "status IN ('pending', 'indexing', 'ready', 'no_text', 'ocr_required', 'failed')",
-            name="ck_media_content_index_states_status",
+            name="ck_content_index_states_status",
         ),
         Index(
-            "ix_media_content_index_states_repair_waiting",
+            "ix_content_index_states_repair_waiting",
             "updated_at",
-            "media_id",
+            "owner_kind",
+            "owner_id",
             postgresql_where=text("status IN ('pending', 'failed')"),
         ),
         Index(
-            "ix_media_content_index_states_repair_indexing",
+            "ix_content_index_states_repair_indexing",
             "updated_at",
-            "media_id",
+            "owner_kind",
+            "owner_id",
             postgresql_where=text("status = 'indexing'"),
         ),
     )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="content_index_state")
 
 
 class MediaTranscriptState(Base):

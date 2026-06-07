@@ -40,9 +40,9 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.llm_catalog import MODEL_CATALOG
-from nexus.services import object_search
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.note_indexing import rebuild_page_content_index
 
 # =============================================================================
 # Models
@@ -572,7 +572,8 @@ def create_test_highlight_note(
             metadata_json={},
         )
     )
-    object_search.project_page(session, user_id, page)
+    session.flush()
+    rebuild_page_content_index(session, page_id=page.id, reason="factory")
     session.commit()
     return highlight.id, note_block.id
 

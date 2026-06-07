@@ -150,8 +150,10 @@ class TestIngestYoutubeVideo:
                     """
                     SELECT
                         (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
-                        (SELECT COUNT(*) FROM content_chunks WHERE media_id = :media_id),
-                        (SELECT COUNT(*) FROM evidence_spans WHERE media_id = :media_id)
+                        (SELECT COUNT(*) FROM content_chunks
+                         WHERE owner_kind = 'media' AND owner_id = :media_id),
+                        (SELECT COUNT(*) FROM evidence_spans
+                         WHERE owner_kind = 'media' AND owner_id = :media_id)
                     """
                 ),
                 {"media_id": media_id},

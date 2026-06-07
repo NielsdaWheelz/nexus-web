@@ -11,8 +11,9 @@ from sqlalchemy import text
 from nexus.db.models import Fragment
 from nexus.services.content_indexing import (
     IndexableBlock,
+    IndexOwner,
+    rebuild_content_index,
     rebuild_fragment_content_index,
-    rebuild_media_content_index,
     rebuild_transcript_content_index,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -89,7 +90,7 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
                 """
                 SELECT primary_evidence_span_id
                 FROM content_chunks
-                WHERE media_id = :media_id
+                WHERE owner_kind = 'media' AND owner_id = :media_id
                 ORDER BY chunk_idx ASC
                 LIMIT 1
                 """
@@ -142,7 +143,7 @@ def test_evidence_resolution_rejects_span_from_inactive_index_run(
                 """
                 SELECT primary_evidence_span_id
                 FROM content_chunks
-                WHERE media_id = :media_id
+                WHERE owner_kind = 'media' AND owner_id = :media_id
                 ORDER BY chunk_idx ASC
                 LIMIT 1
                 """
@@ -235,7 +236,7 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
                     ccp.block_end_offset
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
-                WHERE cc.media_id = :media_id
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                 ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                 LIMIT 1
                 """
@@ -247,7 +248,8 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
             text(
                 """
                 INSERT INTO evidence_spans (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
@@ -258,6 +260,7 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
                     resolver_kind
                 )
                 VALUES (
+                    'media',
                     :media_id,
                     :block_id,
                     :block_id,
@@ -373,7 +376,7 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
                 JOIN content_blocks cb ON cb.id = ccp.block_id
-                WHERE cc.media_id = :media_id
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                 ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                 LIMIT 1
                 """
@@ -391,7 +394,8 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
             text(
                 """
                 INSERT INTO evidence_spans (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
@@ -402,6 +406,7 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
                     resolver_kind
                 )
                 VALUES (
+                    'media',
                     :media_id,
                     :block_id,
                     :block_id,
@@ -520,13 +525,13 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
                 ],
             },
         }
-        rebuild_media_content_index(
+        rebuild_content_index(
             session,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             source_kind="pdf",
             blocks=[
                 IndexableBlock(
-                    media_id=media_id,
+                    owner=IndexOwner("media", media_id),
                     source_kind="pdf",
                     block_idx=0,
                     block_kind="pdf_text_block",
@@ -547,7 +552,7 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
                 """
                 SELECT primary_evidence_span_id
                 FROM content_chunks
-                WHERE media_id = :media_id
+                WHERE owner_kind = 'media' AND owner_id = :media_id
                 ORDER BY chunk_idx ASC
                 LIMIT 1
                 """
@@ -668,7 +673,7 @@ def test_transcript_evidence_uses_current_blocks_after_segment_changes(
                 """
                 SELECT primary_evidence_span_id
                 FROM content_chunks
-                WHERE media_id = :media_id
+                WHERE owner_kind = 'media' AND owner_id = :media_id
                 ORDER BY chunk_idx ASC
                 LIMIT 1
                 """

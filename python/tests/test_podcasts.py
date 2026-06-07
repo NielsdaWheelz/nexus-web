@@ -111,9 +111,9 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_m
     db_session.execute(
         text(
             """
-            UPDATE media_content_index_states
+            UPDATE content_index_states
             SET active_embedding_model = 'stale_model'
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -146,8 +146,8 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_m
         text(
             """
             SELECT active_embedding_model
-            FROM media_content_index_states
-            WHERE media_id = :media_id
+            FROM content_index_states
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -6239,7 +6239,7 @@ class TestPodcastApiSurface:
                     """
                     SELECT COUNT(*)
                     FROM content_chunks
-                    WHERE media_id = :media_id
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                       AND source_kind = 'transcript'
                     """
                 ),
@@ -9079,7 +9079,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                     """
                     SELECT COUNT(*)
                     FROM content_chunks
-                    WHERE media_id = :media_id
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                       AND source_kind = 'transcript'
                     """
                 ),
@@ -9675,7 +9675,8 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                     SELECT
                         (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
                         (SELECT COUNT(*) FROM fragments WHERE media_id = :media_id),
-                        (SELECT COUNT(*) FROM media_content_index_states WHERE media_id = :media_id)
+                        (SELECT COUNT(*) FROM content_index_states
+                         WHERE owner_kind = 'media' AND owner_id = :media_id)
                     """
                 ),
                 {"media_id": media_id},

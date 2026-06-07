@@ -17,7 +17,10 @@ import {
 } from "react";
 import DocChatTab from "@/components/chat/DocChatTab";
 import ReaderChatDetail from "@/components/chat/ReaderChatDetail";
-import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type {
+  MediaReaderTarget,
+  ReaderSourceTarget,
+} from "@/lib/conversations/readerTarget";
 import ReaderHighlightsSurface from "@/components/reader/ReaderHighlightsSurface";
 import ReaderOverviewRuler from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
@@ -579,7 +582,7 @@ export default function MediaPaneBody() {
     PdfHighlightOut[]
   >([]);
   const [readerSourceTarget, setReaderSourceTarget] =
-    useState<ReaderSourceTarget | null>(null);
+    useState<MediaReaderTarget | null>(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
 
   const resolvedEvidenceResource = useResource<EvidenceResolutionResponse>({
@@ -4163,6 +4166,14 @@ export default function MediaPaneBody() {
   // or open a different source in a new pane.
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget) => {
+      if (target.kind === "note") {
+        // A note citation is not media: open the notes pane (the page editor
+        // listens for the note pulse to scroll + pulse the cited block).
+        const route = target.href || `/notes/${target.block_id}`;
+        openInNewPane?.(route, target.label ?? "Note");
+        return;
+      }
+
       if (target.media_id !== id) {
         const route = target.href || `/media/${target.media_id}`;
         const titleHint = target.label ?? "Source";

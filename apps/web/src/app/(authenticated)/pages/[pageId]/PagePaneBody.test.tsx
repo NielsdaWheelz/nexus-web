@@ -1,11 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import {
+  setPendingNoteActivation,
+  consumePendingNoteActivation,
+} from "@/lib/reader/pendingNoteActivation";
+import type { NotePulseTarget } from "@/lib/reader/pulseEvent";
+import type { NotePage } from "@/lib/notes/api";
 import {
   noteBlocksToOutlineDoc,
   outlineSchema,
   paragraphFromText,
 } from "@/lib/notes/prosemirror/schema";
-import {
+import PagePaneBody, {
   deletedRootBlockIdsForPersistence,
   pageDraftMetadataFromStorage,
   readDraftBlocksForPersistence,
@@ -137,6 +147,164 @@ describe("pageDraftMetadataFromStorage", () => {
     ).toBeNull();
   });
 });
+
+// AC-5 / finding #10: a note `[N]` citation clicked in chat for a page that is
+// NOT already open dispatches the live pulse before the target pane's
+// `useNotePulseHighlight` listener has mounted, so the live event is lost. The
+// activator therefore also stashes a pending activation keyed by page id; the
+// freshly-mounted `PagePaneBody` must consume it and run its own scroll+pulse.
+// This guards that the listener-not-yet-mounted race is handled by the pending
+// store, and that the pending entry is consumed (a second mount must not pulse).
+describe("PagePaneBody cross-pane note activation", () => {
+  const PAGE_ID = "11111111-1111-4111-8111-111111111111";
+  const BLOCK_ID = "22222222-2222-4222-8222-222222222222";
+
+  let scrollIntoViewSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // A genuine same-pane pulse listens on a window event; ensure no stale
+    // pending activation or persisted draft leaks across tests.
+    consumePendingNoteActivation(PAGE_ID);
+    window.localStorage.clear();
+
+    scrollIntoViewSpy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    // Only the network boundary is mocked: the page loads from `initialPage`,
+    // so the sole fetch is NoteBacklinks' object-links GET.
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        jsonResponse({ data: { links: [] } }),
+      );
+  });
+
+  afterEach(() => {
+    scrollIntoViewSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it("scrolls to and pulses the cited block on a fresh cross-pane mount, then clears the pending activation", async () => {
+    setPendingNoteActivation(noteActivation(PAGE_ID, BLOCK_ID));
+
+    const { unmount } = renderPagePane(PAGE_ID, activationPage(PAGE_ID, BLOCK_ID));
+
+    // The page renders one note block; once it pulses, the cross-pane handoff
+    // worked despite the live event firing before this pane's listener mounted.
+    await waitFor(() => {
+      expect(citedBlock()).toHaveClass("nexus-note-pulse");
+    });
+    expect(citedBlock()).toHaveAttribute("data-note-block-id", BLOCK_ID);
+    // The pulse also scrolls the cited block into view. Match by note-block id
+    // rather than node identity: ProseMirror may reconcile the `li` instance
+    // after the scroll, but every scrolled target is the cited block.
+    expect(scrolledNoteBlockIds(scrollIntoViewSpy)).toContain(BLOCK_ID);
+
+    // The activation must have been consumed: nothing remains for a later mount.
+    expect(consumePendingNoteActivation(PAGE_ID)).toBeNull();
+
+    // A second fresh mount (no new pending activation) must NOT re-pulse.
+    unmount();
+    scrollIntoViewSpy.mockClear();
+
+    renderPagePane(PAGE_ID, activationPage(PAGE_ID, BLOCK_ID));
+    await screen.findByRole("listitem");
+    // Give the (absent) pulse retry loop a chance to run before asserting.
+    await Promise.resolve();
+    expect(citedBlock()).not.toHaveClass("nexus-note-pulse");
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+  });
+});
+
+function citedBlock(): HTMLElement {
+  return screen.getByRole("listitem");
+}
+
+function scrolledNoteBlockIds(
+  spy: ReturnType<typeof vi.spyOn>,
+): (string | null)[] {
+  return spy.mock.instances.map((instance: unknown) =>
+    instance instanceof Element
+      ? instance.closest("li[data-note-block-id]")?.getAttribute(
+          "data-note-block-id",
+        ) ?? null
+      : null,
+  );
+}
+
+function noteActivation(pageId: string, blockId: string): NotePulseTarget {
+  return {
+    pageId,
+    blockId,
+    startOffset: 0,
+    endOffset: 5,
+    snippet: "Cited",
+    highlightBehavior: "pulse",
+    focusBehavior: "scroll_into_view",
+  };
+}
+
+function activationPage(pageId: string, blockId: string): NotePage {
+  return {
+    id: pageId,
+    title: "Cited page",
+    description: null,
+    updatedAt: "2026-01-01T00:00:00Z",
+    blocks: [
+      {
+        id: blockId,
+        pageId,
+        parentBlockId: null,
+        orderKey: "0000000001",
+        blockKind: "bullet",
+        bodyPmJson: paragraphFromText("Cited snippet body").toJSON() as Record<
+          string,
+          unknown
+        >,
+        bodyMarkdown: "Cited snippet body",
+        bodyText: "Cited snippet body",
+        collapsed: false,
+        children: [],
+      },
+    ],
+  };
+}
+
+function renderPagePane(pageId: string, initialPage: NotePage) {
+  const href = `/pages/${pageId}`;
+  const identity = resolvePaneRouteIdentity(href);
+  const { unmount } = render(
+    <FeedbackProvider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={href}
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        pathParams={{ pageId }}
+        canGoBack={false}
+        canGoForward={false}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+      >
+        <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
+      </PaneRuntimeProvider>
+    </FeedbackProvider>,
+  );
+  return { unmount };
+}
+
+function jsonResponse(data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 interface OutlineInput {
   id: string;

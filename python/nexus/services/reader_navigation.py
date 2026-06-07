@@ -48,8 +48,8 @@ def get_media_navigation_for_viewer(
         text(
             """
             SELECT 1
-            FROM media_content_index_states mcis
-            WHERE mcis.media_id = :media_id
+            FROM content_index_states mcis
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
               AND mcis.status = 'ready'
             """
         ),
@@ -66,7 +66,7 @@ def get_media_navigation_for_viewer(
                    cb.locator,
                    cb.metadata
             FROM content_blocks cb
-            WHERE cb.media_id = :media_id
+            WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
               AND cb.block_kind = 'heading'
             ORDER BY cb.block_idx ASC
             """

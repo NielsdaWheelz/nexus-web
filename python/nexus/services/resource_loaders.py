@@ -121,13 +121,22 @@ def _missing(uri: str, scheme: ResourceUriScheme) -> LoadedResource:
 
 
 def parent_media_id_for_read_pointer(db: Session, *, scheme: str, resource_id: UUID) -> UUID | None:
-    """Return the parent media id for media-derived read pointers."""
-    table = {"fragment": "fragments", "span": "evidence_spans", "chunk": "content_chunks"}.get(
-        scheme
-    )
+    """Return the parent media id for media-derived read pointers.
+
+    ``fragments`` still carries an intrinsic ``media_id`` column. ``evidence_spans``
+    and ``content_chunks`` are polymorphic over ``(owner_kind, owner_id)``; only
+    media-owned rows have a parent media id, so a page-owned span/chunk resolves to
+    ``NULL`` here and is correctly treated as non-readable in this context.
+    """
+    if scheme == "fragment":
+        return db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": resource_id})
+    table = {"span": "evidence_spans", "chunk": "content_chunks"}.get(scheme)
     if table is None:
         return None
-    return db.scalar(text(f"SELECT media_id FROM {table} WHERE id = :id"), {"id": resource_id})
+    return db.scalar(
+        text(f"SELECT owner_id FROM {table} WHERE id = :id AND owner_kind = 'media'"),
+        {"id": resource_id},
+    )
 
 
 def _load_media(
@@ -209,9 +218,9 @@ def _load_span(
     rows = db.execute(
         text(
             """
-            SELECT es.id, es.media_id, es.span_text, es.citation_label, m.title
+            SELECT es.id, es.owner_id AS media_id, es.span_text, es.citation_label, m.title
             FROM evidence_spans es
-            JOIN media m ON m.id = es.media_id
+            JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
             WHERE es.id = ANY(:ids)
             """
         ),
@@ -243,9 +252,9 @@ def _load_chunk(
     rows = db.execute(
         text(
             """
-            SELECT cc.id, cc.media_id, cc.chunk_text, m.title
+            SELECT cc.id, cc.owner_id AS media_id, cc.chunk_text, m.title
             FROM content_chunks cc
-            JOIN media m ON m.id = cc.media_id
+            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
             WHERE cc.id = ANY(:ids)
             """
         ),

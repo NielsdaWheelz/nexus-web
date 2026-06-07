@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from nexus.services.content_indexing import (
     IndexableBlock,
-    rebuild_media_content_index,
+    IndexOwner,
+    rebuild_content_index,
     repair_ready_media_content_index_now,
 )
 
@@ -68,9 +69,9 @@ def test_rebuild_rejects_malformed_blocks_selectors_and_offsets_before_citations
 
     for build_block in cases:
         with pytest.raises(ValueError):
-            rebuild_media_content_index(
+            rebuild_content_index(
                 db_session,
-                media_id=media_id,
+                owner=IndexOwner("media", media_id),
                 source_kind="web_article",
                 blocks=[build_block()],
                 reason="validation_test",
@@ -80,9 +81,12 @@ def test_rebuild_rejects_malformed_blocks_selectors_and_offsets_before_citations
         text(
             """
             SELECT
-                (SELECT COUNT(*) FROM content_blocks WHERE media_id = :media_id),
-                (SELECT COUNT(*) FROM evidence_spans WHERE media_id = :media_id),
-                (SELECT COUNT(*) FROM content_chunks WHERE media_id = :media_id)
+                (SELECT COUNT(*) FROM content_blocks
+                 WHERE owner_kind = 'media' AND owner_id = :media_id),
+                (SELECT COUNT(*) FROM evidence_spans
+                 WHERE owner_kind = 'media' AND owner_id = :media_id),
+                (SELECT COUNT(*) FROM content_chunks
+                 WHERE owner_kind = 'media' AND owner_id = :media_id)
             """
         ),
         {"media_id": media_id},
@@ -100,9 +104,9 @@ def test_rebuild_rejects_out_of_order_source_offsets(db_session: Session):
     _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
 
     with pytest.raises(ValueError, match="sorted and non-overlapping"):
-        rebuild_media_content_index(
+        rebuild_content_index(
             db_session,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             source_kind="web_article",
             blocks=[
                 _web_block(
@@ -134,9 +138,9 @@ def test_rebuild_rejects_overlapping_source_offsets(db_session: Session):
     _insert_ready_media(db_session, user_id=user_id, media_id=media_id)
 
     with pytest.raises(ValueError, match="sorted and non-overlapping"):
-        rebuild_media_content_index(
+        rebuild_content_index(
             db_session,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             source_kind="web_article",
             blocks=[
                 _web_block(
@@ -180,9 +184,9 @@ def test_embedding_failure_preserves_prior_current_index(
         {"media_id": media_id, "user_id": user_id},
     )
 
-    rebuild_media_content_index(
+    rebuild_content_index(
         db_session,
-        media_id=media_id,
+        owner=IndexOwner("media", media_id),
         source_kind="web_article",
         blocks=[
             _web_block(
@@ -203,9 +207,9 @@ def test_embedding_failure_preserves_prior_current_index(
     )
 
     with pytest.raises(RuntimeError, match="replacement embeddings unavailable"):
-        rebuild_media_content_index(
+        rebuild_content_index(
             db_session,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             source_kind="web_article",
             blocks=[
                 _web_block(
@@ -225,8 +229,8 @@ def test_embedding_failure_preserves_prior_current_index(
                 mcis.status_reason,
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model
-            FROM media_content_index_states mcis
-            WHERE mcis.media_id = :media_id
+            FROM content_index_states mcis
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -241,7 +245,7 @@ def test_embedding_failure_preserves_prior_current_index(
             """
             SELECT cc.chunk_text
             FROM content_chunks cc
-            WHERE cc.media_id = :media_id
+            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -257,7 +261,7 @@ def test_embedding_failure_does_not_commit_caller_owned_work(direct_db, monkeypa
 
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("media", "id", media_id)
-    direct_db.register_cleanup("media_content_index_states", "media_id", media_id)
+    direct_db.register_cleanup("content_index_states", "owner_id", media_id)
 
     def fail_embeddings(_texts: list[str]) -> tuple[str, list[list[float]]]:
         raise RuntimeError("provider unavailable before durable writes")
@@ -286,9 +290,9 @@ def test_embedding_failure_does_not_commit_caller_owned_work(direct_db, monkeypa
         )
 
         with pytest.raises(RuntimeError, match="provider unavailable before durable writes"):
-            rebuild_media_content_index(
+            rebuild_content_index(
                 session,
-                media_id=media_id,
+                owner=IndexOwner("media", media_id),
                 source_kind="web_article",
                 blocks=[
                     _web_block(
@@ -387,7 +391,7 @@ def test_repair_ready_media_content_index_supports_ready_podcast_transcript(
             SELECT cc.source_kind, es.span_text
             FROM content_chunks cc
             JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
-            WHERE cc.media_id = :media_id
+            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -446,7 +450,7 @@ def test_pdf_repair_uses_current_evidence_contract(db_session: Session):
             SELECT cb.block_kind, cb.metadata, es.span_text
             FROM content_blocks cb
             JOIN evidence_spans es ON es.start_block_id = cb.id
-            WHERE cb.media_id = :media_id
+            WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -482,7 +486,7 @@ def _web_block(
     block_kind: str = "paragraph",
 ) -> IndexableBlock:
     return IndexableBlock(
-        media_id=media_id,
+        owner=IndexOwner("media", media_id),
         source_kind="web_article",
         block_idx=block_idx,
         block_kind=block_kind,

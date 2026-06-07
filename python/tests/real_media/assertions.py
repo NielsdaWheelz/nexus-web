@@ -75,25 +75,25 @@ def assert_complete_evidence_trace(
                         (
                             SELECT count(*)
                             FROM content_blocks cb
-                            WHERE cb.media_id = :media_id
+                            WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
                         ) AS block_count,
                         (
                             SELECT count(*)
                             FROM content_chunks cc
-                            WHERE cc.media_id = :media_id
+                            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                               AND cc.source_kind = :source_kind
                         ) AS chunk_count,
                         (
                             SELECT count(*)
                             FROM evidence_spans es
-                            WHERE es.media_id = :media_id
+                            WHERE es.owner_kind = 'media' AND es.owner_id = :media_id
                               AND es.resolver_kind = :resolver_kind
                         ) AS evidence_count,
                         (
                             SELECT count(DISTINCT ce.chunk_id)
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
-                            WHERE cc.media_id = :media_id
+                            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                               AND cc.source_kind = :source_kind
                               AND ce.embedding_provider = mcis.active_embedding_provider
                               AND ce.embedding_model = mcis.active_embedding_model
@@ -104,18 +104,18 @@ def assert_complete_evidence_trace(
                             SELECT count(DISTINCT ce.embedding_dimensions)
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
-                            WHERE cc.media_id = :media_id
+                            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                               AND cc.source_kind = :source_kind
                         ) AS embedding_dimension_count,
                         (
                             SELECT max(ce.embedding_dimensions)
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
-                            WHERE cc.media_id = :media_id
+                            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                               AND cc.source_kind = :source_kind
                         ) AS embedding_dimensions
-                    FROM media_content_index_states mcis
-                    WHERE mcis.media_id = :media_id
+                    FROM content_index_states mcis
+                    WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
                     """
                 ),
                 {
@@ -148,7 +148,7 @@ def assert_complete_evidence_trace(
                            source_start_offset, source_end_offset,
                            locator, selector
                     FROM content_blocks
-                    WHERE media_id = :media_id
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                     ORDER BY block_idx ASC
                     """
                 ),
@@ -191,7 +191,7 @@ def assert_complete_evidence_trace(
                     JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
                     JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
                     JOIN content_blocks cb ON cb.id = ccp.block_id
-                    WHERE cc.media_id = :media_id
+                    WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                       AND cc.source_kind = :source_kind
                     GROUP BY cc.id, cc.primary_evidence_span_id, cc.chunk_text,
                              cc.token_count, es.span_text, es.selector, es.citation_label
@@ -223,7 +223,7 @@ def assert_complete_evidence_trace(
                         ccp.separator_before
                     FROM content_chunk_parts ccp
                     JOIN content_chunks cc ON cc.id = ccp.chunk_id
-                    WHERE cc.media_id = :media_id
+                    WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                       AND cc.source_kind = :source_kind
                     ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                     """
@@ -310,21 +310,21 @@ def assert_pdf_ocr_required_trace(
                         (
                             SELECT count(*)
                             FROM content_blocks
-                            WHERE media_id = :media_id
+                            WHERE owner_kind = 'media' AND owner_id = :media_id
                         ) AS block_count,
                         (
                             SELECT count(*)
                             FROM content_chunks
-                            WHERE media_id = :media_id
+                            WHERE owner_kind = 'media' AND owner_id = :media_id
                         ) AS chunk_count,
                         (
                             SELECT count(*)
                             FROM content_embeddings ce
                             JOIN content_chunks cc ON cc.id = ce.chunk_id
-                            WHERE cc.media_id = :media_id
+                            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                         ) AS embedding_count
                     FROM media m
-                    JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                    JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                     WHERE m.id = :media_id
                     """
                 ),
@@ -348,7 +348,7 @@ def assert_pdf_ocr_required_trace(
                     """
                     SELECT canonical_text, locator, selector
                     FROM content_blocks
-                    WHERE media_id = :media_id
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                     ORDER BY block_idx ASC
                     LIMIT 1
                     """
@@ -396,8 +396,8 @@ def assert_reingest_replacement_trace(
                             FROM evidence_spans
                             WHERE id = :old_evidence_span_id
                         ) AS old_span_count
-                    FROM media_content_index_states mcis
-                    WHERE mcis.media_id = :media_id
+                    FROM content_index_states mcis
+                    WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
                     """
                 ),
                 {
@@ -601,11 +601,11 @@ def assert_export_trace(
                         h.exact AS highlight_exact,
                         hfa.fragment_id,
                         hfa.start_offset
-                    FROM media_content_index_states mcis
-                    JOIN content_blocks cb ON cb.media_id = mcis.media_id
+                    FROM content_index_states mcis
+                    JOIN content_blocks cb ON cb.owner_kind = mcis.owner_kind AND cb.owner_id = mcis.owner_id
                     JOIN highlights h ON h.id = :highlight_id
                     JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                    WHERE mcis.media_id = :media_id
+                    WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
                       AND mcis.status = 'ready'
                     GROUP BY h.exact, hfa.fragment_id, hfa.start_offset
                     """
@@ -683,16 +683,16 @@ def assert_library_removed_evidence_trace(
                         (
                             SELECT count(*)
                             FROM content_chunks
-                            WHERE media_id = :media_id
+                            WHERE owner_kind = 'media' AND owner_id = :media_id
                         ) AS chunk_count,
                         (
                             SELECT count(*)
                             FROM evidence_spans
-                            WHERE media_id = :media_id
+                            WHERE owner_kind = 'media' AND owner_id = :media_id
                         ) AS evidence_count,
                         mcis.status
-                    FROM media_content_index_states mcis
-                    WHERE mcis.media_id = :media_id
+                    FROM content_index_states mcis
+                    WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
                     """
                 ),
                 {"media_id": media_id, "library_id": library_id},
@@ -751,9 +751,11 @@ def assert_media_deleted_evidence_trace(
                     """
                     SELECT
                         (SELECT count(*) FROM media WHERE id = :media_id) AS media_count,
-                        (SELECT count(*) FROM content_chunks WHERE media_id = :media_id)
+                        (SELECT count(*) FROM content_chunks
+                            WHERE owner_kind = 'media' AND owner_id = :media_id)
                             AS chunk_count,
-                        (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id)
+                        (SELECT count(*) FROM evidence_spans
+                            WHERE owner_kind = 'media' AND owner_id = :media_id)
                             AS evidence_count
                     """
                 ),

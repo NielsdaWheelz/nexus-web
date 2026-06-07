@@ -358,6 +358,13 @@ def _is_search_scope_uri(uri: str) -> bool:
     )
 
 
+# Result types whose evidence lives in content_chunks (media-owned or page-owned), so a
+# scope can be "indexed but unmatched" vs "no indexed evidence". A named set keeps the
+# empty-status guard correct as chat planned_types evolve (chat plans content_chunk +
+# note_block; see chat_runs).
+_CHUNK_OWNER_RESULT_TYPES = frozenset({"content_chunk", "note_block"})
+
+
 def _empty_status_for_scopes(
     db: Session,
     *,
@@ -367,7 +374,7 @@ def _empty_status_for_scopes(
     filters: dict[str, Any],
 ) -> str:
     """Distinguish 'no_results' from 'no_indexed_evidence' across scopes."""
-    if requested_types != ["content_chunk"] or not scopes:
+    if not scopes or not any(t in _CHUNK_OWNER_RESULT_TYPES for t in requested_types):
         return "no_results"
     for scope_uri in scopes:
         status = _scoped_content_chunk_empty_status(
@@ -422,22 +429,47 @@ def _scoped_content_chunk_empty_status(
             )
         """
 
+    # Page-owned (note) evidence also makes a scope "indexed" (chat cites notes). Skip it
+    # whenever a media-only filter (format/author/role) is active, since notes can never
+    # satisfy those — a filtered search legitimately has no note evidence.
+    note_exists = ""
+    if not (filters["formats"] or filters["authors"] or filters["roles"]):
+        note_clause = scope_filter_sql(scope_type, scope_id, "note_block")
+        if not isinstance(note_clause, ScopeUnsupported):
+            note_scope_filter, _ = note_clause  # same :scope_id bind, already in params
+            note_exists = f"""
+                OR EXISTS (
+                    SELECT 1
+                    FROM content_chunks cc
+                    JOIN pages p ON p.id = cc.owner_id AND cc.owner_kind = 'page'
+                        AND p.user_id = :viewer_id
+                    JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
+                        AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
+                    WHERE TRUE
+                    {note_scope_filter}
+                )
+            """
+
     row = db.execute(
         text(
             f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT 1
-            FROM content_chunks cc
-            JOIN media m ON m.id = cc.media_id
-            JOIN visible_media vm ON vm.media_id = cc.media_id
-            JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                AND mcis.status = 'ready'
-            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
-                AND es.media_id = cc.media_id
-            WHERE TRUE
-            {scope_filter}
-            {content_kind_filter}
-            {contributor_credit_filter}
+            SELECT 1 WHERE
+            EXISTS (
+                SELECT 1
+                FROM content_chunks cc
+                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                JOIN visible_media vm ON vm.media_id = cc.owner_id AND cc.owner_kind = 'media'
+                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                    AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
+                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                    AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
+                WHERE TRUE
+                {scope_filter}
+                {content_kind_filter}
+                {contributor_credit_filter}
+            )
+            {note_exists}
             LIMIT 1
             """
         ),
@@ -904,9 +936,9 @@ def _render_evidence_span_block(db: Session, viewer_id: UUID, evidence_span_id: 
     row = db.execute(
         text(
             """
-            SELECT es.media_id, es.span_text, es.citation_label, m.title
+            SELECT es.owner_id AS media_id, es.span_text, es.citation_label, m.title
             FROM evidence_spans es
-            JOIN media m ON m.id = es.media_id
+            JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
             WHERE es.id = :evidence_span_id
             """
         ),
@@ -944,7 +976,7 @@ def _render_content_chunk_context(
         text(
             """
             SELECT
-                cc.media_id,
+                cc.owner_id AS media_id,
                 cc.chunk_text,
                 cc.summary_locator,
                 cc.source_kind,
@@ -955,11 +987,11 @@ def _render_content_chunk_context(
                 es.span_text
             FROM content_chunks cc
             JOIN evidence_spans es ON es.id = :evidence_span_id
-                AND es.media_id = cc.media_id
+                AND es.owner_kind = cc.owner_kind AND es.owner_id = cc.owner_id
                 AND es.id = cc.primary_evidence_span_id
-            JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+            JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
                 AND mcis.status = 'ready'
-            JOIN media m ON m.id = cc.media_id
+            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
             WHERE cc.id = :chunk_id
             """
         ),

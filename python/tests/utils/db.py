@@ -12,6 +12,88 @@ from sqlalchemy import Connection, Engine, text
 from sqlalchemy.orm import Session
 
 
+def _delete_owner_content(session: Session, *, owner_kind: str, owner_id: Any) -> None:
+    """Delete the unified content rows for one (owner_kind, owner_id) owner.
+
+    Children first (content_embeddings, content_chunk_parts via their chunks), then the
+    content_chunks themselves, then evidence_spans and content_blocks. Does NOT touch
+    content_index_states — callers delete that explicitly so they control ordering.
+    """
+    params = {"owner_kind": owner_kind, "owner_id": owner_id}
+    session.execute(
+        text(
+            """
+            DELETE FROM content_embeddings ce
+            USING content_chunks cc
+            WHERE ce.chunk_id = cc.id
+              AND cc.owner_kind = :owner_kind
+              AND cc.owner_id = :owner_id
+            """
+        ),
+        params,
+    )
+    session.execute(
+        text(
+            """
+            DELETE FROM content_chunk_parts ccp
+            USING content_chunks cc
+            WHERE ccp.chunk_id = cc.id
+              AND cc.owner_kind = :owner_kind
+              AND cc.owner_id = :owner_id
+            """
+        ),
+        params,
+    )
+    session.execute(
+        text("DELETE FROM content_chunks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
+    )
+    # message_retrievals.evidence_span_id FK is non-cascading: detach before deleting spans.
+    session.execute(
+        text(
+            """
+            UPDATE message_retrievals mr
+            SET evidence_span_id = NULL
+            FROM evidence_spans es
+            WHERE mr.evidence_span_id = es.id
+              AND es.owner_kind = :owner_kind
+              AND es.owner_id = :owner_id
+            """
+        ),
+        params,
+    )
+    session.execute(
+        text("DELETE FROM evidence_spans WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
+    )
+    session.execute(
+        text("DELETE FROM content_blocks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
+    )
+
+
+def _delete_page_owned_content(
+    session: Session, *, page_filter: str, params: dict[str, Any]
+) -> None:
+    """Delete page-owned unified content for every page returned by ``page_filter``.
+
+    ``page_filter`` is a SELECT yielding page ids (e.g. the user's pages). Page note
+    content is keyed by (owner_kind='page', owner_id=<page id>). Children before parents,
+    then content_index_states.
+    """
+    page_ids = [row[0] for row in session.execute(text(page_filter), params)]
+    for page_id in page_ids:
+        _delete_owner_content(session, owner_kind="page", owner_id=page_id)
+    if page_ids:
+        session.execute(
+            text(
+                "DELETE FROM content_index_states "
+                "WHERE owner_kind = 'page' AND owner_id = ANY(:page_ids)"
+            ),
+            {"page_ids": page_ids},
+        )
+
+
 def task_session_factory(fixture_session: Session) -> Callable[[], Session]:
     """Create a session factory for worker job tests.
 
@@ -199,13 +281,14 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text("DELETE FROM object_search_embeddings WHERE user_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM object_search_documents WHERE user_id = :value"),
-                        {"value": value},
+                    # Page-owned content lives in the unified content pipeline keyed by
+                    # (owner_kind='page', owner_id=<page id>); clear it for the user's pages
+                    # before the pages/users cascade. Children (embeddings, chunk parts)
+                    # before parents (chunks), then spans/blocks/index states.
+                    _delete_page_owned_content(
+                        session,
+                        page_filter="SELECT id FROM pages WHERE user_id = :value",
+                        params={"value": value},
                     )
                     session.execute(
                         text("DELETE FROM user_pinned_objects WHERE user_id = :value"),
@@ -356,44 +439,18 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text("DELETE FROM media_content_index_states WHERE media_id = :value"),
-                        {"value": value},
-                    )
+                    # Content index tables are now keyed by (owner_kind, owner_id);
+                    # media-owned content uses owner_kind='media', owner_id=<media id>
+                    # (migration 0141 dropped the media_id columns and renamed
+                    # media_content_index_states -> content_index_states).
                     session.execute(
                         text(
-                            """
-                            DELETE FROM content_embeddings ce
-                            USING content_chunks cc
-                            WHERE ce.chunk_id = cc.id
-                              AND cc.media_id = :value
-                            """
+                            "DELETE FROM content_index_states "
+                            "WHERE owner_kind = 'media' AND owner_id = :value"
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM content_chunk_parts ccp
-                            USING content_chunks cc
-                            WHERE ccp.chunk_id = cc.id
-                              AND cc.media_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM content_chunks WHERE media_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM evidence_spans WHERE media_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM content_blocks WHERE media_id = :value"),
-                        {"value": value},
-                    )
+                    _delete_owner_content(session, owner_kind="media", owner_id=value)
                     session.execute(
                         text("DELETE FROM contributor_credits WHERE media_id = :value"),
                         {"value": value},
@@ -406,14 +463,19 @@ class DirectSessionManager:
                         {"value": value},
                     )
 
-                if table == "content_chunks" and column == "media_id":
+                if table == "content_chunks" and column == "owner_id":
+                    # content_chunks is now keyed by (owner_kind, owner_id); media-owned
+                    # cleanup passes a media id as owner_id. Clear chunk children
+                    # (embeddings, parts) here; the trailing generic DELETE removes the
+                    # chunks themselves by owner_id.
                     session.execute(
                         text(
                             """
                             DELETE FROM content_embeddings ce
                             USING content_chunks cc
                             WHERE ce.chunk_id = cc.id
-                              AND cc.media_id = :value
+                              AND cc.owner_kind = 'media'
+                              AND cc.owner_id = :value
                             """
                         ),
                         {"value": value},
@@ -424,7 +486,8 @@ class DirectSessionManager:
                             DELETE FROM content_chunk_parts ccp
                             USING content_chunks cc
                             WHERE ccp.chunk_id = cc.id
-                              AND cc.media_id = :value
+                              AND cc.owner_kind = 'media'
+                              AND cc.owner_id = :value
                             """
                         ),
                         {"value": value},
@@ -762,31 +825,13 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
+                    # Page note content now lives in the unified content pipeline keyed by
+                    # (owner_kind='page', owner_id=<page id>).
+                    _delete_owner_content(session, owner_kind="page", owner_id=value)
                     session.execute(
                         text(
-                            """
-                            DELETE FROM object_search_embeddings
-                            WHERE search_document_id IN (
-                                SELECT id
-                                FROM object_search_documents
-                                WHERE (object_type = 'page' AND object_id = :value)
-                                   OR (object_type = 'note_block' AND object_id IN (
-                                        SELECT id FROM note_blocks WHERE page_id = :value
-                                      ))
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_documents
-                            WHERE (object_type = 'page' AND object_id = :value)
-                               OR (object_type = 'note_block' AND object_id IN (
-                                    SELECT id FROM note_blocks WHERE page_id = :value
-                                  ))
-                            """
+                            "DELETE FROM content_index_states "
+                            "WHERE owner_kind = 'page' AND owner_id = :value"
                         ),
                         {"value": value},
                     )
@@ -824,24 +869,13 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_embeddings
-                            WHERE user_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_documents
-                            WHERE user_id = :value
-                              AND object_type IN ('page', 'note_block')
-                            """
-                        ),
-                        {"value": value},
+                    # Page note content lives in the unified pipeline keyed by
+                    # (owner_kind='page', owner_id=<page id>); clear it for all the
+                    # user's pages.
+                    _delete_page_owned_content(
+                        session,
+                        page_filter="SELECT id FROM pages WHERE user_id = :value",
+                        params={"value": value},
                     )
                     session.execute(
                         text(
@@ -862,30 +896,9 @@ class DirectSessionManager:
                     )
 
                 if table == "note_blocks" and column == "id":
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_embeddings
-                            WHERE search_document_id IN (
-                                SELECT id
-                                FROM object_search_documents
-                                WHERE object_type = 'note_block'
-                                  AND object_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_documents
-                            WHERE object_type = 'note_block'
-                              AND object_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
+                    # Note content is page-owned (owner_kind='page', owner_id=<page id>) in
+                    # the unified pipeline, so there are no per-note_block content rows to
+                    # clear here — only the pin entry that referenced this note_block.
                     session.execute(
                         text(
                             """
@@ -898,25 +911,6 @@ class DirectSessionManager:
                     )
 
                 if table == "note_blocks" and column == "user_id":
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_embeddings
-                            WHERE user_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM object_search_documents
-                            WHERE user_id = :value
-                              AND object_type = 'note_block'
-                            """
-                        ),
-                        {"value": value},
-                    )
                     session.execute(
                         text(
                             """

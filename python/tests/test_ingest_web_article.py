@@ -203,7 +203,10 @@ class TestIngestionStateTransitions:
 
         assert result == {"status": "success", "reason": "rebuilt_content_index"}
         chunk_count = db_session.execute(
-            text("SELECT count(*) FROM content_chunks WHERE media_id = :media_id"),
+            text(
+                "SELECT count(*) FROM content_chunks "
+                "WHERE owner_kind = 'media' AND owner_id = :media_id"
+            ),
             {"media_id": media_id},
         ).scalar_one()
         assert chunk_count >= 1
@@ -587,8 +590,8 @@ def _seed_duplicate_loser_child_rows(
     )
     db.execute(
         text("""
-            INSERT INTO media_content_index_states (media_id, status, status_reason)
-            VALUES (:media_id, 'failed', 'test_duplicate_cleanup')
+            INSERT INTO content_index_states (owner_kind, owner_id, status, status_reason)
+            VALUES ('media', :media_id, 'failed', 'test_duplicate_cleanup')
         """),
         {"media_id": loser_media_id},
     )
@@ -643,7 +646,12 @@ def _assert_duplicate_loser_child_rows_deleted(
         == 0
     )
     assert (
-        _count_rows(db, "media_content_index_states", "media_id = :media_id", media_id=media_id)
+        _count_rows(
+            db,
+            "content_index_states",
+            "owner_kind = 'media' AND owner_id = :media_id",
+            media_id=media_id,
+        )
         == 0
     )
     object_links = db.execute(

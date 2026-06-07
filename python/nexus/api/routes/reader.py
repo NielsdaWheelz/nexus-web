@@ -33,7 +33,6 @@ def resolve_media_evidence(
     result = locator_resolver.resolve_evidence_span(
         db,
         viewer_id=viewer.user_id,
-        media_id=media_id,
         evidence_span_id=evidence_span_id,
     )
     return success_response(result)

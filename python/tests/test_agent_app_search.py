@@ -14,6 +14,7 @@ from nexus.services.agent_tools.app_search import (
     render_retrieved_context_blocks,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
@@ -461,7 +462,10 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
             assistant_message_id=assistant_message_id,
             scopes=[f"library:{library_id}"],
             planned_query="indexed evidence",
-            planned_types=["content_chunk"],
+            # Production chat shape (chat_runs.py plans content_chunk + note_block); an
+            # empty library has neither indexed media nor indexed notes -> still
+            # no_indexed_evidence.
+            planned_types=["content_chunk", "note_block"],
             planned_filters={},
         )
 
@@ -558,7 +562,10 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
             assistant_message_id=assistant_message_id,
             scopes=[f"library:{library_id}"],
             planned_query="termthatdoesnotexist",
-            planned_types=["media"],
+            # Production chat shape: the scope holds ready-indexed media evidence, so an
+            # unmatched query is no_results (indexed-but-unmatched), not
+            # no_indexed_evidence.
+            planned_types=["content_chunk", "note_block"],
             planned_filters={},
         )
 
@@ -772,6 +779,402 @@ def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
     direct_db.register_cleanup("object_links", "user_id", user_id)
 
 
+def test_execute_app_search_cites_note_block_as_prompt_evidence(
+    direct_db: DirectSessionManager,
+) -> None:
+    """AC-5: the AI cites your notes.
+
+    A page-owned note whose body matches the query is retrieved as a note_block result
+    (chat plans content_chunk + note_block exactly like chat_runs.py), selected into the
+    prompt, rendered via _render_note_block_block, and persisted with a /notes/{block_id}
+    deep link.
+    """
+    user_id = create_test_user_id()
+    note_needle = f"noteneedle{uuid4().hex}"
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Note Citation App Search Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="What did my note say?",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Note Citation Source",
+        )
+        highlight_id, note_block_id = create_test_highlight_note(
+            session,
+            user_id,
+            media_id,
+            body=f"{note_needle} the answer lives in this saved note body",
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[],
+            planned_query=note_needle,
+            # Exactly the chat planner shape (chat_runs.py plans content_chunk + note_block).
+            planned_types=["content_chunk", "note_block"],
+            planned_filters={},
+        )
+
+        assert run is not None
+        assert run.status == "complete"
+
+        note_citation = next(
+            (c for c in run.selected_citations if c.result_type == "note_block"),
+            None,
+        )
+        assert note_citation is not None, (
+            f"Expected a selected note_block citation for note {note_block_id}; got "
+            f"{[(c.result_type, c.source_id) for c in run.selected_citations]}"
+        )
+        assert note_citation.source_id == str(note_block_id)
+        assert note_citation.context_ref == {
+            "type": "note_block",
+            "id": str(note_block_id),
+        }
+        assert note_citation.deep_link == f"/notes/{note_block_id}"
+        assert note_citation.result_ref["type"] == "note_block"
+        assert note_citation.result_ref["id"] == str(note_block_id)
+
+        assert '<app_search_result type="note_block">' in run.context_text, (
+            f"Expected the note_block render block in context_text; got {run.context_text}"
+        )
+
+        retrieval_row = session.execute(
+            text(
+                """
+                SELECT result_type, result_ref, deep_link, selected
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                  AND result_type = 'note_block'
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert retrieval_row[0] == "note_block"
+        assert retrieval_row[1]["type"] == "note_block"
+        assert retrieval_row[1]["id"] == str(note_block_id)
+        assert retrieval_row[2] == f"/notes/{note_block_id}"
+        assert retrieval_row[3] is True
+
+    # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
+    # before children — users FIRST (deleted LAST) and the highlight_fragment_anchors LAST
+    # (deleted FIRST). The pages(user_id) handler cascades note_blocks + page-owned content
+    # + page object_links before deleting the pages themselves.
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+    direct_db.register_cleanup("highlights", "user_id", user_id)
+    direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
+
+
+def test_scoped_app_search_with_only_indexed_notes_is_no_results(
+    direct_db: DirectSessionManager,
+) -> None:
+    """A scope that holds ONLY page-owned (note) ready evidence — no indexed media — and a
+    query that matches nothing is no_results, not no_indexed_evidence. Proves the
+    page-owner union in _scoped_content_chunk_empty_status: a note in scope makes the scope
+    'indexed'. The note is put in scope for a media: URI via a direct note_block->media
+    object_link (the §4.6 note_block scope cell).
+    """
+    user_id = create_test_user_id()
+    media_id = uuid4()
+    page_id = uuid4()
+    note_block_id = uuid4()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Note Only Scope Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find note-only scoped evidence",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        # An UNINDEXED media (no fragment, no media-owned content chunks) made visible via a
+        # non-default library entry so it is a valid, in-scope reference.
+        session.execute(
+            text(
+                """
+                INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                VALUES (:media_id, 'web_article', 'Unindexed Note Anchor', 'ready_for_reading',
+                        :user_id)
+                """
+            ),
+            {"media_id": media_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO library_entries (library_id, media_id)
+                VALUES (:library_id, :media_id)
+                """
+            ),
+            {"library_id": library_id, "media_id": media_id},
+        )
+        # A page-owned note block indexed into the unified content pipeline (owner_kind=page).
+        session.execute(
+            text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, 'Notes')"),
+            {"page_id": page_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO note_blocks (
+                    id, user_id, page_id, order_key, block_kind,
+                    body_pm_json, body_markdown, body_text, collapsed
+                )
+                VALUES (
+                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    jsonb_build_object(
+                        'type', 'paragraph',
+                        'content', jsonb_build_array(
+                            jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
+                        )
+                    ),
+                    :body_text, :body_text, false
+                )
+                """
+            ),
+            {
+                "note_block_id": note_block_id,
+                "user_id": user_id,
+                "page_id": page_id,
+                "body_text": "scoped note body about gardening tools and trellises",
+            },
+        )
+        # Put the note in scope for media:{media_id} via a direct note_block->media link
+        # (the note_block §4.6 scope cell matches ol.b_type='media' AND ol.b_id=:scope_id).
+        session.execute(
+            text(
+                """
+                INSERT INTO object_links (
+                    user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                )
+                VALUES (
+                    :user_id, 'note_about', 'note_block', :note_block_id, 'media', :media_id,
+                    '{}'::jsonb
+                )
+                """
+            ),
+            {"user_id": user_id, "note_block_id": note_block_id, "media_id": media_id},
+        )
+        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        session.execute(
+            text(
+                """
+                INSERT INTO conversation_references (conversation_id, resource_uri)
+                VALUES (:conversation_id, :resource_uri)
+                """
+            ),
+            {"conversation_id": conversation_id, "resource_uri": f"media:{media_id}"},
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            planned_query="termthatmatchesnoindexednote",
+            planned_types=["content_chunk", "note_block"],
+            planned_filters={},
+        )
+
+        assert run is not None
+        assert run.citations == []
+        assert run.empty_status == "no_results", (
+            "scope holds ready-indexed note evidence, so an unmatched query must be "
+            f"no_results; got {run.empty_status}"
+        )
+        assert 'status="no_results"' in run.context_text
+        assert 'status="no_indexed_evidence"' not in run.context_text
+
+    # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
+    # before children — users FIRST (deleted LAST). The pages(id) handler cascades the
+    # page's note_blocks + page-owned content + the note_block->media object_link before
+    # deleting the page, so it is registered after (deleted before) media/users.
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("object_links", "user_id", user_id)
+    direct_db.register_cleanup("note_blocks", "id", note_block_id)
+    direct_db.register_cleanup("pages", "id", page_id)
+
+
+def test_scoped_app_search_with_no_indexed_media_or_notes_is_no_indexed_evidence(
+    direct_db: DirectSessionManager,
+) -> None:
+    """A scope with neither indexed media nor any in-scope indexed note is
+    no_indexed_evidence (the negative side of the page-owner union: an unrelated note that
+    is NOT linked into the scope does not make the scope 'indexed').
+    """
+    user_id = create_test_user_id()
+    media_id = uuid4()
+    page_id = uuid4()
+    note_block_id = uuid4()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "No Indexed Evidence Scope Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find scoped evidence",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        # An UNINDEXED media (no media-owned content chunks), visible via a library entry.
+        session.execute(
+            text(
+                """
+                INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                VALUES (:media_id, 'web_article', 'Unindexed Empty Scope', 'ready_for_reading',
+                        :user_id)
+                """
+            ),
+            {"media_id": media_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO library_entries (library_id, media_id)
+                VALUES (:library_id, :media_id)
+                """
+            ),
+            {"library_id": library_id, "media_id": media_id},
+        )
+        # A page-owned indexed note that exists but is NOT linked into this media scope, so
+        # the note_block scope cell does not match it.
+        session.execute(
+            text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, 'Notes')"),
+            {"page_id": page_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO note_blocks (
+                    id, user_id, page_id, order_key, block_kind,
+                    body_pm_json, body_markdown, body_text, collapsed
+                )
+                VALUES (
+                    :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                    jsonb_build_object(
+                        'type', 'paragraph',
+                        'content', jsonb_build_array(
+                            jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
+                        )
+                    ),
+                    :body_text, :body_text, false
+                )
+                """
+            ),
+            {
+                "note_block_id": note_block_id,
+                "user_id": user_id,
+                "page_id": page_id,
+                "body_text": "unlinked note body not in any media scope",
+            },
+        )
+        rebuild_page_content_index(session, page_id=page_id, reason="test")
+        session.execute(
+            text(
+                """
+                INSERT INTO conversation_references (conversation_id, resource_uri)
+                VALUES (:conversation_id, :resource_uri)
+                """
+            ),
+            {"conversation_id": conversation_id, "resource_uri": f"media:{media_id}"},
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scopes=[f"media:{media_id}"],
+            planned_query="anything",
+            planned_types=["content_chunk", "note_block"],
+            planned_filters={},
+        )
+
+        assert run is not None
+        assert run.citations == []
+        assert run.empty_status == "no_indexed_evidence", (
+            "scope has no indexed media and no in-scope note, so it must be "
+            f"no_indexed_evidence; got {run.empty_status}"
+        )
+        assert 'status="no_indexed_evidence"' in run.context_text
+
+    # Cleanup is LIFO (db.py: deleted in reverse of registration), so register parents
+    # before children — users FIRST (deleted LAST). The pages(id) handler cascades the
+    # page's note_blocks + page-owned content before deleting the page.
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversation_references", "conversation_id", conversation_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("note_blocks", "id", note_block_id)
+    direct_db.register_cleanup("pages", "id", page_id)
+
+
 def test_render_retrieved_context_requires_matching_current_evidence(
     direct_db: DirectSessionManager,
 ) -> None:
@@ -790,11 +1193,11 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             text(
                 """
                 SELECT cc.id,
-                       cc.media_id,
+                       cc.owner_id,
                        ccp.block_id
                 FROM content_chunks cc
                 JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
-                WHERE cc.media_id = :media_id
+                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
                 ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
                 LIMIT 1
                 """
@@ -806,7 +1209,8 @@ def test_render_retrieved_context_requires_matching_current_evidence(
             text(
                 """
                 INSERT INTO evidence_spans (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
@@ -817,6 +1221,7 @@ def test_render_retrieved_context_requires_matching_current_evidence(
                     resolver_kind
                 )
                 VALUES (
+                    'media',
                     :media_id,
                     :block_id,
                     :block_id,

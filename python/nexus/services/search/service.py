@@ -65,7 +65,7 @@ from nexus.services.search.retrievers.library_content import (
     _search_fragments,
 )
 from nexus.services.search.retrievers.media import _search_media, _search_podcasts
-from nexus.services.search.retrievers.objects import _search_note_blocks, _search_pages
+from nexus.services.search.retrievers.notes import _search_note_chunks, _search_pages
 from nexus.services.search.retrievers.web import _search_web_results
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
@@ -313,7 +313,7 @@ def get_search_result(
                     media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     cc.id,
-                    cc.media_id,
+                    cc.owner_id AS media_id,
                     m.kind,
                     m.title,
                     m.published_date,
@@ -322,9 +322,10 @@ def get_search_result(
                     cc.source_kind,
                     cc.primary_evidence_span_id
                 FROM content_chunks cc
-                JOIN media m ON m.id = cc.media_id
-                JOIN visible_media vm ON vm.media_id = cc.media_id
-                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                JOIN visible_media vm ON vm.media_id = cc.owner_id
+                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                    AND mcis.owner_id = cc.owner_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE cc.id = :id
@@ -339,7 +340,6 @@ def get_search_result(
         resolution = resolve_evidence_span(
             db,
             viewer_id=viewer_id,
-            media_id=row[1],
             evidence_span_id=row[8],
         )
         _require_resolved_evidence(resolution)
@@ -392,7 +392,8 @@ def get_search_result(
                     ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
                     LIMIT 1
                 ) nav ON true
-                LEFT JOIN media_content_index_states mcis ON mcis.media_id = f.media_id
+                LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                    AND mcis.owner_id = f.media_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE f.id = :id
@@ -540,7 +541,8 @@ def get_search_result(
                     FROM highlight_pdf_quads hpq
                     WHERE hpq.highlight_id = h.id
                 ) pdf_quads ON true
-                JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+                JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                    AND mcis.owner_id = h.anchor_media_id
                     AND mcis.status = 'ready'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE h.id = :id
@@ -768,7 +770,7 @@ def get_search_result(
                 WITH media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
                 SELECT
                     es.id,
-                    es.media_id,
+                    es.owner_id AS media_id,
                     es.span_text,
                     es.citation_label,
                     m.kind,
@@ -776,7 +778,7 @@ def get_search_result(
                     m.published_date,
                     mcc.contributor_credits
                 FROM evidence_spans es
-                JOIN media m ON m.id = es.media_id
+                JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE es.id = :id
                 """
@@ -788,7 +790,6 @@ def get_search_result(
         resolution = resolve_evidence_span(
             db,
             viewer_id=viewer_id,
-            media_id=row[1],
             evidence_span_id=row[0],
         )
         _require_resolved_evidence(resolution)
@@ -937,7 +938,7 @@ def _search_type(
             db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
         )
     if result_type == "note_block":
-        return _search_note_blocks(
+        return _search_note_chunks(
             db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
         )
     if result_type == "highlight":

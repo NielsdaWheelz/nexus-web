@@ -112,6 +112,55 @@ UNSUPPORTED = ScopeUnsupported()
 
 ScopeFilter = tuple[str, dict[str, Any]] | ScopeUnsupported
 
+
+def _note_object_scope(object_type: str, object_id_sql: str) -> dict[str, str | ScopeUnsupported]:
+    """object_links-based scope for a page/note_block keyed on (object_type, object_id_sql),
+    ported verbatim from the deleted note-substrate scope filter."""
+    link_match = (
+        f"((ol.a_type = '{object_type}' AND ol.a_id = {object_id_sql}) "
+        f"OR (ol.b_type = '{object_type}' AND ol.b_id = {object_id_sql}))"
+    )
+    return {
+        "media": f"""
+            AND EXISTS (
+                SELECT 1 FROM object_links ol
+                LEFT JOIN highlights h
+                  ON ((ol.a_type = 'highlight' AND h.id = ol.a_id)
+                   OR (ol.b_type = 'highlight' AND h.id = ol.b_id))
+                WHERE {link_match}
+                  AND ((ol.a_type = 'media' AND ol.a_id = :scope_id)
+                    OR (ol.b_type = 'media' AND ol.b_id = :scope_id)
+                    OR h.anchor_media_id = :scope_id)
+            )
+        """,
+        "library": f"""
+            AND EXISTS (
+                SELECT 1 FROM object_links ol
+                LEFT JOIN highlights h
+                  ON ((ol.a_type = 'highlight' AND h.id = ol.a_id)
+                   OR (ol.b_type = 'highlight' AND h.id = ol.b_id))
+                JOIN library_entries le
+                  ON le.library_id = :scope_id AND le.media_id IS NOT NULL
+                 AND ((ol.a_type = 'media' AND le.media_id = ol.a_id)
+                   OR (ol.b_type = 'media' AND le.media_id = ol.b_id)
+                   OR le.media_id = h.anchor_media_id)
+                WHERE {link_match}
+            )
+        """,
+        "conversation": f"""
+            AND EXISTS (
+                SELECT 1 FROM object_links ol
+                JOIN messages msg
+                  ON ((ol.a_type = 'message' AND msg.id = ol.a_id)
+                   OR (ol.b_type = 'message' AND msg.id = ol.b_id))
+                WHERE ol.relation_type = 'used_as_context'
+                  AND {link_match}
+                  AND msg.conversation_id = :scope_id
+            )
+        """,
+    }
+
+
 # entity → {scope_kind → SQL fragment | UNSUPPORTED}. `all` is handled before lookup.
 # Entities media/episode/video share the media cell (the shared `_search_media`).
 _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
@@ -154,9 +203,9 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
         """,
     },
     "content_chunk": {
-        "media": "AND cc.media_id = :scope_id",
+        "media": "AND cc.owner_kind = 'media' AND cc.owner_id = :scope_id",
         "library": """
-            AND cc.media_id IN (
+            AND cc.owner_kind = 'media' AND cc.owner_id IN (
                 SELECT media_id
                 FROM library_entries
                 WHERE library_id = :scope_id
@@ -164,7 +213,7 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
             )
         """,
         "conversation": """
-            AND cc.media_id IN (
+            AND cc.owner_kind = 'media' AND cc.owner_id IN (
                 SELECT media_id
                 FROM conversation_media
                 WHERE conversation_id = :scope_id
@@ -184,18 +233,20 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
         "conversation": UNSUPPORTED,
     },
     "evidence_span": {
-        "media": "AND es.media_id = :scope_id",
+        "media": "AND es.owner_kind = 'media' AND es.owner_id = :scope_id",
         "library": """
-            AND es.media_id IN (
+            AND es.owner_kind = 'media' AND es.owner_id IN (
                 SELECT media_id FROM library_entries WHERE library_id = :scope_id
             )
         """,
         "conversation": """
-            AND es.media_id IN (
+            AND es.owner_kind = 'media' AND es.owner_id IN (
                 SELECT media_id FROM conversation_media WHERE conversation_id = :scope_id
             )
         """,
     },
+    "page": _note_object_scope("page", "p.id"),
+    "note_block": _note_object_scope("note_block", "(cc.summary_locator->>'note_block_id')::uuid"),
     "highlight": {
         "media": "AND h.anchor_media_id = :scope_id",
         "library": """

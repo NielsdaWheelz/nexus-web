@@ -22,6 +22,12 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { useResource } from "@/lib/api/useResource";
+import {
+  useNotePulseHighlight,
+  type NotePulseTarget,
+} from "@/lib/reader/pulseEvent";
+import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
+import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isRecord } from "@/lib/validation";
 import { hasTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
@@ -81,6 +87,11 @@ interface LoadedNoteEditorResource {
   focusedBlock: NoteBlock | null;
 }
 
+const NOTE_PULSE_CLASS = "nexus-note-pulse";
+const NOTE_PULSE_DURATION_MS = 2400;
+const NOTE_PULSE_RETRY_MS = 120;
+const NOTE_PULSE_MAX_ATTEMPTS = 25;
+
 export default function PagePaneBody({
   pageIdOverride,
   focusBlockId,
@@ -116,6 +127,62 @@ export default function PagePaneBody({
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
   const editorLoadKeyRef = useRef(editorLoadKey);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+
+  // Note-citation activation: scroll the cited block into view and pulse it,
+  // the notes analog of the reader's evidence pulse. The cited block's offset
+  // range ([startOffset, endOffset)) lives inside one `li[data-note-block-id]`;
+  // the editor may still be mounting when the pulse fires, so retry briefly.
+  const pulseNoteBlock = useCallback((blockId: string) => {
+    let attempts = 0;
+    const tryPulse = () => {
+      const shell = shellRef.current;
+      const block = shell?.querySelector<HTMLElement>(
+        `li[data-note-block-id="${escapeAttrValue(blockId)}"]`,
+      );
+      if (!block) {
+        if (attempts++ < NOTE_PULSE_MAX_ATTEMPTS) {
+          window.setTimeout(tryPulse, NOTE_PULSE_RETRY_MS);
+        }
+        return;
+      }
+      block.scrollIntoView({ behavior: "smooth", block: "center" });
+      block.classList.remove(NOTE_PULSE_CLASS);
+      // Force a reflow so re-adding the class restarts the animation.
+      void block.offsetWidth;
+      block.classList.add(NOTE_PULSE_CLASS);
+      window.setTimeout(() => {
+        block.classList.remove(NOTE_PULSE_CLASS);
+      }, NOTE_PULSE_DURATION_MS);
+    };
+    tryPulse();
+  }, []);
+
+  // Live channel: handles the case where the cited page is already open in this
+  // pane when the citation is clicked.
+  const onNotePulse = useCallback(
+    (target: NotePulseTarget) => {
+      if (target.pageId !== pageId) return;
+      pulseNoteBlock(target.blockId);
+    },
+    [pageId, pulseNoteBlock],
+  );
+  useNotePulseHighlight(onNotePulse);
+
+  // Cross-pane channel: when a citation click navigated to (or opened a new pane
+  // for) this page, the live pulse event fired before this listener mounted. The
+  // activator stashed the target keyed by page id; consume it here once the
+  // editor content is ready, then clear it so a later genuine same-pane pulse
+  // still works. `pulseNoteBlock`'s retry loop tolerates the editor still
+  // mounting, but gating on the loaded `page`/`initialDoc` avoids burning retries
+  // before the editor exists at all.
+  const editorReady = page !== null && initialDoc !== null;
+  useEffect(() => {
+    if (!editorReady) return;
+    const pending = consumePendingNoteActivation(pageId);
+    if (!pending) return;
+    pulseNoteBlock(pending.blockId);
+  }, [editorReady, pageId, pulseNoteBlock]);
 
   const fallbackTitle = focusBlockId ? "Note" : "Page";
   useSetPaneTitle(page ? page.title || fallbackTitle : feedback ? fallbackTitle : null);
@@ -395,7 +462,7 @@ export default function PagePaneBody({
   if (!page || !initialDoc) return <PaneLoadingState />;
 
   return (
-    <div className={styles.editorShell}>
+    <div className={styles.editorShell} ref={shellRef}>
       <input
         className={styles.titleInput}
         value={titleDraft}

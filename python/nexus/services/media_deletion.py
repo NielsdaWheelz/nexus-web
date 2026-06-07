@@ -15,7 +15,7 @@ from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotF
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
 from nexus.services import library_entries
-from nexus.services.content_indexing import delete_media_content_index
+from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.default_library_closure import (
     count_default_references,
     detach_media_from_default_library,
@@ -327,10 +327,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
                     SELECT id FROM highlights WHERE anchor_media_id = :media_id
                ))
                OR (a_type = 'content_chunk' AND a_id IN (
-                    SELECT id FROM content_chunks WHERE media_id = :media_id
+                    SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id
                ))
                OR (b_type = 'content_chunk' AND b_id IN (
-                    SELECT id FROM content_chunks WHERE media_id = :media_id
+                    SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id
                ))
         """),
         {"media_id": media_id},
@@ -375,7 +375,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM highlights WHERE anchor_media_id = :media_id"),
         {"media_id": media_id},
     )
-    delete_media_content_index(db, media_id=media_id)
+    delete_content_index(db, owner=IndexOwner("media", media_id))
     db.execute(
         text("""
             DELETE FROM fragment_blocks
@@ -497,12 +497,12 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
                  OR (a_type = 'content_chunk' AND a_id IN (
                         SELECT id
                         FROM content_chunks
-                        WHERE media_id = :media_id
+                        WHERE owner_kind = 'media' AND owner_id = :media_id
                     ))
                  OR (b_type = 'content_chunk' AND b_id IN (
                         SELECT id
                         FROM content_chunks
-                        WHERE media_id = :media_id
+                        WHERE owner_kind = 'media' AND owner_id = :media_id
                     ))
               )
         """),

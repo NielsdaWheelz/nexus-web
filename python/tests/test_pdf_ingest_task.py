@@ -128,8 +128,8 @@ class TestIngestPdfTask:
             text(
                 """
                 SELECT status
-                FROM media_content_index_states
-                WHERE media_id = :mid
+                FROM content_index_states
+                WHERE owner_kind = 'media' AND owner_id = :mid
                 """
             ),
             {"mid": mid},
@@ -141,7 +141,7 @@ class TestIngestPdfTask:
                 """
                 SELECT block_idx, block_kind, canonical_text, locator, selector
                 FROM content_blocks
-                WHERE media_id = :mid
+                WHERE owner_kind = 'media' AND owner_id = :mid
                 ORDER BY block_idx
                 """
             ),
@@ -164,7 +164,10 @@ class TestIngestPdfTask:
 
         assert (
             db_session.execute(
-                text("SELECT count(*) FROM evidence_spans WHERE media_id = :mid"),
+                text(
+                    "SELECT count(*) FROM evidence_spans "
+                    "WHERE owner_kind = 'media' AND owner_id = :mid"
+                ),
                 {"mid": mid},
             ).scalar_one()
             == 2
@@ -174,7 +177,7 @@ class TestIngestPdfTask:
                 """
                 SELECT selector
                 FROM evidence_spans
-                WHERE media_id = :mid
+                WHERE owner_kind = 'media' AND owner_id = :mid
                 ORDER BY created_at
                 LIMIT 1
                 """
@@ -185,7 +188,10 @@ class TestIngestPdfTask:
         assert len(evidence_selector["geometry"]["quads"]) == 1
         assert (
             db_session.execute(
-                text("SELECT count(*) FROM content_chunks WHERE media_id = :mid"),
+                text(
+                    "SELECT count(*) FROM content_chunks "
+                    "WHERE owner_kind = 'media' AND owner_id = :mid"
+                ),
                 {"mid": mid},
             ).scalar_one()
             == 2
@@ -193,7 +199,8 @@ class TestIngestPdfTask:
 
     def test_pdf_page_label_and_geometry_survive_content_index_repair(self, db_session: Session):
         from nexus.services.content_indexing import (
-            delete_media_content_index,
+            IndexOwner,
+            delete_content_index,
             repair_ready_media_content_index_now,
         )
 
@@ -230,7 +237,7 @@ class TestIngestPdfTask:
         assert span_row[2] == 595
         assert span_row[3] == 0
 
-        delete_media_content_index(db_session, media_id=mid)
+        delete_content_index(db_session, owner=IndexOwner("media", mid))
         repair_result = repair_ready_media_content_index_now(
             db_session,
             media_id=mid,
@@ -244,7 +251,7 @@ class TestIngestPdfTask:
                 """
                 SELECT locator, selector, heading_path
                 FROM content_blocks
-                WHERE media_id = :mid
+                WHERE owner_kind = 'media' AND owner_id = :mid
                 ORDER BY block_idx ASC
                 LIMIT 1
                 """
@@ -290,8 +297,8 @@ class TestIngestPdfTask:
             text(
                 """
                 SELECT mcis.status, mcis.status_reason
-                FROM media_content_index_states mcis
-                WHERE mcis.media_id = :mid
+                FROM content_index_states mcis
+                WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :mid
                 """
             ),
             {"mid": mid},
@@ -304,7 +311,7 @@ class TestIngestPdfTask:
                 """
                 SELECT canonical_text, locator, selector
                 FROM content_blocks
-                WHERE media_id = :mid
+                WHERE owner_kind = 'media' AND owner_id = :mid
                 """
             ),
             {"mid": mid},
@@ -315,7 +322,10 @@ class TestIngestPdfTask:
         assert block[2]["text_quote"]["exact"] == ""
         assert (
             db_session.execute(
-                text("SELECT count(*) FROM content_chunks WHERE media_id = :mid"),
+                text(
+                    "SELECT count(*) FROM content_chunks "
+                    "WHERE owner_kind = 'media' AND owner_id = :mid"
+                ),
                 {"mid": mid},
             ).scalar_one()
             == 0

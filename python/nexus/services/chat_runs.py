@@ -1290,7 +1290,7 @@ async def _execute_chat_run(
                             assistant_message_id=run.assistant_message_id,
                             scopes=scopes,
                             planned_query=str(args.get("query") or ""),
-                            planned_types=["content_chunk"],
+                            planned_types=["content_chunk", "note_block"],
                             planned_filters={},
                             tool_call_index=tool_call_index_next,
                             forced_error=forced_error,

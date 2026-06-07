@@ -1811,10 +1811,10 @@ class TestMigrationUpgradeDowngrade:
                 rows = session.execute(
                     text(
                         """
-                        SELECT id, media_id, status, status_reason
-                        FROM media_content_index_states
-                        WHERE media_id = ANY(:media_ids)
-                        ORDER BY media_id
+                        SELECT id, owner_id AS media_id, status, status_reason
+                        FROM content_index_states
+                        WHERE owner_kind = 'media' AND owner_id = ANY(:media_ids)
+                        ORDER BY owner_id
                         """
                     ),
                     {"media_ids": [web_id, epub_id, pdf_id, pending_id]},
@@ -1877,7 +1877,7 @@ class TestMigrationUpgradeDowngrade:
                         """
                         SELECT is_nullable, column_default
                         FROM information_schema.columns
-                        WHERE table_name = 'media_content_index_states'
+                        WHERE table_name = 'content_index_states'
                           AND column_name = 'id'
                         """
                     )
@@ -1892,18 +1892,18 @@ class TestMigrationUpgradeDowngrade:
                         JOIN pg_attribute a
                           ON a.attrelid = c.conrelid
                          AND a.attnum = key.attnum
-                        WHERE c.conrelid = 'media_content_index_states'::regclass
+                        WHERE c.conrelid = 'content_index_states'::regclass
                           AND c.contype = 'p'
                         """
                     )
                 ).scalar_one()
-                media_unique = session.execute(
+                owner_unique = session.execute(
                     text(
                         """
                         SELECT 1
                         FROM pg_constraint
-                        WHERE conrelid = 'media_content_index_states'::regclass
-                          AND conname = 'uq_media_content_index_states_media'
+                        WHERE conrelid = 'content_index_states'::regclass
+                          AND conname = 'uq_content_index_states_owner'
                           AND contype = 'u'
                         """
                     )
@@ -1913,7 +1913,7 @@ class TestMigrationUpgradeDowngrade:
             assert id_column[0] == "NO"
             assert "gen_random_uuid" in id_column[1]
             assert primary_key_columns == ["id"]
-            assert media_unique == 1
+            assert owner_unique == 1
         finally:
             reset_test_schema()
             engine.dispose()
@@ -2584,11 +2584,19 @@ class TestMigrationUpgradeDowngrade:
                     assert_no_legacy_identity(row["result_refs"])
                     assert_no_legacy_identity(row["selected_context_refs"])
 
+                # 0141 drops the object_search substrate entirely (notes now live in
+                # content_chunks); both tables are gone at head.
                 assert (
                     session.execute(
-                        text("SELECT COUNT(*) FROM object_search_documents")
+                        text("SELECT to_regclass('public.object_search_documents')")
                     ).scalar_one()
-                    == 0
+                    is None
+                )
+                assert (
+                    session.execute(
+                        text("SELECT to_regclass('public.object_search_embeddings')")
+                    ).scalar_one()
+                    is None
                 )
                 assert session.execute(
                     text("""
@@ -4322,15 +4330,15 @@ class TestWorkerRuntime:
             ],
         )
         assert_index(
-            "ix_media_content_index_states_repair_waiting",
-            table_name="media_content_index_states",
-            keys=["updated_at", "media_id"],
+            "ix_content_index_states_repair_waiting",
+            table_name="content_index_states",
+            keys=["updated_at", "owner_kind", "owner_id"],
             predicate_fragments=["pending", "failed"],
         )
         assert_index(
-            "ix_media_content_index_states_repair_indexing",
-            table_name="media_content_index_states",
-            keys=["updated_at", "media_id"],
+            "ix_content_index_states_repair_indexing",
+            table_name="content_index_states",
+            keys=["updated_at", "owner_kind", "owner_id"],
             predicate_fragments=["indexing"],
         )
         assert_index(
@@ -6916,7 +6924,7 @@ class TestMigration0026SemanticChunkBackfill:
                     """
                     SELECT COUNT(*)
                     FROM content_chunks
-                    WHERE media_id = :media_id
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                       AND source_kind = 'transcript'
                     """
                 ),
@@ -6926,8 +6934,8 @@ class TestMigration0026SemanticChunkBackfill:
                 text(
                     """
                     SELECT COUNT(*)
-                    FROM media_content_index_states
-                    WHERE media_id = :media_id
+                    FROM content_index_states
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                       AND status = 'ready'
                     """
                 ),
@@ -8846,3 +8854,758 @@ class TestDurableSourceIngestMigrations:
         assert "ix_external_provider_events_request_id" in indexes
         assert "ix_external_provider_events_source_attempt_id" in indexes
         assert "ix_external_provider_events_provider_status_created" in indexes
+
+
+class TestMigration0141PolymorphicOwner:
+    """Notes/pages evidence unification: polymorphic content-index owner (0141/0142).
+
+    0141 generalizes content_blocks/content_chunks/evidence_spans/content_index_states
+    from a single media_id to a polymorphic (owner_kind, owner_id), extends the
+    source_kind/resolver_kind domains with 'note', renames
+    media_content_index_states -> content_index_states, and drops the never-finished
+    object_search substrate. 0142 adds the at-most-one-in-flight page reindex unique
+    index. These assertions run against the 0141/0142-upgraded HEAD schema.
+    """
+
+    OWNER_TABLES = ("content_blocks", "content_chunks", "evidence_spans")
+
+    def _insert_minimal_block(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        block_idx: int = 0,
+    ):
+        """Insert one HEAD-schema content_block and return its id (or raise)."""
+        return session.execute(
+            text(
+                """
+                INSERT INTO content_blocks (
+                    owner_kind,
+                    owner_id,
+                    block_idx,
+                    block_kind,
+                    canonical_text,
+                    source_start_offset,
+                    source_end_offset,
+                    heading_path,
+                    locator,
+                    selector,
+                    metadata
+                )
+                VALUES (
+                    :owner_kind,
+                    CAST(:owner_id AS uuid),
+                    :block_idx,
+                    'paragraph',
+                    'minimal block',
+                    0,
+                    13,
+                    '[]'::jsonb,
+                    '{}'::jsonb,
+                    '{}'::jsonb,
+                    '{}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {"owner_kind": owner_kind, "owner_id": str(owner_id), "block_idx": block_idx},
+        ).scalar_one()
+
+    def _insert_minimal_chunk(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        source_kind: str,
+        primary_evidence_span_id=None,
+        chunk_idx: int = 0,
+    ):
+        return session.execute(
+            text(
+                """
+                INSERT INTO content_chunks (
+                    owner_kind,
+                    owner_id,
+                    primary_evidence_span_id,
+                    chunk_idx,
+                    source_kind,
+                    chunk_text,
+                    token_count,
+                    heading_path,
+                    summary_locator
+                )
+                VALUES (
+                    :owner_kind,
+                    CAST(:owner_id AS uuid),
+                    CAST(:primary_evidence_span_id AS uuid),
+                    :chunk_idx,
+                    :source_kind,
+                    'minimal chunk',
+                    3,
+                    '[]'::jsonb,
+                    '{}'::jsonb
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "owner_kind": owner_kind,
+                "owner_id": str(owner_id),
+                "primary_evidence_span_id": (
+                    str(primary_evidence_span_id) if primary_evidence_span_id is not None else None
+                ),
+                "source_kind": source_kind,
+                "chunk_idx": chunk_idx,
+            },
+        ).scalar_one()
+
+    def _insert_minimal_span(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        start_block_id,
+        end_block_id,
+        resolver_kind: str,
+    ):
+        return session.execute(
+            text(
+                """
+                INSERT INTO evidence_spans (
+                    owner_kind,
+                    owner_id,
+                    start_block_id,
+                    end_block_id,
+                    start_block_offset,
+                    end_block_offset,
+                    span_text,
+                    selector,
+                    citation_label,
+                    resolver_kind
+                )
+                VALUES (
+                    :owner_kind,
+                    CAST(:owner_id AS uuid),
+                    CAST(:start_block_id AS uuid),
+                    CAST(:end_block_id AS uuid),
+                    0,
+                    13,
+                    'minimal span',
+                    '{}'::jsonb,
+                    'Source',
+                    :resolver_kind
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "owner_kind": owner_kind,
+                "owner_id": str(owner_id),
+                "start_block_id": str(start_block_id),
+                "end_block_id": str(end_block_id),
+                "resolver_kind": resolver_kind,
+            },
+        ).scalar_one()
+
+    def test_owner_columns_replace_media_id_at_head(self):
+        """(a) owner_kind/owner_id are NOT NULL and media_id is gone."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                for table in self.OWNER_TABLES:
+                    columns = {
+                        row[0]: row[1]
+                        for row in session.execute(
+                            text(
+                                """
+                                SELECT column_name, is_nullable
+                                FROM information_schema.columns
+                                WHERE table_name = :table
+                                """
+                            ),
+                            {"table": table},
+                        ).fetchall()
+                    }
+                    assert "media_id" not in columns, (
+                        f"{table}.media_id must be dropped at head. Columns={columns}"
+                    )
+                    assert columns.get("owner_kind") == "NO", (
+                        f"{table}.owner_kind must be NOT NULL at head. Columns={columns}"
+                    )
+                    assert columns.get("owner_id") == "NO", (
+                        f"{table}.owner_id must be NOT NULL at head. Columns={columns}"
+                    )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_owner_kind_check_rejects_unknown_kind(self):
+        """(b) ck_<table>_owner_kind rejects owner_kind outside ('media', 'page')."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            owner_id = uuid4()
+            with Session(engine) as session:
+                block_id = self._insert_minimal_block(session, owner_kind="page", owner_id=owner_id)
+                session.commit()
+
+                # content_blocks
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_minimal_block(session, owner_kind="garbage", owner_id=owner_id)
+                    session.commit()
+                session.rollback()
+                assert "ck_content_blocks_owner_kind" in str(exc_info.value)
+
+                # content_chunks
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_minimal_chunk(
+                        session,
+                        owner_kind="garbage",
+                        owner_id=owner_id,
+                        source_kind="note",
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_content_chunks_owner_kind" in str(exc_info.value)
+
+                # evidence_spans
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_minimal_span(
+                        session,
+                        owner_kind="garbage",
+                        owner_id=owner_id,
+                        start_block_id=block_id,
+                        end_block_id=block_id,
+                        resolver_kind="note",
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_evidence_spans_owner_kind" in str(exc_info.value)
+
+                # content_index_states
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO content_index_states (
+                                owner_kind, owner_id, status
+                            )
+                            VALUES ('garbage', CAST(:owner_id AS uuid), 'pending')
+                            """
+                        ),
+                        {"owner_id": str(owner_id)},
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_content_index_states_owner_kind" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_discriminator_checks_accept_note_and_reject_unknown(self):
+        """(c) source_kind/resolver_kind accept 'note' and reject a bogus kind."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            owner_id = uuid4()
+            with Session(engine) as session:
+                block_id = self._insert_minimal_block(session, owner_kind="page", owner_id=owner_id)
+
+                # content_chunks accepts source_kind='note'.
+                self._insert_minimal_chunk(
+                    session,
+                    owner_kind="page",
+                    owner_id=owner_id,
+                    source_kind="note",
+                    chunk_idx=0,
+                )
+                # evidence_spans accepts resolver_kind='note'.
+                self._insert_minimal_span(
+                    session,
+                    owner_kind="page",
+                    owner_id=owner_id,
+                    start_block_id=block_id,
+                    end_block_id=block_id,
+                    resolver_kind="note",
+                )
+                session.commit()
+
+                # content_chunks rejects a bogus source_kind.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_minimal_chunk(
+                        session,
+                        owner_kind="page",
+                        owner_id=owner_id,
+                        source_kind="bogus_kind",
+                        chunk_idx=1,
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_content_chunks_source_kind" in str(exc_info.value)
+
+                # evidence_spans rejects a bogus resolver_kind.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_minimal_span(
+                        session,
+                        owner_kind="page",
+                        owner_id=owner_id,
+                        start_block_id=block_id,
+                        end_block_id=block_id,
+                        resolver_kind="bogus_kind",
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_evidence_spans_resolver" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_owner_keys_recreated_and_media_keys_gone(self):
+        """(d) Owner uniques/indexes exist by name; old media keys are gone."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                constraint_names = {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            "SELECT conname FROM pg_constraint WHERE connamespace = "
+                            "'public'::regnamespace"
+                        )
+                    ).fetchall()
+                }
+                index_names = {
+                    row[0]
+                    for row in session.execute(
+                        text("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")
+                    ).fetchall()
+                }
+
+            present = constraint_names | index_names
+            expected_owner_keys = (
+                "uq_content_blocks_owner_idx",
+                "uq_content_chunks_owner_idx",
+                "uq_content_index_states_owner",
+                "ix_evidence_spans_owner",
+            )
+            for key in expected_owner_keys:
+                assert key in present, (
+                    f"Expected recreated owner key {key} at head. "
+                    f"Constraints={sorted(constraint_names)} Indexes={sorted(index_names)}"
+                )
+
+            removed_media_keys = (
+                "uq_content_blocks_media_idx",
+                "ix_content_blocks_media_idx",
+                "uq_content_chunks_media_idx",
+                "ix_content_chunks_media_idx",
+                "ix_evidence_spans_media",
+                "uq_media_content_index_states_media",
+            )
+            for key in removed_media_keys:
+                assert key not in present, (
+                    f"Old media key {key} must be gone at head. Present={sorted(present)}"
+                )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_page_owner_scoped_delete_clears_note_evidence(self):
+        """(e) AC-4: owner-scoped delete drops page note evidence + nulls retrievals."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            tool_call_id = uuid4()
+            page_owner_id = uuid4()
+            # An unrelated media owner whose evidence must survive the page-scoped delete.
+            other_owner_id = uuid4()
+
+            with Session(engine) as session:
+                # Conversation/message/tool_call chain to host a message_retrievals row.
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :user_id, 'private', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conversation_id, 1, 'user', 'note please', 'complete')
+                        """
+                    ),
+                    {"id": user_message_id, "conversation_id": conversation_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES (:id, :conversation_id, 2, 'assistant', '', 'pending', :parent_id)
+                        """
+                    ),
+                    {
+                        "id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_id": user_message_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            id, conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, scope, status
+                        )
+                        VALUES (
+                            :id, :conversation_id, :user_message_id, :assistant_message_id,
+                            'app_search', 0, 'all', 'complete'
+                        )
+                        """
+                    ),
+                    {
+                        "id": tool_call_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+
+                # Page-owned note evidence: block -> span -> chunk -> part + embedding + state.
+                page_block_id = self._insert_minimal_block(
+                    session, owner_kind="page", owner_id=page_owner_id
+                )
+                page_span_id = self._insert_minimal_span(
+                    session,
+                    owner_kind="page",
+                    owner_id=page_owner_id,
+                    start_block_id=page_block_id,
+                    end_block_id=page_block_id,
+                    resolver_kind="note",
+                )
+                page_chunk_id = self._insert_minimal_chunk(
+                    session,
+                    owner_kind="page",
+                    owner_id=page_owner_id,
+                    source_kind="note",
+                    primary_evidence_span_id=page_span_id,
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO content_chunk_parts (
+                            chunk_id, part_idx, block_id,
+                            block_start_offset, block_end_offset,
+                            chunk_start_offset, chunk_end_offset
+                        )
+                        VALUES (
+                            CAST(:chunk_id AS uuid), 0, CAST(:block_id AS uuid),
+                            0, 13, 0, 13
+                        )
+                        """
+                    ),
+                    {"chunk_id": str(page_chunk_id), "block_id": str(page_block_id)},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO content_embeddings (
+                            chunk_id, embedding_provider, embedding_model,
+                            embedding_dimensions, embedding_vector
+                        )
+                        VALUES (
+                            CAST(:chunk_id AS uuid), 'fixture', 'fixture',
+                            256, CAST(:embedding_vector AS vector(256))
+                        )
+                        """
+                    ),
+                    {
+                        "chunk_id": str(page_chunk_id),
+                        "embedding_vector": "[" + ",".join(["0"] * 256) + "]",
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO content_index_states (owner_kind, owner_id, status)
+                        VALUES ('page', CAST(:owner_id AS uuid), 'ready')
+                        """
+                    ),
+                    {"owner_id": str(page_owner_id)},
+                )
+
+                # A message_retrievals row pointing at the page-owned span.
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrievals (
+                            tool_call_id, ordinal, result_type, source_id,
+                            context_ref, result_ref, evidence_span_id
+                        )
+                        VALUES (
+                            :tool_call_id, 0, 'note_block', :source_id,
+                            jsonb_build_object('type', 'note_block', 'id', CAST(:source_id AS text)),
+                            jsonb_build_object('type', 'note_block', 'id', CAST(:source_id AS text)),
+                            CAST(:evidence_span_id AS uuid)
+                        )
+                        """
+                    ),
+                    {
+                        "tool_call_id": tool_call_id,
+                        "source_id": str(uuid4()),
+                        "evidence_span_id": str(page_span_id),
+                    },
+                )
+
+                # An unrelated media-owned span + retrieval that MUST survive the delete.
+                other_block_id = self._insert_minimal_block(
+                    session, owner_kind="media", owner_id=other_owner_id
+                )
+                other_span_id = self._insert_minimal_span(
+                    session,
+                    owner_kind="media",
+                    owner_id=other_owner_id,
+                    start_block_id=other_block_id,
+                    end_block_id=other_block_id,
+                    resolver_kind="web",
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrievals (
+                            tool_call_id, ordinal, result_type, source_id,
+                            context_ref, result_ref, evidence_span_id
+                        )
+                        VALUES (
+                            :tool_call_id, 1, 'content_chunk', :source_id,
+                            jsonb_build_object('type', 'content_chunk', 'id', CAST(:source_id AS text)),
+                            jsonb_build_object('type', 'content_chunk', 'id', CAST(:source_id AS text)),
+                            CAST(:evidence_span_id AS uuid)
+                        )
+                        """
+                    ),
+                    {
+                        "tool_call_id": tool_call_id,
+                        "source_id": str(uuid4()),
+                        "evidence_span_id": str(other_span_id),
+                    },
+                )
+                session.commit()
+
+            # Run the owner-scoped delete sequence the application uses for a page
+            # (services/content_indexing.delete_content_index, owner_kind='page'):
+            # null dangling retrievals first, then delete state/embeddings/parts/
+            # chunks/spans/blocks for that owner.
+            params = {"owner_kind": "page", "owner_id": str(page_owner_id)}
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        """
+                        UPDATE message_retrievals mr
+                        SET evidence_span_id = NULL
+                        FROM evidence_spans es
+                        WHERE mr.evidence_span_id = es.id
+                          AND es.owner_kind = :owner_kind
+                          AND es.owner_id = CAST(:owner_id AS uuid)
+                        """
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        "DELETE FROM content_index_states "
+                        "WHERE owner_kind = :owner_kind AND owner_id = CAST(:owner_id AS uuid)"
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        """
+                        DELETE FROM content_embeddings ce
+                        USING content_chunks cc
+                        WHERE ce.chunk_id = cc.id
+                          AND cc.owner_kind = :owner_kind
+                          AND cc.owner_id = CAST(:owner_id AS uuid)
+                        """
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        """
+                        DELETE FROM content_chunk_parts ccp
+                        USING content_chunks cc
+                        WHERE ccp.chunk_id = cc.id
+                          AND cc.owner_kind = :owner_kind
+                          AND cc.owner_id = CAST(:owner_id AS uuid)
+                        """
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        "DELETE FROM content_chunks "
+                        "WHERE owner_kind = :owner_kind AND owner_id = CAST(:owner_id AS uuid)"
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        "DELETE FROM evidence_spans "
+                        "WHERE owner_kind = :owner_kind AND owner_id = CAST(:owner_id AS uuid)"
+                    ),
+                    params,
+                )
+                session.execute(
+                    text(
+                        "DELETE FROM content_blocks "
+                        "WHERE owner_kind = :owner_kind AND owner_id = CAST(:owner_id AS uuid)"
+                    ),
+                    params,
+                )
+                session.commit()
+
+            with Session(engine) as session:
+                dangling = session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM message_retrievals mr
+                        WHERE mr.evidence_span_id IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM evidence_spans es WHERE es.id = mr.evidence_span_id
+                          )
+                        """
+                    )
+                ).scalar_one()
+                assert dangling == 0, (
+                    f"Expected zero dangling message_retrievals.evidence_span_id, got {dangling}"
+                )
+
+                for table in (
+                    "content_chunk_parts",
+                    "content_embeddings",
+                    "content_chunks",
+                    "content_index_states",
+                    "content_blocks",
+                    "evidence_spans",
+                ):
+                    if table in ("content_chunk_parts", "content_embeddings"):
+                        residual = session.execute(
+                            text(
+                                f"""
+                                SELECT COUNT(*)
+                                FROM {table} t
+                                JOIN content_chunks cc ON cc.id = t.chunk_id
+                                WHERE cc.owner_kind = 'page'
+                                  AND cc.owner_id = CAST(:owner_id AS uuid)
+                                """
+                            ),
+                            {"owner_id": str(page_owner_id)},
+                        ).scalar_one()
+                    else:
+                        residual = session.execute(
+                            text(
+                                f"""
+                                SELECT COUNT(*) FROM {table}
+                                WHERE owner_kind = 'page'
+                                  AND owner_id = CAST(:owner_id AS uuid)
+                                """
+                            ),
+                            {"owner_id": str(page_owner_id)},
+                        ).scalar_one()
+                    assert residual == 0, (
+                        f"Expected zero residual {table} rows for the deleted page owner, "
+                        f"got {residual}"
+                    )
+
+                # The unrelated media-owned retrieval/span must be untouched.
+                survivor = session.execute(
+                    text(
+                        """
+                        SELECT mr.evidence_span_id
+                        FROM message_retrievals mr
+                        WHERE mr.result_type = 'content_chunk'
+                        """
+                    )
+                ).scalar_one()
+                assert survivor is not None, (
+                    "Media-owned retrieval evidence_span_id must survive the page-scoped delete"
+                )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_page_reindex_inflight_index_present_at_head(self):
+        """(f) 0142 partial unique index uq_page_reindex_job_inflight exists at head."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                row = session.execute(
+                    text(
+                        """
+                        SELECT i.indisunique, pg_get_expr(i.indpred, i.indrelid) AS predicate
+                        FROM pg_index i
+                        JOIN pg_class idx ON idx.oid = i.indexrelid
+                        JOIN pg_class tbl ON tbl.oid = i.indrelid
+                        WHERE idx.relname = 'uq_page_reindex_job_inflight'
+                          AND tbl.relname = 'background_jobs'
+                        """
+                    )
+                ).fetchone()
+
+            assert row is not None, (
+                "Expected 0142 index uq_page_reindex_job_inflight on background_jobs at head"
+            )
+            indisunique, predicate = row
+            assert indisunique is True, (
+                f"uq_page_reindex_job_inflight must be unique. indisunique={indisunique}"
+            )
+            assert predicate is not None, (
+                "uq_page_reindex_job_inflight must be a partial index (have a predicate)"
+            )
+            predicate_lower = predicate.lower()
+            assert "page_reindex_job" in predicate_lower, (
+                f"Expected partial predicate to scope to page_reindex_job. Predicate={predicate}"
+            )
+            assert "succeeded" in predicate_lower and "dead" in predicate_lower, (
+                f"Expected partial predicate to exclude terminal states. Predicate={predicate}"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()

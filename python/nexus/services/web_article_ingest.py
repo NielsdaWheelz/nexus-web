@@ -94,9 +94,9 @@ def _do_ingest(
                 """
                 SELECT EXISTS (
                     SELECT 1
-                    FROM media_content_index_states mcis
-                    JOIN content_chunks cc ON cc.media_id = mcis.media_id
-                    WHERE mcis.media_id = :id
+                    FROM content_index_states mcis
+                    JOIN content_chunks cc ON cc.owner_kind = mcis.owner_kind AND cc.owner_id = mcis.owner_id
+                    WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :id
                       AND mcis.status = 'ready'
                       AND cc.source_kind = 'web_article'
                 )

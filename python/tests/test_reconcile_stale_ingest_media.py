@@ -178,8 +178,8 @@ def _seed_stale_pending_upload_child_rows(db: Session, media_id: UUID) -> None:
     )
     db.execute(
         text("""
-            INSERT INTO media_content_index_states (media_id, status, status_reason)
-            VALUES (:media_id, 'failed', 'test_abandoned_upload_cleanup')
+            INSERT INTO content_index_states (owner_kind, owner_id, status, status_reason)
+            VALUES ('media', :media_id, 'failed', 'test_abandoned_upload_cleanup')
         """),
         {"media_id": media_id},
     )
@@ -208,7 +208,12 @@ def _assert_stale_pending_upload_child_rows_deleted(db: Session, media_id: UUID)
     assert _count_rows(db, "user_media_deletions", "media_id = :media_id", media_id=media_id) == 0
     assert _count_rows(db, "media_file", "media_id = :media_id", media_id=media_id) == 0
     assert (
-        _count_rows(db, "media_content_index_states", "media_id = :media_id", media_id=media_id)
+        _count_rows(
+            db,
+            "content_index_states",
+            "owner_kind = 'media' AND owner_id = :media_id",
+            media_id=media_id,
+        )
         == 0
     )
     object_links = db.execute(
@@ -573,8 +578,8 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
     db.execute(
         text(
             """
-            INSERT INTO media_content_index_states (media_id, status, status_reason)
-            VALUES (:media_id, 'pending', 'test')
+            INSERT INTO content_index_states (owner_kind, owner_id, status, status_reason)
+            VALUES ('media', :media_id, 'pending', 'test')
             """
         ),
         {"media_id": media_id},
@@ -588,12 +593,12 @@ def _mark_content_index_state_stale_indexing(db: Session, *, media_id: UUID) -> 
     db.execute(
         text(
             """
-            UPDATE media_content_index_states
+            UPDATE content_index_states
             SET
                 status = 'indexing',
                 status_reason = 'stale indexing test',
                 updated_at = :started_at
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {"media_id": media_id, "started_at": started_at},
@@ -811,9 +816,9 @@ def test_reconciler_repairs_pending_document_content_index(db_session: Session, 
         text(
             """
             SELECT mcis.status, count(cc.id)
-            FROM media_content_index_states mcis
-            JOIN content_chunks cc ON cc.media_id = mcis.media_id
-            WHERE mcis.media_id = :media_id
+            FROM content_index_states mcis
+            JOIN content_chunks cc ON cc.owner_kind = mcis.owner_kind AND cc.owner_id = mcis.owner_id
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
             GROUP BY mcis.status
             """
         ),
@@ -858,9 +863,11 @@ def test_reconciler_recovers_stale_indexing_document_content_index(db_session: S
             SELECT
                 mcis.status,
                 active_chunk.chunk_text
-            FROM media_content_index_states mcis
-            JOIN content_chunks active_chunk ON active_chunk.media_id = mcis.media_id
-            WHERE mcis.media_id = :media_id
+            FROM content_index_states mcis
+            JOIN content_chunks active_chunk
+                ON active_chunk.owner_kind = mcis.owner_kind
+               AND active_chunk.owner_id = mcis.owner_id
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -1036,7 +1043,7 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
             SELECT DISTINCT ce.embedding_model
             FROM content_chunks cc
             JOIN content_embeddings ce ON ce.chunk_id = cc.id
-            WHERE cc.media_id = :media_id
+            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
               AND cc.source_kind = 'transcript'
             ORDER BY ce.embedding_model
             """
@@ -1108,7 +1115,7 @@ def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
             SELECT DISTINCT ce.embedding_model
             FROM content_chunks cc
             JOIN content_embeddings ce ON ce.chunk_id = cc.id
-            WHERE cc.media_id = :media_id
+            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
               AND cc.source_kind = 'transcript'
             ORDER BY ce.embedding_model
             """
@@ -1175,7 +1182,7 @@ def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
             """
             SELECT COUNT(*)
             FROM content_chunks
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
               AND source_kind = 'transcript'
             """
         ),

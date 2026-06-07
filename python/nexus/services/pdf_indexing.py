@@ -26,8 +26,9 @@ def index_pdf_evidence(
     """Index extracted PDF text into the shared evidence layer."""
     try:
         from nexus.services.content_indexing import (
+            IndexOwner,
             build_pdf_indexable_blocks,
-            rebuild_media_content_index,
+            rebuild_content_index,
         )
 
         media = db.get(Media, media_uuid)
@@ -51,9 +52,9 @@ def index_pdf_evidence(
             ocr_confidence=extraction_result.ocr_confidence if extraction_result else None,
         )
 
-        index_result = rebuild_media_content_index(
+        index_result = rebuild_content_index(
             db,
-            media_id=media_uuid,
+            owner=IndexOwner("media", media_uuid),
             source_kind="pdf",
             blocks=blocks,
             reason="pdf_ingest",
@@ -79,7 +80,10 @@ def index_pdf_evidence(
         )
         error_code = exc.code.value if isinstance(exc, ApiError) else "E_INGEST_FAILED"
         try:
-            from nexus.services.content_indexing import mark_content_index_failed
+            from nexus.services.content_indexing import (
+                IndexOwner,
+                mark_content_index_failed,
+            )
 
             media = db.get(Media, media_uuid)
             if media:
@@ -93,7 +97,7 @@ def index_pdf_evidence(
                 )
                 mark_content_index_failed(
                     db,
-                    media_id=media_uuid,
+                    owner=IndexOwner("media", media_uuid),
                     failure_code=error_code,
                     failure_message=failure_message,
                 )
@@ -110,11 +114,11 @@ def _mark_pdf_ocr_required_index(db: Session, media_uuid: UUID) -> None:
     db.execute(
         text(
             """
-            UPDATE media_content_index_states
+            UPDATE content_index_states
             SET status = 'ocr_required',
                 status_reason = 'ocr_required',
                 updated_at = :now
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {"media_id": media_uuid, "now": now},

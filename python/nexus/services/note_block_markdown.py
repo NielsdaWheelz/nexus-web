@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock
+from nexus.db.models import NOTE_BLOCK_SIBLING_ORDER, NoteBlock
 
 
 def ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
@@ -17,9 +17,7 @@ def ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
             .where(NoteBlock.page_id == page_id)
             .order_by(
                 NoteBlock.parent_block_id.asc().nullsfirst(),
-                NoteBlock.order_key.asc(),
-                NoteBlock.created_at.asc(),
-                NoteBlock.id.asc(),
+                *NOTE_BLOCK_SIBLING_ORDER,
             )
         )
     )

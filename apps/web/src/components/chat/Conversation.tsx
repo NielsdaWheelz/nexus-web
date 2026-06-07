@@ -195,17 +195,23 @@ export default function Conversation() {
   const handleReaderSourceActivate = useCallback(
     (target: ReaderSourceTarget, event?: React.MouseEvent) => {
       const href =
-        target.href ??
-        hrefForReaderTarget({
-          media_id: target.media_id,
-          evidence_span_id: target.evidence_span_id,
-          locator: target.locator,
-        });
+        target.kind === "note"
+          ? (target.href ?? `/notes/${target.block_id}`)
+          : (target.href ??
+            hrefForReaderTarget({
+              media_id: target.media_id,
+              evidence_span_id: target.evidence_span_id,
+              locator: target.locator,
+            }));
       if (event?.shiftKey) {
         openInNewPane?.(href);
         return;
       }
-      if (resourceRef === `media:${target.media_id}`) return;
+      const currentRef =
+        target.kind === "note"
+          ? `note_block:${target.block_id}`
+          : `media:${target.media_id}`;
+      if (resourceRef === currentRef) return;
       router.push(href);
     },
     [openInNewPane, resourceRef, router],

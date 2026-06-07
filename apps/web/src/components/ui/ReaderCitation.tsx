@@ -167,7 +167,12 @@ export default function ReaderCitation({
   }
 
   if (activationTarget) {
-    const canonicalHashHref = activationTarget.href ?? href ?? `/media/${activationTarget.media_id}`;
+    const canonicalHashHref =
+      activationTarget.href ??
+      href ??
+      (activationTarget.kind === "note"
+        ? `/notes/${activationTarget.block_id}`
+        : `/media/${activationTarget.media_id}`);
     return (
       <>
         <a

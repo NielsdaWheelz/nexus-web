@@ -169,8 +169,8 @@ def run_web_article_source_fixture_with_dedupe_resolution(
                  AND le.media_id = dli.media_id
                 JOIN media m
                   ON m.id = dli.media_id
-                JOIN media_content_index_states mcis
-                  ON mcis.media_id = m.id
+                JOIN content_index_states mcis
+                  ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                 WHERE dl.owner_user_id = :user_id
                   AND dl.is_default = true
                   AND m.kind = 'web_article'

@@ -264,6 +264,16 @@ def _locator_from_resolved_evidence(
             "t_end_ms": selector.get("t_end_ms"),
             "text_quote_selector": quote_selector,
         }
+    elif kind == "note":
+        # Page-owned (note) evidence. `media_id` here is the page id (the span owner).
+        # `note_block_offsets` forbids extra keys, so no media_id/text_quote_selector.
+        locator = {
+            "type": "note_block_offsets",
+            "page_id": selector.get("page_id"),
+            "block_id": selector.get("note_block_id"),
+            "start_offset": selector.get("start_offset"),
+            "end_offset": selector.get("end_offset"),
+        }
     else:
         raise AssertionError("Resolved evidence has unsupported resolver kind")
 
@@ -290,7 +300,8 @@ def _result_deep_link(result: InternalSearchResult) -> str:
         return f"/pages/{result.id}"
     if isinstance(result, _RankedContentChunkResult):
         # Resolver always seeds params["evidence"] with the span id (see
-        # locator_resolver.resolve_evidence_span); route is /media/<media_id>.
+        # locator_resolver.resolve_evidence_span); route is /media/<media_id> for
+        # media-owned chunks or /notes/<note_block_id> for page-owned (note) chunks.
         route = result.resolver.get("route")
         params = result.resolver.get("params")
         if not isinstance(route, str) or not route:

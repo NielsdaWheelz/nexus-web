@@ -27,12 +27,15 @@ from nexus.db.models import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.image_validation import ValidatedImage
+from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.oracle import (
     ORACLE_CANONICAL_PUBLIC_DOMAIN_WORK_SLUGS,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
     ORACLE_THEMES,
+    _retrieve_user_content_chunks_by_embedding,
+    _retrieve_user_library_passages,
     compute_concordance,
     create_reading,
     execute_reading,
@@ -1059,9 +1062,9 @@ def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
     db_session.execute(
         text(
             """
-            UPDATE media_content_index_states
+            UPDATE content_index_states
             SET active_embedding_model = 'stale-model'
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {"media_id": media_id},
@@ -2186,3 +2189,188 @@ def test_is_reading_terminal_treats_missing_reading_as_terminal(db_session: Sess
     fix that the unified cursor stream relies on for its gone-terminal close path.
     """
     assert is_reading_terminal(db_session, reading_id=uuid4()) is True
+
+
+def _seed_ready_note(
+    db: Session,
+    *,
+    user_id: UUID,
+    page_id: UUID,
+    note_block_id: UUID,
+    page_title: str,
+    body_text: str,
+) -> None:
+    """Insert a page + single note_block owned by ``user_id`` and index it into the
+    unified content pipeline (owner_kind='page'), yielding a ready content_index_states
+    row plus a content_embedding under current_transcript_embedding_model(). Mirrors the
+    note-block seeding used by the search tests (test_search._seed_note_block).
+    """
+    db.execute(
+        text("INSERT INTO pages (id, user_id, title) VALUES (:page_id, :user_id, :title)"),
+        {"page_id": page_id, "user_id": user_id, "title": page_title},
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO note_blocks (
+                id, user_id, page_id, order_key, block_kind,
+                body_pm_json, body_markdown, body_text, collapsed
+            )
+            VALUES (
+                :note_block_id, :user_id, :page_id, '0000000001', 'bullet',
+                jsonb_build_object(
+                    'type', 'paragraph',
+                    'content', jsonb_build_array(
+                        jsonb_build_object('type', 'text', 'text', CAST(:body_text AS text))
+                    )
+                ),
+                :body_text, :body_text, false
+            )
+            """
+        ),
+        {
+            "note_block_id": note_block_id,
+            "user_id": user_id,
+            "page_id": page_id,
+            "body_text": body_text,
+        },
+    )
+    db.flush()
+    result = rebuild_page_content_index(db, page_id=page_id, reason="test")
+    assert result.status == "ready", (
+        f"expected the seeded note index to be ready, got {result.status} for page {page_id}"
+    )
+
+
+# The oracle question whose tokens the seeded note body deliberately shares, so the
+# deterministic test embedding gives the note a high cosine score against the oracle
+# user-content retrieval query.
+_NOTE_ORACLE_QUESTION = "Where does the lantern lead through shadow and dawn?"
+_NOTE_BODY_TEXT = (
+    "Where does the lantern lead through shadow and dawn, the forest lamp descending "
+    "toward morning."
+)
+
+
+def test_retrieve_user_library_passages_includes_page_owned_notes(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """Oracle can cite your notes: a page-owned (owner_kind='page') note whose body
+    embedding matches the oracle user-content retrieval query surfaces as a user-library
+    candidate carrying source['content_source_kind'] == 'note'. This pins the AC-9
+    headline that note evidence joins media evidence in oracle retrieval.
+    """
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    page_id = uuid4()
+    note_block_id = uuid4()
+    _seed_ready_note(
+        db_session,
+        user_id=user_id,
+        page_id=page_id,
+        note_block_id=note_block_id,
+        page_title="Lantern Notebook",
+        body_text=_NOTE_BODY_TEXT,
+    )
+    db_session.commit()
+
+    query_embedding_model, query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
+    assert query_embedding_model == current_transcript_embedding_model(), (
+        "the note index and the oracle query must share the embedding model, "
+        f"got index model {current_transcript_embedding_model()} vs query {query_embedding_model}"
+    )
+
+    candidates = _retrieve_user_library_passages(
+        db_session,
+        viewer_id=user_id,
+        query_embedding_model=query_embedding_model,
+        query_embedding=query_embedding,
+    )
+
+    note_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.source.get("content_source_kind") == "note"
+    ]
+    assert note_candidates, (
+        "expected a page-owned note among the oracle user-library candidates "
+        f"(oracle cites your notes); got sources {[c.source for c in candidates]}"
+    )
+    note_candidate = note_candidates[0]
+    assert note_candidate.source.get("owner_kind") == "page", (
+        f"note candidate should be owner_kind='page', got {note_candidate.source}"
+    )
+    assert note_candidate.source.get("media_id") == str(page_id), (
+        f"note candidate owner id should be the page id {page_id}, got {note_candidate.source}"
+    )
+    assert note_candidate.source_kind == "user_media", (
+        f"note candidate should be offered as a user_media candidate, got {note_candidate.source_kind}"
+    )
+
+
+def test_retrieve_user_content_keeps_note_when_id_collides_with_media(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """Owner-collision dedup (the load-bearing half of AC-9): a media-owned chunk and a
+    page-owned note chunk that share the SAME uuid value across the two owner keyspaces
+    must BOTH survive dedup, because the dedup key is (owner_kind, owner_id) and not the
+    bare id. Under the pre-cutover set[str] dedup the note would be dropped as a duplicate
+    of the media id. We assert at both the embedding-row seam and the deduped
+    user-library seam.
+    """
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+
+    media_id = create_searchable_media(
+        db_session,
+        user_id,
+        title=_NOTE_BODY_TEXT,
+    )
+
+    # Force the page id to equal the media id so the two owner keyspaces collide on the
+    # bare uuid; only an (owner_kind, owner_id) dedup keeps both.
+    note_block_id = uuid4()
+    _seed_ready_note(
+        db_session,
+        user_id=user_id,
+        page_id=media_id,
+        note_block_id=note_block_id,
+        page_title="Colliding Notebook",
+        body_text=_NOTE_BODY_TEXT,
+    )
+    db_session.commit()
+
+    query_embedding_model, query_embedding = build_text_embedding(_NOTE_ORACLE_QUESTION)
+
+    rows = _retrieve_user_content_chunks_by_embedding(
+        db_session,
+        viewer_id=user_id,
+        query_embedding_model=query_embedding_model,
+        query_embedding=query_embedding,
+    )
+    owner_kinds_for_id = {
+        str(row["owner_kind"]) for row in rows if str(row["media_id"]) == str(media_id)
+    }
+    assert owner_kinds_for_id == {"media", "page"}, (
+        "both a media-owned and a page-owned chunk should share the colliding id at the "
+        f"embedding-row seam, got {owner_kinds_for_id} for id {media_id}"
+    )
+
+    candidates = _retrieve_user_library_passages(
+        db_session,
+        viewer_id=user_id,
+        query_embedding_model=query_embedding_model,
+        query_embedding=query_embedding,
+    )
+    owner_kinds_kept = {
+        str(candidate.source.get("owner_kind"))
+        for candidate in candidates
+        if candidate.source.get("media_id") == str(media_id)
+    }
+    assert owner_kinds_kept == {"media", "page"}, (
+        "both owner kinds sharing the colliding id must survive the (owner_kind, owner_id) "
+        f"dedup (the note is not dropped); got {owner_kinds_kept} from sources "
+        f"{[c.source for c in candidates]}"
+    )

@@ -261,7 +261,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             FROM library_entries le
             JOIN media m ON m.id = le.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN content_chunks cc ON cc.media_id = m.id
+            LEFT JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = m.id
             WHERE le.library_id = :library_id
               AND le.media_id IS NOT NULL
             GROUP BY le.position, le.media_id, m.title, m.kind, m.processing_status, m.updated_at
@@ -298,7 +298,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             LEFT JOIN podcast_episodes pe ON pe.podcast_id = p.id
             LEFT JOIN media m ON m.id = pe.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
-            LEFT JOIN content_chunks cc ON cc.media_id = m.id
+            LEFT JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = m.id
             WHERE le.library_id = :library_id
               AND le.podcast_id IS NOT NULL
             GROUP BY le.position, le.podcast_id, p.title, p.updated_at

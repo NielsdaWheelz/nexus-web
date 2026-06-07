@@ -8,7 +8,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypeGuard
+from typing import Any, Literal, TypeGuard
 from uuid import UUID
 
 from sqlalchemy import text
@@ -32,8 +32,16 @@ CHUNK_OVERLAP_TOKENS = 60
 
 
 @dataclass(frozen=True)
+class IndexOwner:
+    """Polymorphic owner of a content index. Forward-compatible with ResourceRef."""
+
+    kind: Literal["media", "page"]
+    id: UUID
+
+
+@dataclass(frozen=True)
 class IndexableBlock:
-    media_id: UUID
+    owner: IndexOwner
     source_kind: str
     block_idx: int
     block_kind: str
@@ -49,20 +57,20 @@ class IndexableBlock:
 
 @dataclass(frozen=True)
 class ContentIndexResult:
-    media_id: UUID
+    owner: IndexOwner
     status: str
     chunk_count: int
 
 
-def rebuild_media_content_index(
+def rebuild_content_index(
     db: Session,
     *,
-    media_id: UUID,
+    owner: IndexOwner,
     source_kind: str,
     blocks: list[IndexableBlock],
     reason: str,
 ) -> ContentIndexResult:
-    _validate_blocks(media_id=media_id, source_kind=source_kind, blocks=blocks)
+    _validate_blocks(owner=owner, source_kind=source_kind, blocks=blocks)
 
     embedding_model = current_transcript_embedding_model()
     embedding_dimensions = transcript_embedding_dimensions()
@@ -117,14 +125,17 @@ def rebuild_media_content_index(
                 raise ValueError("Embedding dimensions do not match configured dimensions")
 
     now = datetime.now(UTC)
-    db.execute(
-        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-        {"media_id": media_id},
-    ).scalar_one()
-    delete_media_content_index(db, media_id=media_id)
+    # Per-media single-writer via row lock; the 'page' path is serialized by the
+    # reindex job's dedupe key + lease, so it takes no lock (concurrency.md:13).
+    if owner.kind == "media":
+        db.execute(
+            text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
+            {"owner_id": owner.id},
+        ).scalar_one()
+    delete_content_index(db, owner=owner)
     _set_index_state(
         db,
-        media_id=media_id,
+        owner=owner,
         status="indexing",
         status_reason=reason,
         embedding_provider=None,
@@ -138,7 +149,8 @@ def rebuild_media_content_index(
             text(
                 """
                 INSERT INTO content_blocks (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     block_idx,
                     block_kind,
                     canonical_text,
@@ -153,7 +165,8 @@ def rebuild_media_content_index(
                     created_at
                 )
                 VALUES (
-                    :media_id,
+                    :owner_kind,
+                    :owner_id,
                     :block_idx,
                     :block_kind,
                     :canonical_text,
@@ -171,7 +184,8 @@ def rebuild_media_content_index(
                 """
             ),
             {
-                "media_id": media_id,
+                "owner_kind": owner.kind,
+                "owner_id": owner.id,
                 "block_idx": block.block_idx,
                 "block_kind": block.block_kind,
                 "canonical_text": block.canonical_text,
@@ -190,14 +204,14 @@ def rebuild_media_content_index(
     if not text_blocks:
         _set_index_state(
             db,
-            media_id=media_id,
+            owner=owner,
             status="no_text",
             status_reason="no_text",
             embedding_provider=None,
             embedding_model=None,
             now=now,
         )
-        return ContentIndexResult(media_id=media_id, status="no_text", chunk_count=0)
+        return ContentIndexResult(owner=owner, status="no_text", chunk_count=0)
 
     for chunk_idx, (chunk_parts, chunk_text, summary_locator, embedding) in enumerate(
         zip(chunks, chunk_texts, chunk_locators, embeddings, strict=True)
@@ -211,7 +225,8 @@ def rebuild_media_content_index(
             text(
                 """
                 INSERT INTO evidence_spans (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     start_block_id,
                     end_block_id,
                     start_block_offset,
@@ -223,7 +238,8 @@ def rebuild_media_content_index(
                     created_at
                 )
                 VALUES (
-                    :media_id,
+                    :owner_kind,
+                    :owner_id,
                     :start_block_id,
                     :end_block_id,
                     :start_block_offset,
@@ -238,7 +254,8 @@ def rebuild_media_content_index(
                 """
             ),
             {
-                "media_id": media_id,
+                "owner_kind": owner.kind,
+                "owner_id": owner.id,
                 "start_block_id": first_block_id,
                 "end_block_id": last_block_id,
                 "start_block_offset": first_start,
@@ -255,7 +272,8 @@ def rebuild_media_content_index(
             text(
                 """
                 INSERT INTO content_chunks (
-                    media_id,
+                    owner_kind,
+                    owner_id,
                     primary_evidence_span_id,
                     chunk_idx,
                     source_kind,
@@ -266,7 +284,8 @@ def rebuild_media_content_index(
                     created_at
                 )
                 VALUES (
-                    :media_id,
+                    :owner_kind,
+                    :owner_id,
                     :evidence_span_id,
                     :chunk_idx,
                     :source_kind,
@@ -280,7 +299,8 @@ def rebuild_media_content_index(
                 """
             ),
             {
-                "media_id": media_id,
+                "owner_kind": owner.kind,
+                "owner_id": owner.id,
                 "evidence_span_id": evidence_span_id,
                 "chunk_idx": chunk_idx,
                 "source_kind": source_kind,
@@ -376,14 +396,14 @@ def rebuild_media_content_index(
 
     _set_index_state(
         db,
-        media_id=media_id,
+        owner=owner,
         status="ready",
         status_reason=reason,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         now=now,
     )
-    return ContentIndexResult(media_id=media_id, status="ready", chunk_count=len(chunks))
+    return ContentIndexResult(owner=owner, status="ready", chunk_count=len(chunks))
 
 
 def rebuild_fragment_content_index(
@@ -487,7 +507,7 @@ def rebuild_fragment_content_index(
                     metadata["ordinal"] = spec.ordinal
                 blocks.append(
                     IndexableBlock(
-                        media_id=media_id,
+                        owner=IndexOwner("media", media_id),
                         source_kind=source_kind,
                         block_idx=len(blocks),
                         block_kind=spec.block_kind,
@@ -536,7 +556,7 @@ def rebuild_fragment_content_index(
             heading_path = (str(nav.get("label")),) if nav.get("label") else ()
             blocks.append(
                 IndexableBlock(
-                    media_id=media_id,
+                    owner=IndexOwner("media", media_id),
                     source_kind=source_kind,
                     block_idx=len(blocks),
                     block_kind="paragraph",
@@ -552,9 +572,9 @@ def rebuild_fragment_content_index(
             )
         source_offset += len(fragment_text) + 2
 
-    return rebuild_media_content_index(
+    return rebuild_content_index(
         db,
-        media_id=media_id,
+        owner=IndexOwner("media", media_id),
         source_kind=source_kind,
         blocks=blocks,
         reason=reason,
@@ -592,7 +612,7 @@ def rebuild_transcript_content_index(
         }
         blocks.append(
             IndexableBlock(
-                media_id=media_id,
+                owner=IndexOwner("media", media_id),
                 source_kind="transcript",
                 block_idx=len(blocks),
                 block_kind="transcript_segment",
@@ -608,9 +628,9 @@ def rebuild_transcript_content_index(
         )
         source_offset += len(text_value)
 
-    return rebuild_media_content_index(
+    return rebuild_content_index(
         db,
-        media_id=media_id,
+        owner=IndexOwner("media", media_id),
         source_kind="transcript",
         blocks=blocks,
         reason=reason,
@@ -781,9 +801,9 @@ def _repair_ready_pdf_content_index(
         page_spans=page_rows,
     )
 
-    return rebuild_media_content_index(
+    return rebuild_content_index(
         db,
-        media_id=media_id,
+        owner=IndexOwner("media", media_id),
         source_kind="pdf",
         blocks=blocks,
         reason=reason,
@@ -857,7 +877,7 @@ def build_pdf_indexable_blocks(
             metadata["extraction_method"] = extraction_method
         blocks.append(
             IndexableBlock(
-                media_id=media_id,
+                owner=IndexOwner("media", media_id),
                 source_kind="pdf",
                 block_idx=len(blocks),
                 block_kind="pdf_text_block",
@@ -877,14 +897,14 @@ def build_pdf_indexable_blocks(
 def mark_content_index_failed(
     db: Session,
     *,
-    media_id: UUID,
+    owner: IndexOwner,
     failure_code: str,
     failure_message: str,
 ) -> None:
     now = datetime.now(UTC)
     _set_index_state(
         db,
-        media_id=media_id,
+        owner=owner,
         status="failed",
         status_reason=f"{failure_code}: {failure_message}"[:1000],
         embedding_provider=None,
@@ -893,12 +913,26 @@ def mark_content_index_failed(
     )
 
 
-def deactivate_media_content_index(db: Session, *, media_id: UUID, reason: str) -> None:
-    now = datetime.now(UTC)
-    delete_media_content_index(db, media_id=media_id)
+def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
+    """Flag an owner's index stale (gated out of search) without deleting its rows;
+    the reindex job rebuilds and flips it back to ready."""
     _set_index_state(
         db,
-        media_id=media_id,
+        owner=owner,
+        status="pending",
+        status_reason=reason,
+        embedding_provider=None,
+        embedding_model=None,
+        now=datetime.now(UTC),
+    )
+
+
+def deactivate_content_index(db: Session, *, owner: IndexOwner, reason: str) -> None:
+    now = datetime.now(UTC)
+    delete_content_index(db, owner=owner)
+    _set_index_state(
+        db,
+        owner=owner,
         status="pending",
         status_reason=reason,
         embedding_provider=None,
@@ -907,7 +941,8 @@ def deactivate_media_content_index(db: Session, *, media_id: UUID, reason: str) 
     )
 
 
-def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
+def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
+    params = {"owner_kind": owner.kind, "owner_id": owner.id}
     db.execute(
         text(
             """
@@ -915,32 +950,34 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
             SET evidence_span_id = NULL
             FROM evidence_spans es
             WHERE mr.evidence_span_id = es.id
-              AND es.media_id = :media_id
+              AND es.owner_kind = :owner_kind
+              AND es.owner_id = :owner_id
             """
         ),
-        {"media_id": media_id},
+        params,
     )
     db.execute(
-        text("DELETE FROM media_content_index_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
+        text(
+            "DELETE FROM content_index_states "
+            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+        ),
+        params,
     )
     db.execute(
         text(
             """
             DELETE FROM object_links
             WHERE (a_type = 'content_chunk' AND a_id IN (
-                    SELECT id
-                    FROM content_chunks
-                    WHERE media_id = :media_id
+                    SELECT id FROM content_chunks
+                    WHERE owner_kind = :owner_kind AND owner_id = :owner_id
                   ))
                OR (b_type = 'content_chunk' AND b_id IN (
-                    SELECT id
-                    FROM content_chunks
-                    WHERE media_id = :media_id
+                    SELECT id FROM content_chunks
+                    WHERE owner_kind = :owner_kind AND owner_id = :owner_id
                   ))
             """
         ),
-        {"media_id": media_id},
+        params,
     )
     db.execute(
         text(
@@ -948,10 +985,10 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
             DELETE FROM content_embeddings ce
             USING content_chunks cc
             WHERE ce.chunk_id = cc.id
-              AND cc.media_id = :media_id
+              AND cc.owner_kind = :owner_kind AND cc.owner_id = :owner_id
             """
         ),
-        {"media_id": media_id},
+        params,
     )
     db.execute(
         text(
@@ -959,26 +996,29 @@ def delete_media_content_index(db: Session, *, media_id: UUID) -> None:
             DELETE FROM content_chunk_parts ccp
             USING content_chunks cc
             WHERE ccp.chunk_id = cc.id
-              AND cc.media_id = :media_id
+              AND cc.owner_kind = :owner_kind AND cc.owner_id = :owner_id
             """
         ),
-        {"media_id": media_id},
+        params,
     )
     db.execute(
-        text("DELETE FROM content_chunks WHERE media_id = :media_id"), {"media_id": media_id}
+        text("DELETE FROM content_chunks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
     )
     db.execute(
-        text("DELETE FROM evidence_spans WHERE media_id = :media_id"), {"media_id": media_id}
+        text("DELETE FROM evidence_spans WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
     )
     db.execute(
-        text("DELETE FROM content_blocks WHERE media_id = :media_id"), {"media_id": media_id}
+        text("DELETE FROM content_blocks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+        params,
     )
 
 
 def _set_index_state(
     db: Session,
     *,
-    media_id: UUID,
+    owner: IndexOwner,
     status: str,
     status_reason: str | None,
     embedding_provider: str | None,
@@ -989,24 +1029,28 @@ def _set_index_state(
         embedding_provider = None
         embedding_model = None
     exists = db.execute(
-        text("SELECT 1 FROM media_content_index_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
+        text(
+            "SELECT 1 FROM content_index_states "
+            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+        ),
+        {"owner_kind": owner.kind, "owner_id": owner.id},
     ).scalar()
     if exists:
         db.execute(
             text(
                 """
-                UPDATE media_content_index_states
+                UPDATE content_index_states
                 SET status = :status,
                     status_reason = :status_reason,
                     active_embedding_provider = :embedding_provider,
                     active_embedding_model = :embedding_model,
                     updated_at = :now
-                WHERE media_id = :media_id
+                WHERE owner_kind = :owner_kind AND owner_id = :owner_id
                 """
             ),
             {
-                "media_id": media_id,
+                "owner_kind": owner.kind,
+                "owner_id": owner.id,
                 "status": status,
                 "status_reason": status_reason,
                 "embedding_provider": embedding_provider,
@@ -1019,8 +1063,9 @@ def _set_index_state(
     db.execute(
         text(
             """
-            INSERT INTO media_content_index_states (
-                media_id,
+            INSERT INTO content_index_states (
+                owner_kind,
+                owner_id,
                 status,
                 status_reason,
                 active_embedding_provider,
@@ -1029,7 +1074,8 @@ def _set_index_state(
                 created_at
             )
             VALUES (
-                :media_id,
+                :owner_kind,
+                :owner_id,
                 :status,
                 :status_reason,
                 :embedding_provider,
@@ -1040,7 +1086,8 @@ def _set_index_state(
             """
         ),
         {
-            "media_id": media_id,
+            "owner_kind": owner.kind,
+            "owner_id": owner.id,
             "status": status,
             "status_reason": status_reason,
             "embedding_provider": embedding_provider,
@@ -1052,17 +1099,17 @@ def _set_index_state(
 
 def _validate_blocks(
     *,
-    media_id: UUID,
+    owner: IndexOwner,
     source_kind: str,
     blocks: list[IndexableBlock],
 ) -> None:
-    if source_kind not in {"web_article", "epub", "pdf", "transcript"}:
+    if source_kind not in {"web_article", "epub", "pdf", "transcript", "note"}:
         raise ValueError(f"Unsupported source_kind: {source_kind}")
 
     previous_source_end: int | None = None
     for expected_idx, block in enumerate(blocks):
-        if block.media_id != media_id:
-            raise ValueError("IndexableBlock media_id does not match target media")
+        if block.owner != owner:
+            raise ValueError("IndexableBlock owner does not match target owner")
         if block.source_kind != source_kind:
             raise ValueError("IndexableBlock source_kind does not match target source")
         if block.block_idx != expected_idx:
@@ -1137,7 +1184,39 @@ def _validate_selector(
             raise ValueError(f"{context} kind is invalid for transcript")
         _validate_transcript_selector(selector, context=context)
         return
+    if source_kind == "note":
+        if kind != "note_text":
+            raise ValueError(f"{context} kind is invalid for note")
+        _validate_note_selector(selector, text_value, context=context)
+        return
     raise ValueError(f"Unsupported source_kind: {source_kind}")
+
+
+def _validate_note_selector(
+    selector: dict[str, object],
+    text_value: str,
+    *,
+    context: str,
+) -> None:
+    for field in ("note_block_id", "page_id"):
+        value = selector.get(field)
+        if not isinstance(value, str):
+            raise ValueError(f"{context} {field} is required")
+        try:
+            UUID(value)
+        except ValueError:
+            raise ValueError(f"{context} {field} is invalid") from None
+    start_offset = selector.get("start_offset")
+    end_offset = selector.get("end_offset")
+    if not _is_int(start_offset) or not _is_int(end_offset):
+        raise ValueError(f"{context} offsets must be integers")
+    if start_offset < 0 or end_offset < start_offset:
+        raise ValueError(f"{context} offsets are invalid")
+    if end_offset - start_offset != len(text_value):
+        raise ValueError(
+            f"{context} offsets do not match text length "
+            f"(start={start_offset}, end={end_offset}, text_length={len(text_value)})"
+        )
 
 
 def _validate_fragment_selector(
@@ -1289,6 +1368,10 @@ def _same_locator_anchor(left: IndexableBlock, right: IndexableBlock) -> bool:
         return left.locator.get("t_start_ms") == right.locator.get(
             "t_start_ms"
         ) and left.locator.get("t_end_ms") == right.locator.get("t_end_ms")
+    if left_kind == "note_text":
+        # Anchor on note_block_id forbids cross-block coalescing (D10): every
+        # note chunk stays inside one block and is citeable to that block.
+        return left.locator.get("note_block_id") == right.locator.get("note_block_id")
     raise ValueError(f"Unsupported locator kind: {left_kind}")
 
 
@@ -1378,6 +1461,12 @@ def _chunk_locator(
     elif locator.get("kind") == "transcript_time_text":
         locator["t_start_ms"] = first_block.locator.get("t_start_ms")
         locator["t_end_ms"] = last_block.locator.get("t_end_ms")
+    elif locator.get("kind") == "note_text":
+        # Single-block by construction (D10): first_block is last_block. Offsets
+        # are within the note_block body; shift the block-relative range by the piece.
+        block_start = int(str(first_block.locator.get("start_offset") or 0))
+        locator["start_offset"] = block_start + first_start
+        locator["end_offset"] = block_start + last_end
     else:
         raise ValueError(f"Unsupported locator kind: {locator.get('kind')}")
 
@@ -1453,4 +1542,6 @@ def _resolver_kind(source_kind: str) -> str:
         return "pdf"
     if source_kind == "transcript":
         return "transcript"
+    if source_kind == "note":
+        return "note"
     raise ValueError(f"Unsupported source_kind: {source_kind}")

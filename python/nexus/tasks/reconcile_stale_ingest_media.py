@@ -17,6 +17,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
+    IndexOwner,
     mark_content_index_failed,
     repair_ready_media_content_index_now,
 )
@@ -216,9 +217,9 @@ def reconcile_stale_ingest_media_job(
         content_index_rows = db.execute(
             text(
                 """
-                SELECT mcis.media_id, mcis.status
-                FROM media_content_index_states mcis
-                JOIN media m ON m.id = mcis.media_id
+                SELECT mcis.owner_id AS media_id, mcis.status
+                FROM content_index_states mcis
+                JOIN media m ON mcis.owner_kind = 'media' AND m.id = mcis.owner_id
                 WHERE (
                     (
                         mcis.status IN ('pending', 'failed')
@@ -230,7 +231,7 @@ def reconcile_stale_ingest_media_job(
                   )
                   AND m.kind IN ('web_article', 'epub', 'pdf')
                   AND m.processing_status = 'ready_for_reading'
-                ORDER BY mcis.updated_at ASC, mcis.media_id ASC
+                ORDER BY mcis.updated_at ASC, mcis.owner_id ASC
                 LIMIT :limit
                 """
             ),
@@ -246,7 +247,7 @@ def reconcile_stale_ingest_media_job(
                 if str(row[1] or "") == "indexing":
                     mark_content_index_failed(
                         db,
-                        media_id=media_id,
+                        owner=IndexOwner("media", media_id),
                         failure_code=ApiErrorCode.E_INGEST_TIMEOUT.value,
                         failure_message=(
                             "Evidence index exceeded stale-time threshold and was "
@@ -283,7 +284,7 @@ def reconcile_stale_ingest_media_job(
                 )
                 mark_content_index_failed(
                     db,
-                    media_id=media_id,
+                    owner=IndexOwner("media", media_id),
                     failure_code=error_code,
                     failure_message=f"Evidence index repair failed: {exc}"[:_MAX_ERROR_MSG_LEN],
                 )
@@ -325,8 +326,8 @@ def reconcile_stale_ingest_media_job(
                           AND (
                               NOT EXISTS (
                                   SELECT 1
-                                  FROM media_content_index_states mcis
-                                  WHERE mcis.media_id = mts.media_id
+                                  FROM content_index_states mcis
+                                  WHERE mcis.owner_kind = 'media' AND mcis.owner_id = mts.media_id
                                     AND mcis.status = 'ready'
                                     AND mcis.active_embedding_provider = :embedding_provider
                                     AND mcis.active_embedding_model = :embedding_model
@@ -439,11 +440,11 @@ def _mark_content_index_state_failed(db: Session, media_id, message: str) -> Non
     db.execute(
         text(
             """
-            UPDATE media_content_index_states
+            UPDATE content_index_states
             SET status = 'failed',
                 status_reason = :message,
                 updated_at = now()
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             """
         ),
         {

@@ -156,10 +156,10 @@ def get_content_sample(db: Session, media: Media) -> str:
             """
             SELECT cc.chunk_idx, cc.source_kind, cc.heading_path, cc.chunk_text
             FROM content_chunks cc
-            JOIN media_content_index_states mcis
-              ON mcis.media_id = cc.media_id
+            JOIN content_index_states mcis
+              ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
              AND mcis.status = 'ready'
-            WHERE cc.media_id = :media_id
+            WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
               AND btrim(cc.chunk_text) <> ''
             ORDER BY cc.chunk_idx ASC
             LIMIT 4
@@ -177,10 +177,10 @@ def get_content_sample(db: Session, media: Media) -> str:
             """
             SELECT cb.block_idx, cb.block_kind, cb.heading_path, cb.canonical_text
             FROM content_blocks cb
-            JOIN media_content_index_states mcis
-              ON mcis.media_id = cb.media_id
+            JOIN content_index_states mcis
+              ON mcis.owner_kind = cb.owner_kind AND mcis.owner_id = cb.owner_id
              AND mcis.status = 'ready'
-            WHERE cb.media_id = :media_id
+            WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
               AND btrim(cb.canonical_text) <> ''
             ORDER BY cb.block_idx ASC
             LIMIT 8

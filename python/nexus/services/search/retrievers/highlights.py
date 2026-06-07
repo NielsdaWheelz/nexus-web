@@ -96,7 +96,8 @@ def _search_highlights(
                 FROM highlight_pdf_quads hpq
                 WHERE hpq.highlight_id = h.id
             ) pdf_quads ON true
-            JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                AND mcis.owner_id = h.anchor_media_id
                 AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector(

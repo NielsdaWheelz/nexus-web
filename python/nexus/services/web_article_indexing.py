@@ -10,6 +10,7 @@ from nexus.db.models import Fragment, Media
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
+    IndexOwner,
     mark_content_index_failed,
     rebuild_fragment_content_index,
 )
@@ -63,7 +64,7 @@ def index_web_article_evidence(
         )
         mark_content_index_failed(
             db,
-            media_id=media_id,
+            owner=IndexOwner("media", media_id),
             failure_code=error_code,
             failure_message=failure_message,
         )

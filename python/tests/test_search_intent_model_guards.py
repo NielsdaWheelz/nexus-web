@@ -22,6 +22,7 @@ _SEMANTIC_FLAG = re.compile(r"\bsemantic\s*[:=]")
 def _strip_comments(src: str) -> str:
     return "\n".join(line.split("#", 1)[0] for line in src.splitlines())
 
+
 ROOT = Path(__file__).resolve().parents[2]
 NEXUS = ROOT / "python" / "nexus"
 WEB = ROOT / "apps" / "web" / "src"
@@ -111,7 +112,11 @@ def test_scope_filter_sql_is_the_single_scope_owner() -> None:
         src = path.read_text()
         if "def scope_filter_sql" in src:
             offenders.append(f"{path.name}: redefines scope_filter_sql")
-        for scoped in ('scope_type == "media"', 'scope_type == "library"', 'scope_type == "conversation"'):
+        for scoped in (
+            'scope_type == "media"',
+            'scope_type == "library"',
+            'scope_type == "conversation"',
+        ):
             if scoped in src:
                 offenders.append(f"{path.name}: inline {scoped}")
     assert offenders == [], f"inline scope-filter branches in retrievers: {offenders}"
@@ -124,7 +129,9 @@ def test_gutenberg_is_not_a_search_format() -> None:
     for name, src in _search_pkg_sources().items():
         code = _strip_comments(src)
         assert "'gutenberg'" not in code, f"gutenberg format literal in search/{name}"
-        assert "'project_gutenberg'" not in code, f"project_gutenberg format literal in search/{name}"
+        assert "'project_gutenberg'" not in code, (
+            f"project_gutenberg format literal in search/{name}"
+        )
 
 
 # --- Frontend guards -------------------------------------------------------
@@ -191,7 +198,9 @@ def test_e2e_suite_has_no_legacy_search_params_or_deleted_ui() -> None:
     for path in E2E.rglob("*.ts"):
         src = path.read_text()
         rel = path.relative_to(ROOT).as_posix()
-        offenders += [f"{rel}: legacy param {m}=" for m in sorted(set(_LEGACY_URL_PARAM.findall(src)))]
+        offenders += [
+            f"{rel}: legacy param {m}=" for m in sorted(set(_LEGACY_URL_PARAM.findall(src)))
+        ]
         offenders += [f"{rel}: deleted-UI ref {ui!r}" for ui in deleted_ui if ui in src]
     assert offenders == [], offenders
 

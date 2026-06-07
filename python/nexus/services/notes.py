@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.errors import integrity_constraint_name, is_serialization_failure
 from nexus.db.models import (
+    NOTE_BLOCK_SIBLING_ORDER,
     DailyNotePage,
     Highlight,
     NoteBlock,
@@ -44,7 +45,8 @@ from nexus.schemas.notes import (
     UpdateNoteBlockRequest,
     UpdatePageRequest,
 )
-from nexus.services import object_search
+from nexus.services.content_indexing import IndexOwner, delete_content_index
+from nexus.services.note_indexing import enqueue_page_reindex
 from nexus.services.object_refs import hydrate_object_ref
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
@@ -207,7 +209,7 @@ def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> Not
     page = Page(user_id=viewer_id, title=request.title, description=request.description)
     db.add(page)
     db.flush()
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="page_create")
     db.commit()
     db.refresh(page)
     return _page_out(db, page)
@@ -240,7 +242,7 @@ def update_page(
         changed = True
     if changed:
         page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
+        enqueue_page_reindex(db, page_id=page.id, reason="page_update")
     db.commit()
     db.refresh(page)
     return _page_out(db, page)
@@ -402,7 +404,6 @@ def _patch_page_document_once(
             db.add(block)
             db.flush()
             _sync_inline_reference_links(db, viewer_id, block)
-            object_search.project_note_block(db, viewer_id, block)
             created_blocks[block.id] = block
             changed = True
 
@@ -436,7 +437,6 @@ def _patch_page_document_once(
             if body_changed:
                 _sync_inline_reference_links(db, viewer_id, block)
             block.updated_at = func.now()
-            object_search.project_note_block(db, viewer_id, block)
             changed = True
 
         for block_id in touched_existing_order_ids:
@@ -447,7 +447,6 @@ def _patch_page_document_once(
                 continue
             block.order_key = final_order_by_id[block_id]
             block.updated_at = func.now()
-            object_search.project_note_block(db, viewer_id, block)
             changed = True
 
         for block_id in _document_delete_order(existing_blocks, deleted_ids):
@@ -459,15 +458,12 @@ def _patch_page_document_once(
                     PinnedObjectRef.object_id == block_id,
                 )
             )
-            object_search.delete_document(
-                db, viewer_id, object_type="note_block", object_id=block_id
-            )
             db.delete(existing_blocks[block_id])
             changed = True
 
         if changed:
             page.updated_at = func.now()
-            object_search.project_page(db, viewer_id, page)
+            enqueue_page_reindex(db, page_id=page.id, reason="page_patch")
 
         db.commit()
     except IntegrityError as exc:
@@ -510,7 +506,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
                 PinnedObjectRef.object_id == block_id,
             )
         )
-        object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block_id)
     db.execute(delete(NoteBlock).where(NoteBlock.page_id == page.id))
     _delete_object_edges(db, "page", page.id)
     db.execute(
@@ -526,7 +521,7 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
             DailyNotePage.page_id == page.id,
         )
     )
-    object_search.delete_document(db, viewer_id, object_type="page", object_id=page.id)
+    delete_content_index(db, owner=IndexOwner("page", page_id))
     db.delete(page)
     db.commit()
 
@@ -584,7 +579,7 @@ def quick_capture_to_daily(
         ),
     )
     page.updated_at = func.now()
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="quick_capture")
     db.commit()
     db.refresh(block)
     return _block_out(block, [])
@@ -666,10 +661,9 @@ def create_note_block(
             )
         )
     _sync_inline_reference_links(db, viewer_id, block)
-    object_search.project_note_block(db, viewer_id, block)
 
     page.updated_at = func.now()
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="block_create")
     db.commit()
     db.refresh(block)
     return _block_out(block, [])
@@ -730,8 +724,7 @@ def _update_note_block_once(
         page = db.get(Page, page_id)
         if page is not None:
             page.updated_at = func.now()
-            object_search.project_page(db, viewer_id, page)
-        object_search.project_note_block(db, viewer_id, block)
+        enqueue_page_reindex(db, page_id=page_id, reason="block_update")
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
@@ -752,7 +745,9 @@ def set_note_block_markdown_body_without_commit(
         block.body_text = text_from_pm_json(body_pm_json)
         block.updated_at = func.now()
         _sync_inline_reference_links(db, viewer_id, block)
-        object_search.project_note_block(db, viewer_id, block)
+        page_id = block.page_id
+        assert page_id is not None
+        enqueue_page_reindex(db, page_id=page_id, reason="block_markdown")
 
 
 def move_note_block(
@@ -792,8 +787,7 @@ def move_note_block(
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
-    object_search.project_note_block(db, viewer_id, block)
+    enqueue_page_reindex(db, page_id=page_id, reason="block_move")
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
@@ -833,9 +827,7 @@ def split_note_block(
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
-    object_search.project_note_block(db, viewer_id, block)
-    object_search.project_note_block(db, viewer_id, new_block)
+    enqueue_page_reindex(db, page_id=page_id, reason="block_split")
     db.commit()
     db.refresh(new_block)
     return _block_out(new_block, [])
@@ -864,7 +856,6 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
         target_block_id=previous.id,
     )
     _sync_inline_reference_links(db, viewer_id, previous)
-    object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block.id)
     db.delete(block)
     previous_page_id = previous.page_id
     assert previous_page_id is not None
@@ -872,8 +863,7 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     page = db.get(Page, previous_page_id)
     if page is not None:
         page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
-    object_search.project_note_block(db, viewer_id, previous)
+    enqueue_page_reindex(db, page_id=previous_page_id, reason="block_merge")
     db.commit()
     db.refresh(previous)
     return _block_out(previous, _child_tree(db, previous_page_id, previous.id))
@@ -901,9 +891,6 @@ def _delete_note_block_once(db: Session, viewer_id: UUID, block_id: UUID) -> Non
                 PinnedObjectRef.object_id == descendant_id,
             )
         )
-        object_search.delete_document(
-            db, viewer_id, object_type="note_block", object_id=descendant_id
-        )
     _delete_object_edges(db, "note_block", block.id)
     db.execute(
         delete(PinnedObjectRef).where(
@@ -912,13 +899,12 @@ def _delete_note_block_once(db: Session, viewer_id: UUID, block_id: UUID) -> Non
             PinnedObjectRef.object_id == block.id,
         )
     )
-    object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block.id)
     db.execute(delete(NoteBlock).where(NoteBlock.id.in_([block.id, *descendant_ids])))
     _renumber_siblings(db, page_id, block.parent_block_id)
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page_id, reason="block_delete")
     db.commit()
 
 
@@ -995,13 +981,10 @@ def set_highlight_note_body(
         if existing is not None:
             page = db.get(Page, existing.page_id) if existing.page_id is not None else None
             _delete_object_edges(db, "note_block", existing.id)
-            object_search.delete_document(
-                db, viewer_id, object_type="note_block", object_id=existing.id
-            )
             db.delete(existing)
             if page is not None:
                 page.updated_at = func.now()
-                object_search.project_page(db, viewer_id, page)
+                enqueue_page_reindex(db, page_id=page.id, reason="highlight_note")
             if commit:
                 db.commit()
         return None
@@ -1028,11 +1011,10 @@ def set_highlight_note_body(
         existing.body_text = normalized
         existing.updated_at = func.now()
         _sync_inline_reference_links(db, viewer_id, existing)
-        object_search.project_note_block(db, viewer_id, existing)
         page = db.get(Page, existing.page_id) if existing.page_id is not None else None
         if page is not None:
             page.updated_at = func.now()
-            object_search.project_page(db, viewer_id, page)
+            enqueue_page_reindex(db, page_id=page.id, reason="highlight_note")
     if commit:
         db.commit()
         db.refresh(existing)
@@ -1102,9 +1084,8 @@ def _create_note_block_without_commit(
             )
         )
     _sync_inline_reference_links(db, viewer_id, block)
-    object_search.project_note_block(db, viewer_id, block)
     page.updated_at = func.now()
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="block_create")
     return block
 
 
@@ -1117,7 +1098,7 @@ def _default_page(db: Session, viewer_id: UUID) -> Page:
     page = Page(user_id=viewer_id, title="Notes", description=None)
     db.add(page)
     db.flush()
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="page_create")
     return page
 
 
@@ -1222,7 +1203,7 @@ def _resolve_daily_page_once(
             page_id=page.id,
         )
     )
-    object_search.project_page(db, viewer_id, page)
+    enqueue_page_reindex(db, page_id=page.id, reason="daily_page")
     return page, time_zone
 
 
@@ -1663,7 +1644,7 @@ def _siblings(db: Session, page_id: UUID, parent_id: UUID | None) -> list[NoteBl
         db.scalars(
             select(NoteBlock)
             .where(NoteBlock.page_id == page_id, parent_clause)
-            .order_by(NoteBlock.order_key.asc(), NoteBlock.created_at.asc(), NoteBlock.id.asc())
+            .order_by(*NOTE_BLOCK_SIBLING_ORDER)
         )
     )
 

@@ -18,7 +18,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.services.content_indexing import delete_media_content_index
+from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
@@ -107,7 +107,7 @@ def materialize_epub_source(
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     """Delete all EPUB extraction and chunk/embedding artifacts for a media row."""
-    delete_media_content_index(db, media_id=media_id)
+    delete_content_index(db, owner=IndexOwner("media", media_id))
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
         .scalars()

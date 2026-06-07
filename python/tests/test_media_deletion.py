@@ -73,7 +73,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("content_chunks", "media_id", media_id)
+    direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
@@ -202,7 +202,7 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
 
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("content_chunks", "media_id", media_id)
+    direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
@@ -224,7 +224,7 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                 SELECT
                     (SELECT count(*) FROM media WHERE id = :media_id),
                     (SELECT count(*) FROM fragments WHERE media_id = :media_id),
-                    (SELECT count(*) FROM content_chunks WHERE media_id = :media_id)
+                    (SELECT count(*) FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id)
             """),
             {"media_id": media_id},
         ).one()

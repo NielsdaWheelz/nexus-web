@@ -10,11 +10,11 @@ from nexus.db.models import (
     DailyNotePage,
     NoteBlock,
     ObjectLink,
-    ObjectSearchDocument,
     Page,
     PinnedObjectRef,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.jobs.queue import claim_next_job, complete_job
 from nexus.schemas.notes import (
     UNSET,
     CreateNoteBlockRequest,
@@ -32,17 +32,20 @@ from nexus.schemas.notes import (
 from nexus.services import notes, object_links, object_refs
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import markdown_from_pm_json, text_from_pm_json
 from tests.factories import (
     add_library_member,
     add_media_to_library,
     create_searchable_media,
+    create_test_conversation,
     create_test_conversation_with_message,
     create_test_fragment,
     create_test_highlight,
     create_test_library,
     create_test_media,
     create_test_media_in_library,
+    create_test_message,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -636,7 +639,7 @@ def test_daily_note_resolution_uses_durable_date_identity(db_session, bootstrapp
 
 
 @pytest.mark.integration
-def test_quick_capture_appends_to_daily_page_and_projects_search_docs(
+def test_quick_capture_appends_to_daily_page_and_makes_it_indexable(
     db_session,
     bootstrapped_user,
 ):
@@ -649,18 +652,38 @@ def test_quick_capture_appends_to_daily_page_and_projects_search_docs(
         request=QuickCaptureRequest(body_markdown="Daily capture projection needle"),
     )
     daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
-    docs = db_session.scalars(
-        select(ObjectSearchDocument).where(
-            ObjectSearchDocument.user_id == bootstrapped_user,
-            ObjectSearchDocument.object_type.in_(["page", "note_block"]),
-        )
-    ).all()
 
     assert block.page_id == daily.page.id
     assert [item.body_text for item in daily.page.blocks] == ["Daily capture projection needle"]
-    doc_keys = {(doc.object_type, doc.object_id) for doc in docs}
-    assert ("page", daily.page.id) in doc_keys
-    assert ("note_block", block.id) in doc_keys
+
+    # quick_capture enqueues a debounced reindex on the production path: the page is
+    # marked pending and one in-flight page_reindex_job is queued for it.
+    job_kind = db_session.scalar(
+        text(
+            """
+            SELECT kind FROM background_jobs
+            WHERE kind = 'page_reindex_job'
+              AND (payload->>'page_id') = :page_id
+              AND status NOT IN ('succeeded', 'dead')
+            """
+        ),
+        {"page_id": str(daily.page.id)},
+    )
+    assert job_kind == "page_reindex_job"
+
+    # Running that reindex synchronously indexes the captured note into the unified
+    # content pipeline (owner_kind='page'), so its note_block becomes searchable content.
+    rebuild_page_content_index(db_session, page_id=daily.page.id, reason="test")
+    chunk_count = db_session.scalar(
+        text(
+            """
+            SELECT count(*) FROM content_chunks
+            WHERE owner_kind = 'page' AND owner_id = :page_id
+            """
+        ),
+        {"page_id": daily.page.id},
+    )
+    assert chunk_count >= 1
 
 
 @pytest.mark.integration
@@ -875,7 +898,7 @@ def test_object_ref_search_returns_contributors_and_content_chunks(
             """
             SELECT id
             FROM content_chunks
-            WHERE media_id = :media_id
+            WHERE owner_kind = 'media' AND owner_id = :media_id
             ORDER BY chunk_idx ASC
             LIMIT 1
             """
@@ -1581,3 +1604,460 @@ def test_notes_and_object_link_validation_through_api(auth_client, direct_db: Di
     )
     assert invalid_object_link_type.status_code == 400, invalid_object_link_type.text
     assert invalid_object_link_type.json()["error"]["code"] == ApiErrorCode.E_INVALID_REQUEST.value
+
+
+def _page_content_index_row_counts(db_session, page_id) -> dict[str, int]:
+    """All content-index rows owned by a page (owner_kind='page'), keyed by table.
+
+    content_embeddings and content_chunk_parts join through content_chunks since they
+    carry no owner columns of their own. After a page or its last cited block is gone
+    and the index is rebuilt/torn down, every count here must be zero.
+    """
+    owned = {
+        "content_chunks": (
+            "SELECT count(*) FROM content_chunks WHERE owner_kind = 'page' AND owner_id = :page_id"
+        ),
+        "evidence_spans": (
+            "SELECT count(*) FROM evidence_spans WHERE owner_kind = 'page' AND owner_id = :page_id"
+        ),
+        "content_blocks": (
+            "SELECT count(*) FROM content_blocks WHERE owner_kind = 'page' AND owner_id = :page_id"
+        ),
+        "content_index_states": (
+            "SELECT count(*) FROM content_index_states "
+            "WHERE owner_kind = 'page' AND owner_id = :page_id"
+        ),
+        "content_embeddings": (
+            "SELECT count(*) FROM content_embeddings ce "
+            "JOIN content_chunks cc ON cc.id = ce.chunk_id "
+            "WHERE cc.owner_kind = 'page' AND cc.owner_id = :page_id"
+        ),
+        "content_chunk_parts": (
+            "SELECT count(*) FROM content_chunk_parts ccp "
+            "JOIN content_chunks cc ON cc.id = ccp.chunk_id "
+            "WHERE cc.owner_kind = 'page' AND cc.owner_id = :page_id"
+        ),
+    }
+    return {
+        table: int(db_session.scalar(text(sql), {"page_id": page_id}))
+        for table, sql in owned.items()
+    }
+
+
+def _seed_note_citation_for_chunk(db_session, viewer_id, page_id, evidence_span_id):
+    """Persist a note citation: a message_retrievals row whose evidence_span_id points at
+    a page-owned content chunk's primary evidence span (the chat ``[N]`` -> note span link).
+
+    Returns the retrieval id so the test can re-read its evidence_span_id after a delete.
+    """
+    conversation_id = create_test_conversation(db_session, viewer_id)
+    user_message_id = create_test_message(db_session, conversation_id, seq=1, role="user")
+    assistant_message_id = create_test_message(db_session, conversation_id, seq=2, role="assistant")
+    tool_call_id = uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                id,
+                conversation_id,
+                user_message_id,
+                assistant_message_id,
+                tool_name,
+                tool_call_index,
+                scope,
+                status
+            )
+            VALUES (
+                :tool_call_id,
+                :conversation_id,
+                :user_message_id,
+                :assistant_message_id,
+                'app_search',
+                0,
+                'all',
+                'complete'
+            )
+            """
+        ),
+        {
+            "tool_call_id": tool_call_id,
+            "conversation_id": conversation_id,
+            "user_message_id": user_message_id,
+            "assistant_message_id": assistant_message_id,
+        },
+    )
+    retrieval_id = uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_retrievals (
+                id,
+                tool_call_id,
+                ordinal,
+                result_type,
+                source_id,
+                evidence_span_id,
+                context_ref,
+                result_ref
+            )
+            VALUES (
+                :retrieval_id,
+                :tool_call_id,
+                0,
+                'note_block',
+                :source_id,
+                :evidence_span_id,
+                CAST(:context_ref AS jsonb),
+                CAST(:result_ref AS jsonb)
+            )
+            """
+        ),
+        {
+            "retrieval_id": retrieval_id,
+            "tool_call_id": tool_call_id,
+            "source_id": str(page_id),
+            "evidence_span_id": evidence_span_id,
+            "context_ref": f'{{"type":"page","id":"{page_id}"}}',
+            "result_ref": (
+                '{"type":"note_block",'
+                f'"id":"{page_id}",'
+                '"result_type":"note_block",'
+                f'"source_id":"{page_id}"}}'
+            ),
+        },
+    )
+    db_session.commit()
+    return retrieval_id
+
+
+@pytest.mark.integration
+def test_delete_page_nulls_note_citations_and_removes_all_owned_content_index_rows(
+    db_session,
+    bootstrapped_user,
+):
+    """AC-4: deleting a cited note page nulls the citation's span (row preserved) and
+    leaves zero content-index rows for that owner across every backing table."""
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Citable note page {uuid4()}"),
+    )
+    notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            body_markdown="Orphan-cleanup note needle for content indexing",
+        ),
+    )
+
+    rebuild_page_content_index(db_session, page_id=page.id, reason="test")
+    db_session.commit()
+
+    chunk_row = db_session.execute(
+        text(
+            """
+            SELECT id, primary_evidence_span_id
+            FROM content_chunks
+            WHERE owner_kind = 'page' AND owner_id = :page_id
+            ORDER BY chunk_idx ASC
+            LIMIT 1
+            """
+        ),
+        {"page_id": page.id},
+    ).one_or_none()
+    assert chunk_row is not None, "Indexing the note page must produce at least one content chunk"
+    evidence_span_id = chunk_row[1]
+    assert evidence_span_id is not None, "Note chunk must carry a primary evidence span to cite"
+
+    retrieval_id = _seed_note_citation_for_chunk(
+        db_session, bootstrapped_user, page.id, evidence_span_id
+    )
+
+    notes.delete_page(db_session, bootstrapped_user, page.id)
+
+    citation_span = db_session.scalar(
+        text("SELECT evidence_span_id FROM message_retrievals WHERE id = :id"),
+        {"id": retrieval_id},
+    )
+    citation_exists = db_session.scalar(
+        text("SELECT count(*) FROM message_retrievals WHERE id = :id"),
+        {"id": retrieval_id},
+    )
+    assert citation_exists == 1, (
+        "Deleting a page must preserve the citing message_retrievals row, not delete it; "
+        f"retrieval {retrieval_id}"
+    )
+    assert citation_span is None, (
+        "Deleting a cited page must null the citation's evidence_span_id, not dangle it; "
+        f"got {citation_span} for retrieval {retrieval_id}"
+    )
+
+    counts = _page_content_index_row_counts(db_session, page.id)
+    assert counts == {
+        "content_chunks": 0,
+        "evidence_spans": 0,
+        "content_blocks": 0,
+        "content_index_states": 0,
+        "content_embeddings": 0,
+        "content_chunk_parts": 0,
+    }, f"Page delete must remove every owner_kind='page' content-index row, got {counts}"
+
+
+@pytest.mark.integration
+def test_delete_cited_note_block_then_reindex_removes_its_chunk_and_span(
+    db_session,
+    bootstrapped_user,
+):
+    """AC-4 (block level): deleting one cited block on a surviving page and reindexing
+    drops that block's chunk + span (its citation is nulled) while the page itself and
+    its other blocks keep a clean, orphan-free index."""
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Block-delete note page {uuid4()}"),
+    )
+    doomed = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            body_markdown="Doomed block needle that will be deleted and reindexed away",
+        ),
+    )
+    survivor = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            body_markdown="Surviving block needle that stays indexed after the delete",
+        ),
+    )
+
+    rebuild_page_content_index(db_session, page_id=page.id, reason="test")
+    db_session.commit()
+
+    doomed_span_id = db_session.scalar(
+        text(
+            """
+            SELECT cc.primary_evidence_span_id
+            FROM content_chunks cc
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+            JOIN content_blocks cb ON cb.id = es.start_block_id
+            WHERE cc.owner_kind = 'page' AND cc.owner_id = :page_id
+              AND (cb.locator->>'note_block_id') = :note_block_id
+            LIMIT 1
+            """
+        ),
+        {"page_id": page.id, "note_block_id": str(doomed.id)},
+    )
+    assert doomed_span_id is not None, (
+        "Indexing must produce a citeable evidence span for the doomed block "
+        f"{doomed.id} on page {page.id}"
+    )
+
+    retrieval_id = _seed_note_citation_for_chunk(
+        db_session, bootstrapped_user, page.id, doomed_span_id
+    )
+
+    initial_counts = _page_content_index_row_counts(db_session, page.id)
+    assert initial_counts["content_chunks"] >= 2, (
+        f"Two non-empty blocks should index to at least two chunks, got {initial_counts}"
+    )
+
+    # Delete only the cited block; the service enqueues a reindex but does not rebuild
+    # inline, so the new (post-delete) index is produced by running the reindex.
+    notes.delete_note_block(db_session, bootstrapped_user, doomed.id)
+    rebuild_page_content_index(db_session, page_id=page.id, reason="test")
+    db_session.commit()
+
+    # The deleted block's span is gone, so its citation is nulled (row preserved).
+    citation_span = db_session.scalar(
+        text("SELECT evidence_span_id FROM message_retrievals WHERE id = :id"),
+        {"id": retrieval_id},
+    )
+    assert citation_span is None, (
+        "Reindexing after a cited block delete must null that block's note citation; "
+        f"got {citation_span} for retrieval {retrieval_id}"
+    )
+
+    # No row for the deleted block remains anywhere in the page's index (no orphans).
+    doomed_chunk_count = db_session.scalar(
+        text(
+            """
+            SELECT count(*)
+            FROM content_blocks
+            WHERE owner_kind = 'page' AND owner_id = :page_id
+              AND (locator->>'note_block_id') = :note_block_id
+            """
+        ),
+        {"page_id": page.id, "note_block_id": str(doomed.id)},
+    )
+    assert doomed_chunk_count == 0, (
+        f"Deleted block {doomed.id} must leave no content_blocks rows on page {page.id}"
+    )
+
+    # The surviving block is still indexed and the index stays internally consistent
+    # (every chunk part / embedding still joins to a live page-owned chunk).
+    survivor_block_count = db_session.scalar(
+        text(
+            """
+            SELECT count(*)
+            FROM content_blocks
+            WHERE owner_kind = 'page' AND owner_id = :page_id
+              AND (locator->>'note_block_id') = :note_block_id
+            """
+        ),
+        {"page_id": page.id, "note_block_id": str(survivor.id)},
+    )
+    assert survivor_block_count >= 1, (
+        f"Surviving block {survivor.id} must remain indexed on page {page.id}"
+    )
+    final_counts = _page_content_index_row_counts(db_session, page.id)
+    assert final_counts["content_chunks"] >= 1, (
+        f"The surviving block must still produce a chunk, got {final_counts}"
+    )
+    assert final_counts["content_embeddings"] == final_counts["content_chunks"], (
+        "Every surviving page chunk must keep exactly one embedding (no orphan parts); "
+        f"got {final_counts}"
+    )
+
+
+def _inflight_page_reindex_jobs(db_session, page_id) -> list:
+    """Non-terminal page_reindex_job ids for a page, newest first.
+
+    Mirrors the partial unique index uq_page_reindex_job_inflight predicate
+    (kind='page_reindex_job' AND status NOT IN ('succeeded','dead')). page_id is bound
+    as text because payload->>'page_id' is a text extraction.
+    """
+    return [
+        row[0]
+        for row in db_session.execute(
+            text(
+                """
+                SELECT id
+                FROM background_jobs
+                WHERE kind = 'page_reindex_job'
+                  AND (payload->>'page_id') = :page_id
+                  AND status NOT IN ('succeeded', 'dead')
+                ORDER BY created_at DESC, id DESC
+                """
+            ),
+            {"page_id": str(page_id)},
+        ).all()
+    ]
+
+
+@pytest.mark.integration
+def test_debounced_page_reindex_coalesces_in_flight_then_rearms_after_completion(
+    db_session,
+    bootstrapped_user,
+):
+    """AC-3/AC-8: rapid edits coalesce onto one in-flight page_reindex_job, but once that
+    job is terminal the next edit enqueues a FRESH job. Guards the static-dedupe-key
+    regression where the second post-completion edit was silently dropped."""
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Debounce reindex page {uuid4()}"),
+    )
+    block = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(page_id=page.id, body_markdown="first body"),
+    )
+    db_session.commit()
+
+    # First edit: enqueue_page_reindex runs and leaves exactly one in-flight job.
+    notes.update_note_block(
+        db_session,
+        bootstrapped_user,
+        block.id,
+        UpdateNoteBlockRequest(
+            body_pm_json={
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "edited once"}],
+            },
+        ),
+    )
+    db_session.commit()
+
+    after_first = _inflight_page_reindex_jobs(db_session, page.id)
+    assert len(after_first) == 1, (
+        f"First edit must leave exactly one in-flight page_reindex_job, got {after_first}"
+    )
+    inflight_job_id = after_first[0]
+
+    # Second edit before the job drains: the in-flight job is reused, not duplicated, and
+    # the IntegrityError from the partial unique index is swallowed (no error to caller).
+    notes.update_note_block(
+        db_session,
+        bootstrapped_user,
+        block.id,
+        UpdateNoteBlockRequest(
+            body_pm_json={
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "edited twice"}],
+            },
+        ),
+    )
+    db_session.commit()
+
+    after_second = _inflight_page_reindex_jobs(db_session, page.id)
+    assert after_second == [inflight_job_id], (
+        "Second edit must coalesce onto the in-flight job (one row, same id), got "
+        f"{after_second} (expected [{inflight_job_id}])"
+    )
+
+    # Drive the page's in-flight job to 'succeeded' through the real queue path. The
+    # shared queue may hold other page_reindex_jobs (FIFO claim order), so drain until
+    # this page's job is terminal — exercising claim_next_job + complete_job for real.
+    drained_ours = False
+    while _inflight_page_reindex_jobs(db_session, page.id):
+        claimed = claim_next_job(
+            db_session,
+            worker_id="test-worker",
+            lease_seconds=60,
+            allowed_kinds=["page_reindex_job"],
+        )
+        assert claimed is not None, (
+            "A claimable page_reindex_job must exist while ours is in-flight"
+        )
+        drained_ours = drained_ours or claimed.id == inflight_job_id
+        completed = complete_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="test-worker",
+            result_payload={"status": "ready"},
+        )
+        assert completed, f"complete_job must mark job {claimed.id} succeeded"
+        db_session.commit()
+
+    assert drained_ours, f"The in-flight job {inflight_job_id} must have been claimed and completed"
+    assert _inflight_page_reindex_jobs(db_session, page.id) == [], (
+        "After completion there must be no in-flight page_reindex_job for the page"
+    )
+
+    # Third edit after the job is terminal: the dedupe must RE-ARM and enqueue a fresh job.
+    notes.update_note_block(
+        db_session,
+        bootstrapped_user,
+        block.id,
+        UpdateNoteBlockRequest(
+            body_pm_json={
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "edited a third time"}],
+            },
+        ),
+    )
+    db_session.commit()
+
+    after_third = _inflight_page_reindex_jobs(db_session, page.id)
+    assert len(after_third) == 1, (
+        "A post-completion edit must enqueue exactly one fresh in-flight job (re-arm), got "
+        f"{after_third}"
+    )
+    assert after_third[0] != inflight_job_id, (
+        "The re-armed job must be a NEW row, not the completed one; "
+        f"got {after_third[0]} == completed {inflight_job_id}"
+    )

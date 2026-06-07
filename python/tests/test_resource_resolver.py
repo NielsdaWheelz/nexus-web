@@ -56,7 +56,7 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
 
     Wires up the minimum current content block so the span's FKs satisfy the
     schema. Resolver only reads ``span_text``, ``citation_label``, and
-    ``media_id`` via the join.
+    ``owner_id`` via the join.
     """
     from sqlalchemy import text as sql_text
 
@@ -64,13 +64,13 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
         sql_text(
             """
             INSERT INTO content_blocks (
-                media_id, block_idx, block_kind,
+                owner_kind, owner_id, block_idx, block_kind,
                 canonical_text, extraction_confidence,
                 source_start_offset, source_end_offset,
                 heading_path, locator, selector, metadata
             )
             VALUES (
-                :media_id, 0, 'paragraph',
+                'media', :media_id, 0, 'paragraph',
                 :canonical_text, 1.0, 0, :source_end_offset,
                 '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
             )
@@ -85,7 +85,8 @@ def _make_span(db: Session, media_id: UUID, text: str = "Inline span body.") -> 
     ).scalar_one()
     span = EvidenceSpan(
         id=uuid4(),
-        media_id=media_id,
+        owner_kind="media",
+        owner_id=media_id,
         start_block_id=block_id,
         end_block_id=block_id,
         start_block_offset=0,

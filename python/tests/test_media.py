@@ -1226,8 +1226,8 @@ class TestEpubFragmentContentStableAcrossIndexStatusTransition:
                 text(
                     """
                     SELECT active_embedding_provider, active_embedding_model
-                    FROM media_content_index_states
-                    WHERE media_id = :media_id
+                    FROM content_index_states
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
                     """
                 ),
                 {"media_id": media_id},
@@ -1241,12 +1241,12 @@ class TestEpubFragmentContentStableAcrossIndexStatusTransition:
                 session.execute(
                     text(
                         """
-                        UPDATE media_content_index_states
+                        UPDATE content_index_states
                         SET status = :status,
                             active_embedding_provider = :embedding_provider,
                             active_embedding_model = :embedding_model,
                             updated_at = now()
-                        WHERE media_id = :media_id
+                        WHERE owner_kind = 'media' AND owner_id = :media_id
                         """
                     ),
                     {
@@ -2718,10 +2718,10 @@ class TestRetryWebArticleEndpoint:
                         (SELECT count(*) FROM fragments WHERE media_id = :media_id),
                         (SELECT count(*) FROM fragment_blocks WHERE fragment_id = :fragment_id),
                         (SELECT count(*) FROM contributor_credits WHERE media_id = :media_id),
-                        (SELECT count(*) FROM media_content_index_states WHERE media_id = :media_id),
-                        (SELECT count(*) FROM content_chunks WHERE media_id = :media_id),
-                        (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id),
-                        (SELECT count(*) FROM content_blocks WHERE media_id = :media_id)
+                        (SELECT count(*) FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :media_id),
+                        (SELECT count(*) FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id),
+                        (SELECT count(*) FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :media_id),
+                        (SELECT count(*) FROM content_blocks WHERE owner_kind = 'media' AND owner_id = :media_id)
                 """),
                 {"media_id": media_id, "fragment_id": fragment_id},
             ).one()

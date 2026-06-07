@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import (
+    NOTE_BLOCK_SIBLING_ORDER,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
@@ -30,6 +31,7 @@ from nexus.db.models import (
     NoteBlock,
     ObjectLink,
     Page,
+    note_block_sibling_sort_key,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES
@@ -609,9 +611,9 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
             text(
                 """
                 SELECT cb.canonical_text, cb.locator
-                FROM media_content_index_states mcis
-                JOIN content_blocks cb ON cb.media_id = mcis.media_id
-                WHERE mcis.media_id = :media_id
+                FROM content_index_states mcis
+                JOIN content_blocks cb ON cb.owner_kind = mcis.owner_kind AND cb.owner_id = mcis.owner_id
+                WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
                   AND mcis.status = 'ready'
                   AND cb.canonical_text <> ''
                 ORDER BY cb.block_idx ASC
@@ -729,9 +731,7 @@ def _editable_page_blocks(db: Session, page_id: UUID) -> list[NoteBlock]:
             )
             .order_by(
                 NoteBlock.parent_block_id.asc().nullsfirst(),
-                NoteBlock.order_key.asc(),
-                NoteBlock.created_at.asc(),
-                NoteBlock.id.asc(),
+                *NOTE_BLOCK_SIBLING_ORDER,
             )
         )
     )
@@ -747,7 +747,7 @@ def _page_blocks_markdown(blocks: list[NoteBlock]) -> str:
         blocks_by_parent.setdefault(block.parent_block_id, []).append(block)
 
     for sibling_blocks in blocks_by_parent.values():
-        sibling_blocks.sort(key=lambda block: (block.order_key, block.created_at, str(block.id)))
+        sibling_blocks.sort(key=note_block_sibling_sort_key)
 
     sections: list[str] = []
 

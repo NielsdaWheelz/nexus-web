@@ -587,9 +587,12 @@ def delete_pdf_text_artifacts(db: Session, media_id: UUID) -> None:
 
     Used before text-rebuild retry paths.
     """
-    from nexus.services.content_indexing import deactivate_media_content_index
+    from nexus.services.content_indexing import (
+        IndexOwner,
+        deactivate_content_index,
+    )
 
-    deactivate_media_content_index(db, media_id=media_id, reason="pdf_text_rebuild")
+    deactivate_content_index(db, owner=IndexOwner("media", media_id), reason="pdf_text_rebuild")
     db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
     db.execute(
         text("""

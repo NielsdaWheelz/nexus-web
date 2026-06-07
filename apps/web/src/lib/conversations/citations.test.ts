@@ -65,6 +65,7 @@ describe("buildCitations", () => {
         },
         href: "/media/media-1#evidence-span-1",
         target: {
+          kind: "media",
           source: "message_retrieval",
           media_id: "media-1",
           locator,

@@ -264,8 +264,8 @@ def list_media_for_viewer_by_ids(
               ON vm.media_id = m.id
             LEFT JOIN media_transcript_states mts
               ON mts.media_id = m.id
-            LEFT JOIN media_content_index_states mcis
-              ON mcis.media_id = m.id
+            LEFT JOIN content_index_states mcis
+              ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
             LEFT JOIN podcast_episodes pe
               ON pe.media_id = m.id
             {_media_listening_state_join_sql(include_listening_state=True)}
@@ -561,7 +561,7 @@ def list_visible_media(
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-        LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
+        LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
         LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC

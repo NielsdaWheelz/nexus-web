@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
-  isReaderPulseTarget,
-  READER_PULSE_HIGHLIGHT,
+  useReaderPulseHighlight,
   type ReaderPulseTarget,
 } from "./pulseEvent";
 import {
@@ -81,20 +80,16 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
     }
   }, [hasPaneRuntime, mediaId, paneHref]);
 
-  useEffect(() => {
-    function listener(event: Event) {
-      if (!(event instanceof CustomEvent) || !isReaderPulseTarget(event.detail)) {
-        return;
-      }
-      const detail = event.detail;
+  const onReaderPulse = useCallback(
+    (detail: ReaderPulseTarget) => {
       if (detail.mediaId !== mediaId) return;
       const next = targetFromPulse(detail);
       if (!next) return;
       setState({ target: next, status: "pending" });
-    }
-    window.addEventListener(READER_PULSE_HIGHLIGHT, listener);
-    return () => window.removeEventListener(READER_PULSE_HIGHLIGHT, listener);
-  }, [mediaId]);
+    },
+    [mediaId],
+  );
+  useReaderPulseHighlight(onReaderPulse);
 
   const setTarget = useCallback((next: ReaderTarget) => {
     setState({ target: next, status: "pending" });

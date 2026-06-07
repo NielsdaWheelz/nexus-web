@@ -47,8 +47,8 @@ def run_youtube_video_ingest(
                     EXISTS(SELECT 1 FROM fragments WHERE media_id = :media_id),
                     mcis.status
                 FROM media m
-                LEFT JOIN media_content_index_states mcis
-                  ON mcis.media_id = m.id
+                LEFT JOIN content_index_states mcis
+                  ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                 WHERE m.id = :media_id
                 """
             ),
