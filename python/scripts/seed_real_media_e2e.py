@@ -244,7 +244,7 @@ def main() -> None:
                             """
                             SELECT m.id
                             FROM media m
-                            JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                            JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                             WHERE m.kind = 'web_article'
                               AND m.created_by_user_id = :user_id
                               AND m.canonical_url = :canonical_url
@@ -475,28 +475,28 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                                 (
                                     SELECT count(*)
                                     FROM content_chunks cc
-                                    WHERE cc.media_id = m.id
+                                    WHERE cc.owner_kind = 'media' AND cc.owner_id = m.id
                                 ) AS chunk_count,
                                 (
                                     SELECT count(*)
                                     FROM evidence_spans es
-                                    WHERE es.media_id = m.id
+                                    WHERE es.owner_kind = 'media' AND es.owner_id = m.id
                                 ) AS evidence_count,
                                 (
                                     SELECT count(*)
                                     FROM content_embeddings ce
                                     JOIN content_chunks cc ON cc.id = ce.chunk_id
-                                    WHERE cc.media_id = m.id
+                                    WHERE cc.owner_kind = 'media' AND cc.owner_id = m.id
                                 ) AS embedding_count,
                                 (
                                     SELECT count(*)
                                     FROM content_chunks cc
-                                    WHERE cc.media_id = m.id
+                                    WHERE cc.owner_kind = 'media' AND cc.owner_id = m.id
                                       AND cc.chunk_text ILIKE :needle
                                 ) AS needle_chunk_count
                             FROM media m
                             LEFT JOIN media_file mf ON mf.media_id = m.id
-                            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                            LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                             WHERE m.id = :media_id
                             """
                         ),
@@ -571,7 +571,7 @@ def _media_has_index_status(engine: Engine, media_id: UUID, expected_status: str
                     """
                     SELECT m.processing_status, mcis.status
                     FROM media m
-                    JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                    JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                     WHERE m.id = :media_id
                     """
                 ),

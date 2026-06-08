@@ -352,5 +352,12 @@ test_env_export_r2_env() {
 
 test_env_export_makeflags() {
     unset SERVICE_ROLE_KEY SUPABASE_AUTH_ADMIN_KEY SUPABASE_DATABASE_URL SUPABASE_SERVICE_KEY SUPABASE_SERVICE_ROLE_KEY
-    export MAKEFLAGS="${MAKEFLAGS:-} -e"
+    # `-e` makes the environment's ephemeral DATABASE_URL/POSTGRES_PORT win over the
+    # hard `=` assignments a local `.env`/`.dev-ports` injects via `-include`, keeping
+    # tests on the isolated stack instead of the developer's dev database. It MUST be
+    # prepended: a command-line variable (e.g. `make test-e2e PLAYWRIGHT_ARGS=...`, as
+    # CI and local shard/filter runs do) puts `--` in MAKEFLAGS, and a `-e` appended
+    # after that `--` is parsed as a target/assignment, not the flag, silently dropping
+    # the override and pointing migrations at the dev DB.
+    export MAKEFLAGS="-e ${MAKEFLAGS:-}"
 }

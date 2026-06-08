@@ -43,20 +43,21 @@ test("@real-media configured media are ready and open in the reader", async ({
     seed.fixtures.scanned_pdf.query,
     "pdf",
   );
+  // `can_search=False` (no OCR text) gates content retrieval, not title/metadata
+  // discovery: the six-kind search still surfaces the document itself by metadata
+  // (a `media` row + its `/media/<id>` link). What must NOT exist is retrievable
+  // EVIDENCE — content_chunk / evidence_span rows synthesized from un-OCR'd content.
   expect(
     scannedSearch.results.some(
-      (item: { source?: { media_id?: string } }) =>
+      (item: { type?: string; source?: { media_id?: string } }) =>
+        (item.type === "content_chunk" || item.type === "evidence_span") &&
         item.source?.media_id === seed.fixtures.scanned_pdf.media_id,
     ),
     "OCR-required scanned PDF must not expose retrievable evidence",
   ).toBe(false);
-  const scannedMediaLinkSelector = [
-    `a[href$="/media/${seed.fixtures.scanned_pdf.media_id}"]`,
-    `a[href*="/media/${seed.fixtures.scanned_pdf.media_id}?"]`,
-    `a[href*="/media/${seed.fixtures.scanned_pdf.media_id}#"]`,
-  ].join(", ");
+  const scannedEvidenceLinkSelector = `a[href*="/media/${seed.fixtures.scanned_pdf.media_id}#evidence-"]`;
   await expect(
-    activeWorkspacePane(page).locator(scannedMediaLinkSelector),
+    activeWorkspacePane(page).locator(scannedEvidenceLinkSelector),
   ).toHaveCount(0);
 
   writeRealMediaTrace(testInfo, "real-media-readiness-trace.json", {

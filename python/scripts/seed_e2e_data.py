@@ -60,6 +60,7 @@ from nexus.services.epub_metadata import persist_epub_metadata
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_source_ingest import accept_url_source
+from nexus.services.note_indexing import rebuild_page_content_index
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfExtractionError
@@ -899,7 +900,7 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             ),
         )
 
-        set_highlight_note_body(
+        quote_note_block = set_highlight_note_body(
             db,
             user_id,
             quote_highlight.id,
@@ -913,6 +914,16 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             "Seeded focus note for non-PDF linked-items e2e.",
             commit=False,
         )
+        note_page_id = quote_note_block.page_id if quote_note_block else None
+        if note_page_id is None:
+            raise RuntimeError("Non-PDF seed note block was not created")
+        # Note/page content indexing is async in production (enqueue_page_reindex
+        # only marks the page 'pending'); no worker runs in E2E, so drive the
+        # rebuild inline — the same synchronous pattern the seeded media use and
+        # the canonical test-factory convention — so the seeded note is
+        # searchable the instant the API serves a request.
+        db.flush()
+        rebuild_page_content_index(db, page_id=note_page_id, reason="e2e_seed")
         db.commit()
 
     _write_non_pdf_seed_file(
@@ -1405,7 +1416,7 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
                 color="blue",
             ),
         )
-        set_highlight_note_body(
+        near_note_block = set_highlight_note_body(
             db,
             user_id,
             near_highlight.id,
@@ -1419,6 +1430,15 @@ def _seed_reader_overview_ruler_media(session_factory, user_id: UUID) -> None:
             "Seeded far note for reader overview-ruler e2e.",
             commit=False,
         )
+        note_page_id = near_note_block.page_id if near_note_block else None
+        if note_page_id is None:
+            raise RuntimeError("Reader overview-ruler seed note block was not created")
+        # These notes land on the same default page as the non-PDF seed and would
+        # re-mark it 'pending' (enqueue_page_reindex); rebuild inline so the page
+        # content index ends 'ready' after this seed runs (it is ordered last), or
+        # the note-search evidence would be silently unsearchable.
+        db.flush()
+        rebuild_page_content_index(db, page_id=note_page_id, reason="e2e_seed")
         db.commit()
 
     _write_reader_overview_ruler_seed_file(

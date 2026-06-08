@@ -132,7 +132,7 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
     });
   });
 
-  it("closes the sheet and pops the synthetic history entry when selecting a result", async () => {
+  it("dismisses the sheet when a result is selected", async () => {
     renderPalette();
     open();
 
@@ -143,12 +143,13 @@ describe("PaletteSheet (mobile bottom sheet)", () => {
     await screen.findByRole("option", { name: /keyboard shortcuts/i });
     await userEvent.keyboard("{Enter}");
 
+    // Selecting a result closes the sheet. The synthetic-entry bookkeeping for a
+    // navigating select — that it must NOT pop and revert the destination — is
+    // covered directly in useHistoryDismiss.test.tsx and end-to-end by the mobile
+    // command-palette e2e; here we assert the user-visible dismissal.
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
     });
-
-    // history.back() must have been called to pop the synthetic entry
-    expect(history.back).toHaveBeenCalled();
   });
 
   it("drag down past the threshold on the grabber dismisses the sheet", async () => {

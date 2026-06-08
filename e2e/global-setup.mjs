@@ -297,7 +297,7 @@ function databaseHasReadyEvidenceIndexes(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select count(*) from media_content_index_states where media_id = any(%s::uuid[]) and status = 'ready'",
+          "select count(*) from content_index_states where owner_kind = 'media' and owner_id = any(%s::uuid[]) and status = 'ready'",
         ) +
         ", (ids,));" +
         "row=cur.fetchone();" +
@@ -490,7 +490,7 @@ function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select mts.media_id::text, mts.transcript_state, mts.transcript_coverage, mts.semantic_status, mcis.status from media_transcript_states mts left join media_content_index_states mcis on mcis.media_id = mts.media_id where mts.media_id = any(%s::uuid[])",
+          "select mts.media_id::text, mts.transcript_state, mts.transcript_coverage, mts.semantic_status, mcis.status from media_transcript_states mts left join content_index_states mcis on mcis.owner_kind = 'media' and mcis.owner_id = mts.media_id where mts.media_id = any(%s::uuid[])",
         ) +
         ", ([seed['media_id'], seed['playback_only_media_id']],));" +
         "rows={media_id:(state, coverage, semantic, index_status) for media_id, state, coverage, semantic, index_status in cur.fetchall()};" +

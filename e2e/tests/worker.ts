@@ -154,9 +154,9 @@ if media_id:
                     count(DISTINCT es.id),
                     count(DISTINCT ce.id)
                 FROM media m
-                LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                LEFT JOIN content_chunks cc ON cc.media_id = m.id
-                LEFT JOIN evidence_spans es ON es.media_id = m.id
+                LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
+                LEFT JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = m.id
+                LEFT JOIN evidence_spans es ON es.owner_kind = 'media' AND es.owner_id = m.id
                 LEFT JOIN content_embeddings ce ON ce.chunk_id = cc.id
                 WHERE m.id = %s::uuid
                 GROUP BY m.processing_status, mcis.status

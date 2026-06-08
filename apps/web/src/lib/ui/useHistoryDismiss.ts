@@ -30,8 +30,21 @@ export function useHistoryDismiss(active: boolean, onDismiss: () => void): void 
         // Closed via the overlay's own UI — remove the entry we pushed. The
         // popstate this triggers has no listener (the open-effect cleanup ran
         // first), so it cannot re-fire onDismiss.
+        //
+        // But the close may itself be a *navigation*: selecting a palette
+        // result closes the overlay and opens a route, and the workspace URL
+        // sync replaces our synthetic entry with the destination via
+        // `replaceState` in a sibling effect that runs *after* this one in the
+        // same flush. Popping then would revert the navigation (lands on the
+        // previous route). Defer the pop to a microtask — which drains after the
+        // whole effect flush — and only pop if our marker is still the current
+        // entry. A navigation drops the marker (replaceState wrote null state),
+        // so we skip the pop and let the destination stand; a plain dismiss
+        // keeps the marker, so we pop it as before.
         entryActiveRef.current = false;
-        history.back();
+        queueMicrotask(() => {
+          if (hasMarker()) history.back();
+        });
       }
       return;
     }

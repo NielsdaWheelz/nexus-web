@@ -28,8 +28,12 @@ function paletteListbox(root: Page | Locator): Locator {
 // Row accessible name is now `${title} ${subtitle?} ${shortcut?}` (no section tag):
 // the "Keyboard Shortcuts" command has no subtitle, so its name is just the title.
 function keyboardShortcutsOption(root: Page | Locator): Locator {
+  // Exact name targets the nav command only; once /settings/keybindings has been
+  // visited it also appears as a recent row ("Keyboard Shortcuts /settings/…"),
+  // so a loose match would resolve to two options on a retry.
   return paletteListbox(root).getByRole("option", {
-    name: /^Keyboard Shortcuts\b/,
+    name: "Keyboard Shortcuts",
+    exact: true,
   });
 }
 

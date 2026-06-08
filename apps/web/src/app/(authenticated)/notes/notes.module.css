@@ -112,8 +112,10 @@
  * Note-block pulse: applied (via a global class) to the cited
  * `li[data-note-block-id]` when a chat citation activates a note block, so it
  * scrolls into view and pulses — the notes analog of the reader evidence pulse.
+ * Anchored under `.editorShell` (the pulse target is always a descendant of the
+ * `shellRef` editor container) so the selector stays CSS-module pure.
  */
-:global(li[data-note-block-id].nexus-note-pulse) {
+.editorShell :global(li[data-note-block-id].nexus-note-pulse) {
   animation: noteBlockPulse 1200ms var(--ease-glide) 0s 2;
   border-radius: var(--radius-sm);
 }
@@ -129,7 +131,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(li[data-note-block-id].nexus-note-pulse) {
+  .editorShell :global(li[data-note-block-id].nexus-note-pulse) {
     animation: none;
   }
 }

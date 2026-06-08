@@ -736,8 +736,19 @@ def assert_no_search_results(
         headers=headers,
     )
     assert response.status_code == 200, response.text
-    assert response.json()["results"] == [], response.json()
-    return {"media_id": str(media_id), "query": query, "result_count": 0}
+    results = response.json()["results"]
+    # `can_search=False` (capabilities: `can_quote AND retrieval_ready`) gates content
+    # retrieval, not title/metadata discovery. Under the six-kind search model a
+    # `media:<id>` scope still returns that media itself by title/publisher match — the
+    # deliberate scope×entity matrix cell — so a metadata row is expected, not a bug.
+    # The contract this OCR/extraction trace actually asserts is narrower: no
+    # CONTENT-INDEX fallback rows (no chunks/fragments/evidence synthesized for a
+    # document whose body was never indexed, e.g. an OCR-required scan).
+    index_results = [
+        row for row in results if row.get("type") in {"content_chunk", "fragment", "evidence_span"}
+    ]
+    assert index_results == [], results
+    return {"media_id": str(media_id), "query": query, "result_count": len(index_results)}
 
 
 def assert_media_deleted_evidence_trace(
