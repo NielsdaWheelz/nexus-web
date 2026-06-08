@@ -58,6 +58,7 @@ class SearchResultSourceOut(BaseModel):
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
+    summary_md: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

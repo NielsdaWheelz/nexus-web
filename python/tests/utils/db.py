@@ -94,6 +94,44 @@ def _delete_page_owned_content(
         )
 
 
+def _delete_library_intelligence(session: Session, artifact_filter: str, value: Any) -> None:
+    """Tear down the LI head + revisions (non-cascading, migration 0141) for cleanup.
+
+    ``artifact_filter`` is a WHERE clause over ``library_intelligence_artifacts``
+    (e.g. ``WHERE library_id = :value``). Order: null the circular pointer, drop
+    revision children (citations, events), then revisions, then the head.
+    """
+    revision_filter = (
+        "revision_id IN (SELECT r.id FROM library_intelligence_artifact_revisions r "
+        f"JOIN library_intelligence_artifacts a ON a.id = r.artifact_id {artifact_filter})"
+    )
+    session.execute(
+        text(
+            f"UPDATE library_intelligence_artifacts SET current_revision_id = NULL {artifact_filter}"
+        ),
+        {"value": value},
+    )
+    session.execute(
+        text(f"DELETE FROM library_intelligence_citations WHERE {revision_filter}"),
+        {"value": value},
+    )
+    session.execute(
+        text(f"DELETE FROM library_intelligence_revision_events WHERE {revision_filter}"),
+        {"value": value},
+    )
+    session.execute(
+        text(
+            "DELETE FROM library_intelligence_artifact_revisions WHERE artifact_id IN "
+            f"(SELECT id FROM library_intelligence_artifacts {artifact_filter})"
+        ),
+        {"value": value},
+    )
+    session.execute(
+        text(f"DELETE FROM library_intelligence_artifacts {artifact_filter}"),
+        {"value": value},
+    )
+
+
 def task_session_factory(fixture_session: Session) -> Callable[[], Session]:
     """Create a session factory for worker job tests.
 
@@ -431,12 +469,33 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
+                    # library_intelligence head/revisions are non-cascading (migration
+                    # 0141) and the head FKs both library_id and user_id; tear them down
+                    # before the user (and its cascaded libraries).
+                    _delete_library_intelligence(
+                        session,
+                        "WHERE library_id IN (SELECT id FROM libraries WHERE owner_user_id = :value) "
+                        "OR user_id = :value",
+                        value,
+                    )
 
                 if table == "media" and column == "id":
                     session.execute(
                         text(
                             "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :value"
                         ),
+                        {"value": value},
+                    )
+                    # media_claims/media_summaries are non-cascading (migration 0140);
+                    # claims FK evidence_spans + media_summaries, so clear them before
+                    # the span/content/media rows they reference (handled below by
+                    # _delete_owner_content and the trailing DELETE FROM media).
+                    session.execute(
+                        text("DELETE FROM media_claims WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM media_summaries WHERE media_id = :value"),
                         {"value": value},
                     )
                     # Content index tables are now keyed by (owner_kind, owner_id);
@@ -511,6 +570,10 @@ class DirectSessionManager:
                         text("DELETE FROM library_entries WHERE library_id = :value"),
                         {"value": value},
                     )
+                    # library_intelligence head/revisions are non-cascading (migration
+                    # 0141): null the circular pointer, then drop revision children, then
+                    # revisions + the head, before the library row.
+                    _delete_library_intelligence(session, "WHERE library_id = :value", value)
 
                 if table == "libraries" and column == "owner_user_id":
                     session.execute(
@@ -519,6 +582,11 @@ class DirectSessionManager:
                             "(SELECT id FROM libraries WHERE owner_user_id = :value)"
                         ),
                         {"value": value},
+                    )
+                    _delete_library_intelligence(
+                        session,
+                        "WHERE library_id IN (SELECT id FROM libraries WHERE owner_user_id = :value)",
+                        value,
                     )
 
                 if table == "conversations" and column == "id":

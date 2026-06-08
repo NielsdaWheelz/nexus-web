@@ -1,7 +1,7 @@
 """notes & pages evidence unification: polymorphic content-index owner
 
-Revision ID: 0141
-Revises: 0140
+Revision ID: 0143
+Revises: 0142
 Create Date: 2026-06-07
 
 Generalizes the content/evidence pipeline owner from media_id to a polymorphic
@@ -24,8 +24,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0141"
-down_revision: str | Sequence[str] | None = "0140"
+revision: str = "0143"
+down_revision: str | Sequence[str] | None = "0142"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

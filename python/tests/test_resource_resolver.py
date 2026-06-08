@@ -186,6 +186,55 @@ def _add_fragment(db: Session, media_id: UUID, *, idx: int, text: str) -> UUID:
     return fragment.id
 
 
+def _make_li_artifact(
+    db: Session,
+    library_id: UUID,
+    user_id: UUID,
+    *,
+    content_md: str | None = "Synthesis overview.\nMore prose [1].",
+) -> UUID:
+    """Create an LI artifact head; when ``content_md`` is set, a promoted current revision.
+
+    Resolver only reads the head id, the joined library name, and (LEFT JOIN) the
+    current revision's content_md, so this raw insert is sufficient. ``content_md=None``
+    leaves ``current_revision_id`` NULL (a head with no promoted revision).
+    """
+    from sqlalchemy import text as sql_text
+
+    artifact_id = db.execute(
+        sql_text(
+            """
+            INSERT INTO library_intelligence_artifacts (library_id, user_id)
+            VALUES (:library_id, :user_id)
+            RETURNING id
+            """
+        ),
+        {"library_id": library_id, "user_id": user_id},
+    ).scalar_one()
+    if content_md is not None:
+        revision_id = db.execute(
+            sql_text(
+                """
+                INSERT INTO library_intelligence_artifact_revisions (
+                    artifact_id, content_md, covered_targets, status, promoted_at
+                )
+                VALUES (:artifact_id, :content_md, '[]'::jsonb, 'ready', now())
+                RETURNING id
+                """
+            ),
+            {"artifact_id": artifact_id, "content_md": content_md},
+        ).scalar_one()
+        db.execute(
+            sql_text(
+                "UPDATE library_intelligence_artifacts "
+                "SET current_revision_id = :rev WHERE id = :artifact_id"
+            ),
+            {"rev": revision_id, "artifact_id": artifact_id},
+        )
+    db.commit()
+    return UUID(str(artifact_id))
+
+
 def _make_pdf(db: Session, library_id: UUID, *, pages: list[str], title: str = "Test PDF") -> UUID:
     """Create a PDF media with plain_text + page spans (offsets into plain_text)."""
     plain_text = ""
@@ -312,6 +361,187 @@ def test_resolve_library_non_member_returns_missing(db_session: Session, bootstr
     resolved = resolve(db_session, f"library:{other_library_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-member must see library as missing"
+
+
+def test_resolve_li_artifact_promoted_inlines_current_revision(
+    db_session: Session, bootstrapped_user: UUID
+):
+    library_id = create_test_library(db_session, bootstrapped_user, "Synthesis Library")
+    artifact_id = _make_li_artifact(
+        db_session,
+        library_id,
+        bootstrapped_user,
+        content_md="Overview line.\nThe library covers X and Y [1].",
+    )
+
+    resolved = resolve(
+        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+    )
+
+    assert not resolved.missing, f"Member should resolve a promoted artifact; got {resolved}"
+    assert resolved.label == "Library Intelligence — Synthesis Library", (
+        f"Artifact label should name the library; got {resolved.label!r}"
+    )
+    assert resolved.summary == "Overview line.", (
+        f"Summary should be the first prose line; got {resolved.summary!r}"
+    )
+    assert resolved.inline_body == "Overview line.\nThe library covers X and Y [1].", (
+        f"Short current-revision content should inline; got {resolved.inline_body!r}"
+    )
+    assert f"library:{library_id}" in resolved.fetch_hint, (
+        f"Fetch hint should point at the library scope; got {resolved.fetch_hint}"
+    )
+    assert "read_resource" in resolved.fetch_hint
+
+
+def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstrapped_user: UUID):
+    library_id = create_test_library(db_session, bootstrapped_user, "Big Synthesis")
+    long_content = "First line.\n" + ("x" * (INLINE_THRESHOLD_CHARS + 100))
+    artifact_id = _make_li_artifact(
+        db_session, library_id, bootstrapped_user, content_md=long_content
+    )
+
+    resolved = resolve(
+        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+    )
+
+    assert not resolved.missing
+    assert resolved.inline_body is None, (
+        f"Content >= {INLINE_THRESHOLD_CHARS} chars must not inline; got len="
+        f"{len(resolved.inline_body or '')}"
+    )
+    assert resolved.summary == "First line."
+
+
+def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
+    db_session: Session, bootstrapped_user: UUID
+):
+    library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Library")
+    artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
+
+    resolved = resolve(
+        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+    )
+
+    assert not resolved.missing, (
+        f"A head with current_revision_id NULL must resolve non-missing; got {resolved}"
+    )
+    assert resolved.inline_body is None, "No current revision -> no inline body"
+    assert resolved.label == "Library Intelligence — Ungenerated Library"
+
+
+def test_resolve_li_artifact_non_member_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
+    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
+
+    resolved = resolve(
+        db_session, f"library_intelligence_artifact:{artifact_id}", viewer_id=bootstrapped_user
+    )
+
+    assert resolved.missing, "Non-member must see the artifact as missing"
+
+
+def test_resolve_li_artifact_unknown_id_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    resolved = resolve(
+        db_session, f"library_intelligence_artifact:{uuid4()}", viewer_id=bootstrapped_user
+    )
+    assert resolved.missing, "Unknown artifact URI must resolve as missing"
+
+
+def test_li_artifact_resources_block_reflects_current_revision(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """§6.6: the resource resolves to whatever revision is current at assembly time.
+
+    Promoting a new revision changes the assembled <resource> block on the next
+    assembly — without re-referencing (the head URI is stable; resolution is fresh).
+    """
+    from sqlalchemy import text as sql_text
+
+    from nexus.services import context_assembler
+    from nexus.services.conversation_references import insert_reference_if_absent
+
+    library_id = create_test_library(db_session, bootstrapped_user, "Fresh-Resolve Library")
+    artifact_id = _make_li_artifact(
+        db_session, library_id, bootstrapped_user, content_md="First revision prose."
+    )
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    insert_reference_if_absent(
+        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
+    )
+    db_session.commit()
+
+    block, _meta, _citations = context_assembler._build_resources_block(
+        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
+    )
+    assert block is not None
+    assert "First revision prose." in block.text, (
+        f"Block should inline the current revision; got:\n{block.text}"
+    )
+
+    # Promote a new revision; the head URI is unchanged.
+    new_revision_id = db_session.execute(
+        sql_text(
+            """
+            INSERT INTO library_intelligence_artifact_revisions (
+                artifact_id, content_md, covered_targets, status, promoted_at
+            )
+            VALUES (:artifact_id, 'Second revision prose.', '[]'::jsonb, 'ready', now())
+            RETURNING id
+            """
+        ),
+        {"artifact_id": artifact_id},
+    ).scalar_one()
+    db_session.execute(
+        sql_text(
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = :rev WHERE id = :artifact_id"
+        ),
+        {"rev": new_revision_id, "artifact_id": artifact_id},
+    )
+    db_session.commit()
+
+    block2, _meta2, _citations2 = context_assembler._build_resources_block(
+        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
+    )
+    assert block2 is not None
+    assert "Second revision prose." in block2.text, (
+        f"Next assembly must reflect the promoted revision; got:\n{block2.text}"
+    )
+    assert "First revision prose." not in block2.text
+
+
+def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootstrapped_user: UUID):
+    """The artifact carries inline content but is NON-citable: no [N] / no citation.
+
+    Its inline [N] reference the revision's own citations rendered by the LI pane,
+    not a get_search_result chip, so the attached-citation materializer skips it.
+    """
+    from nexus.services import context_assembler
+    from nexus.services.conversation_references import insert_reference_if_absent
+
+    library_id = create_test_library(db_session, bootstrapped_user, "Noncitable Library")
+    artifact_id = _make_li_artifact(
+        db_session, library_id, bootstrapped_user, content_md="Inline synthesis [1]."
+    )
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    insert_reference_if_absent(
+        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
+    )
+    db_session.commit()
+
+    block, _meta, citations = context_assembler._build_resources_block(
+        db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
+    )
+    assert block is not None
+    assert citations == (), "The artifact must not materialize an attached citation"
+    assert ' n="' not in block.text, "A non-citable resource must not be numbered"
 
 
 def test_resolve_span_inlines_body_under_threshold(db_session: Session, bootstrapped_user: UUID):

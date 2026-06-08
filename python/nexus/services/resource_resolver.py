@@ -27,6 +27,7 @@ INLINE_THRESHOLD_CHARS = 1500
 ResourceUriScheme = Literal[
     "media",
     "library",
+    "library_intelligence_artifact",
     "span",
     "chunk",
     "highlight",
@@ -39,6 +40,7 @@ ResourceUriScheme = Literal[
 RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = (
     "media",
     "library",
+    "library_intelligence_artifact",
     "span",
     "chunk",
     "highlight",
@@ -51,7 +53,10 @@ RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = (
 SEARCH_SCOPE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = ("media", "library")
 # read_resource rejects these outright (a library has no canonical body). `media`
 # is NOT here — it is readable (full / too_large) — but stays a valid search scope
-# above. The two tuples are distinct on purpose; do not merge them.
+# above. `library_intelligence_artifact` is NOT here either — UNLIKE `library` it
+# HAS a canonical body (the current revision's content_md), so it is readable; but
+# it is NOT a search scope (the co-referenced `library:` URI carries retrieval).
+# The three tuples are distinct on purpose; do not merge them.
 READ_REJECTED_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = ("library",)
 READABLE_RESOURCE_URI_SCHEMES: tuple[ResourceUriScheme, ...] = tuple(
     scheme for scheme in RESOURCE_URI_SCHEMES if scheme not in READ_REJECTED_RESOURCE_URI_SCHEMES
@@ -196,6 +201,28 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             summary=summary,
             inline_body=None,
             fetch_hint=f'app_search(scopes=["{loaded.uri}"], query=...)',
+        )
+    if scheme == "library_intelligence_artifact":
+        name = loaded.title or ""
+        content_md = loaded.body or ""
+        library_uri = (
+            f"library:{loaded.related_library_id}"
+            if loaded.related_library_id is not None
+            else None
+        )
+        library_search = (
+            f'; app_search(scopes=["{library_uri}"], query=...) to search the library'
+            if library_uri is not None
+            else ""
+        )
+        return ResolvedResource(
+            uri=loaded.uri,
+            label=f"Library Intelligence — {name}",
+            summary=_first_line(content_md) or f"Library Intelligence for {name}",
+            inline_body=(
+                content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
+            ),
+            fetch_hint=(f'read_resource("{loaded.uri}") for the full synthesis{library_search}'),
         )
     if scheme == "highlight":
         quote = loaded.quote

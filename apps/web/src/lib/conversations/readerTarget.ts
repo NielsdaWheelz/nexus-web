@@ -18,7 +18,9 @@ export interface MediaReaderTarget {
   snippet: string | null;
   highlight_behavior: "pulse";
   focus_behavior: "scroll_into_view";
-  status: string;
+  // Retrieval-status hint, set by `readerTargetFromRetrieval`. The CitationOut
+  // render path (`readerTargetForCitation`) has no status source, so optional.
+  status?: string;
   label?: string;
   href?: string | null;
   evidence_span_id?: string | null;
@@ -35,7 +37,7 @@ export interface NoteReaderTarget {
   snippet: string | null;
   highlight_behavior: "pulse";
   focus_behavior: "scroll_into_view";
-  status: string;
+  status?: string;
   label?: string;
   href?: string | null;
   evidence_id?: string;

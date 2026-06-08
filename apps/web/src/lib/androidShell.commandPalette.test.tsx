@@ -15,8 +15,8 @@ import CommandPalette from "@/components/palette/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
-import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 // ---------------------------------------------------------------------------

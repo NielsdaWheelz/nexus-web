@@ -55,8 +55,9 @@ READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
         "or a read_uri that inspect_resource returned. Accepts 'media:UUID' (the whole "
         "document if short, else a redirect to inspect_resource), 'page_range:MEDIA:a-b' "
         "(PDF pages), 'fragment:UUID' (a section), 'highlight:UUID', 'span:UUID', "
-        "'chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', or "
-        "'conversation:UUID'. Not valid for 'library:UUID' — that is a search scope; use "
+        "'chunk:UUID', 'page:UUID', 'note_block:UUID', 'message:UUID', "
+        "'conversation:UUID', or 'library_intelligence_artifact:UUID' (a library's "
+        "synthesis). Not valid for 'library:UUID' — that is a search scope; use "
         "app_search with scopes=[...]. Every result is labelled with a kind attribute."
     ),
     "parameters": {
@@ -291,6 +292,16 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=f"{loaded.message_role}:\n{loaded.body or ''}",
             kind="message",
+        )
+    if scheme == "library_intelligence_artifact":
+        # The artifact's body IS the current revision's synthesis prose. NON-citable:
+        # its inline [N] markers reference the revision's own citations (rendered by
+        # the LI pane), not a get_search_result chip — so no citation_result_type.
+        return ReadResourceResult(
+            uri=loaded.uri,
+            status="complete",
+            body=loaded.body or "",
+            kind="library_intelligence",
         )
     if scheme in ("span", "chunk", "page", "note_block"):
         return ReadResourceResult(

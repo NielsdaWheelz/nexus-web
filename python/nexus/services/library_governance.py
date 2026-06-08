@@ -284,54 +284,40 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
 
 
 def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
+    """Tear down the head + its revisions for a deleted library (non-cascading FKs).
+
+    Order: null the circular head->revision pointer, then citations + events
+    (revision children), then revisions, then the head.
+    """
+    revision_filter = (
+        "revision_id IN (SELECT r.id FROM library_intelligence_artifact_revisions r "
+        "JOIN library_intelligence_artifacts a ON a.id = r.artifact_id "
+        "WHERE a.library_id = :library_id)"
+    )
     db.execute(
         text(
-            """
-            DELETE FROM library_intelligence_evidence e
-            USING library_intelligence_claims c
-            WHERE e.claim_id = c.id
-              AND c.artifact_id IN (
-                  SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
-              )
-            """
+            "UPDATE library_intelligence_artifacts "
+            "SET current_revision_id = NULL WHERE library_id = :library_id"
         ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(f"DELETE FROM library_intelligence_citations WHERE {revision_filter}"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(f"DELETE FROM library_intelligence_revision_events WHERE {revision_filter}"),
         {"library_id": library_id},
     )
     db.execute(
         text(
             """
-            DELETE FROM library_intelligence_claims
+            DELETE FROM library_intelligence_artifact_revisions
             WHERE artifact_id IN (
                 SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
             )
             """
         ),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM library_intelligence_nodes
-            WHERE artifact_id IN (
-                SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
-            )
-            """
-        ),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM library_intelligence_sections
-            WHERE artifact_id IN (
-                SELECT id FROM library_intelligence_artifacts WHERE library_id = :library_id
-            )
-            """
-        ),
-        {"library_id": library_id},
-    )
-    db.execute(
-        text("DELETE FROM library_intelligence_builds WHERE library_id = :library_id"),
         {"library_id": library_id},
     )
     db.execute(

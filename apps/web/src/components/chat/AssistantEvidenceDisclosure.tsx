@@ -2,7 +2,10 @@
 
 import { useMemo, type Ref } from "react";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
-import { buildCitations } from "@/lib/conversations/citations";
+import {
+  messageToCitationOuts,
+  toReaderCitationData,
+} from "@/lib/conversations/citations";
 import {
   conversationMessageText,
   type ConversationMessage,
@@ -20,7 +23,10 @@ export default function AssistantEvidenceDisclosure({
   onCitationActivate?: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
 }) {
   const answerContent = conversationMessageText(message);
-  const citations = useMemo(() => buildCitations(message), [message]);
+  const citations = useMemo(
+    () => messageToCitationOuts(message).map(toReaderCitationData),
+    [message],
+  );
   return (
     <div ref={answerRef} className={styles.assistantBody}>
       <MarkdownMessage

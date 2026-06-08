@@ -33,8 +33,10 @@ from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_result_ref_json,
 )
+from nexus.services import media_intelligence
 from nexus.services.contributor_taxonomy import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
+from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_resolver import (
     SEARCH_SCOPE_RESOURCE_URI_SCHEMES,
     ResourceUriParseFailure,
@@ -864,6 +866,9 @@ def _render_media_block(db: Session, media_id: UUID) -> str | None:
     lines = ['<app_search_result type="media">', f"<source>{xml_escape(row[0] or '')}</source>"]
     if row[1]:
         lines.append(f"<url>{xml_escape(row[1])}</url>")
+    unit = media_intelligence.get_media_unit(db, media_id=media_id)
+    if isinstance(unit, MediaUnit) and unit.summary_md:
+        lines.append(f"<summary>{xml_escape(unit.summary_md)}</summary>")
     lines.append("</app_search_result>")
     return "\n".join(lines)
 

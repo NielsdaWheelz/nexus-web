@@ -13,19 +13,31 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
+from pydantic import TypeAdapter
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.schemas.citation import (
+    CitationOut,
+    CitationRole,
+    CitationSnapshot,
+    CitationTargetRef,
+    CitationTargetType,
+)
 from nexus.schemas.retrieval import (
+    RetrievalLocator,
     retrieval_context_ref_json,
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
 from nexus.schemas.search import SearchResultOut
+from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+
+_LOCATOR_ADAPTER: TypeAdapter[RetrievalLocator] = TypeAdapter(RetrievalLocator)
 
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
     {
@@ -339,3 +351,105 @@ def insert_retrieval_row(
         return db.execute(_INSERT_RETRIEVAL, payload).scalar_one()
     db.execute(_UPDATE_RETRIEVAL, {**payload, "retrieval_id": existing[0]})
     return existing[0]
+
+
+# ---------- evidence-span citation target (write-time) ----------------------
+
+
+def build_evidence_span_citation_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    evidence_span_id: UUID,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve one evidence span to a stored (locator, snapshot) pair.
+
+    Used by the library-intelligence reduce at citation-write time. The locator is
+    the normalized ``RetrievalLocator`` shape (via the shared
+    ``locator_from_resolution`` mapping); the snapshot carries display fields plus
+    the canonical ``#evidence-`` deep_link (the read producer lifts it into
+    ``CitationOut.deep_link``).
+    """
+    resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=evidence_span_id)
+    media = (
+        db.execute(
+            text("SELECT title, kind FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one()
+    )
+    locator = locator_from_resolution(
+        resolution, media_id=media_id, media_kind=str(media["kind"] or "")
+    )
+    snapshot = {
+        "title": str(media["title"]) if media["title"] is not None else None,
+        "excerpt": str(resolution.get("span_text") or "")[:600],
+        "section_label": str(resolution.get("citation_label") or "") or None,
+        "result_type": "evidence_span",
+        "deep_link": f"/media/{media_id}#evidence-{evidence_span_id}",
+    }
+    return locator, snapshot
+
+
+# ---------- citation read-model producer ------------------------------------
+
+
+def build_citation_outs_for_revision(db: Session, *, revision_id: UUID) -> list[CitationOut]:
+    """Build the shared ``CitationOut`` read-model for one LI revision's citations.
+
+    Reads the immutable ``library_intelligence_citations`` rows (locator + snapshot
+    persisted at generation), lifting ``snapshot.deep_link`` into
+    ``CitationOut.deep_link``. The render contract (`[N]` jump) is identical to
+    chat/oracle citations.
+    """
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT ordinal, role, target_type, target_id, locator, snapshot
+                FROM library_intelligence_citations
+                WHERE revision_id = :revision_id
+                ORDER BY ordinal
+                """
+            ),
+            {"revision_id": revision_id},
+        )
+        .mappings()
+        .all()
+    )
+    return [_citation_out_from_row(row) for row in rows]
+
+
+def _citation_out_from_row(row: Mapping[Any, Any]) -> CitationOut:
+    raw_locator = row["locator"] if isinstance(row["locator"], dict) else None
+    locator: RetrievalLocator | None = (
+        _LOCATOR_ADAPTER.validate_python(raw_locator) if raw_locator else None
+    )
+    snapshot_raw = row["snapshot"] if isinstance(row["snapshot"], dict) else {}
+    deep_link = snapshot_raw.get("deep_link")
+    # Not every locator variant carries a media_id (e.g. note_block/message/url),
+    # but evidence-span citations always do.
+    media_id = getattr(locator, "media_id", None) if locator is not None else None
+    return CitationOut(
+        ordinal=int(row["ordinal"]),
+        role=cast("CitationRole", str(row["role"])),
+        target_ref=CitationTargetRef(
+            type=cast("CitationTargetType", str(row["target_type"])),
+            id=UUID(str(row["target_id"])),
+        ),
+        media_id=UUID(str(media_id)) if media_id is not None else None,
+        locator=locator,
+        deep_link=str(deep_link) if isinstance(deep_link, str) else None,
+        snapshot=CitationSnapshot(
+            title=_opt_str(snapshot_raw.get("title")),
+            excerpt=_opt_str(snapshot_raw.get("excerpt")),
+            section_label=_opt_str(snapshot_raw.get("section_label")),
+            result_type=_opt_str(snapshot_raw.get("result_type")),
+        ),
+    )
+
+
+def _opt_str(value: Any) -> str | None:
+    return value if isinstance(value, str) else None

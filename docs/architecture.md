@@ -464,8 +464,8 @@ single instance is single-concurrency.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
-`oracle_reading_generate`, `library_intelligence_build_job`,
-`podcast_sync_subscription_job`,
+`oracle_reading_generate`, `library_intelligence_artifact_generate`,
+`media_unit_build`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`

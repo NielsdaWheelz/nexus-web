@@ -105,7 +105,9 @@ type MediaSearchCitationEventData = SearchCitationBase<
   "media",
   "media",
   null
->;
+> & {
+  summary_md?: string | null;
+};
 
 type PodcastSearchCitationEventData = SearchCitationBase<
   "podcast",
@@ -119,13 +121,17 @@ type EpisodeSearchCitationEventData = SearchCitationBase<
   "episode",
   "media",
   null
->;
+> & {
+  summary_md?: string | null;
+};
 
 type VideoSearchCitationEventData = SearchCitationBase<
   "video",
   "media",
   null
->;
+> & {
+  summary_md?: string | null;
+};
 
 type ContentChunkSearchCitationEventData = SearchCitationBase<
   "content_chunk",
@@ -286,7 +292,10 @@ export function isSearchCitationEventData(
 
   switch (resultType) {
     case "media":
-      return isSearchCitationBase(citation, "media", "media", []);
+      return (
+        isSearchCitationBase(citation, "media", "media", ["summary_md"]) &&
+        isOptionalString(citation.summary_md)
+      );
     case "podcast":
       return (
         isSearchCitationBase(citation, "podcast", "podcast", [
@@ -296,9 +305,15 @@ export function isSearchCitationEventData(
         citation.contributors.every(isRecord)
       );
     case "episode":
-      return isSearchCitationBase(citation, "episode", "media", []);
+      return (
+        isSearchCitationBase(citation, "episode", "media", ["summary_md"]) &&
+        isOptionalString(citation.summary_md)
+      );
     case "video":
-      return isSearchCitationBase(citation, "video", "media", []);
+      return (
+        isSearchCitationBase(citation, "video", "media", ["summary_md"]) &&
+        isOptionalString(citation.summary_md)
+      );
     case "content_chunk":
       return (
         isSearchCitationBase(citation, "content_chunk", "content_chunk", [

@@ -1,7 +1,7 @@
 """page reindex: at-most-one-in-flight-per-page dedupe index
 
-Revision ID: 0142
-Revises: 0141
+Revision ID: 0144
+Revises: 0143
 Create Date: 2026-06-07
 
 A note/page edit enqueues a debounced page_reindex_job. We want rapid edits to
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0142"
-down_revision: str | Sequence[str] | None = "0141"
+revision: str = "0144"
+down_revision: str | Sequence[str] | None = "0143"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -27,7 +27,8 @@ from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
-    "ingest_media_source,enrich_metadata,chat_run,library_intelligence_build_job,"
+    "ingest_media_source,enrich_metadata,chat_run,"
+    "library_intelligence_artifact_generate,media_unit_build,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate"
 )

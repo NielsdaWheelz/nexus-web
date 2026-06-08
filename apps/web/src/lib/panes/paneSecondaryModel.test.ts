@@ -20,7 +20,6 @@ describe("paneSecondaryModel", () => {
     expect(getSecondaryGroupForSurface("conversation-forks")).toBe(
       "conversation-context",
     );
-    expect(getSecondaryGroupForSurface("library-chat")).toBe("library-tools");
     expect(getSecondaryGroupForSurface("library-intelligence")).toBe("library-tools");
   });
 
@@ -44,10 +43,14 @@ describe("paneSecondaryModel", () => {
       "conversation-references",
       "conversation-forks",
     ]);
+    expect(getSecondarySurfaceIdsForGroup("library-tools")).toEqual([
+      "library-intelligence",
+    ]);
   });
 
   it("validates secondary ids", () => {
-    expect(isWorkspaceSecondarySurfaceId("library-chat")).toBe(true);
+    expect(isWorkspaceSecondarySurfaceId("library-chat")).toBe(false);
+    expect(isWorkspaceSecondarySurfaceId("library-intelligence")).toBe(true);
     expect(isWorkspaceSecondarySurfaceId("unknown")).toBe(false);
     expect(isWorkspaceSecondaryGroupId("library-tools")).toBe(true);
     expect(isWorkspaceSecondaryGroupId("unknown")).toBe(false);

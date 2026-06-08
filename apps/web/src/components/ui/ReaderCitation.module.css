@@ -70,6 +70,18 @@
   margin-bottom: var(--space-1);
 }
 
+.previewSummary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
+  margin-bottom: var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
+}
+
 .previewExcerpt {
   display: -webkit-box;
   -webkit-box-orient: vertical;

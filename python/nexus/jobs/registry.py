@@ -101,11 +101,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=900,
             dead_letter_handler=_dead_letter_chat_run,
         ),
-        "library_intelligence_build_job": JobDefinition(
-            kind="library_intelligence_build_job",
-            handler=_run_library_intelligence_build,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
+        "library_intelligence_artifact_generate": JobDefinition(
+            kind="library_intelligence_artifact_generate",
+            handler=_run_library_intelligence_artifact_generate,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
             lease_seconds=900,
         ),
         "podcast_sync_subscription_job": JobDefinition(
@@ -200,6 +200,14 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=120,
         ),
+        "media_unit_build": JobDefinition(
+            kind="media_unit_build",
+            handler=_run_media_unit_build,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=300,
+            failed_result_statuses=("failed",),
+        ),
     }
 
 
@@ -245,10 +253,12 @@ def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
     finalize_dead_lettered_chat_run(db, job)
 
 
-def _run_library_intelligence_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.library_intelligence import library_intelligence_build_job
+def _run_library_intelligence_artifact_generate(
+    *, payload: Mapping[str, Any]
+) -> Mapping[str, Any] | None:
+    from nexus.tasks.library_intelligence import library_intelligence_artifact_generate
 
-    return library_intelligence_build_job(build_id=str(payload["build_id"]))
+    return library_intelligence_artifact_generate(revision_id=str(payload["revision_id"]))
 
 
 def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -369,6 +379,12 @@ def _run_oracle_reading_generate(*, payload: Mapping[str, Any]) -> Mapping[str, 
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
     return oracle_reading_generate(reading_id=str(payload["reading_id"]))
+
+
+def _run_media_unit_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.media_unit_build import media_unit_build
+
+    return media_unit_build(media_id=str(payload["media_id"]))
 
 
 def _optional_str(value: Any) -> str | None:

@@ -52,8 +52,7 @@ import {
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { useResource } from "@/lib/api/useResource";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
-import LibraryIntelligenceView from "./LibraryIntelligenceView";
-import LibraryChatTab from "@/components/chat/LibraryChatTab";
+import LibraryIntelligencePane from "./LibraryIntelligencePane";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -750,23 +749,9 @@ export default function LibraryPaneBody() {
     router.push("/libraries");
   }, [currentLibrary, closeEditDialog, router]);
 
-  const handleOpenLibraryChat = useCallback(() => {
-    requestSecondarySurface?.("library-chat");
-  }, [requestSecondarySurface]);
-
   const handleOpenLibraryIntelligence = useCallback(() => {
     requestSecondarySurface?.("library-intelligence");
   }, [requestSecondarySurface]);
-
-  const handleOpenFullLibraryChat = useCallback(
-    (conversationId: string) => {
-      openInNewPane?.(
-        `/conversations/${conversationId}`,
-        currentLibrary?.name,
-      );
-    },
-    [currentLibrary?.name, openInNewPane],
-  );
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
@@ -789,6 +774,34 @@ export default function LibraryPaneBody() {
       }
     },
     [openInNewPane],
+  );
+
+  const handleOpenIntelligenceChat = useCallback(
+    async (artifactId: string) => {
+      try {
+        const response = await apiFetch<{
+          data: { id: string };
+        }>("/api/conversations", {
+          method: "POST",
+          body: JSON.stringify({
+            initial_references: [
+              `library_intelligence_artifact:${artifactId}`,
+              `library:${id}`,
+            ],
+          }),
+        });
+        const route = `/conversations/${response.data.id}`;
+        openInNewPane?.(route, currentLibrary?.name);
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        setError(
+          toFeedback(err, {
+            fallback: "Failed to open library chat",
+          }),
+        );
+      }
+    },
+    [currentLibrary?.name, id, openInNewPane],
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
@@ -834,7 +847,6 @@ export default function LibraryPaneBody() {
         },
         ...libraryResourceOptions({
           library: currentLibrary,
-          onOpenChat: handleOpenLibraryChat,
           onViewIntelligence: handleOpenLibraryIntelligence,
           onEdit: () => void openEditDialog(),
           onDelete: () => {
@@ -850,25 +862,21 @@ export default function LibraryPaneBody() {
       currentLibrary
         ? {
             groupId: "library-tools" as const,
-            defaultSurfaceId: "library-chat" as const,
+            defaultSurfaceId: "library-intelligence" as const,
             surfaces: [
               {
-                id: "library-chat" as const,
+                id: "library-intelligence" as const,
                 body: (
-                  <LibraryChatTab
+                  <LibraryIntelligencePane
                     libraryId={id}
-                    onOpenChat={handleOpenFullLibraryChat}
+                    onOpenChat={handleOpenIntelligenceChat}
                   />
                 ),
-              },
-              {
-                id: "library-intelligence" as const,
-                body: <LibraryIntelligenceView libraryId={id} />,
               },
             ],
           }
         : null,
-    [currentLibrary, handleOpenFullLibraryChat, id],
+    [currentLibrary, handleOpenIntelligenceChat, id],
   );
   usePaneSecondary(secondaryDescriptor);
 

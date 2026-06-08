@@ -75,6 +75,7 @@ class LoadedResource:
     message_role: str | None = None  # message "{role}: …"
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
+    related_library_id: UUID | None = None  # LI artifact -> the library: scope for app_search
 
 
 def load_resource_batch(
@@ -93,6 +94,8 @@ def load_resource_batch(
             loaded = _load_media(db, items, viewer_id=viewer_id)
         elif scheme == "library":
             loaded = _load_library(db, items, viewer_id=viewer_id)
+        elif scheme == "library_intelligence_artifact":
+            loaded = _load_library_intelligence_artifact(db, items, viewer_id=viewer_id)
         elif scheme == "span":
             loaded = _load_span(db, items, viewer_id=viewer_id)
         elif scheme == "chunk":
@@ -206,6 +209,49 @@ def _load_library(
                 scheme="library",
                 title=str(row[1]),
                 item_count=int(counts.get(row[0], 0)),
+            )
+        )
+    return out
+
+
+def _load_library_intelligence_artifact(
+    db: Session, items: list[ParsedResourceUri], *, viewer_id: UUID
+) -> list[LoadedResource]:
+    """Resolve each artifact head to its CURRENT revision content_md.
+
+    Joins head -> libraries (name) -> LEFT JOIN current revision (content_md). The
+    head resolves to whatever is current at this call (fresh per assembly). A head
+    with ``current_revision_id IS NULL`` is non-missing with ``body=None``. Gated by
+    library membership; a non-member or unknown id is masked as missing.
+    """
+    ids = [p.resource_id for p in items]
+    rows = db.execute(
+        text(
+            """
+            SELECT a.id, a.library_id, l.name, r.content_md
+            FROM library_intelligence_artifacts a
+            JOIN libraries l ON l.id = a.library_id
+            LEFT JOIN library_intelligence_artifact_revisions r
+                ON r.id = a.current_revision_id
+            WHERE a.id = ANY(:ids)
+            """
+        ),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in rows}
+    out: list[LoadedResource] = []
+    for p in items:
+        row = by_id.get(p.resource_id)
+        if row is None or not is_library_member(db, viewer_id, row[1]):
+            out.append(_missing(p.raw, "library_intelligence_artifact"))
+            continue
+        out.append(
+            LoadedResource(
+                uri=p.raw,
+                scheme="library_intelligence_artifact",
+                title=str(row[2]),
+                body=str(row[3]) if row[3] is not None else None,
+                related_library_id=UUID(str(row[1])),
             )
         )
     return out

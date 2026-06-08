@@ -58,12 +58,6 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "git-branch",
   },
   {
-    id: "library-chat",
-    groupId: "library-tools",
-    title: "Library chat",
-    iconId: "message-square",
-  },
-  {
     id: "library-intelligence",
     groupId: "library-tools",
     title: "Intelligence",

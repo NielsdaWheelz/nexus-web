@@ -18,9 +18,16 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.schemas.search import VALID_RESULT_TYPES, SearchPageInfo, SearchResponse, SearchResultOut
+from nexus.schemas.search import (
+    VALID_RESULT_TYPES,
+    SearchPageInfo,
+    SearchResponse,
+    SearchResultOut,
+    SearchResultSourceOut,
+)
+from nexus.services import media_intelligence
 from nexus.services.contributors import resolve_canonical_contributor_ids
-from nexus.services.locator_resolver import resolve_evidence_span
+from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
     CANDIDATES_PER_TYPE,
     MAX_LIMIT,
@@ -30,7 +37,6 @@ from nexus.services.search.cursor import decode_search_cursor, encode_search_cur
 from nexus.services.search.embedding import _query_has_full_text_terms, build_query_embedding
 from nexus.services.search.projection import (
     _direct_fragment_locator,
-    _locator_from_resolved_evidence,
     _require_resolved_evidence,
     _result_to_out,
     _truncate_snippet,
@@ -77,6 +83,26 @@ logger = get_logger(__name__)
 # =============================================================================
 # Search Implementation
 # =============================================================================
+
+
+def _enrich_results_with_media_summaries(db: Session, results: list[SearchResultOut]) -> None:
+    """Attach ready per-media unit summaries to each media-bearing result source.
+
+    One batch select over the distinct media ids in this page; the unit summary
+    is a nested property of the result's source (no per-call-site threading).
+    """
+    sources_by_media: dict[UUID, list[SearchResultSourceOut]] = {}
+    for result in results:
+        source = getattr(result, "source", None)
+        if isinstance(source, SearchResultSourceOut):
+            sources_by_media.setdefault(source.media_id, []).append(source)
+    if not sources_by_media:
+        return
+
+    summaries = media_intelligence.get_ready_summaries(db, media_ids=list(sources_by_media.keys()))
+    for media_id, summary_md in summaries.items():
+        for source in sources_by_media.get(media_id, []):
+            source.summary_md = summary_md
 
 
 def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
@@ -183,6 +209,7 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
 
     # Convert to response objects
     results = [_result_to_out(r) for r in paginated]
+    _enrich_results_with_media_summaries(db, results)
 
     # Build page info
     next_cursor = None
@@ -350,7 +377,7 @@ def get_search_result(
                 source_kind=str(row[7]),
                 evidence_span_ids=[row[8]],
                 citation_label=str(resolution["citation_label"]),
-                locator=_locator_from_resolved_evidence(
+                locator=locator_from_resolution(
                     resolution,
                     media_id=row[1],
                     media_kind=str(row[2] or ""),
@@ -798,7 +825,7 @@ def get_search_result(
                 id=row[0],
                 snippet=_truncate_snippet(str(row[2] or "")),
                 citation_label=str(row[3] or resolution.get("citation_label") or ""),
-                locator=_locator_from_resolved_evidence(
+                locator=locator_from_resolution(
                     resolution,
                     media_id=row[1],
                     media_kind=str(row[4]),

@@ -14,6 +14,18 @@ from nexus.schemas.contributors import ContributorCreditOut
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
 
+MediaUnitStatus = Literal["building", "ready", "failed"]
+
+
+class MediaSummarizeOut(BaseModel):
+    """Response contract for POST /media/{id}/summarize (on-demand unit build)."""
+
+    media_id: UUID
+    summary_id: UUID
+    status: MediaUnitStatus
+
+    model_config = ConfigDict(extra="forbid")
+
 
 class CapabilitiesOut(BaseModel):
     """Derived capabilities for a media item.

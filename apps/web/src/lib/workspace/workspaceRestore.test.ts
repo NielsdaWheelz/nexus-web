@@ -49,7 +49,7 @@ function secondary(
     id: input.id ?? "secondary-1",
     parentPrimaryPaneId: input.parentPrimaryPaneId ?? "pane-1",
     groupId: input.groupId ?? "library-tools",
-    activeSurfaceId: input.activeSurfaceId ?? "library-chat",
+    activeSurfaceId: input.activeSurfaceId ?? "library-intelligence",
     widthPx: input.widthPx ?? 420,
     visibility: input.visibility ?? "collapsed",
   };

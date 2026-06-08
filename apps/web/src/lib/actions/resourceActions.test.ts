@@ -173,14 +173,12 @@ describe("libraryResourceOptions", () => {
   it("orders canonical library actions with destructive work last", () => {
     const options = libraryResourceOptions({
       library: { is_default: false, role: "admin" },
-      onOpenChat: () => {},
       onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "chat-about-library",
       "view-library-intelligence",
       "edit-library",
       "delete-library",
@@ -195,14 +193,12 @@ describe("libraryResourceOptions", () => {
   it("does not offer edit or delete on the default library", () => {
     const options = libraryResourceOptions({
       library: { is_default: true, role: "admin" },
-      onOpenChat: () => {},
       onViewIntelligence: () => {},
       onEdit: () => {},
       onDelete: () => {},
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "chat-about-library",
       "view-library-intelligence",
     ]);
   });

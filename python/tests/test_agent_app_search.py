@@ -224,6 +224,45 @@ def test_execute_app_search_rejects_blank_explicit_scope(
     assert run.citations == []
 
 
+def test_li_artifact_reference_dropped_from_default_scope_resolution(
+    db_session: Session,
+    bootstrapped_user,
+) -> None:
+    """The artifact reference is NOT a search scope; the library: ref carries retrieval.
+
+    With both an ``library_intelligence_artifact:`` and a ``library:`` reference and
+    no explicit scopes, default scope resolution keeps only the library URI.
+    """
+    from uuid import uuid4 as _uuid4
+
+    from nexus.services.agent_tools.app_search import _resolve_scope_uris
+    from nexus.services.conversation_references import insert_reference_if_absent
+
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    library_id = create_test_library(db_session, bootstrapped_user, "Scope Library")
+    artifact_id = _uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO library_intelligence_artifacts (id, library_id, user_id)
+            VALUES (:id, :library_id, :user_id)
+            """
+        ),
+        {"id": artifact_id, "library_id": library_id, "user_id": bootstrapped_user},
+    )
+    insert_reference_if_absent(
+        db_session, conversation_id, f"library_intelligence_artifact:{artifact_id}"
+    )
+    insert_reference_if_absent(db_session, conversation_id, f"library:{library_id}")
+    db_session.commit()
+
+    resolved = _resolve_scope_uris(db_session, conversation_id=conversation_id, scopes=[])
+
+    assert resolved == [f"library:{library_id}"], (
+        f"Only the library scope should carry retrieval; got {resolved}"
+    )
+
+
 def test_execute_app_search_error_output_escapes_attribute_quotes(
     db_session: Session,
     bootstrapped_user,

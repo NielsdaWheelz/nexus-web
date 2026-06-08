@@ -198,6 +198,39 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
             fragments=[fragment],
             reason="test",
         )
+        # The content-index "ready" branch funnels through
+        # media_intelligence.ensure_media_unit_in_tx, creating the unit head; add a
+        # ready summary plus a grounded claim so deletion must tear down a real,
+        # non-empty unit (the head + claim FK media/evidence_spans non-cascading).
+        evidence_span_id = session.execute(
+            text(
+                "SELECT id FROM evidence_spans "
+                "WHERE owner_kind = 'media' AND owner_id = :media_id LIMIT 1"
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        summary_id = session.execute(
+            text("""
+                UPDATE media_summaries
+                SET status = 'ready', summary_md = 'Hello summary'
+                WHERE media_id = :media_id
+                RETURNING id
+            """),
+            {"media_id": media_id},
+        ).scalar_one()
+        session.execute(
+            text("""
+                INSERT INTO media_claims (
+                    media_id, summary_id, claim_text, evidence_span_id, ordinal
+                )
+                VALUES (:media_id, :summary_id, 'Hello claim', :evidence_span_id, 0)
+            """),
+            {
+                "media_id": media_id,
+                "summary_id": summary_id,
+                "evidence_span_id": evidence_span_id,
+            },
+        )
         session.commit()
 
     direct_db.register_cleanup("media", "id", media_id)
@@ -224,8 +257,10 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                 SELECT
                     (SELECT count(*) FROM media WHERE id = :media_id),
                     (SELECT count(*) FROM fragments WHERE media_id = :media_id),
-                    (SELECT count(*) FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id)
+                    (SELECT count(*) FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :media_id),
+                    (SELECT count(*) FROM media_summaries WHERE media_id = :media_id),
+                    (SELECT count(*) FROM media_claims WHERE media_id = :media_id)
             """),
             {"media_id": media_id},
         ).one()
-    assert counts == (0, 0, 0)
+    assert counts == (0, 0, 0, 0, 0)

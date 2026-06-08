@@ -2194,7 +2194,7 @@ export default function MediaPaneBody() {
         return null;
       }
       return {
-        id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
+        id: `reader-source-${readerSourceTarget.source}-target`,
         start_offset: startOffset,
         end_offset: endOffset,
         color: "blue",
@@ -2222,7 +2222,7 @@ export default function MediaPaneBody() {
       return null;
     }
     return {
-      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
+      id: `reader-source-${readerSourceTarget.source}-target`,
       start_offset: matchedOffset,
       end_offset: matchedOffset + canonicalCpLength(exact),
       color: "blue",
@@ -2302,7 +2302,7 @@ export default function MediaPaneBody() {
       return null;
     }
     return {
-      id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.evidence_id ?? "target"}`,
+      id: `reader-source-${readerSourceTarget.source}-target`,
       pageNumber,
       quads,
       color: "blue",

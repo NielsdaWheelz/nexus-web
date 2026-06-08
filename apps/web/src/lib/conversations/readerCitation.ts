@@ -11,6 +11,7 @@ export type ReaderCitationColor =
 export interface ReaderCitationPreview {
   title?: string;
   excerpt?: string;
+  summary?: string;
   meta?: string[];
   copyText?: string;
 }

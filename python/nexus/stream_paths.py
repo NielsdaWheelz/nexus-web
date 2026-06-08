@@ -11,5 +11,6 @@ def is_stream_path(path: str) -> bool:
     return (
         (path.startswith("/chat-runs/") and path.endswith("/events"))
         or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
+        or (path.startswith("/stream/library-intelligence/") and path.endswith("/events"))
         or (path.startswith("/media/") and path.endswith("/events"))
     )
