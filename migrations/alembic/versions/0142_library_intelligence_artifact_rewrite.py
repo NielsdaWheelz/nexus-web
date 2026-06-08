@@ -138,6 +138,17 @@ def upgrade() -> None:
 
     # (C) Strip the dead chat verifier taxonomy from the chat_run_events CHECK.
     op.execute("ALTER TABLE chat_run_events DROP CONSTRAINT ck_chat_run_events_event_type")
+    # Delete event rows still carrying the retired verifier taxonomy (claim /
+    # claim_evidence) so the tightened CHECK can be added on databases that
+    # streamed them before this cutover. Clean databases delete nothing; these
+    # are intermediate streaming-log rows, not durable chat state.
+    op.execute("""
+        DELETE FROM chat_run_events
+        WHERE event_type NOT IN (
+            'meta', 'tool_call', 'retrieval_result',
+            'citation_index', 'reference_added', 'delta', 'done'
+        )
+    """)
     op.execute("""
         ALTER TABLE chat_run_events
         ADD CONSTRAINT ck_chat_run_events_event_type CHECK (

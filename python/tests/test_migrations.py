@@ -1357,10 +1357,44 @@ class TestMigrationUpgradeDowngrade:
                 )
                 session.commit()
 
+            # Pause at 0119, where the retired verifier taxonomy
+            # (claim / claim_evidence) is still a valid event_type, and seed two
+            # such rows. Migration 0142 tightens the CHECK; it must delete these
+            # first or the ADD CONSTRAINT fails on real data — the clean-DB-only
+            # gap that shipped this as a production incident.
+            result = run_alembic_command("upgrade 0119")
+            assert result.returncode == 0, f"upgrade to 0119 failed: {result.stderr}"
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                        VALUES
+                            (:run_id, 90, 'claim', '{}'::jsonb),
+                            (:run_id, 91, 'claim_evidence', '{}'::jsonb)
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+                session.commit()
+
             result = run_alembic_command("upgrade head")
             assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
 
             with Session(engine) as session:
+                retired_count = session.execute(
+                    text(
+                        """
+                        SELECT count(*) FROM chat_run_events
+                        WHERE event_type IN ('claim', 'claim_evidence')
+                        """
+                    )
+                ).scalar_one()
+                assert retired_count == 0, (
+                    "migration 0142 must delete retired claim/claim_evidence event rows "
+                    "before tightening ck_chat_run_events_event_type"
+                )
+
                 row = session.execute(
                     text(
                         """
