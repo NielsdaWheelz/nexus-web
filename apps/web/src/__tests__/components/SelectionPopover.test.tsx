@@ -131,8 +131,9 @@ describe("SelectionPopover", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows icon-only chat destination actions when callbacks are provided", () => {
-    const onCreateHighlight = vi.fn();
+  it("shows icon-only chat destination actions when callbacks are provided", async () => {
+    const highlight = { id: "h1" };
+    const onCreateHighlight = vi.fn(async () => highlight);
     const onQuoteToNewChat = vi.fn();
     const onQuoteToExtantChat = vi.fn();
 
@@ -155,15 +156,17 @@ describe("SelectionPopover", () => {
     fireEvent.click(docButton);
     fireEvent.click(libraryButton);
 
-    expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
-    expect(onQuoteToNewChat).toHaveBeenCalledWith();
-    expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
-    expect(onQuoteToExtantChat).toHaveBeenCalledWith();
-    expect(onCreateHighlight).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+      expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
+    });
+    expect(onQuoteToNewChat).toHaveBeenCalledWith(highlight);
+    expect(onQuoteToExtantChat).toHaveBeenCalledWith(highlight);
   });
 
   it("creates a highlight in the picked color, separate from chat actions", async () => {
-    const onCreateHighlight = vi.fn();
+    const highlight = { id: "h1" };
+    const onCreateHighlight = vi.fn(async () => highlight);
     const onQuoteToNewChat = vi.fn();
 
     render(
@@ -178,10 +181,61 @@ describe("SelectionPopover", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Highlight color" }));
     fireEvent.click(await screen.findByRole("button", { name: "Blue" }));
+    expect(onCreateHighlight).toHaveBeenCalledWith("blue");
+    expect(onQuoteToNewChat).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
+    expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
+    await waitFor(() => {
+      expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("creates the highlight then passes that same highlight to the quote verb", async () => {
+    const highlight = { id: "h1" };
+    const onCreateHighlight = vi.fn(async () => highlight);
+    const onQuoteToNewChat = vi.fn();
+
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={onCreateHighlight}
+        onQuoteToNewChat={onQuoteToNewChat}
+        onDismiss={vi.fn()}
+      />
+    );
+
     fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
 
-    expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onQuoteToNewChat).toHaveBeenCalledWith();
+    expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
+    await waitFor(() => {
+      expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
+    });
+    expect(onQuoteToNewChat.mock.calls[0][0]).toBe(highlight);
+  });
+
+  it("does not run the quote verb when highlight creation returns null", async () => {
+    const onCreateHighlight = vi.fn(async () => null);
+    const onQuoteToNewChat = vi.fn();
+
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={onCreateHighlight}
+        onQuoteToNewChat={onQuoteToNewChat}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
+
+    await waitFor(() => {
+      expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onQuoteToNewChat).not.toHaveBeenCalled();
   });
 
   it("hides chat destination actions when callbacks are not provided", () => {
@@ -200,6 +254,52 @@ describe("SelectionPopover", () => {
     expect(
       screen.queryByRole("button", { name: "Quote to existing chat" })
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the add-note action only when onAddNote is provided", () => {
+    const { unmount } = render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onAddNote={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Add note" })).toBeInTheDocument();
+    unmount();
+
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "Add note" })).not.toBeInTheDocument();
+  });
+
+  it("invokes onAddNote synchronously without creating a highlight itself", () => {
+    const onCreateHighlight = vi.fn(async () => ({ id: "h1" }));
+    const onAddNote = vi.fn();
+
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={onCreateHighlight}
+        onAddNote={onAddNote}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+
+    expect(onAddNote).toHaveBeenCalledTimes(1);
+    expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
   it("dismisses on pointerdown outside the popup", async () => {

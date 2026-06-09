@@ -37,8 +37,11 @@ import PdfReader, {
   type PdfReaderControlsState,
   type PdfTemporaryHighlight,
 } from "@/components/PdfReader";
-import SelectionPopover from "@/components/SelectionPopover";
+import SelectionPopover, { DEFAULT_COLOR } from "@/components/SelectionPopover";
 import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
+import HighlightQuickNoteComposer, {
+  type QuickNoteSession,
+} from "@/components/highlights/HighlightQuickNoteComposer";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { mediaFragmentsResource, mediaResource } from "@/lib/api/resource";
@@ -79,6 +82,8 @@ import {
   applyFocusClass,
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
+import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
+import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
@@ -662,6 +667,9 @@ export default function MediaPaneBody() {
     highlightId: string;
     rect: DOMRect;
   } | null>(null);
+  // The quick-note composer session (selection note verb, `n` chord, or the
+  // click popover's Add/Edit note action). Null = composer closed.
+  const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
@@ -2853,6 +2861,26 @@ export default function MediaPaneBody() {
     clearRetainedSelection(false);
   }, [clearRetainedSelection]);
 
+  // Note verb (selection popover button + bare-`n` chord): snapshot the quote
+  // and anchor, then open the composer synchronously in the gesture while the
+  // highlight create runs concurrently (handleCreateHighlight reads the
+  // retained snapshot and clears the selection itself).
+  const handleAddNoteToSelection = useCallback(() => {
+    if (!selection) return;
+    setQuickNote({
+      kind: "pending-create",
+      sessionId: createRandomId(),
+      quote: selection.selectedText,
+      anchorRect: selection.rect,
+      creation: handleCreateHighlight(DEFAULT_COLOR),
+    });
+  }, [handleCreateHighlight, selection]);
+
+  useHighlightNoteChord({
+    enabled: !isPdf && selection !== null && !focusState.editingBounds,
+    onTrigger: handleAddNoteToSelection,
+  });
+
   const handleTranscriptSegmentSelect = useCallback(
     (fragment: TranscriptFragment) => {
       cancelRestoreSession();
@@ -4921,6 +4949,15 @@ export default function MediaPaneBody() {
                       ? quoteHighlightToExtantChat
                       : undefined
                   }
+                  onAddNote={({ quote, anchorRect, creation }) =>
+                    setQuickNote({
+                      kind: "pending-create",
+                      sessionId: createRandomId(),
+                      quote,
+                      anchorRect,
+                      creation,
+                    })
+                  }
                   temporaryHighlight={temporaryPdfHighlight}
                   onControlsStateChange={setPdfControlsState}
                   onControlsReady={(controls) => {
@@ -4998,26 +5035,18 @@ export default function MediaPaneBody() {
             selectionRect={selection.rect}
             selectionLineRects={selection.lineRects}
             containerRef={contentRef}
-            onCreateHighlight={async (color) =>
-              (await handleCreateHighlight(color))?.id ?? null
-            }
+            onCreateHighlight={handleCreateHighlight}
             onQuoteToNewChat={
               media?.capabilities?.can_quote
-                ? async () => {
-                    const highlight = await handleCreateHighlight("yellow");
-                    if (highlight)
-                      await quoteHighlightToNewChat(highlight.id, highlight);
-                  }
+                ? (highlight) => quoteHighlightToNewChat(highlight.id, highlight)
                 : undefined
             }
             onQuoteToExtantChat={
               media?.capabilities?.can_quote
-                ? async () => {
-                    const highlight = await handleCreateHighlight("yellow");
-                    if (highlight) quoteHighlightToExtantChat(highlight.id, highlight);
-                  }
+                ? (highlight) => quoteHighlightToExtantChat(highlight.id, highlight)
                 : undefined
             }
+            onAddNote={handleAddNoteToSelection}
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />
@@ -5028,10 +5057,21 @@ export default function MediaPaneBody() {
           highlight={highlightActionTarget}
           anchorRect={highlightActionAnchor.rect}
           canQuoteToChat={media?.capabilities?.can_quote ?? false}
+          canAddNote
           isReflowable={!isPdf}
           onSelectColor={(color) =>
             handleColorChange(highlightActionTarget.id, color)
           }
+          onAddNote={() => {
+            setQuickNote({
+              kind: "existing",
+              highlightId: highlightActionTarget.id,
+              note: highlightActionTarget.linked_note_blocks?.[0] ?? null,
+              quote: highlightActionTarget.exact,
+              anchorRect: highlightActionAnchor.rect,
+            });
+            dismissHighlightActions();
+          }}
           onDelete={() => handleDelete(highlightActionTarget.id)}
           onQuoteToNewChat={() => {
             quoteHighlightToNewChat(highlightActionTarget.id);
@@ -5049,6 +5089,15 @@ export default function MediaPaneBody() {
           onDismiss={dismissHighlightActions}
         />
       ) : null}
+
+      {/* Mount contract: always rendered, driven by `session`. */}
+      <HighlightQuickNoteComposer
+        session={quickNote}
+        onClose={() => setQuickNote(null)}
+        onSaveNote={handleNoteSave}
+        onDeleteNote={handleNoteDelete}
+        onOpenLink={handleOpenNoteLink}
+      />
     </>
   );
 }

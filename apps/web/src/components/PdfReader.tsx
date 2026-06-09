@@ -32,7 +32,8 @@ import {
   type PdfPageViewLike,
   type PdfViewerLike,
 } from "@/components/pdfReaderRuntime";
-import SelectionPopover from "./SelectionPopover";
+import SelectionPopover, { DEFAULT_COLOR } from "./SelectionPopover";
+import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import {
   rectToCanonicalQuad,
@@ -171,6 +172,11 @@ interface PdfReaderProps {
     highlightId: string,
     highlight: PdfHighlightOut,
   ) => void | Promise<void>;
+  onAddNote?: (session: {
+    quote: string;
+    anchorRect: DOMRect;
+    creation: Promise<{ id: string } | null>;
+  }) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -488,6 +494,7 @@ export default function PdfReader({
   temporaryHighlight = null,
   onQuoteToNewChat,
   onQuoteToExtantChat,
+  onAddNote,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -1694,6 +1701,24 @@ export default function PdfReader({
     ],
   );
 
+  // Note verb (selection popover button + bare-`n` chord): snapshot the quote
+  // and anchor, then raise the session synchronously in the gesture while the
+  // highlight create runs concurrently (handleCreateHighlight reads the live
+  // selection and clears it itself).
+  const handleAddNote = useCallback(() => {
+    if (!selection) return;
+    onAddNote?.({
+      quote: selection.range.toString().trim(),
+      anchorRect: selection.rect,
+      creation: handleCreateHighlight(DEFAULT_COLOR),
+    });
+  }, [handleCreateHighlight, onAddNote, selection]);
+
+  useHighlightNoteChord({
+    enabled: Boolean(onAddNote && selection && textGeometryReliable),
+    onTrigger: handleAddNote,
+  });
+
   const goToPage = useCallback(
     async (nextPage: number) => {
       const viewer = pdfViewerRef.current;
@@ -2339,26 +2364,19 @@ export default function PdfReader({
           selectionRect={selection.rect}
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
-          onCreateHighlight={async (color) =>
-            (await handleCreateHighlight(color))?.id ?? null
-          }
+          onCreateHighlight={handleCreateHighlight}
           onQuoteToNewChat={
             onQuoteToNewChat && textGeometryReliable
-              ? async () => {
-                  const highlight = await handleCreateHighlight("yellow");
-                  if (highlight)
-                    await onQuoteToNewChat(highlight.id, highlight);
-                }
+              ? (highlight) => onQuoteToNewChat(highlight.id, highlight)
               : undefined
           }
           onQuoteToExtantChat={
             onQuoteToExtantChat && textGeometryReliable
-              ? async () => {
-                  const highlight = await handleCreateHighlight("yellow");
-                  if (highlight)
-                    await onQuoteToExtantChat(highlight.id, highlight);
-                }
+              ? (highlight) => onQuoteToExtantChat(highlight.id, highlight)
               : undefined
+          }
+          onAddNote={
+            onAddNote && textGeometryReliable ? handleAddNote : undefined
           }
           onDismiss={clearSelection}
           isCreating={isCreating}

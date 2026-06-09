@@ -51,6 +51,15 @@ describe("HighlightActionPopover", () => {
     }
   });
 
+  it("forwards the note action to the shared bar", async () => {
+    const user = userEvent.setup();
+    const onAddNote = vi.fn();
+    renderPopover({ canAddNote: true, onAddNote });
+
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledTimes(1);
+  });
+
   it("dismisses on Escape and on outside pointerdown", async () => {
     const user = userEvent.setup();
     const onDismiss = vi.fn();

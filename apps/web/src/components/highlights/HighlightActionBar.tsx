@@ -14,9 +14,11 @@ type ExistingProps = {
   presentation: "bar" | "menu";
   highlight: AnchoredHighlightRow;
   canQuoteToChat: boolean;
+  canAddNote?: boolean;
   isReflowable: boolean;
   isEditingBounds: boolean;
   onSelectColor: (color: HighlightColor) => Promise<void>;
+  onAddNote?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -28,8 +30,10 @@ type SelectionProps = {
   variant: "selection";
   selectionColor: HighlightColor;
   canQuoteToChat: boolean;
+  canAddNote?: boolean;
   busy: boolean;
   onSelectColor: (color: HighlightColor) => void;
+  onAddNote?: () => void;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
   className?: string;
@@ -54,10 +58,12 @@ function SelectionActionBar(props: SelectionProps) {
   const options = buildHighlightActions({
     target: { kind: "selection", color: props.selectionColor },
     canQuoteToChat: props.canQuoteToChat,
+    canAddNote: props.canAddNote ?? false,
     isReflowable: false,
     state: { isEditingBounds: false, deleting: false, changingColor: props.busy },
     handlers: {
       onSelectColor: props.onSelectColor,
+      onAddNote: props.onAddNote,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: () => {},
@@ -103,10 +109,12 @@ function ExistingActionBar(props: ExistingProps) {
   const options = buildHighlightActions({
     target: { kind: "existing", highlight: props.highlight },
     canQuoteToChat: props.canQuoteToChat,
+    canAddNote: props.canAddNote ?? false,
     isReflowable: props.isReflowable,
     state: { isEditingBounds: props.isEditingBounds, deleting, changingColor },
     handlers: {
       onSelectColor: (color) => void selectColor(color),
+      onAddNote: props.onAddNote,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: props.onToggleEditBounds,

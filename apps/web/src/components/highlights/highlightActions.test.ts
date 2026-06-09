@@ -23,13 +23,13 @@ function ids(args: Parameters<typeof buildHighlightActions>[0]) {
 describe("buildHighlightActions", () => {
   it("offers the full owner set on reflowable text", () => {
     expect(
-      ids({ target: existing(), canQuoteToChat: true, isReflowable: true, state: idleState, handlers: noopHandlers }),
+      ids({ target: existing(), canQuoteToChat: true, canAddNote: false, isReflowable: true, state: idleState, handlers: noopHandlers }),
     ).toEqual(["color", "quote-new", "quote-existing", "edit-bounds", "delete"]);
   });
 
   it("drops edit-bounds on PDF (non-reflowable)", () => {
     expect(
-      ids({ target: existing(), canQuoteToChat: true, isReflowable: false, state: idleState, handlers: noopHandlers }),
+      ids({ target: existing(), canQuoteToChat: true, canAddNote: false, isReflowable: false, state: idleState, handlers: noopHandlers }),
     ).toEqual(["color", "quote-new", "quote-existing", "delete"]);
   });
 
@@ -37,7 +37,7 @@ describe("buildHighlightActions", () => {
     expect(
       ids({
         target: existing({ is_owner: false }),
-        canQuoteToChat: true,
+        canQuoteToChat: true, canAddNote: false,
         isReflowable: true,
         state: idleState,
         handlers: noopHandlers,
@@ -49,7 +49,7 @@ describe("buildHighlightActions", () => {
     expect(
       ids({
         target: existing({ exact: "   " }),
-        canQuoteToChat: true,
+        canQuoteToChat: true, canAddNote: false,
         isReflowable: true,
         state: idleState,
         handlers: noopHandlers,
@@ -59,14 +59,14 @@ describe("buildHighlightActions", () => {
 
   it("gates quotes off when chat quoting is unavailable", () => {
     expect(
-      ids({ target: existing(), canQuoteToChat: false, isReflowable: true, state: idleState, handlers: noopHandlers }),
+      ids({ target: existing(), canQuoteToChat: false, canAddNote: false, isReflowable: true, state: idleState, handlers: noopHandlers }),
     ).toEqual(["color", "edit-bounds", "delete"]);
   });
 
   it("marks delete as a danger action with a leading divider", () => {
     const del = buildHighlightActions({
       target: existing(),
-      canQuoteToChat: true,
+      canQuoteToChat: true, canAddNote: false,
       isReflowable: true,
       state: idleState,
       handlers: noopHandlers,
@@ -78,7 +78,7 @@ describe("buildHighlightActions", () => {
   it("flips the edit-bounds label and pressed state while editing", () => {
     const editing = buildHighlightActions({
       target: existing(),
-      canQuoteToChat: true,
+      canQuoteToChat: true, canAddNote: false,
       isReflowable: true,
       state: { ...idleState, isEditingBounds: true },
       handlers: noopHandlers,
@@ -91,7 +91,7 @@ describe("buildHighlightActions", () => {
     expect(
       ids({
         target: { kind: "selection", color: "green" },
-        canQuoteToChat: true,
+        canQuoteToChat: true, canAddNote: false,
         isReflowable: true,
         state: idleState,
         handlers: noopHandlers,
@@ -103,7 +103,7 @@ describe("buildHighlightActions", () => {
     expect(
       ids({
         target: { kind: "selection", color: "green" },
-        canQuoteToChat: false,
+        canQuoteToChat: false, canAddNote: false,
         isReflowable: true,
         state: idleState,
         handlers: noopHandlers,
@@ -111,10 +111,69 @@ describe("buildHighlightActions", () => {
     ).toEqual(["color"]);
   });
 
+  it("slots the note action directly after color when enabled", () => {
+    expect(
+      ids({
+        target: existing(),
+        canQuoteToChat: true, canAddNote: true,
+        isReflowable: true,
+        state: idleState,
+        handlers: { ...noopHandlers, onAddNote: () => {} },
+      }),
+    ).toEqual(["color", "note", "quote-new", "quote-existing", "edit-bounds", "delete"]);
+  });
+
+  it("hides the note action when the flag is off or the handler is missing", () => {
+    expect(
+      ids({
+        target: existing(),
+        canQuoteToChat: false, canAddNote: false,
+        isReflowable: false,
+        state: idleState,
+        handlers: { ...noopHandlers, onAddNote: () => {} },
+      }),
+    ).toEqual(["color", "delete"]);
+    expect(
+      ids({
+        target: existing(),
+        canQuoteToChat: false, canAddNote: true,
+        isReflowable: false,
+        state: idleState,
+        handlers: noopHandlers,
+      }),
+    ).toEqual(["color", "delete"]);
+  });
+
+  it("labels the note action by whether a linked note exists", () => {
+    const noteLabel = (overrides: Partial<AnchoredHighlightRow>) =>
+      buildHighlightActions({
+        target: existing(overrides),
+        canQuoteToChat: false, canAddNote: true,
+        isReflowable: false,
+        state: idleState,
+        handlers: { ...noopHandlers, onAddNote: () => {} },
+      }).find((option) => option.id === "note")?.label;
+    expect(noteLabel({})).toBe("Add note");
+    expect(noteLabel({ linked_note_blocks: [] })).toBe("Add note");
+    expect(noteLabel({ linked_note_blocks: [{ note_block_id: "n1", body_text: "hi" }] })).toBe("Edit note");
+  });
+
+  it('labels the note action "Add note" for a fresh selection', () => {
+    const actions = buildHighlightActions({
+      target: { kind: "selection", color: "green" },
+      canQuoteToChat: true, canAddNote: true,
+      isReflowable: true,
+      state: idleState,
+      handlers: { ...noopHandlers, onAddNote: () => {} },
+    });
+    expect(actions.map((option) => option.id)).toEqual(["color", "note", "quote-new", "quote-existing"]);
+    expect(actions.find((option) => option.id === "note")?.label).toBe("Add note");
+  });
+
   it("disables selection color and quote actions while the selection action is busy", () => {
     const actions = buildHighlightActions({
       target: { kind: "selection", color: "green" },
-      canQuoteToChat: true,
+      canQuoteToChat: true, canAddNote: false,
       isReflowable: true,
       state: { ...idleState, changingColor: true },
       handlers: noopHandlers,

@@ -11,7 +11,9 @@ import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import { openHighlightsPane } from "./reader";
+import { selectFreshVisibleTextSnippet } from "./selection";
 import {
+  activePaneSelector,
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
@@ -127,6 +129,42 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
     return;
   }
   expect(response.status(), `${label}: ${await response.text()}`).toBe(200);
+}
+
+async function blockedExactsForFragment(
+  page: Page,
+  fragmentId: string
+): Promise<string[]> {
+  const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
+  await expectOk(response, "Fetch existing fragment highlights");
+  const payload = (await response.json()) as HighlightsPayload;
+  return payload.data.highlights.map((highlight) => highlight.exact);
+}
+
+/**
+ * Resolves with the highlight created by the note verb (selection popover
+ * "Add note" / the `n` chord), which POSTs to the fragment highlights
+ * endpoint concurrently with opening the composer.
+ */
+async function nextCreatedHighlight(
+  page: Page,
+  action: () => Promise<void>
+): Promise<{ id: string; fragmentId: string }> {
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/fragments\/[^/]+\/highlights/.test(response.url())
+  );
+  await action();
+  const response = await responsePromise;
+  expect(
+    response.ok(),
+    `Create highlight via note verb: status=${response.status()}`
+  ).toBeTruthy();
+  const payload = (await response.json()) as HighlightPayload;
+  const fragmentId = /\/api\/fragments\/([^/]+)\/highlights/.exec(response.url())?.[1];
+  if (!fragmentId) throw new Error(`No fragment id in highlight create URL: ${response.url()}`);
+  return { id: payload.data.id, fragmentId };
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<void> {
@@ -270,6 +308,209 @@ test.describe("notes cutover", () => {
         }
       }
       throwE2eCleanupFailures("Linked highlight note", productError, cleanupErrors);
+    }
+  });
+
+  // Quick-note composer cutover (docs/cutovers/highlight-quick-note-composer-
+  // hard-cutover.md): AC-1 note verb in the selection popover, AC-2 dismissal
+  // persists through the canonical save path, AC-4 existing-highlight "Edit
+  // note" preloads, AC-9 the note is a real note block at /notes/{blockId}.
+  test("quick-note composer: note verb creates highlight + note, Edit note preloads, note block routable", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const seeded = readSeededNonPdfMedia();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-notes-composer");
+    const noteText = `E2E quick note ${Date.now()}`;
+    let highlightId: string | null = null;
+    let highlightFragmentId: string | null = null;
+    let noteBlockId: string | null = null;
+    let productError: unknown = null;
+
+    try {
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
+      const activePane = activeWorkspacePane(page);
+      const contentPane = activePane.locator('div[class*="fragments"]');
+      await expect(contentPane).toBeVisible({ timeout: 10_000 });
+
+      const blockedExacts = await blockedExactsForFragment(page, seeded.fragment_id);
+      await selectFreshVisibleTextSnippet(
+        page,
+        activePaneSelector('div[class*="fragments"]'),
+        blockedExacts,
+        { method: "range" }
+      );
+
+      // AC-1: the selection popover offers the note verb.
+      const selectionPopover = page.getByRole("group", { name: "Selection actions" });
+      await expect(selectionPopover).toBeVisible({ timeout: 5_000 });
+      const addNoteButton = selectionPopover.getByRole("button", { name: "Add note" });
+      await expect(addNoteButton).toBeVisible();
+
+      const created = await nextCreatedHighlight(page, () => addNoteButton.click());
+      highlightId = created.id;
+      highlightFragmentId = created.fragmentId;
+
+      // The composer replaces the selection popover, editor focused.
+      const composer = page.getByRole("dialog", { name: "Add note to highlight" });
+      await expect(composer).toBeVisible({ timeout: 5_000 });
+      await expect(selectionPopover).toBeHidden();
+      const composerEditor = composer.getByRole("textbox", { name: "Highlight note" });
+      await expect(composerEditor).toBeFocused({ timeout: 5_000 });
+
+      await page.keyboard.insertText(noteText);
+
+      // AC-2: autosave reaches "Saved"; Esc closes without discarding.
+      await expect(composer.getByText("Saved")).toBeVisible({ timeout: 15_000 });
+      await page.keyboard.press("Escape");
+      await expect(composer).toBeHidden({ timeout: 5_000 });
+
+      await expect
+        .poll(() => linkedNoteForHighlight(page, created.fragmentId, created.id), {
+          timeout: 15_000,
+        })
+        .not.toBeNull();
+      const linkedNote = await linkedNoteForHighlight(page, created.fragmentId, created.id);
+      if (!linkedNote) throw new Error("Expected linked note after composer save");
+      noteBlockId = linkedNote.noteBlockId;
+      expect(linkedNote.bodyText).toContain(noteText);
+
+      // AC-4: clicking the highlight offers "Edit note"; the composer reopens
+      // preloaded with the linked note.
+      await scrollHighlightIntoView(contentPane, created.id);
+      const segment = contentPane
+        .locator(`[data-active-highlight-ids~="${created.id}"]`)
+        .first();
+      await segment.click();
+      const actionPopover = page.getByRole("group", { name: "Highlight actions" });
+      await expect(actionPopover).toBeVisible({ timeout: 5_000 });
+      const editNoteButton = actionPopover.getByRole("button", { name: "Edit note" });
+      await expect(editNoteButton).toBeVisible();
+      await editNoteButton.click();
+      await expect(composer).toBeVisible({ timeout: 5_000 });
+      await expect(composer.getByRole("textbox", { name: "Highlight note" })).toContainText(
+        noteText,
+        { timeout: 10_000 }
+      );
+      await page.keyboard.press("Escape");
+      await expect(composer).toBeHidden({ timeout: 5_000 });
+
+      // AC-2: the sidecar highlight row reflects the saved note.
+      await scrollHighlightIntoView(contentPane, created.id);
+      const highlightsPane = await openHighlightsPane(page);
+      const row = highlightsPane.locator(`[data-highlight-id="${created.id}"]`).first();
+      await expect(row).toBeVisible({ timeout: 20_000 });
+      await expect(row).toContainText(noteText);
+
+      // AC-9: the note is a real note block reachable at /notes/{blockId}.
+      await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
+      await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
+      const notesOutline = activeWorkspacePane(page).getByRole("textbox", {
+        name: "Notes outline",
+      });
+      await expect(notesOutline).toContainText(noteText, { timeout: 10_000 });
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (!noteBlockId && highlightId && highlightFragmentId) {
+        try {
+          const linkedNote = await linkedNoteForHighlight(page, highlightFragmentId, highlightId);
+          noteBlockId = linkedNote?.noteBlockId ?? null;
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (noteBlockId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/notes/blocks/${noteBlockId}`,
+            `Note block ${noteBlockId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      if (highlightId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${highlightId}`,
+            `Highlight ${highlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures("Quick-note composer", productError, cleanupErrors);
+    }
+  });
+
+  // AC-6: bare `n` with a reader selection active triggers the note verb; an
+  // untouched composer creates no note while the highlight persists (AC-3).
+  test("quick-note composer: n chord opens the composer; dismissing untyped leaves highlight, no note", async ({
+    page,
+  }, testInfo) => {
+    test.slow();
+    const seeded = readSeededNonPdfMedia();
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-notes-chord");
+    let highlightId: string | null = null;
+    let productError: unknown = null;
+
+    try {
+      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
+      const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
+      await expect(contentPane).toBeVisible({ timeout: 10_000 });
+
+      const blockedExacts = await blockedExactsForFragment(page, seeded.fragment_id);
+      await selectFreshVisibleTextSnippet(
+        page,
+        activePaneSelector('div[class*="fragments"]'),
+        blockedExacts,
+        { method: "range" }
+      );
+      await expect(
+        page.getByRole("group", { name: "Selection actions" })
+      ).toBeVisible({ timeout: 5_000 });
+
+      const created = await nextCreatedHighlight(page, () => page.keyboard.press("n"));
+      highlightId = created.id;
+
+      const composer = page.getByRole("dialog", { name: "Add note to highlight" });
+      await expect(composer).toBeVisible({ timeout: 5_000 });
+      await expect(
+        composer.getByRole("textbox", { name: "Highlight note" })
+      ).toBeFocused({ timeout: 5_000 });
+
+      await page.keyboard.press("Escape");
+      await expect(composer).toBeHidden({ timeout: 5_000 });
+
+      // Highlight persists; no note was created for the untouched composer.
+      const response = await page.request.get(`/api/fragments/${created.fragmentId}/highlights`);
+      await expectOk(response, "Fetch highlights after chord dismiss");
+      const payload = (await response.json()) as HighlightsPayload;
+      const highlight = payload.data.highlights.find((item) => item.id === created.id);
+      expect(highlight, "Highlight should survive an abandoned composer").toBeTruthy();
+      expect(highlight?.linked_note_blocks ?? []).toHaveLength(0);
+    } catch (error) {
+      productError = error;
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (highlightId) {
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${highlightId}`,
+            `Highlight ${highlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      throwE2eCleanupFailures("Quick-note chord", productError, cleanupErrors);
     }
   });
 });

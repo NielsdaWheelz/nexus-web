@@ -75,6 +75,20 @@ describe("HighlightActionBar — existing", () => {
     await user.click(screen.getByRole("button", { name: "Edit bounds" }));
     expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
   });
+
+  it("renders the note action only when enabled and fires its handler", async () => {
+    const user = userEvent.setup();
+    const onAddNote = vi.fn();
+    setupExisting({ canAddNote: true, onAddNote });
+
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits the note action by default", () => {
+    setupExisting();
+    expect(screen.queryByRole("button", { name: "Add note" })).toBeNull();
+  });
 });
 
 describe("HighlightActionBar — existing (menu)", () => {
@@ -133,6 +147,16 @@ describe("HighlightActionBar — existing (menu)", () => {
     expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
   });
 
+  it("reveals the note action in the menu when enabled", async () => {
+    const user = userEvent.setup();
+    const onAddNote = vi.fn();
+    setupExisting({ canAddNote: true, onAddNote }, "menu");
+
+    await user.click(screen.getByRole("button", { name: "Highlight actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledTimes(1);
+  });
+
   it("renders no trigger when there are no actions", () => {
     setupExisting(
       {
@@ -171,6 +195,29 @@ describe("HighlightActionBar — selection", () => {
     await user.click(screen.getByRole("button", { name: "Highlight color" }));
     await user.click(await screen.findByRole("button", { name: "Green" }));
     expect(onSelectColor).toHaveBeenCalledWith("green");
+  });
+
+  it("renders the note action when enabled and fires its handler", async () => {
+    const user = userEvent.setup();
+    const onAddNote = vi.fn();
+    render(
+      <FeedbackProvider>
+        <HighlightActionBar
+          variant="selection"
+          selectionColor="yellow"
+          canQuoteToChat
+          canAddNote
+          busy={false}
+          onSelectColor={vi.fn()}
+          onAddNote={onAddNote}
+          onQuoteToNewChat={vi.fn()}
+          onQuoteToExistingChat={vi.fn()}
+        />
+      </FeedbackProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledTimes(1);
   });
 
   it("disables every create/quote action while a selection action is busy", async () => {

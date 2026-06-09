@@ -1,4 +1,4 @@
-import { MessageSquarePlus, MessagesSquare, TextSelect, Trash2 } from "lucide-react";
+import { MessageSquarePlus, MessagesSquare, NotebookPen, TextSelect, Trash2 } from "lucide-react";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
@@ -20,22 +20,26 @@ function ColorDot({ color }: { color: HighlightColor }) {
  * state, and handlers it returns the same descriptors. Rendered by ActionBar in
  * the sidecar card, the reader-text click popover, and the selection popover.
  *
- * `selection` targets have no highlight yet: only color (which creates) and the
- * quotes (create-then-quote); never edit-bounds or delete.
+ * `selection` targets have no highlight yet: only color (which creates), note
+ * (create-then-annotate), and the quotes (create-then-quote); never edit-bounds
+ * or delete.
  */
 export function buildHighlightActions({
   target,
   canQuoteToChat,
+  canAddNote,
   isReflowable,
   state,
   handlers,
 }: {
   target: HighlightActionTarget;
   canQuoteToChat: boolean;
+  canAddNote: boolean;
   isReflowable: boolean;
   state: { isEditingBounds: boolean; deleting: boolean; changingColor: boolean };
   handlers: {
     onSelectColor: (color: HighlightColor) => void;
+    onAddNote?: () => void;
     onQuoteToNewChat: () => void;
     onQuoteToExistingChat: () => void;
     onToggleEditBounds: () => void;
@@ -66,6 +70,16 @@ export function buildHighlightActions({
           }}
         />
       ),
+    });
+  }
+
+  if (canAddNote && handlers.onAddNote) {
+    options.push({
+      id: "note",
+      label: isExisting && target.highlight.linked_note_blocks?.length ? "Edit note" : "Add note",
+      icon: <NotebookPen size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
+      onSelect: handlers.onAddNote,
     });
   }
 

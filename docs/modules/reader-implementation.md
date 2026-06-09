@@ -50,6 +50,41 @@ the reader has two right-side highlight surfaces with distinct scopes.
   reader menu or by tapping an existing highlight; the mobile sheet is the same
   `ReaderHighlightsSurface` component on the same visible-only model.
 
+### quick-note composer
+
+the **quick-note composer** (`HighlightQuickNoteComposer`) is the in-context
+annotation surface: one owner component hosting the unchanged
+`HighlightNoteEditor` (ProseMirror session, drafts, debounced autosave) in two
+skins.
+
+- desktop renders a `FloatingActionSurface` anchored at the selection-rect
+  snapshot (not a highlight DOM lookup), dismissing on scroll; mobile renders
+  a `MobileSheet` with a one-line clamped quote header and the editor as
+  `initialFocus`, on the standard sheet mount contract (always mounted,
+  driven by `active`).
+- three entries: the selection popover's **Note** verb (creates the highlight
+  concurrently and opens the composer in the same gesture), the
+  existing-highlight click popover's **Add note**/**Edit note** action, and
+  the bare-`n` chord while a reader selection is active. `SelectionPopover`
+  is the single create-then-verb sequencer; the readers no longer hand-roll
+  create-then-quote wrappers.
+- pending-create sessions hand the editor a stable opaque session id as its
+  `highlightId` and bridge to the real highlight id inside the composer's
+  save wrapper once the concurrent create resolves; the editor is never
+  re-keyed mid-session.
+- Esc, click-outside, scroll, and sheet dismissal flush pending edits and
+  save — there is no discard path. an empty composer creates no note; the
+  highlight survives in every branch.
+- all note writes flow through the canonical `saveHighlightNote` path (the
+  same `handleNoteSave`/`handleNoteDelete` slot patching the sidecar uses),
+  so composer-written notes appear in the sidecar with no extra wiring.
+
+the `n` chord is reader-local: `useHighlightNoteChord` fires on bare `n`
+(no modifiers), guarded by `isEditableTarget`, dispatched where the selection
+state lives (`MediaPaneBody` and `PdfReader`). it is deliberately not a
+keybindings-registry entry — that registry is app-global and cannot capture
+bare keys.
+
 ### contents surface
 
 the document table of contents (epub + web article) is the reader-tools

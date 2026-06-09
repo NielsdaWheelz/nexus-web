@@ -14,8 +14,10 @@ export default function HighlightActionPopover({
   highlight,
   anchorRect,
   canQuoteToChat,
+  canAddNote,
   isReflowable,
   onSelectColor,
+  onAddNote,
   onDelete,
   onQuoteToNewChat,
   onQuoteToExistingChat,
@@ -25,8 +27,10 @@ export default function HighlightActionPopover({
   highlight: AnchoredHighlightRow;
   anchorRect: DOMRect;
   canQuoteToChat: boolean;
+  canAddNote?: boolean;
   isReflowable: boolean;
   onSelectColor: (color: HighlightColor) => Promise<void>;
+  onAddNote?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -48,9 +52,11 @@ export default function HighlightActionPopover({
         presentation="bar"
         highlight={highlight}
         canQuoteToChat={canQuoteToChat}
+        canAddNote={canAddNote}
         isReflowable={isReflowable}
         isEditingBounds={false}
         onSelectColor={onSelectColor}
+        onAddNote={onAddNote}
         onDelete={onDelete}
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExistingChat={onQuoteToExistingChat}
