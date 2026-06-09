@@ -38,12 +38,6 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "highlighter",
   },
   {
-    id: "reader-doc-chat",
-    groupId: "reader-tools",
-    title: "Document chat",
-    iconId: "file-text",
-  },
-  {
     id: "reader-contents",
     groupId: "reader-tools",
     title: "Contents",
@@ -54,6 +48,18 @@ const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     groupId: "reader-tools",
     title: "Connections",
     iconId: "link-2",
+  },
+  {
+    id: "reader-apparatus",
+    groupId: "reader-tools",
+    title: "Citations",
+    iconId: "quote",
+  },
+  {
+    id: "reader-doc-chat",
+    groupId: "reader-tools",
+    title: "Document chat",
+    iconId: "file-text",
   },
   {
     id: "conversation-references",

@@ -14,7 +14,13 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
-from nexus.services import epub_read, locator_resolver, media_file_access, reader_navigation
+from nexus.services import (
+    epub_read,
+    locator_resolver,
+    media_file_access,
+    reader_apparatus,
+    reader_navigation,
+)
 from nexus.services import reader as reader_service
 
 router = APIRouter(tags=["media"])
@@ -58,6 +64,17 @@ def get_media_navigation(
 ) -> dict:
     """Get canonical reader navigation payload."""
     result = reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
+    return ok(result)
+
+
+@router.get("/media/{media_id}/apparatus")
+def get_media_apparatus(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get source-authored reader apparatus."""
+    result = reader_apparatus.get_media_apparatus(db, viewer.user_id, media_id)
     return ok(result)
 
 

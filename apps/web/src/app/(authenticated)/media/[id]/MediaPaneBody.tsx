@@ -29,6 +29,7 @@ import {
   toTextAnchoredHighlightRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
+import ReaderApparatusSurface from "@/components/reader/ReaderApparatusSurface";
 import { OVERVIEW_RULER_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
   type PdfHighlightOut,
@@ -87,6 +88,9 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
+import HoverPreview, {
+  HOVER_PREVIEW_DELAY_MS,
+} from "@/components/ui/HoverPreview";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import NoteBacklinks from "@/components/notes/NoteBacklinks";
@@ -137,6 +141,14 @@ import {
   type ReaderNavigationSection,
 } from "@/lib/media/readerNavigation";
 import {
+  assertReaderApparatusResponse,
+  buildReaderApparatusRows,
+  readerApparatusRowPresentation,
+  type ReaderApparatusResponse,
+  type ReaderApparatusRow,
+} from "@/lib/reader/apparatus";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import {
   canReadMediaDocument,
   type DocumentProcessingStatus,
 } from "@/lib/media/documentReadiness";
@@ -185,12 +197,7 @@ import {
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ListTree,
-  RefreshCw,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, ListTree, RefreshCw } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
@@ -355,6 +362,19 @@ const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
+const READER_APPARATUS_MEDIA_KINDS = new Set(["web_article", "epub", "pdf"]);
+const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
+const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
+const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
+const READER_APPARATUS_PULSE_MS = 1200;
+
+interface ReaderApparatusPreviewState {
+  itemId: string;
+  anchor: { x: number; y: number };
+  kind: string;
+  confidence: string;
+  bodyText: string;
+}
 
 const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
   version: 0,
@@ -372,6 +392,51 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
     width.toFixed(1),
     height.toFixed(1),
   ].join("::");
+}
+
+function isReaderApparatusMediaKind(kind: string | null | undefined): boolean {
+  return typeof kind === "string" && READER_APPARATUS_MEDIA_KINDS.has(kind);
+}
+
+function readerApparatusSelector(itemId: string): string {
+  return `[data-reader-apparatus-item-id="${escapeAttrValue(itemId)}"]`;
+}
+
+function findReaderApparatusElement(
+  element: Element | null,
+): HTMLElement | null {
+  while (element) {
+    if (
+      element instanceof HTMLElement &&
+      element.hasAttribute("data-reader-apparatus-item-id")
+    ) {
+      return element;
+    }
+    element = element.parentElement;
+  }
+  return null;
+}
+
+function applyReaderApparatusClass(
+  container: Element,
+  itemIds: readonly string[],
+  className: string,
+): void {
+  container
+    .querySelectorAll(`.${className}`)
+    .forEach((element) => element.classList.remove(className));
+  for (const itemId of itemIds) {
+    container
+      .querySelectorAll(readerApparatusSelector(itemId))
+      .forEach((element) => element.classList.add(className));
+  }
+}
+
+function pulseReaderApparatusElement(element: HTMLElement): void {
+  element.classList.add(READER_APPARATUS_PULSE_CLASS);
+  window.setTimeout(() => {
+    element.classList.remove(READER_APPARATUS_PULSE_CLASS);
+  }, READER_APPARATUS_PULSE_MS);
 }
 
 function parsePositivePageNumber(
@@ -403,7 +468,6 @@ function textQuoteField(
   const value = (textQuote as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
 }
-
 
 function isUserScrollKey(event: KeyboardEvent): boolean {
   return (
@@ -443,11 +507,10 @@ export default function MediaPaneBody() {
   const requestedFragmentId =
     target?.kind === "fragment"
       ? target.value
-      : (paneSearchParams.get("fragment")?.trim() || null);
+      : paneSearchParams.get("fragment")?.trim() || null;
   const requestedHighlightId =
     target?.kind === "highlight" ? target.value : null;
-  const requestedEvidenceId =
-    target?.kind === "evidence" ? target.value : null;
+  const requestedEvidenceId = target?.kind === "evidence" ? target.value : null;
   const requestedLocParam = paneSearchParams.get("loc")?.trim() ?? "";
   const requestedReaderLoc =
     target?.kind === "loc"
@@ -539,7 +602,9 @@ export default function MediaPaneBody() {
     useState(0);
   const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
     useState(false);
-  useSetPaneTitle(loading ? null : buildCompactMediaPaneTitle(media) ?? "Media");
+  useSetPaneTitle(
+    loading ? null : (buildCompactMediaPaneTitle(media) ?? "Media"),
+  );
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
@@ -563,7 +628,9 @@ export default function MediaPaneBody() {
   );
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
-  const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(null);
+  const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
+    null,
+  );
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
@@ -662,6 +729,14 @@ export default function MediaPaneBody() {
   const [hoveredHighlightId, setHoveredHighlightId] = useState<string | null>(
     null,
   );
+  const [focusedApparatusItemId, setFocusedApparatusItemId] = useState<
+    string | null
+  >(null);
+  const [hoveredApparatusItemId, setHoveredApparatusItemId] = useState<
+    string | null
+  >(null);
+  const [readerApparatusPreview, setReaderApparatusPreview] =
+    useState<ReaderApparatusPreviewState | null>(null);
   // A highlight clicked in the reader text opens an action popover anchored to
   // its rect (PDF supplies the rect; reflowable reads the clicked element).
   const [highlightActionAnchor, setHighlightActionAnchor] = useState<{
@@ -714,6 +789,11 @@ export default function MediaPaneBody() {
     fragmentId: string;
     target: ReaderPulseTarget;
   } | null>(null);
+  const pendingApparatusPulseRef = useRef<{
+    itemId: string;
+    locator: RetrievalLocator;
+  } | null>(null);
+  const readerApparatusPreviewTimerRef = useRef<number | null>(null);
 
   const beginRestoreSession = useCallback(
     (phase: Exclude<ReaderRestorePhase, "settled" | "cancelled">) => {
@@ -910,6 +990,19 @@ export default function MediaPaneBody() {
       return { sections: payload.sections, toc: payload.toc };
     },
   });
+  const readerApparatusResource = useResource<ReaderApparatusResponse>({
+    cacheKey:
+      media && canRead && isReaderApparatusMediaKind(media.kind)
+        ? `${id}:reader-apparatus`
+        : null,
+    load: async (signal) => {
+      const response = await apiFetch<{ data: unknown }>(
+        `/api/media/${id}/apparatus`,
+        { signal },
+      );
+      return assertReaderApparatusResponse(response.data);
+    },
+  });
   const epubSections =
     epubNavigationResource.status === "ready"
       ? epubNavigationResource.data.sections
@@ -926,6 +1019,19 @@ export default function MediaPaneBody() {
     webNavigationResource.status === "ready"
       ? webNavigationResource.data.toc
       : null;
+  const readerApparatus =
+    readerApparatusResource.status === "ready"
+      ? readerApparatusResource.data
+      : null;
+  const readerApparatusRows = useMemo(
+    () =>
+      readerApparatus &&
+      (readerApparatus.status === "ready" ||
+        readerApparatus.status === "partial")
+        ? buildReaderApparatusRows(readerApparatus)
+        : [],
+    [readerApparatus],
+  );
 
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -983,6 +1089,103 @@ export default function MediaPaneBody() {
     }
     return null;
   }, [activeEpubSection?.anchor_id, isEpub, isPdf]);
+
+  const currentReaderApparatusRows = useMemo(
+    () =>
+      readerApparatusRows.filter((row) => {
+        const locator = row.marker.locator ?? row.target?.locator;
+        if (!locator) {
+          return false;
+        }
+        if (
+          locator.type === "web_text_offsets" ||
+          locator.type === "epub_fragment_offsets"
+        ) {
+          return locator.fragment_id === activeContent?.fragmentId;
+        }
+        return locator.type === "pdf_page_geometry";
+      }),
+    [activeContent?.fragmentId, readerApparatusRows],
+  );
+  const showApparatusPane =
+    readerApparatus?.capabilities.has_sidecar_items === true &&
+    readerApparatusRows.length > 0;
+  const readerApparatusRowByItemId = useMemo(() => {
+    const rowsByItemId = new Map<string, ReaderApparatusRow>();
+    for (const row of readerApparatusRows) {
+      rowsByItemId.set(row.marker.stable_key, row);
+      for (const target of row.targets) {
+        rowsByItemId.set(target.stable_key, row);
+      }
+    }
+    return rowsByItemId;
+  }, [readerApparatusRows]);
+  const readerApparatusItemIdsByRowId = useMemo(() => {
+    const itemIdsByRowId = new Map<string, string[]>();
+    for (const row of readerApparatusRows) {
+      const itemIds = Array.from(
+        new Set([
+          row.marker.stable_key,
+          ...row.targets.map((target) => target.stable_key),
+        ]),
+      );
+      itemIdsByRowId.set(row.id, itemIds);
+    }
+    return itemIdsByRowId;
+  }, [readerApparatusRows]);
+  const readerApparatusItemIdsForRow = useCallback(
+    (rowId: string | null) =>
+      rowId ? (readerApparatusItemIdsByRowId.get(rowId) ?? [rowId]) : [],
+    [readerApparatusItemIdsByRowId],
+  );
+
+  const closeReaderApparatusPreview = useCallback(() => {
+    if (readerApparatusPreviewTimerRef.current !== null) {
+      window.clearTimeout(readerApparatusPreviewTimerRef.current);
+      readerApparatusPreviewTimerRef.current = null;
+    }
+    setReaderApparatusPreview(null);
+  }, []);
+
+  const openReaderApparatusPreview = useCallback(
+    (itemId: string, element: Element) => {
+      const row = readerApparatusRowByItemId.get(itemId);
+      if (
+        !row ||
+        !readerApparatus ||
+        !readerApparatusRowPresentation(row, readerApparatus.capabilities)
+          .canPreview
+      ) {
+        closeReaderApparatusPreview();
+        return;
+      }
+      const bodyText = row?.targets
+        .map((target) => target.body_text?.trim())
+        .filter((value): value is string => Boolean(value))
+        .join("\n\n");
+      if (!bodyText) {
+        closeReaderApparatusPreview();
+        return;
+      }
+      if (readerApparatusPreviewTimerRef.current !== null) {
+        window.clearTimeout(readerApparatusPreviewTimerRef.current);
+      }
+      const rect = element.getBoundingClientRect();
+      readerApparatusPreviewTimerRef.current = window.setTimeout(() => {
+        readerApparatusPreviewTimerRef.current = null;
+        setReaderApparatusPreview({
+          itemId,
+          anchor: { x: rect.left + rect.width / 2, y: rect.top },
+          kind: row.marker.kind,
+          confidence: row.marker.confidence,
+          bodyText,
+        });
+      }, HOVER_PREVIEW_DELAY_MS);
+    },
+    [closeReaderApparatusPreview, readerApparatus, readerApparatusRowByItemId],
+  );
+
+  useEffect(() => closeReaderApparatusPreview, [closeReaderApparatusPreview]);
 
   const activeTextStartOffset = useMemo(() => {
     if (isPdf) {
@@ -1088,10 +1291,13 @@ export default function MediaPaneBody() {
   // Data Fetching — initial load
   // ==========================================================================
 
-  const initialMediaResource = useResource<{
-    media: Media;
-    fragments: Fragment[];
-  }, { id: string }>({
+  const initialMediaResource = useResource<
+    {
+      media: Media;
+      fragments: Fragment[];
+    },
+    { id: string }
+  >({
     descriptor: mediaResource,
     params: { id },
     load: async (params, signal) => {
@@ -1185,8 +1391,13 @@ export default function MediaPaneBody() {
     [id],
   );
 
-  const { snapshot: processingSnapshot, connectionState: processingConnectionState } =
-    useMediaProcessingStatus(media?.id ?? null, media?.processing_status ?? "");
+  const {
+    snapshot: processingSnapshot,
+    connectionState: processingConnectionState,
+  } = useMediaProcessingStatus(
+    media?.id ?? null,
+    media?.processing_status ?? "",
+  );
 
   useEffect(() => {
     if (!processingSnapshot) return;
@@ -1222,7 +1433,9 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
+      const mediaResp = await apiFetch<{ data: Media }>(
+        `/api/media/${media.id}`,
+      );
       const nextMedia = mediaResp.data;
       setMedia(nextMedia);
 
@@ -1393,13 +1606,7 @@ export default function MediaPaneBody() {
     clearFocus();
     setHighlights([]);
     clearRetainedSelection(false);
-  }, [
-    activeSectionId,
-    clearFocus,
-    clearRetainedSelection,
-    id,
-    isEpub,
-  ]);
+  }, [activeSectionId, clearFocus, clearRetainedSelection, id, isEpub]);
 
   useEffect(() => {
     if (epubSectionResource.status === "loading") {
@@ -1462,6 +1669,9 @@ export default function MediaPaneBody() {
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
+    pendingApparatusPulseRef.current = null;
+    setFocusedApparatusItemId(null);
+    setHoveredApparatusItemId(null);
     setTextRestoreSettled(false);
   }, [id]);
 
@@ -1492,13 +1702,7 @@ export default function MediaPaneBody() {
       origin: "manual",
     });
     setActiveWebSectionId(section.section_id);
-  }, [
-    activeRequestedReaderLoc,
-    feedback,
-    media?.kind,
-    setTarget,
-    webSections,
-  ]);
+  }, [activeRequestedReaderLoc, feedback, media?.kind, setTarget, webSections]);
 
   useEffect(() => {
     scrollRestoreAppliedRef.current = false;
@@ -1583,10 +1787,7 @@ export default function MediaPaneBody() {
       // Hash/pulse target drives the scroll; resume is suppressed for this load.
       return;
     }
-    if (
-      initialReaderResumeStateLoading ||
-      !readerLayoutReady
-    ) {
+    if (initialReaderResumeStateLoading || !readerLayoutReady) {
       return;
     }
     if (isMismatchDisabled) {
@@ -2499,6 +2700,24 @@ export default function MediaPaneBody() {
   }, [hoveredHighlightId]);
 
   useEffect(() => {
+    if (!contentRef.current) return;
+    applyReaderApparatusClass(
+      contentRef.current,
+      readerApparatusItemIdsForRow(focusedApparatusItemId),
+      READER_APPARATUS_FOCUS_CLASS,
+    );
+  }, [focusedApparatusItemId, readerApparatusItemIdsForRow, renderedHtml]);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    applyReaderApparatusClass(
+      contentRef.current,
+      readerApparatusItemIdsForRow(hoveredApparatusItemId),
+      READER_APPARATUS_HOVER_CLASS,
+    );
+  }, [hoveredApparatusItemId, readerApparatusItemIdsForRow, renderedHtml]);
+
+  useEffect(() => {
     if (!requestedHighlightId) {
       urlHighlightAppliedRef.current = null;
       return;
@@ -2891,11 +3110,47 @@ export default function MediaPaneBody() {
       setHighlights([]);
       clearRetainedSelection(false);
     },
+    [cancelRestoreSession, clearFocus, clearRetainedSelection, clearTarget],
+  );
+
+  const focusReaderApparatusInContent = useCallback(
+    (itemId: string, shouldScroll: boolean) => {
+      const root = contentRef.current;
+      if (!root) {
+        return;
+      }
+      const element = root.querySelector<HTMLElement>(
+        readerApparatusSelector(itemId),
+      );
+      if (!element) {
+        return;
+      }
+      const rowId = readerApparatusRowByItemId.get(itemId)?.id ?? itemId;
+      setFocusedApparatusItemId(rowId);
+      applyReaderApparatusClass(
+        root,
+        readerApparatusItemIdsForRow(rowId),
+        READER_APPARATUS_FOCUS_CLASS,
+      );
+      if (shouldScroll) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      pulseReaderApparatusElement(element);
+    },
+    [readerApparatusItemIdsForRow, readerApparatusRowByItemId],
+  );
+
+  const activateVisibleReaderApparatusItem = useCallback(
+    (itemId: string) => {
+      const rowId = readerApparatusRowByItemId.get(itemId)?.id ?? itemId;
+      setFocusedApparatusItemId(rowId);
+      requestSecondarySurface?.("reader-apparatus");
+      focusReaderApparatusInContent(itemId, false);
+    },
     [
-      cancelRestoreSession,
-      clearFocus,
-      clearRetainedSelection,
-      clearTarget,
+      focusReaderApparatusInContent,
+      readerApparatusRowByItemId,
+      requestSecondarySurface,
     ],
   );
 
@@ -2920,14 +3175,33 @@ export default function MediaPaneBody() {
         }
       }
 
+      const apparatusEl = findReaderApparatusElement(clickTarget);
+      if (apparatusEl) {
+        e.preventDefault();
+        const itemId = apparatusEl.getAttribute(
+          "data-reader-apparatus-item-id",
+        );
+        if (itemId) {
+          activateVisibleReaderApparatusItem(itemId);
+          setHighlightActionAnchor(null);
+        }
+        return;
+      }
+
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         clearFocus();
         clearTarget();
+        setFocusedApparatusItemId(null);
         setHighlightActionAnchor(null);
       }
     },
-    [clearFocus, clearTarget, handleHighlightClick],
+    [
+      activateVisibleReaderApparatusItem,
+      clearFocus,
+      clearTarget,
+      handleHighlightClick,
+    ],
   );
 
   // ==========================================================================
@@ -3038,7 +3312,9 @@ export default function MediaPaneBody() {
 
   const handleColorChange = useCallback(
     async (highlightId: string, color: HighlightColor) => {
-      await applyHighlightMutation(() => updateHighlight(highlightId, { color }));
+      await applyHighlightMutation(() =>
+        updateHighlight(highlightId, { color }),
+      );
     },
     [applyHighlightMutation],
   );
@@ -3175,7 +3451,8 @@ export default function MediaPaneBody() {
           ? (pendingQuoteLabel ?? quoteLabelForHighlightId(highlightId))
           : null,
         readerSelection: highlightId
-          ? (pendingQuoteSelection ?? readerSelectionForHighlightId(highlightId))
+          ? (pendingQuoteSelection ??
+            readerSelectionForHighlightId(highlightId))
           : null,
       });
       setPendingQuoteUri(null);
@@ -3291,6 +3568,110 @@ export default function MediaPaneBody() {
       webSections,
     ],
   );
+
+  const handleReaderApparatusRowActivate = useCallback(
+    (row: ReaderApparatusRow) => {
+      const presentation = readerApparatus
+        ? readerApparatusRowPresentation(row, readerApparatus.capabilities)
+        : null;
+      if (
+        !readerApparatus ||
+        !presentation ||
+        (!presentation.canActivateMarker && !presentation.canActivateTarget)
+      ) {
+        return;
+      }
+      setFocusedApparatusItemId(row.id);
+      requestSecondarySurface?.("reader-apparatus");
+
+      const activationItem = presentation.canActivateMarker
+        ? row.marker
+        : (row.targets.find((target) => target.locator) ?? row.target);
+      if (!activationItem?.locator) {
+        return;
+      }
+      const locator = activationItem.locator;
+      if (locator.type === "pdf_page_geometry") {
+        dispatchReaderPulse({
+          mediaId: id,
+          locator,
+          snippet: activationItem.body_text ?? activationItem.label,
+          highlightBehavior: "pulse",
+          focusBehavior: "scroll_into_view",
+        });
+        return;
+      }
+      if (
+        locator.type !== "web_text_offsets" &&
+        locator.type !== "epub_fragment_offsets"
+      ) {
+        return;
+      }
+      if (
+        activeContent?.fragmentId === locator.fragment_id &&
+        !epubSectionLoading
+      ) {
+        focusReaderApparatusInContent(activationItem.stable_key, true);
+        return;
+      }
+
+      pendingApparatusPulseRef.current = {
+        itemId: activationItem.stable_key,
+        locator,
+      };
+      if (locator.type === "epub_fragment_offsets") {
+        const section = (epubSections ?? []).find(
+          (item) => item.fragment_id === locator.fragment_id,
+        );
+        if (!section) {
+          return;
+        }
+        navigateToSection(section.section_id);
+        return;
+      }
+
+      const params = new URLSearchParams({ fragment: locator.fragment_id });
+      paneRouterPush?.(`/media/${id}?${params.toString()}`);
+      setTarget({
+        kind: "fragment",
+        value: locator.fragment_id,
+        origin: "manual",
+      });
+    },
+    [
+      activeContent?.fragmentId,
+      epubSectionLoading,
+      epubSections,
+      focusReaderApparatusInContent,
+      id,
+      navigateToSection,
+      paneRouterPush,
+      readerApparatus,
+      requestSecondarySurface,
+      setTarget,
+    ],
+  );
+
+  useEffect(() => {
+    const pending = pendingApparatusPulseRef.current;
+    if (
+      !pending ||
+      !activeContent ||
+      epubSectionLoading ||
+      (pending.locator.type !== "web_text_offsets" &&
+        pending.locator.type !== "epub_fragment_offsets") ||
+      pending.locator.fragment_id !== activeContent.fragmentId
+    ) {
+      return;
+    }
+    pendingApparatusPulseRef.current = null;
+    focusReaderApparatusInContent(pending.itemId, true);
+  }, [
+    activeContent,
+    epubSectionLoading,
+    focusReaderApparatusInContent,
+    renderedHtml,
+  ]);
 
   const activeSectionPosition = useMemo(() => {
     if (!epubSections || !activeSectionId) {
@@ -3425,12 +3806,7 @@ export default function MediaPaneBody() {
         primaryWidth: { kind: "workspace" },
       });
     };
-  }, [
-    isMobileViewport,
-    isPdf,
-    pdfIntrinsicWidthPx,
-    setPaneLayout,
-  ]);
+  }, [isMobileViewport, isPdf, pdfIntrinsicWidthPx, setPaneLayout]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
   // Shift+Esc returns focus mode to off.
@@ -3478,12 +3854,7 @@ export default function MediaPaneBody() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [
-    clearTarget,
-    readerProfile.focus_mode,
-    saveReaderProfile,
-    targetStatus,
-  ]);
+  }, [clearTarget, readerProfile.focus_mode, saveReaderProfile, targetStatus]);
 
   // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
   useEffect(() => {
@@ -3600,18 +3971,76 @@ export default function MediaPaneBody() {
   // Prose mark hover → hoveredHighlightId, mirroring the click delegation above.
   // onPointerOver also fires on non-mark targets, so it clears the id when the
   // pointer moves off a mark; onPointerOut clears it when leaving the content.
-  const handleContentPointerOver = useCallback((e: React.PointerEvent) => {
-    const mark = findHighlightElement(e.target as Element | null);
-    setHoveredHighlightId(
-      mark ? (parseHighlightElement(mark)?.topmostId ?? null) : null,
-    );
-  }, []);
-
-  const handleContentPointerOut = useCallback((e: React.PointerEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+  const handleContentPointerOver = useCallback(
+    (e: React.PointerEvent) => {
+      const mark = findHighlightElement(e.target as Element | null);
+      if (mark) {
+        setHoveredHighlightId(parseHighlightElement(mark)?.topmostId ?? null);
+        setHoveredApparatusItemId(null);
+        closeReaderApparatusPreview();
+        return;
+      }
       setHoveredHighlightId(null);
-    }
-  }, []);
+      const apparatusEl = findReaderApparatusElement(
+        e.target as Element | null,
+      );
+      const itemId =
+        apparatusEl?.getAttribute("data-reader-apparatus-item-id") ?? null;
+      const rowId = itemId
+        ? (readerApparatusRowByItemId.get(itemId)?.id ?? itemId)
+        : null;
+      setHoveredApparatusItemId(rowId);
+      if (itemId && apparatusEl) {
+        openReaderApparatusPreview(itemId, apparatusEl);
+        return;
+      }
+      closeReaderApparatusPreview();
+    },
+    [
+      closeReaderApparatusPreview,
+      openReaderApparatusPreview,
+      readerApparatusRowByItemId,
+    ],
+  );
+
+  const handleContentPointerOut = useCallback(
+    (e: React.PointerEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+        setHoveredHighlightId(null);
+        setHoveredApparatusItemId(null);
+        closeReaderApparatusPreview();
+      }
+    },
+    [closeReaderApparatusPreview],
+  );
+
+  const handleContentFocus = useCallback(
+    (e: React.FocusEvent<HTMLDivElement>) => {
+      const apparatusEl = findReaderApparatusElement(
+        e.target as Element | null,
+      );
+      const itemId =
+        apparatusEl?.getAttribute("data-reader-apparatus-item-id") ?? null;
+      const rowId = itemId
+        ? (readerApparatusRowByItemId.get(itemId)?.id ?? itemId)
+        : null;
+      setHoveredApparatusItemId(rowId);
+      if (itemId && apparatusEl) {
+        openReaderApparatusPreview(itemId, apparatusEl);
+      }
+    },
+    [openReaderApparatusPreview, readerApparatusRowByItemId],
+  );
+
+  const handleContentBlur = useCallback(
+    (e: React.FocusEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+        setHoveredApparatusItemId(null);
+        closeReaderApparatusPreview();
+      }
+    },
+    [closeReaderApparatusPreview],
+  );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, anchorRect: DOMRect) => {
@@ -3880,8 +4309,7 @@ export default function MediaPaneBody() {
       readerOptions.push({
         id: "show-highlights",
         label: "Show highlights",
-        onSelect: () =>
-          requestSecondarySurface?.("reader-highlights"),
+        onSelect: () => requestSecondarySurface?.("reader-highlights"),
       });
     }
 
@@ -3898,7 +4326,9 @@ export default function MediaPaneBody() {
       readerOptions.push({
         id: "reader-theme-dark",
         label:
-          readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
+          readerProfile.theme === "dark"
+            ? "Dark theme (current)"
+            : "Dark theme",
         disabled: readerProfile.theme === "dark",
         onSelect: () => updateTheme("dark"),
       });
@@ -4137,9 +4567,7 @@ export default function MediaPaneBody() {
           role="toolbar"
           aria-label="Article controls"
         >
-          <div className={styles.mediaToolbarRow}>
-            {contentsToolbarButton}
-          </div>
+          <div className={styles.mediaToolbarRow}>{contentsToolbarButton}</div>
         </div>
       ) : null,
     [
@@ -4287,7 +4715,9 @@ export default function MediaPaneBody() {
         highlight,
         highlight.anchor,
         isTranscriptMedia
-          ? (fragments.find((item) => item.id === highlight.anchor.fragment_id) ?? null)
+          ? (fragments.find(
+              (item) => item.id === highlight.anchor.fragment_id,
+            ) ?? null)
           : null,
       ),
     );
@@ -4355,9 +4785,7 @@ export default function MediaPaneBody() {
     const start = activeTextStartOffset / totalTextLength;
     const end =
       (activeTextStartOffset +
-        (activeContent
-          ? canonicalCpLength(activeContent.canonicalText)
-          : 0)) /
+        (activeContent ? canonicalCpLength(activeContent.canonicalText) : 0)) /
       totalTextLength;
     return { start, end };
   }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
@@ -4549,6 +4977,81 @@ export default function MediaPaneBody() {
     ],
   );
 
+  const readerApparatusMeasureKey = useMemo(
+    () =>
+      [
+        media?.kind ?? "",
+        activeContent?.fragmentId ?? "",
+        activeEpubSection?.section_id ?? "",
+        renderedHtml,
+        readerProfile.font_family,
+        readerProfile.font_size_px,
+        readerProfile.line_height,
+        readerProfile.column_width_ch,
+        readerProfile.theme,
+        readerProfile.hyphenation,
+        pdfControlsState?.pageNumber ?? "",
+        pdfControlsState?.zoomPercent ?? "",
+        pdfControlsState?.pageRenderEpoch ?? "",
+        currentReaderApparatusRows
+          .map(
+            (row) =>
+              `${row.id}:${row.marker.locator_status}:${row.target?.locator_status ?? ""}:${row.marker.confidence}:${row.sort_key}`,
+          )
+          .join("|"),
+      ].join("||"),
+    [
+      activeContent?.fragmentId,
+      activeEpubSection?.section_id,
+      currentReaderApparatusRows,
+      media?.kind,
+      pdfControlsState?.pageNumber,
+      pdfControlsState?.pageRenderEpoch,
+      pdfControlsState?.zoomPercent,
+      readerProfile.column_width_ch,
+      readerProfile.font_family,
+      readerProfile.font_size_px,
+      readerProfile.hyphenation,
+      readerProfile.line_height,
+      readerProfile.theme,
+      renderedHtml,
+    ],
+  );
+
+  const readerApparatusSecondaryBody = useMemo(
+    () =>
+      showApparatusPane ? (
+        <ReaderApparatusSurface
+          rows={readerApparatusRows}
+          projectRows={currentReaderApparatusRows}
+          capabilities={readerApparatus.capabilities}
+          contentRef={isPdf ? pdfContentRef : contentRef}
+          activeItemId={focusedApparatusItemId}
+          hoveredItemId={hoveredApparatusItemId}
+          onActivateRow={handleReaderApparatusRowActivate}
+          onHoverItem={setHoveredApparatusItemId}
+          measureKey={readerApparatusMeasureKey}
+          isMobile={isMobileViewport}
+          pdfActivePage={isPdf ? (pdfControlsState?.pageNumber ?? null) : null}
+        />
+      ) : null,
+    [
+      contentRef,
+      currentReaderApparatusRows,
+      focusedApparatusItemId,
+      handleReaderApparatusRowActivate,
+      hoveredApparatusItemId,
+      isMobileViewport,
+      isPdf,
+      pdfContentRef,
+      pdfControlsState?.pageNumber,
+      readerApparatus,
+      readerApparatusRows,
+      readerApparatusMeasureKey,
+      showApparatusPane,
+    ],
+  );
+
   const highlightsSecondaryBody = useMemo(
     () =>
       showHighlightsPane ? (
@@ -4613,7 +5116,9 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const readerSecondarySurfaces = useMemo<PaneSecondarySurfacePublication[]>(() => {
+  const readerSecondarySurfaces = useMemo<
+    PaneSecondarySurfacePublication[]
+  >(() => {
     const surfaces: PaneSecondarySurfacePublication[] = [];
     if (showHighlightsPane) {
       surfaces.push({
@@ -4631,6 +5136,20 @@ export default function MediaPaneBody() {
     }
     if (contentsAvailable) {
       surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
+    }
+    if (showApparatusPane) {
+      surfaces.push({
+        id: "reader-apparatus",
+        body: (
+          <div className={styles.readerSecondaryBody}>
+            {readerApparatusSecondaryBody ?? (
+              <div className={styles.readerSecondaryEmpty}>
+                Citations are unavailable for this context.
+              </div>
+            )}
+          </div>
+        ),
+      });
     }
     surfaces.push({
       id: "reader-doc-chat",
@@ -4685,7 +5204,9 @@ export default function MediaPaneBody() {
     id,
     openChatInSecondary,
     pendingQuoteUri,
+    readerApparatusSecondaryBody,
     secondaryChat,
+    showApparatusPane,
     showHighlightsPane,
     startChatInSecondary,
   ]);
@@ -4697,10 +5218,17 @@ export default function MediaPaneBody() {
         ? "reader-highlights"
         : contentsAvailable
           ? "reader-contents"
-          : "reader-doc-chat",
+          : showApparatusPane
+            ? "reader-apparatus"
+            : "reader-doc-chat",
       surfaces: readerSecondarySurfaces,
     }),
-    [contentsAvailable, readerSecondarySurfaces, showHighlightsPane],
+    [
+      contentsAvailable,
+      readerSecondarySurfaces,
+      showApparatusPane,
+      showHighlightsPane,
+    ],
   );
   usePaneSecondary(readerSecondaryDescriptor);
   const fixedChromePublication = useMemo(
@@ -5007,6 +5535,8 @@ export default function MediaPaneBody() {
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
+              onContentFocus={handleContentFocus}
+              onContentBlur={handleContentBlur}
               onInternalLinkClick={(href) => {
                 const target = resolveEpubInternalLinkTarget(
                   href,
@@ -5034,11 +5564,31 @@ export default function MediaPaneBody() {
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
+              onContentFocus={handleContentFocus}
+              onContentBlur={handleContentBlur}
             />
           )}
         </div>
-
       </div>
+
+      {readerApparatusPreview ? (
+        <HoverPreview
+          anchor={readerApparatusPreview.anchor}
+          onClose={closeReaderApparatusPreview}
+        >
+          <div className={styles.apparatusPreview}>
+            <div className={styles.apparatusPreviewMeta}>
+              {readerApparatusPreview.kind.replaceAll("_", " ")}
+              {readerApparatusPreview.confidence === "exact"
+                ? ""
+                : ` / ${readerApparatusPreview.confidence}`}
+            </div>
+            <div className={styles.apparatusPreviewBody}>
+              {readerApparatusPreview.bodyText}
+            </div>
+          </div>
+        </HoverPreview>
+      ) : null}
 
       {!isPdf &&
         selection &&

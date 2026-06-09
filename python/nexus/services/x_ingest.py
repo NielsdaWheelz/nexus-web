@@ -22,6 +22,11 @@ from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_bl
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.provider_events import record_external_provider_event
+from nexus.services.reader_apparatus import (
+    attach_fragment_locators,
+    replace_media_apparatus,
+    source_fingerprint,
+)
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_indexing import index_web_article_evidence
 from nexus.services.web_article_structure import (
@@ -54,6 +59,8 @@ logger = get_logger(__name__)
 class _PreparedXFragment:
     fragment: Fragment
     fragment_blocks: list[FragmentBlockSpec]
+    apparatus_items: list[dict[str, object]]
+    apparatus_edges: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -232,6 +239,29 @@ def _refresh_x_author_thread_media_for_viewer(
             }
         ],
     )
+    replace_media_apparatus(
+        db,
+        media_id=media.id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "x_thread",
+            snapshot.canonical_url,
+            "\n\n".join(fragment.html_sanitized for fragment in fragments),
+            "\n\n".join(fragment.canonical_text for fragment in fragments),
+        ),
+        items=[
+            item
+            for prepared in prepared_fragments
+            for item in attach_fragment_locators(
+                media_id=media.id,
+                fragment_id=prepared.fragment.id,
+                media_kind="web_article",
+                canonical_text=prepared.fragment.canonical_text,
+                items=prepared.apparatus_items,
+            )
+        ],
+        edges=[edge for prepared in prepared_fragments for edge in prepared.apparatus_edges],
+    )
     db.commit()
 
     created_index_targets.append(
@@ -372,6 +402,25 @@ def _create_or_reuse_x_snapshot_post_media(
                 }
             ],
         )
+    replace_media_apparatus(
+        db,
+        media_id=media.id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "x_post",
+            canonical_x_post_url(post.id),
+            prepared_fragment.fragment.html_sanitized,
+            prepared_fragment.fragment.canonical_text,
+        ),
+        items=attach_fragment_locators(
+            media_id=media.id,
+            fragment_id=prepared_fragment.fragment.id,
+            media_kind="web_article",
+            canonical_text=prepared_fragment.fragment.canonical_text,
+            items=prepared_fragment.apparatus_items,
+        ),
+        edges=prepared_fragment.apparatus_edges,
+    )
     library_entries.assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media.id, library_ids
     )
@@ -409,7 +458,12 @@ def _build_x_fragment(
         canonical_text=canonical_text,
         created_at=created_at,
     )
-    return _PreparedXFragment(fragment=fragment, fragment_blocks=prepared.fragment_blocks)
+    return _PreparedXFragment(
+        fragment=fragment,
+        fragment_blocks=prepared.fragment_blocks,
+        apparatus_items=prepared.apparatus_items,
+        apparatus_edges=prepared.apparatus_edges,
+    )
 
 
 def _status_to_str(value: object) -> str:

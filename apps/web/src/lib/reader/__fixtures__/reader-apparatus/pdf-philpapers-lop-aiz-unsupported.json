@@ -1,0 +1,48 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": false,
+      "has_probable_items": false,
+      "has_sidecar_items": false,
+      "supports_hover_preview": false,
+      "supports_jump_to_marker": false,
+      "supports_jump_to_target": false
+    },
+    "diagnostics": {
+      "pdf_legal_footnotes": {
+        "adapter_version": "pdf_legal_footnotes_v1",
+        "edge_count": 0,
+        "marker_count": 0,
+        "page_count": 22,
+        "skipped": {},
+        "status": "no_supported_legal_footnotes",
+        "target_count": 0,
+        "unpaired_target_count": 0,
+        "unresolved_marker_count": 0
+      },
+      "pdf_native_link": {
+        "citation_link_count": 0,
+        "edge_count": 0,
+        "internal_link_count": 0,
+        "marker_count": 0,
+        "skipped": {
+          "non_citation_destination": 21
+        },
+        "status": "no_supported_citation_links",
+        "target_count": 0,
+        "total_link_count": 21,
+        "unresolved_marker_count": 0
+      }
+    },
+    "edges": [],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [],
+    "media_id": "db7800a9-be06-561c-8ab2-1561edd18e0c",
+    "media_kind": "pdf",
+    "source_fingerprint": "sha256:66bb0e8a7dcf759560a1650d2cbce34da753d91b28acbe81abb95d1c520c0cd3",
+    "status": "empty"
+  },
+  "fixture_id": "pdf-philpapers-lop-aiz-unsupported",
+  "source_fixture_path": "pdf/philpapers-lop-aiz.pdf",
+  "source_fixture_sha256": "cd19f4439cb3a0747bbff29c8ac2386c8f38727f0821916f5109b2304d052867"
+}

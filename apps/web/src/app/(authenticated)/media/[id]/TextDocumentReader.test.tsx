@@ -11,6 +11,8 @@ function renderReader(
   const onDocumentScroll = vi.fn();
   const onContentPointerOver = vi.fn();
   const onContentPointerOut = vi.fn();
+  const onContentFocus = vi.fn();
+  const onContentBlur = vi.fn();
   const props: Parameters<typeof TextDocumentReader>[0] = {
     mediaId: "media-1",
     readerRootRef: createRef<HTMLDivElement>(),
@@ -32,11 +34,20 @@ function renderReader(
     onContentClick,
     onContentPointerOver,
     onContentPointerOut,
+    onContentFocus,
+    onContentBlur,
     ...overrides,
   };
 
   render(<TextDocumentReader {...props} />);
-  return { onContentClick, onDocumentScroll, onContentPointerOver };
+  return {
+    onContentClick,
+    onDocumentScroll,
+    onContentPointerOver,
+    onContentPointerOut,
+    onContentFocus,
+    onContentBlur,
+  };
 }
 
 describe("TextDocumentReader", () => {
@@ -48,9 +59,7 @@ describe("TextDocumentReader", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Internal" }));
 
-    expect(onInternalLinkClick).toHaveBeenCalledWith(
-      "chapter-2.xhtml#target",
-    );
+    expect(onInternalLinkClick).toHaveBeenCalledWith("chapter-2.xhtml#target");
     expect(onContentClick).not.toHaveBeenCalled();
   });
 
@@ -66,9 +75,7 @@ describe("TextDocumentReader", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Internal" }));
 
-    expect(onInternalLinkClick).toHaveBeenCalledWith(
-      "chapter-2.xhtml#target",
-    );
+    expect(onInternalLinkClick).toHaveBeenCalledWith("chapter-2.xhtml#target");
     expect(onContentClick).toHaveBeenCalledTimes(1);
   });
 
@@ -84,6 +91,35 @@ describe("TextDocumentReader", () => {
     fireEvent.pointerOver(screen.getByText("marked"));
 
     expect(onContentPointerOver).toHaveBeenCalledTimes(1);
+  });
+
+  it("delegates non-anchor apparatus elements to content handlers", () => {
+    const {
+      onContentClick,
+      onContentPointerOver,
+      onContentPointerOut,
+      onContentFocus,
+      onContentBlur,
+    } = renderReader({
+      contentState: {
+        status: "ready",
+        renderedHtml:
+          '<span tabindex="0" data-reader-apparatus-item-id="margin-1">Margin note</span>',
+      },
+    });
+
+    const marginNote = screen.getByText("Margin note");
+    fireEvent.click(marginNote);
+    fireEvent.pointerOver(marginNote);
+    fireEvent.pointerOut(marginNote);
+    fireEvent.focus(marginNote);
+    fireEvent.blur(marginNote);
+
+    expect(onContentClick).toHaveBeenCalledTimes(1);
+    expect(onContentPointerOver).toHaveBeenCalledTimes(1);
+    expect(onContentPointerOut).toHaveBeenCalledTimes(1);
+    expect(onContentFocus).toHaveBeenCalledTimes(1);
+    expect(onContentBlur).toHaveBeenCalledTimes(1);
   });
 
   it("publishes document viewport scroll snapshots", () => {
@@ -112,12 +148,14 @@ describe("TextDocumentReader", () => {
           readerRootRef={createRef<HTMLDivElement>()}
           contentRef={createRef<HTMLDivElement>()}
           readerSurfaceClassName={styles.readerContentRoot}
-          readerSurfaceStyle={{
-            "--reader-column-width-ch": "36ch",
-            "--reader-font-family": "Arial, sans-serif",
-            "--reader-font-size-px": "16px",
-            "--reader-line-height": "1.5",
-          } as CSSProperties}
+          readerSurfaceStyle={
+            {
+              "--reader-column-width-ch": "36ch",
+              "--reader-font-family": "Arial, sans-serif",
+              "--reader-font-size-px": "16px",
+              "--reader-line-height": "1.5",
+            } as CSSProperties
+          }
           focusMode="off"
           hyphenation="manual"
           contentState={{
@@ -128,6 +166,8 @@ describe("TextDocumentReader", () => {
           onContentClick={() => {}}
           onContentPointerOver={() => {}}
           onContentPointerOut={() => {}}
+          onContentFocus={() => {}}
+          onContentBlur={() => {}}
         />
       </div>,
     );

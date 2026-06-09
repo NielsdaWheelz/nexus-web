@@ -193,6 +193,31 @@ ruler never uses it.
 - Projection state is never persisted. It is derived from current rendered
   reader geometry.
 
+### source-authored apparatus
+
+Reader apparatus is the reader-owned surface for source-authored footnotes,
+endnotes, sidenotes, bibliography entries, and in-document citation markers. It
+is not generated chat citation evidence and must not write or read
+`message_retrievals`.
+
+- Backend extraction is owned by `reader_apparatus.py` and the relevant ingest
+  path before semantic source attributes are sanitized away.
+- Source-authored standalone margin notes are valid target-only apparatus rows:
+  they appear in the sidecar and can jump to the note target, but they do not
+  get invented marker edges or hover previews.
+- The reader exposes apparatus in the `Citations` tab under the existing
+  `reader-tools` secondary group.
+- Web/EPUB rows may support hover previews and marker/target activation when
+  exact locators exist.
+- PDF rows are capability-gated. Current PDF support is scoped to native
+  internal `cite.*` link graphs, arXiv source-package TeX/BibTeX graphs, and
+  strict law-review-style same-page legal footnotes with footnote-sized target
+  text. Generic PDF superscripts, reference sections, and plain extracted text
+  do not create apparatus rows.
+- The 20-source support matrix, fixture hashes, and expected counts live in
+  `python/tests/fixtures/reader_apparatus/corpus_manifest.json`, not in reader
+  prose.
+
 ### reader settings
 
 - `reader_profile` stores the global reader preferences for a user

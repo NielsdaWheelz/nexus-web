@@ -1,0 +1,1351 @@
+{
+  "schema_version": 1,
+  "fixture_id": "tei-philpapers-lop-aiz-grobid-0-8-2",
+  "fixture_path": "reader_apparatus/tei/philpapers-lop-aiz.grobid-0.8.2.tei.xml",
+  "fixture_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+  "coverage": "sample_scope",
+  "audit_basis": "hand_selected_grobid_tei_reference_sample",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "partial",
+    "media_kind": "tei",
+    "sampled_bibliography_entries": 12,
+    "sampled_bibliography_refs": 30,
+    "sampled_edges": 19
+  },
+  "items": [
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b3",
+      "kind": "bibliography_entry",
+      "label": "b3",
+      "body_sha256": "7f573f425fc1e9f9b11316d008650f8b15a55c49dfc79563a90dc16c61f2eae2",
+      "body_chars": 121,
+      "body_excerpt": "Archer, A., & Mills, G. (2025). Fear and ADective Injustice. In Harbin, A. (ed.) The Moral Psychology of Fear. Bloomsbury",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b3",
+        "coords": "17,72.00,181.63,468.01,10.37;17,72.00,197.23,157.44,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b4",
+      "kind": "bibliography_entry",
+      "label": "b4",
+      "body_sha256": "08e3c85ae93540f83f625b857b055a413795a725918057a4bcf72f7c88339896",
+      "body_chars": 99,
+      "body_excerpt": "Archer, A. How Public Statues Wrong: ADective Artifacts and ADective Injustice. Topoi, 43: 809-819.",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b4",
+        "coords": "17,72.00,220.51,49.40,10.37;17,161.10,220.51,378.91,10.37;17,72.00,236.11,60.85,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b17",
+      "kind": "bibliography_entry",
+      "label": "b17",
+      "body_sha256": "ec0781760163c01f8340437793eae3373b2235513e2ade3eaac6ce0f990ccbd2",
+      "body_chars": 138,
+      "body_excerpt": "Cordelli, C. (2015a). Justice as Fairness and Relational Resources. Journal of Political Philosophy, 23(1): 86-110. doi:10.1111/jopp.12036",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b17",
+        "coords": "17,72.00,679.87,468.03,10.37;17,72.00,695.23,246.93,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b38",
+      "kind": "bibliography_entry",
+      "label": "b38",
+      "body_sha256": "f9c76a7ade25b13ca868b86283f4fbb4e99f126b2ec9a047bbfcfbca00090bfc",
+      "body_chars": 122,
+      "body_excerpt": "Isern-Mas, C., & Almagro, M. (2025). Unmasking therapy-speak. Theor Med Bioeth. https://doi.org/10.1007/s11017-025-09730-5",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b38",
+        "coords": "19,72.00,298.27,468.01,10.37;19,72.00,313.87,218.37,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b39",
+      "kind": "bibliography_entry",
+      "label": "b39",
+      "body_sha256": "a92bd75c011555bb344a81d700d3ac555289d9ffe8d54d9ba01c1f6c12bbbf64",
+      "body_chars": 199,
+      "body_excerpt": "Isern-Mas, C., Schaubroeck, K. & Archer, A. (2025). No One Mourns the Wicked: The Ethics of Mourning Morally Flawed Celebrities. Journal of Social Philosophy 1-",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b39",
+        "coords": "19,72.00,337.15,468.01,10.37;19,72.00,352.75,47.73,10.37;19,143.59,352.75,37.32,10.37;19,204.76,352.75,35.43,10.37;19,264.05,352.75,97.47,10.37;19,385.39,352.75,9.30,10.37;19,418.55,352.75,30.38,10.37;19,472.80,352.75,67.21,10.37;19,72.00,368.11,186.39,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b6",
+      "kind": "bibliography_entry",
+      "label": "b6",
+      "body_sha256": "4d45bae5c8fb703c83e7599f2effd5b49f496745382ee922f02de7a59000caf1",
+      "body_chars": 92,
+      "body_excerpt": "Archer, A., & Matheson, B. (2023). Emotional Imperialism. Philosophical Topics, 51 (1): 7-25",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b6",
+        "coords": "17,72.00,298.27,449.09,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b56",
+      "kind": "bibliography_entry",
+      "label": "b56",
+      "body_sha256": "a92ab5ba3155f3034d9dc7352fddbb5c4731c716805107e6cffb3876114d5f4d",
+      "body_chars": 98,
+      "body_excerpt": "Pismenny, A. (2025). Pain, Power, and Policing: Emotional Injustice in Healthcare. Bioethics, 1- 8",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b56",
+        "coords": "20,72.00,360.67,468.02,10.37;20,72.00,376.03,6.04,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b57",
+      "kind": "bibliography_entry",
+      "label": "b57",
+      "body_sha256": "48821155416e0ae889d4c6585b72cc0846f960e580483bf92482fb508fc49528",
+      "body_chars": 111,
+      "body_excerpt": "Pismenny, A., G. Eickers, and J. Prinz (2024). Emotional Injustice. Ergo: An Open Access Journal of Philosophy.",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b57",
+        "coords": "20,72.00,399.55,468.02,10.37;20,72.00,414.91,68.91,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b59",
+      "kind": "bibliography_entry",
+      "label": "b59",
+      "body_sha256": "8bb5716fce3482306b9ab0125e20ecad12cc5b24705528d56fe92d989d6534de",
+      "body_chars": 120,
+      "body_excerpt": "Puddifoot, K. (2025). ADect, attention, and injustice: The injustice of neglected aDect. Philosophical Psychology, 1-32.",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b59",
+        "coords": "20,72.00,477.31,467.94,10.37;20,72.00,492.67,155.78,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b66",
+      "kind": "bibliography_entry",
+      "label": "b66",
+      "body_sha256": "af68b210304a8cc415f3e72f32053638c8a59ec4e0101730f6d5a35a31770a73",
+      "body_chars": 92,
+      "body_excerpt": "Srinivasan, A. (2018). The Aptness of Anger. Journal of Political Philosophy 26 (2): 123-44.",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b66",
+        "coords": "20,72.00,718.75,442.48,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b81",
+      "kind": "bibliography_entry",
+      "label": "b81",
+      "body_sha256": "704ec5b6ca9907c6112a1e06dfc43b17a22eeb1465db7a8125c58844acbce174",
+      "body_chars": 180,
+      "body_excerpt": "Whitney, S. (2018). ADective Intentionality and ADective Injustice: Merleau-Ponty and Fanon on the Body Schema as a Theory of ADect. Southern Journal of Philoso",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b81",
+        "coords": "21,72.00,648.91,468.00,10.37;21,72.00,664.27,427.68,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b90",
+      "kind": "bibliography_entry",
+      "label": "b90",
+      "body_sha256": "3db9dc98ec8e3ac4b3109128a9fb11612df82b2ae824a947f8590f4a01d63232",
+      "body_chars": 210,
+      "body_excerpt": "Zembylas, M. (2026a). DisaDection as refusal: aDective injustice and the politics of unfeeling in pedagogies of nation. Pedagogy, Culture & Society, 34(2), 579-",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_entry",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "biblStruct",
+        "target_id": "b90",
+        "coords": "22,72.00,376.03,468.03,10.37;22,72.00,391.63,55.54,10.37;22,153.94,391.63,9.65,10.37;22,190.00,391.63,86.31,10.37;22,302.73,391.63,37.34,10.37;22,366.46,391.63,7.49,10.37;22,400.34,391.63,68.92,10.37;22,495.68,391.63,44.34,10.37;22,72.00,406.99,237.94,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000000",
+      "kind": "bibliography_ref",
+      "label": "Srinivasan (2018)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 0,
+        "ref_type": "bibr",
+        "ref_text": "Srinivasan (2018)",
+        "target_id": "b66",
+        "resolved_target_ids": [
+          "b66"
+        ],
+        "coords": "2,394.29,373.15,87.36,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000001",
+      "kind": "bibliography_ref",
+      "label": "Whitney (2018)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 1,
+        "ref_type": "bibr",
+        "ref_text": "Whitney (2018)",
+        "target_id": "b81",
+        "resolved_target_ids": [
+          "b81"
+        ],
+        "coords": "2,72.00,393.31,74.60,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000002",
+      "kind": "bibliography_ref",
+      "label": "Srinivasan (2018, 127;",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 2,
+        "ref_type": "bibr",
+        "ref_text": "Srinivasan (2018, 127;",
+        "target_id": null,
+        "resolved_target_ids": [
+          "b66"
+        ],
+        "coords": "2,429.50,562.27,110.51,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000003",
+      "kind": "bibliography_ref",
+      "label": "133)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "unresolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 3,
+        "ref_type": "bibr",
+        "ref_text": "133)",
+        "target_id": null,
+        "resolved_target_ids": [],
+        "coords": "2,72.00,582.43,19.59,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000006",
+      "kind": "bibliography_ref",
+      "label": "Archer and Benjamin Matheson (2023)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 6,
+        "ref_type": "bibr",
+        "ref_text": "Archer and Benjamin Matheson (2023)",
+        "target_id": null,
+        "resolved_target_ids": [
+          "b6"
+        ],
+        "coords": "3,432.11,244.27,107.92,10.37;3,72.00,264.43,83.72,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000007",
+      "kind": "bibliography_ref",
+      "label": "(Archer and Matheson 2023, 9)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 7,
+        "ref_type": "bibr",
+        "ref_text": "(Archer and Matheson 2023, 9)",
+        "target_id": null,
+        "resolved_target_ids": [
+          "b6"
+        ],
+        "coords": "3,294.31,485.95,149.94,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000021",
+      "kind": "bibliography_ref",
+      "label": "(Archer and",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "suppressed_fragment",
+      "candidate_target_ids": [
+        "b4"
+      ],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 21,
+        "ref_type": "bibr",
+        "ref_text": "(Archer and",
+        "target_id": null,
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "resolved_target_ids": [],
+        "coords": "4,72.00,364.99,60.33,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000022",
+      "kind": "bibliography_ref",
+      "label": "Mills 2025, Puddifoot 2025)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "suppressed_fragment",
+      "candidate_target_ids": [
+        "b59"
+      ],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 22,
+        "ref_type": "bibr",
+        "ref_text": "Mills 2025, Puddifoot 2025)",
+        "target_id": null,
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b59"
+        ],
+        "resolved_target_ids": [],
+        "coords": "4,136.79,364.99,138.35,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000029",
+      "kind": "bibliography_ref",
+      "label": ", Zembylas 2026a)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 29,
+        "ref_type": "bibr",
+        "ref_text": ", Zembylas 2026a)",
+        "target_id": null,
+        "resolved_target_ids": [
+          "b90"
+        ],
+        "coords": "4,278.67,405.31,94.90,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000039",
+      "kind": "bibliography_ref",
+      "label": "(Isern-Mas et al. 2025)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "ambiguous",
+      "candidate_target_ids": [
+        "b38",
+        "b39"
+      ],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 39,
+        "ref_type": "bibr",
+        "ref_text": "(Isern-Mas et al. 2025)",
+        "target_id": null,
+        "resolved_target_ids": [],
+        "coords": "4,390.47,506.11,108.18,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000057",
+      "kind": "bibliography_ref",
+      "label": "(Archer and",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "suppressed_fragment",
+      "candidate_target_ids": [
+        "b4"
+      ],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 57,
+        "ref_type": "bibr",
+        "ref_text": "(Archer and",
+        "target_id": null,
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "resolved_target_ids": [],
+        "coords": "5,144.14,393.31,60.78,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000058",
+      "kind": "bibliography_ref",
+      "label": "Mills 2025, Pismenny et al. 2024)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "suppressed_fragment",
+      "candidate_target_ids": [
+        "b56",
+        "b57"
+      ],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 58,
+        "ref_type": "bibr",
+        "ref_text": "Mills 2025, Pismenny et al. 2024)",
+        "target_id": null,
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b56",
+          "b57"
+        ],
+        "resolved_target_ids": [],
+        "coords": "5,209.79,393.31,170.96,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000124",
+      "kind": "bibliography_ref",
+      "label": "(Cordelli 2015a",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "resolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 124,
+        "ref_type": "bibr",
+        "ref_text": "(Cordelli 2015a",
+        "target_id": null,
+        "resolved_target_ids": [
+          "b17"
+        ],
+        "coords": "13,258.44,453.55,74.18,10.37"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000146",
+      "kind": "bibliography_ref",
+      "label": "Archer (2024)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "unresolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 146,
+        "ref_type": "bibr",
+        "ref_text": "Archer (2024)",
+        "target_id": null,
+        "resolved_target_ids": [],
+        "coords": "16,373.10,124.90,59.46,9.47"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000151",
+      "kind": "bibliography_ref",
+      "label": "501)",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "resolution_status": "unresolved",
+      "candidate_target_ids": [],
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 151,
+        "ref_type": "bibr",
+        "ref_text": "501)",
+        "target_id": null,
+        "resolved_target_ids": [],
+        "coords": "16,193.51,410.74,19.39,9.47"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000000/b66",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000000",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b66",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 0,
+        "ref_type": "bibr",
+        "ref_text": "Srinivasan (2018)",
+        "target_id": "b66",
+        "resolved_target_ids": [
+          "b66"
+        ],
+        "coords": "2,394.29,373.15,87.36,10.37",
+        "resolution_method": "grobid_tei_bibliography_ref"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000001/b81",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000001",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b81",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_bibliography_ref",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 1,
+        "ref_type": "bibr",
+        "ref_text": "Whitney (2018)",
+        "target_id": "b81",
+        "resolved_target_ids": [
+          "b81"
+        ],
+        "coords": "2,72.00,393.31,74.60,10.37",
+        "resolution_method": "grobid_tei_bibliography_ref"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000002/b66",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000002",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b66",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_author_year_match",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 2,
+        "ref_type": "bibr",
+        "ref_text": "Srinivasan (2018, 127;",
+        "target_id": "b66",
+        "resolved_target_ids": [
+          "b66"
+        ],
+        "coords": "2,429.50,562.27,110.51,10.37",
+        "resolution_method": "grobid_tei_author_year_match"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000006/b6",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000006",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b6",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_author_year_match",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 6,
+        "ref_type": "bibr",
+        "ref_text": "Archer and Benjamin Matheson (2023)",
+        "target_id": "b6",
+        "resolved_target_ids": [
+          "b6"
+        ],
+        "coords": "3,432.11,244.27,107.92,10.37;3,72.00,264.43,83.72,10.37",
+        "resolution_method": "grobid_tei_author_year_match"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000007/b6",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000007",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b6",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_author_year_match",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 7,
+        "ref_type": "bibr",
+        "ref_text": "(Archer and Matheson 2023, 9)",
+        "target_id": "b6",
+        "resolved_target_ids": [
+          "b6"
+        ],
+        "coords": "3,294.31,485.95,149.94,10.37",
+        "resolution_method": "grobid_tei_author_year_match"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000029/b90",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000029",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b90",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_author_year_match",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 29,
+        "ref_type": "bibr",
+        "ref_text": ", Zembylas 2026a)",
+        "target_id": "b90",
+        "resolved_target_ids": [
+          "b90"
+        ],
+        "coords": "4,278.67,405.31,94.90,10.37",
+        "resolution_method": "grobid_tei_author_year_match"
+      }
+    },
+    {
+      "gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/edge/000124/b17",
+      "from_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/ref/000124",
+      "to_gold_key": "tei-philpapers-lop-aiz-grobid-0-8-2/bibl/b17",
+      "relation": "cites_bibliography_entry",
+      "confidence": "probable",
+      "extraction_method": "grobid_tei_author_year_match",
+      "source_ref": {
+        "format": "grobid_tei",
+        "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+        "adapter_version": "grobid_tei_scholarly_v1",
+        "tei_element": "ref",
+        "ordinal": 124,
+        "ref_type": "bibr",
+        "ref_text": "(Cordelli 2015a",
+        "target_id": "b17",
+        "resolved_target_ids": [
+          "b17"
+        ],
+        "coords": "13,258.44,453.55,74.18,10.37",
+        "resolution_method": "grobid_tei_author_year_match"
+      }
+    }
+  ],
+  "expected_absences": [
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 3,
+        "ref_text": "133)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled unresolved or ambiguous TEI reference must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 21,
+        "ref_text": "(Archer and",
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "resolved_target_ids": []
+      },
+      "candidate_target_ids": [
+        "b4"
+      ],
+      "reason": "split Archer/Mills fragment must not emit GROBID direct-target false-positive edge to b4"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 22,
+        "ref_text": "Mills 2025, Puddifoot 2025)",
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b59"
+        ],
+        "resolved_target_ids": []
+      },
+      "candidate_target_ids": [
+        "b59"
+      ],
+      "reason": "targetless continuation fragment is unsafe until adjacent TEI refs are grouped"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 31,
+        "ref_text": "(Archer 2024)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled unresolved TEI author-year reference must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 39,
+        "ref_text": "(Isern-Mas et al. 2025)"
+      },
+      "candidate_target_ids": [
+        "b38",
+        "b39"
+      ],
+      "reason": "sampled unresolved or ambiguous TEI reference must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 51,
+        "ref_text": "2025b)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled orphan year suffix must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 53,
+        "ref_text": "2024)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled orphan year suffix must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 57,
+        "ref_text": "(Archer and",
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "resolved_target_ids": []
+      },
+      "candidate_target_ids": [
+        "b4"
+      ],
+      "reason": "split Archer/Mills fragment must not emit GROBID direct-target false-positive edge to b4"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 58,
+        "ref_text": "Mills 2025, Pismenny et al. 2024)",
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b56",
+          "b57"
+        ],
+        "resolved_target_ids": []
+      },
+      "candidate_target_ids": [
+        "b56",
+        "b57"
+      ],
+      "reason": "mixed targetless continuation fragment is unsafe until adjacent TEI refs are grouped"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 146,
+        "ref_text": "Archer (2024)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled unresolved or ambiguous TEI reference must not emit citation edges"
+    },
+    {
+      "kind": "tei_ref_edges",
+      "expected_count": 0,
+      "source_ref": {
+        "ordinal": 151,
+        "ref_text": "501)"
+      },
+      "candidate_target_ids": [],
+      "reason": "sampled unresolved or ambiguous TEI reference must not emit citation edges"
+    }
+  ],
+  "diagnostics": {
+    "selected_ref_ordinals": [
+      0,
+      1,
+      2,
+      3,
+      6,
+      7,
+      8,
+      9,
+      15,
+      19,
+      21,
+      22,
+      29,
+      30,
+      31,
+      39,
+      48,
+      51,
+      53,
+      57,
+      58,
+      64,
+      65,
+      123,
+      124,
+      132,
+      133,
+      146,
+      150,
+      151
+    ],
+    "selected_target_ids": [
+      "b17",
+      "b22",
+      "b38",
+      "b39",
+      "b4",
+      "b45",
+      "b5",
+      "b56",
+      "b57",
+      "b59",
+      "b6",
+      "b66",
+      "b73",
+      "b74",
+      "b80",
+      "b81",
+      "b86",
+      "b90"
+    ],
+    "resolved_ref_ordinals": [
+      0,
+      1,
+      2,
+      6,
+      7,
+      8,
+      9,
+      15,
+      19,
+      29,
+      30,
+      48,
+      64,
+      65,
+      123,
+      124,
+      132,
+      133,
+      150
+    ],
+    "unresolved_ref_ordinals": [
+      3,
+      31,
+      51,
+      53,
+      146,
+      151
+    ],
+    "ambiguous_ref_ordinals": [
+      39
+    ],
+    "suppressed_fragment_ref_ordinals": [
+      21,
+      22,
+      57,
+      58
+    ],
+    "suppressed_fragment_reason": "split Archer/Mills continuation fragments are retained as bibliography_ref items but emit no edges until adjacent TEI ref grouping exists",
+    "hand_gold_ref_matrix": [
+      {
+        "ordinal": 0,
+        "ref_text": "Srinivasan (2018)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b66"
+        ],
+        "source_target_id": "b66",
+        "declared_target_id": "b66",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct narrative"
+      },
+      {
+        "ordinal": 1,
+        "ref_text": "Whitney (2018)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b81"
+        ],
+        "source_target_id": "b81",
+        "declared_target_id": "b81",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct narrative"
+      },
+      {
+        "ordinal": 8,
+        "ref_text": "(Archer and Matheson 2023;",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b6"
+        ],
+        "source_target_id": "b6",
+        "declared_target_id": "b6",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct semicolon list"
+      },
+      {
+        "ordinal": 9,
+        "ref_text": "Whitney 2023)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b80"
+        ],
+        "source_target_id": "b80",
+        "declared_target_id": "b80",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct semicolon list"
+      },
+      {
+        "ordinal": 15,
+        "ref_text": "Villa 2024)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b74"
+        ],
+        "source_target_id": "b74",
+        "declared_target_id": "b74",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct wrapped fragment"
+      },
+      {
+        "ordinal": 19,
+        "ref_text": "(Whitney 2023",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b80"
+        ],
+        "source_target_id": "b80",
+        "declared_target_id": "b80",
+        "resolution_method": "grobid_tei_bibliography_ref",
+        "stratum": "direct truncated-but-targeted"
+      },
+      {
+        "ordinal": 2,
+        "ref_text": "Srinivasan (2018, 127;",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b66"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year split head"
+      },
+      {
+        "ordinal": 6,
+        "ref_text": "Archer and Benjamin Matheson (2023)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b6"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year narrative two-author"
+      },
+      {
+        "ordinal": 7,
+        "ref_text": "(Archer and Matheson 2023, 9)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b6"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year parenthetical"
+      },
+      {
+        "ordinal": 29,
+        "ref_text": ", Zembylas 2026a)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b90"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year suffix year"
+      },
+      {
+        "ordinal": 30,
+        "ref_text": "(Vespermann and Tirkonnen 2024)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b73"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year two-author"
+      },
+      {
+        "ordinal": 48,
+        "ref_text": "(Zembylas 2024a;",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b86"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year suffix/trailing semicolon"
+      },
+      {
+        "ordinal": 64,
+        "ref_text": "(Fanon 1963",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b22"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year malformed Fanon date"
+      },
+      {
+        "ordinal": 65,
+        "ref_text": "(Fanon /2004;;",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b22"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year duplicate-edition risk"
+      },
+      {
+        "ordinal": 123,
+        "ref_text": "), while Pilar Lopez-Cantero (2025)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b45"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year prose-leading ref"
+      },
+      {
+        "ordinal": 124,
+        "ref_text": "(Cordelli 2015a",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b17"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year suffix 2015a"
+      },
+      {
+        "ordinal": 132,
+        "ref_text": "Archer and Matheson (2023, 21-23)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b6"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year same authors 2023"
+      },
+      {
+        "ordinal": 133,
+        "ref_text": "(Archer and Matheson 2022, 771)",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b5"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year same authors 2022"
+      },
+      {
+        "ordinal": 150,
+        "ref_text": "Whitney (2018, 498;",
+        "expected_edge_count": 1,
+        "expected_target_ids": [
+          "b81"
+        ],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "resolution_method": "grobid_tei_author_year_match",
+        "stratum": "author-year split head"
+      },
+      {
+        "ordinal": 3,
+        "ref_text": "133)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "page-only continuation"
+      },
+      {
+        "ordinal": 21,
+        "ref_text": "(Archer and",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "stratum": "suppressed direct fragment"
+      },
+      {
+        "ordinal": 22,
+        "ref_text": "Mills 2025, Puddifoot 2025)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b59"
+        ],
+        "stratum": "suppressed continuation"
+      },
+      {
+        "ordinal": 31,
+        "ref_text": "(Archer 2024)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "unresolved Archer 2024"
+      },
+      {
+        "ordinal": 39,
+        "ref_text": "(Isern-Mas et al. 2025)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "candidate_target_ids": [
+          "b38",
+          "b39"
+        ],
+        "stratum": "ambiguous b38/b39"
+      },
+      {
+        "ordinal": 51,
+        "ref_text": "2025b)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "orphan year suffix"
+      },
+      {
+        "ordinal": 53,
+        "ref_text": "2024)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "orphan year suffix"
+      },
+      {
+        "ordinal": 57,
+        "ref_text": "(Archer and",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": "b4",
+        "suppressed_resolution_reason": "incomplete_direct_ref_fragment",
+        "suppressed_candidate_target_ids": [
+          "b4"
+        ],
+        "stratum": "suppressed direct fragment"
+      },
+      {
+        "ordinal": 58,
+        "ref_text": "Mills 2025, Pismenny et al. 2024)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "suppressed_resolution_reason": "split_ref_continuation",
+        "suppressed_candidate_target_ids": [
+          "b56",
+          "b57"
+        ],
+        "stratum": "suppressed continuation"
+      },
+      {
+        "ordinal": 146,
+        "ref_text": "Archer (2024)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "unresolved Archer 2024"
+      },
+      {
+        "ordinal": 151,
+        "ref_text": "501)",
+        "expected_edge_count": 0,
+        "expected_target_ids": [],
+        "source_target_id": null,
+        "declared_target_id": null,
+        "stratum": "page-only continuation"
+      }
+    ]
+  }
+}

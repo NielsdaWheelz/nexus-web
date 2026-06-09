@@ -1,0 +1,164 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000000:Rasmussen2004",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000004.000000.edge.000",
+        "source_ref": {
+          "citation_key": "Rasmussen2004",
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Rasmussen2004"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000000:Rasmussen2004->web:0:distill-bibliography-target:Rasmussen2004",
+        "to_stable_key": "web:0:distill-bibliography-target:Rasmussen2004"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000000",
+        "relation": "points_to_note",
+        "sort_key": "000005.000000.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote-ref:000000->web:0:distill-footnote:000000",
+        "to_stable_key": "web:0:distill-footnote:000000"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "Gaussian Processes in Machine Learning Rasmussen, C. E., 2004.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Gaussian",
+        "locator": {
+          "end_offset": 164,
+          "fragment_id": "b9800a21-71bf-520b-ada2-34afbec71943",
+          "media_id": "9cb05b17-ca89-5035-b28b-48f5255a5850",
+          "media_kind": "web_article",
+          "start_offset": 102,
+          "text_quote_selector": {
+            "exact": "Gaussian Processes in Machine Learning\nRasmussen, C. E., 2004."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000004.000000.target.000",
+        "source_ref": {
+          "citation_key": "Rasmussen2004",
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Rasmussen2004"
+        },
+        "stable_key": "web:0:distill-bibliography-target:Rasmussen2004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[1]",
+        "locator": {
+          "end_offset": 49,
+          "fragment_id": "b9800a21-71bf-520b-ada2-34afbec71943",
+          "media_id": "9cb05b17-ca89-5035-b28b-48f5255a5850",
+          "media_kind": "web_article",
+          "start_offset": 45,
+          "text_quote_selector": {
+            "exact": "[1]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000004.000000.marker",
+        "source_ref": {
+          "citation_keys": [
+            "Rasmussen2004"
+          ],
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000000:Rasmussen2004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A short explanatory note attached by Distill markup.",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "1",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000005.000000.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote:000000"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 88,
+          "fragment_id": "b9800a21-71bf-520b-ada2-34afbec71943",
+          "media_id": "9cb05b17-ca89-5035-b28b-48f5255a5850",
+          "media_kind": "web_article",
+          "start_offset": 86,
+          "text_quote_selector": {
+            "exact": "1."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000005.000000.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote-ref:000000"
+      }
+    ],
+    "media_id": "9cb05b17-ca89-5035-b28b-48f5255a5850",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:c14b01a08a33f3d4454745d0abc0067330febd4c3d5c888c2ac9e31253e0d360",
+    "status": "ready"
+  },
+  "fixture_id": "html-distill-custom-citations",
+  "source_fixture_path": "reader_apparatus/html/distill-custom-citations.html",
+  "source_fixture_sha256": "3511f48060fbff87df8248a35f32eff43fb51b1f7f11bd2d171dd4a93fc56084"
+}

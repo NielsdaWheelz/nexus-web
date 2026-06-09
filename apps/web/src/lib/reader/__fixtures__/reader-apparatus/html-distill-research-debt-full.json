@@ -1,0 +1,1938 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000000",
+        "relation": "points_to_note",
+        "sort_key": "000010.000000.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote-ref:000000->web:0:distill-footnote:000000",
+        "to_stable_key": "web:0:distill-footnote:000000"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000000:hartl2013tau",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000019.000000.edge.000",
+        "source_ref": {
+          "citation_key": "hartl2013tau",
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "hartl2013tau"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000000:hartl2013tau->web:0:distill-bibliography-target:hartl2013tau",
+        "to_stable_key": "web:0:distill-bibliography-target:hartl2013tau"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000001",
+        "relation": "points_to_note",
+        "sort_key": "000020.000001.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1
+        },
+        "stable_key": "web:0:distill-footnote-ref:000001->web:0:distill-footnote:000001",
+        "to_stable_key": "web:0:distill-footnote:000001"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000001:nostrand2015interpretive-graeber2015utopia",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000019.000001.edge.000",
+        "source_ref": {
+          "citation_key": "nostrand2015interpretive",
+          "citation_ordinal": 1,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nostrand2015interpretive"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000001:nostrand2015interpretive-graeber2015utopia->web:0:distill-bibliography-target:nostrand2015interpretive",
+        "to_stable_key": "web:0:distill-bibliography-target:nostrand2015interpretive"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000001:nostrand2015interpretive-graeber2015utopia",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000019.000001.edge.001",
+        "source_ref": {
+          "citation_key": "graeber2015utopia",
+          "citation_ordinal": 1,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "graeber2015utopia"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000001:nostrand2015interpretive-graeber2015utopia->web:0:distill-bibliography-target:graeber2015utopia",
+        "to_stable_key": "web:0:distill-bibliography-target:graeber2015utopia"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000002",
+        "relation": "points_to_note",
+        "sort_key": "000019.000002.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2
+        },
+        "stable_key": "web:0:distill-footnote-ref:000002->web:0:distill-footnote:000002",
+        "to_stable_key": "web:0:distill-footnote:000002"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000002:brooks1986mythical",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000000.000002.edge.000",
+        "source_ref": {
+          "citation_key": "brooks1986mythical",
+          "citation_ordinal": 2,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "brooks1986mythical"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000002:brooks1986mythical->web:0:distill-bibliography-target:brooks1986mythical",
+        "to_stable_key": "web:0:distill-bibliography-target:brooks1986mythical"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000003",
+        "relation": "points_to_note",
+        "sort_key": "000020.000003.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3
+        },
+        "stable_key": "web:0:distill-footnote-ref:000003->web:0:distill-footnote:000003",
+        "to_stable_key": "web:0:distill-footnote:000003"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000004",
+        "relation": "points_to_note",
+        "sort_key": "000024.000004.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4
+        },
+        "stable_key": "web:0:distill-footnote-ref:000004->web:0:distill-footnote:000004",
+        "to_stable_key": "web:0:distill-footnote:000004"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000005",
+        "relation": "points_to_note",
+        "sort_key": "000034.000005.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5
+        },
+        "stable_key": "web:0:distill-footnote-ref:000005->web:0:distill-footnote:000005",
+        "to_stable_key": "web:0:distill-footnote:000005"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "from_stable_key": "web:0:distill-footnote-ref:000006",
+        "relation": "points_to_note",
+        "sort_key": "000035.000006.edge",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6
+        },
+        "stable_key": "web:0:distill-footnote-ref:000006->web:0:distill-footnote:000006",
+        "to_stable_key": "web:0:distill-footnote:000006"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000003:needham1998visual",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000047.000003.edge.000",
+        "source_ref": {
+          "citation_key": "needham1998visual",
+          "citation_ordinal": 3,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needham1998visual"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000003:needham1998visual->web:0:distill-bibliography-target:needham1998visual",
+        "to_stable_key": "web:0:distill-bibliography-target:needham1998visual"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000048.000004.edge.000",
+        "source_ref": {
+          "citation_key": "carter2009visual",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "carter2009visual"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished->web:0:distill-bibliography-target:carter2009visual",
+        "to_stable_key": "web:0:distill-bibliography-target:carter2009visual"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000048.000004.edge.001",
+        "source_ref": {
+          "citation_key": "needham1993visual",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needham1993visual"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished->web:0:distill-bibliography-target:needham1993visual",
+        "to_stable_key": "web:0:distill-bibliography-target:needham1993visual"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000048.000004.edge.002",
+        "source_ref": {
+          "citation_key": "needhamUnpublished",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needhamUnpublished"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished->web:0:distill-bibliography-target:needhamUnpublished",
+        "to_stable_key": "web:0:distill-bibliography-target:needhamUnpublished"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000005:Engelbart-1968-RCA-1476589.1476645",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000049.000005.edge.000",
+        "source_ref": {
+          "citation_key": "Engelbart:1968:RCA:1476589.1476645",
+          "citation_ordinal": 5,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Engelbart:1968:RCA:1476589.1476645"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000005:Engelbart-1968-RCA-1476589.1476645->web:0:distill-bibliography-target:Engelbart-1968-RCA-1476589.1476645",
+        "to_stable_key": "web:0:distill-bibliography-target:Engelbart-1968-RCA-1476589.1476645"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000006:Kay-1977-PDM-1300728.1301186",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000050.000006.edge.000",
+        "source_ref": {
+          "citation_key": "Kay:1977:PDM:1300728.1301186",
+          "citation_ordinal": 6,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Kay:1977:PDM:1300728.1301186"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000006:Kay-1977-PDM-1300728.1301186->web:0:distill-bibliography-target:Kay-1977-PDM-1300728.1301186",
+        "to_stable_key": "web:0:distill-bibliography-target:Kay-1977-PDM-1300728.1301186"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000007:victor2011explorable",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000050.000007.edge.000",
+        "source_ref": {
+          "citation_key": "victor2011explorable",
+          "citation_ordinal": 7,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2011explorable"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000007:victor2011explorable->web:0:distill-bibliography-target:victor2011explorable",
+        "to_stable_key": "web:0:distill-bibliography-target:victor2011explorable"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000051.000008.edge.000",
+        "source_ref": {
+          "citation_key": "bostock2014visualizing",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "bostock2014visualizing"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back->web:0:distill-bibliography-target:bostock2014visualizing",
+        "to_stable_key": "web:0:distill-bibliography-target:bostock2014visualizing"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000051.000008.edge.001",
+        "source_ref": {
+          "citation_key": "wittens2013how",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "wittens2013how"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back->web:0:distill-bibliography-target:wittens2013how",
+        "to_stable_key": "web:0:distill-bibliography-target:wittens2013how"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000051.000008.edge.002",
+        "source_ref": {
+          "citation_key": "schaedler2016back",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "schaedler2016back"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back->web:0:distill-bibliography-target:schaedler2016back",
+        "to_stable_key": "web:0:distill-bibliography-target:schaedler2016back"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000009:victor2013media-victor2012learnable",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000050.000009.edge.000",
+        "source_ref": {
+          "citation_key": "victor2013media",
+          "citation_ordinal": 9,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2013media"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000009:victor2013media-victor2012learnable->web:0:distill-bibliography-target:victor2013media",
+        "to_stable_key": "web:0:distill-bibliography-target:victor2013media"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000009:victor2013media-victor2012learnable",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000050.000009.edge.001",
+        "source_ref": {
+          "citation_key": "victor2012learnable",
+          "citation_ordinal": 9,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2012learnable"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000009:victor2013media-victor2012learnable->web:0:distill-bibliography-target:victor2012learnable",
+        "to_stable_key": "web:0:distill-bibliography-target:victor2012learnable"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000010:nielsen2016thought-nielsen2016towards",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000051.000010.edge.000",
+        "source_ref": {
+          "citation_key": "nielsen2016thought",
+          "citation_ordinal": 10,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nielsen2016thought"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000010:nielsen2016thought-nielsen2016towards->web:0:distill-bibliography-target:nielsen2016thought",
+        "to_stable_key": "web:0:distill-bibliography-target:nielsen2016thought"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000010:nielsen2016thought-nielsen2016towards",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000051.000010.edge.001",
+        "source_ref": {
+          "citation_key": "nielsen2016towards",
+          "citation_ordinal": 10,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nielsen2016towards"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000010:nielsen2016thought-nielsen2016towards->web:0:distill-bibliography-target:nielsen2016towards",
+        "to_stable_key": "web:0:distill-bibliography-target:nielsen2016towards"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000011:thurston1998proof",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000052.000011.edge.000",
+        "source_ref": {
+          "citation_key": "thurston1998proof",
+          "citation_ordinal": 11,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "thurston1998proof"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000011:thurston1998proof->web:0:distill-bibliography-target:thurston1998proof",
+        "to_stable_key": "web:0:distill-bibliography-target:thurston1998proof"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000012:chow2009beginner",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000054.000012.edge.000",
+        "source_ref": {
+          "citation_key": "chow2009beginner",
+          "citation_ordinal": 12,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "chow2009beginner"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000012:chow2009beginner->web:0:distill-bibliography-target:chow2009beginner",
+        "to_stable_key": "web:0:distill-bibliography-target:chow2009beginner"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000013:grothendieck1985recoltes",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000055.000013.edge.000",
+        "source_ref": {
+          "citation_key": "grothendieck1985recoltes",
+          "citation_ordinal": 13,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "grothendieck1985recoltes"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000013:grothendieck1985recoltes->web:0:distill-bibliography-target:grothendieck1985recoltes",
+        "to_stable_key": "web:0:distill-bibliography-target:grothendieck1985recoltes"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "from_stable_key": "web:0:distill-bibliography-ref:000014:aaronson2008statement",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "000056.000014.edge.000",
+        "source_ref": {
+          "citation_key": "aaronson2008statement",
+          "citation_ordinal": 14,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "aaronson2008statement"
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000014:aaronson2008statement->web:0:distill-bibliography-target:aaronson2008statement",
+        "to_stable_key": "web:0:distill-bibliography-target:aaronson2008statement"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "That is, really outstanding tutorials, reviews, textbooks, and so on.",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "1",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000010.000000.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote:000000"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 1321,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 1278,
+          "text_quote_selector": {
+            "exact": "1 The climb isn\u2019t something to be proud of."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000010.000000.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0
+        },
+        "stable_key": "web:0:distill-footnote-ref:000000"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Tau Manifesto [link]Hartl, M., 2013.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "The",
+        "locator": {
+          "end_offset": 11627,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11585,
+          "text_quote_selector": {
+            "exact": "The Tau Manifesto  [link]\nHartl, M., 2013."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000000.target.000",
+        "source_ref": {
+          "citation_key": "hartl2013tau",
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "hartl2013tau"
+        },
+        "stable_key": "web:0:distill-bibliography-target:hartl2013tau"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "pi is wrong",
+        "locator": {
+          "end_offset": 2461,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 2449,
+          "text_quote_selector": {
+            "exact": "pi is wrong."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000000.marker",
+        "source_ref": {
+          "citation_keys": [
+            "hartl2013tau"
+          ],
+          "citation_ordinal": 0,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000000:hartl2013tau"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Because most work is explained poorly, it takes a lot of energy to understand each piece of work. For many papers, one wants a simple one sentence explanation of it, but needs to fight with it to get that sentence. Because the simplest way to get the attention of interested parties is to get everyone\u2019s attention, we get flooded with work. Because we incentivize people being \u201cprolific,\u201d we get flooded with a lot of work\u2026",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "2",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000020.000001.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1
+        },
+        "stable_key": "web:0:distill-footnote:000001"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "2",
+        "locator": {
+          "end_offset": 2706,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 2640,
+          "text_quote_selector": {
+            "exact": "2 We think noise is the main way experts experience research debt."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000020.000001.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1
+        },
+        "stable_key": "web:0:distill-footnote-ref:000001"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Interpretive Labor [link]Van Nostrand, E., 2015.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Interpretive",
+        "locator": {
+          "end_offset": 11678,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11628,
+          "text_quote_selector": {
+            "exact": "Interpretive Labor  [link]\nVan Nostrand, E., 2015."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000001.target.000",
+        "source_ref": {
+          "citation_key": "nostrand2015interpretive",
+          "citation_ordinal": 1,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nostrand2015interpretive"
+        },
+        "stable_key": "web:0:distill-bibliography-target:nostrand2015interpretive"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[2]",
+        "locator": {
+          "end_offset": 3609,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 3605,
+          "text_quote_selector": {
+            "exact": "[2]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000001.marker",
+        "source_ref": {
+          "citation_keys": [
+            "nostrand2015interpretive",
+            "graeber2015utopia"
+          ],
+          "citation_ordinal": 1,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000001:nostrand2015interpretive-graeber2015utopia"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The utopia of rules: On technology, stupidity, and the secret joys of bureaucracy Graeber, D., 2015. Melville House.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "The",
+        "locator": {
+          "end_offset": 11795,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11679,
+          "text_quote_selector": {
+            "exact": "The utopia of rules: On technology, stupidity, and the secret joys of bureaucracy\nGraeber, D., 2015. Melville House."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000001.target.001",
+        "source_ref": {
+          "citation_key": "graeber2015utopia",
+          "citation_ordinal": 1,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "graeber2015utopia"
+        },
+        "stable_key": "web:0:distill-bibliography-target:graeber2015utopia"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "More formally, if N people are trying to understand each other, it takes each one O(1) effort to write an explanation of their ideas but O(N) effort to understand each of the other N-1 people\u2019s ideas. The result is that energy cost looks like O(a + bN) where a and b are coefficients for the trade off between energy on the explanation side and energy on the understanding side. That is a is the energy spent on explaining and b is the corresponding effort needed to understand. This is similar to ideas in The Mythical Man-Month",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "3",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000019.000002.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2
+        },
+        "stable_key": "web:0:distill-footnote:000002"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "3",
+        "locator": {
+          "end_offset": 3967,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 3844,
+          "text_quote_selector": {
+            "exact": "3 As a result, the cost of understanding has a multiplier in the interpretive labor tradeoff \u2014 sometimes a huge multiplier."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000002.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2
+        },
+        "stable_key": "web:0:distill-footnote-ref:000002"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Mythical Man-Month Brooks, F., 1986. Tutorial, Vol 11, pp. 35--42.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "The",
+        "locator": {
+          "end_offset": 11866,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11796,
+          "text_quote_selector": {
+            "exact": "The Mythical Man-Month\nBrooks, F., 1986. Tutorial, Vol 11, pp. 35--42."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.000002.target.000",
+        "source_ref": {
+          "citation_key": "brooks1986mythical",
+          "citation_ordinal": 2,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "brooks1986mythical"
+        },
+        "stable_key": "web:0:distill-bibliography-target:brooks1986mythical"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "The Mythical Man-Month",
+        "locator": {
+          "end_offset": 11818,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11796,
+          "text_quote_selector": {
+            "exact": "The Mythical Man-Month"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.000002.marker",
+        "source_ref": {
+          "citation_keys": [
+            "brooks1986mythical"
+          ],
+          "citation_ordinal": 2,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000002:brooks1986mythical"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "For example, Christopher\u2019s average blog post is read by over 100,000 people; if he can save each reader just one second, he\u2019s saved humanity 30 hours.",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "4",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000020.000003.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3
+        },
+        "stable_key": "web:0:distill-footnote:000003"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "4",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000020.000003.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3
+        },
+        "stable_key": "web:0:distill-footnote-ref:000003"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Often, some individuals have a much more developed version of an idea than is publicly shared. There are a lot of reasons for not sharing it (in particular, they\u2019re often not traditionally publishable).",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "5",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000024.000004.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4
+        },
+        "stable_key": "web:0:distill-footnote:000004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "5",
+        "locator": {
+          "end_offset": 5156,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 5117,
+          "text_quote_selector": {
+            "exact": "5 It\u2019s a communal messiness of thought."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000024.000004.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4
+        },
+        "stable_key": "web:0:distill-footnote-ref:000004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "There are a lot of perverse incentives that push against explaining things well, sharing data, and so forth. This is especially true when the work you are doing isn\u2019t that interesting or isn\u2019t reproducible and you want to obscure that. Or if you have a lot of competitors and don\u2019t want them to catch up.However, our experience is that most good researchers don\u2019t seem that motivated by these kind of factors. Instead, the main issue is that it isn\u2019t worthwhile for them to divert energy from pursuing results to distill things. Perhaps things are different in other fields, or I\u2019m not cynical enough.",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "6",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000034.000005.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5
+        },
+        "stable_key": "web:0:distill-footnote:000005"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "6",
+        "locator": {
+          "end_offset": 7069,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 6954,
+          "text_quote_selector": {
+            "exact": "6 Another possibility is that they don\u2019t enjoy research distillation. Again, we don\u2019t think that\u2019s what\u2019s going on."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000034.000005.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5
+        },
+        "stable_key": "web:0:distill-footnote-ref:000005"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "There is a strange kind of informal support for people working on research distillation. Christopher has personally benefitted a great deal from this. But it\u2019s unreliable and not widely advertised, which makes it hard to build a career on.",
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote",
+        "label": "7",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000035.000006.target",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6
+        },
+        "stable_key": "web:0:distill-footnote:000006"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_footnote",
+        "kind": "footnote_ref",
+        "label": "7",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "000035.000006.marker",
+        "source_ref": {
+          "element": "d-footnote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6
+        },
+        "stable_key": "web:0:distill-footnote-ref:000006"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Visual Complex Analysis Needham, T., 1998. Oxford University Press.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Visual",
+        "locator": {
+          "end_offset": 11934,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11867,
+          "text_quote_selector": {
+            "exact": "Visual Complex Analysis\nNeedham, T., 1998. Oxford University Press."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000047.000003.target.000",
+        "source_ref": {
+          "citation_key": "needham1998visual",
+          "citation_ordinal": 3,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needham1998visual"
+        },
+        "stable_key": "web:0:distill-bibliography-target:needham1998visual"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "Visual Complex Analysis",
+        "locator": {
+          "end_offset": 8657,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 8501,
+          "text_quote_selector": {
+            "exact": "Visual Complex Analysis is particularly striking, but there are several lovely examples of new clarity being brought to a topic by visually reformulating it"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000047.000003.marker",
+        "source_ref": {
+          "citation_keys": [
+            "needham1998visual"
+          ],
+          "citation_ordinal": 3,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000003:needham1998visual"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Visual Group Theory Carter, N., 2009. MAA.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Visual",
+        "locator": {
+          "end_offset": 11977,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11935,
+          "text_quote_selector": {
+            "exact": "Visual Group Theory\nCarter, N., 2009. MAA."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.000004.target.000",
+        "source_ref": {
+          "citation_key": "carter2009visual",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "carter2009visual"
+        },
+        "stable_key": "web:0:distill-bibliography-target:carter2009visual"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[5]",
+        "locator": {
+          "end_offset": 8686,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 8658,
+          "text_quote_selector": {
+            "exact": "[5] and, on a smaller scale,"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.000004.marker",
+        "source_ref": {
+          "citation_keys": [
+            "carter2009visual",
+            "needham1993visual",
+            "needhamUnpublished"
+          ],
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000004:carter2009visual-needham1993visual-needhamUnpublished"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A visual explanation of Jensen's inequality Needham, T., 1993. The American mathematical monthly, Vol 100(8), pp. 768--771. JSTOR. DOI: 10.2307/2324783",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "A",
+        "locator": {
+          "end_offset": 12129,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 11978,
+          "text_quote_selector": {
+            "exact": "A visual explanation of Jensen's inequality\nNeedham, T., 1993. The American mathematical monthly, Vol 100(8), pp. 768--771. JSTOR. DOI: 10.2307/2324783"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.000004.target.001",
+        "source_ref": {
+          "citation_key": "needham1993visual",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needham1993visual"
+        },
+        "stable_key": "web:0:distill-bibliography-target:needham1993visual"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Visual Differential Geometry Needham, T., Work In Progress.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Visual",
+        "locator": {
+          "end_offset": 12189,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12130,
+          "text_quote_selector": {
+            "exact": "Visual Differential Geometry\nNeedham, T., Work In Progress."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.000004.target.002",
+        "source_ref": {
+          "citation_key": "needhamUnpublished",
+          "citation_ordinal": 4,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "needhamUnpublished"
+        },
+        "stable_key": "web:0:distill-bibliography-target:needhamUnpublished"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A Research Center for Augmenting Human Intellect [link]Engelbart, D.C. and English, W.K., 1968. Proceedings of the December 9-11, 1968, Fall Joint Computer Conference, Part I, pp. 395--410. ACM. DOI: 10.1145/1476589.1476645",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "A",
+        "locator": {
+          "end_offset": 12415,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12190,
+          "text_quote_selector": {
+            "exact": "A Research Center for Augmenting Human Intellect  [link]\nEngelbart, D.C. and English, W.K., 1968. Proceedings of the December 9-11, 1968, Fall Joint Computer Conference, Part I, pp. 395--410. ACM. DOI: 10.1145/1476589.1476645"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000049.000005.target.000",
+        "source_ref": {
+          "citation_key": "Engelbart:1968:RCA:1476589.1476645",
+          "citation_ordinal": 5,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Engelbart:1968:RCA:1476589.1476645"
+        },
+        "stable_key": "web:0:distill-bibliography-target:Engelbart-1968-RCA-1476589.1476645"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[6]",
+        "locator": {
+          "end_offset": 8995,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 8979,
+          "text_quote_selector": {
+            "exact": "[6] and Alan Kay"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000049.000005.marker",
+        "source_ref": {
+          "citation_keys": [
+            "Engelbart:1968:RCA:1476589.1476645"
+          ],
+          "citation_ordinal": 5,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000005:Engelbart-1968-RCA-1476589.1476645"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Personal Dynamic Media [link]Kay, A. and Goldberg, A., 1977. Computer, Vol 10(3), pp. 31--41. IEEE Computer Society Press. DOI: 10.1109/C-M.1977.217672",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Personal",
+        "locator": {
+          "end_offset": 12569,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12416,
+          "text_quote_selector": {
+            "exact": "Personal Dynamic Media  [link]\nKay, A. and Goldberg, A., 1977. Computer, Vol 10(3), pp. 31--41. IEEE Computer Society Press. DOI: 10.1109/C-M.1977.217672"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000006.target.000",
+        "source_ref": {
+          "citation_key": "Kay:1977:PDM:1300728.1301186",
+          "citation_ordinal": 6,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "Kay:1977:PDM:1300728.1301186"
+        },
+        "stable_key": "web:0:distill-bibliography-target:Kay-1977-PDM-1300728.1301186"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[7]",
+        "locator": {
+          "end_offset": 8999,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 8995,
+          "text_quote_selector": {
+            "exact": "[7]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000006.marker",
+        "source_ref": {
+          "citation_keys": [
+            "Kay:1977:PDM:1300728.1301186"
+          ],
+          "citation_ordinal": 6,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000006:Kay-1977-PDM-1300728.1301186"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Explorable explanations [link]Victor, B., 2011.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Explorable",
+        "locator": {
+          "end_offset": 12619,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12570,
+          "text_quote_selector": {
+            "exact": "Explorable explanations  [link]\nVictor, B., 2011."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000007.target.000",
+        "source_ref": {
+          "citation_key": "victor2011explorable",
+          "citation_ordinal": 7,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2011explorable"
+        },
+        "stable_key": "web:0:distill-bibliography-target:victor2011explorable"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "foundational essay",
+        "locator": {
+          "end_offset": 9213,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 9139,
+          "text_quote_selector": {
+            "exact": "foundational essay and has been further developed by amazing examples (eg."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000007.marker",
+        "source_ref": {
+          "citation_keys": [
+            "victor2011explorable"
+          ],
+          "citation_ordinal": 7,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000007:victor2011explorable"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Visualizing Algorithms [link]Bostock, M., 2014.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Visualizing",
+        "locator": {
+          "end_offset": 12669,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12620,
+          "text_quote_selector": {
+            "exact": "Visualizing Algorithms  [link]\nBostock, M., 2014."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000008.target.000",
+        "source_ref": {
+          "citation_key": "bostock2014visualizing",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "bostock2014visualizing"
+        },
+        "stable_key": "web:0:distill-bibliography-target:bostock2014visualizing"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[9]",
+        "locator": {
+          "end_offset": 9219,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 9214,
+          "text_quote_selector": {
+            "exact": "[9])."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000008.marker",
+        "source_ref": {
+          "citation_keys": [
+            "bostock2014visualizing",
+            "wittens2013how",
+            "schaedler2016back"
+          ],
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000008:bostock2014visualizing-wittens2013how-schaedler2016back"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "How to Fold a Julia Fractal [link]Wittens, S., 2013.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "How",
+        "locator": {
+          "end_offset": 12724,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12670,
+          "text_quote_selector": {
+            "exact": "How to Fold a Julia Fractal  [link]\nWittens, S., 2013."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000008.target.001",
+        "source_ref": {
+          "citation_key": "wittens2013how",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "wittens2013how"
+        },
+        "stable_key": "web:0:distill-bibliography-target:wittens2013how"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Back to the Future of Handwriting Recognition [link]Schaedler, J., 2016.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Back",
+        "locator": {
+          "end_offset": 12799,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12725,
+          "text_quote_selector": {
+            "exact": "Back to the Future of Handwriting Recognition  [link]\nSchaedler, J., 2016."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000008.target.002",
+        "source_ref": {
+          "citation_key": "schaedler2016back",
+          "citation_ordinal": 8,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "schaedler2016back"
+        },
+        "stable_key": "web:0:distill-bibliography-target:schaedler2016back"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Media for thinking the unthinkable [link]Victor, B., 2013.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Media",
+        "locator": {
+          "end_offset": 12860,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12800,
+          "text_quote_selector": {
+            "exact": "Media for thinking the unthinkable  [link]\nVictor, B., 2013."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000009.target.000",
+        "source_ref": {
+          "citation_key": "victor2013media",
+          "citation_ordinal": 9,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2013media"
+        },
+        "stable_key": "web:0:distill-bibliography-target:victor2013media"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[10]",
+        "locator": {
+          "end_offset": 9437,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 9408,
+          "text_quote_selector": {
+            "exact": "[10], as does Michael Nielsen"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000009.marker",
+        "source_ref": {
+          "citation_keys": [
+            "victor2013media",
+            "victor2012learnable"
+          ],
+          "citation_ordinal": 9,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000009:victor2013media-victor2012learnable"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Learnable programming [link]Victor, B., 2012.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Learnable",
+        "locator": {
+          "end_offset": 12908,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12861,
+          "text_quote_selector": {
+            "exact": "Learnable programming  [link]\nVictor, B., 2012."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000009.target.001",
+        "source_ref": {
+          "citation_key": "victor2012learnable",
+          "citation_ordinal": 9,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "victor2012learnable"
+        },
+        "stable_key": "web:0:distill-bibliography-target:victor2012learnable"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Thought as a Technology [HTML]Nielsen, M., 2016.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Thought",
+        "locator": {
+          "end_offset": 12959,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12909,
+          "text_quote_selector": {
+            "exact": "Thought as a Technology  [HTML]\nNielsen, M., 2016."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000010.target.000",
+        "source_ref": {
+          "citation_key": "nielsen2016thought",
+          "citation_ordinal": 10,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nielsen2016thought"
+        },
+        "stable_key": "web:0:distill-bibliography-target:nielsen2016thought"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[11]",
+        "locator": {
+          "end_offset": 9443,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 9438,
+          "text_quote_selector": {
+            "exact": "[11]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000010.marker",
+        "source_ref": {
+          "citation_keys": [
+            "nielsen2016thought",
+            "nielsen2016towards"
+          ],
+          "citation_ordinal": 10,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000010:nielsen2016thought-nielsen2016towards"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Toward an Exploratory Medium for Mathematics [HTML]Nielsen, M., 2016.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Toward",
+        "locator": {
+          "end_offset": 13031,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 12960,
+          "text_quote_selector": {
+            "exact": "Toward an Exploratory Medium for Mathematics  [HTML]\nNielsen, M., 2016."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000010.target.001",
+        "source_ref": {
+          "citation_key": "nielsen2016towards",
+          "citation_ordinal": 10,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "nielsen2016towards"
+        },
+        "stable_key": "web:0:distill-bibliography-target:nielsen2016towards"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "On Proof and Progress in Mathematics [PDF]Thurston, W.P., 1998. New directions in the philosophy of mathematics, pp. 337--55.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "On",
+        "locator": {
+          "end_offset": 13159,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 13032,
+          "text_quote_selector": {
+            "exact": "On Proof and Progress in Mathematics  [PDF]\nThurston, W.P., 1998. New directions in the philosophy of mathematics, pp. 337--55."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000052.000011.target.000",
+        "source_ref": {
+          "citation_key": "thurston1998proof",
+          "citation_ordinal": 11,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "thurston1998proof"
+        },
+        "stable_key": "web:0:distill-bibliography-target:thurston1998proof"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[12]",
+        "locator": {
+          "end_offset": 10640,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 10635,
+          "text_quote_selector": {
+            "exact": "[12]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000052.000011.marker",
+        "source_ref": {
+          "citation_keys": [
+            "thurston1998proof"
+          ],
+          "citation_ordinal": 11,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000011:thurston1998proof"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A beginner\u2019s guide to forcing [PDF]Chow, T.Y., 2009. Communicating mathematics, Vol 479, pp. 25--40. American Mathematical Soc.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "A",
+        "locator": {
+          "end_offset": 13289,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 13160,
+          "text_quote_selector": {
+            "exact": "A beginner\u2019s guide to forcing  [PDF]\nChow, T.Y., 2009. Communicating mathematics, Vol 479, pp. 25--40. American Mathematical Soc."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000054.000012.target.000",
+        "source_ref": {
+          "citation_key": "chow2009beginner",
+          "citation_ordinal": 12,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "chow2009beginner"
+        },
+        "stable_key": "web:0:distill-bibliography-target:chow2009beginner"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[13]",
+        "locator": {
+          "end_offset": 10781,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 10724,
+          "text_quote_selector": {
+            "exact": "[13], Grothendieck\u2019s \u201crising sea\u201d approach to mathematics"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000054.000012.marker",
+        "source_ref": {
+          "citation_keys": [
+            "chow2009beginner"
+          ],
+          "citation_ordinal": 12,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000012:chow2009beginner"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Recoltes et Semailles Grothendieck, A., 1985. Reflexions et temoignage sur un passe de mathematicien, pp. 621.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Recoltes",
+        "locator": {
+          "end_offset": 13400,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 13290,
+          "text_quote_selector": {
+            "exact": "Recoltes et Semailles\nGrothendieck, A., 1985. Reflexions et temoignage sur un passe de mathematicien, pp. 621."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000055.000013.target.000",
+        "source_ref": {
+          "citation_key": "grothendieck1985recoltes",
+          "citation_ordinal": 13,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "grothendieck1985recoltes"
+        },
+        "stable_key": "web:0:distill-bibliography-target:grothendieck1985recoltes"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[14]",
+        "locator": {
+          "end_offset": 10844,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 10782,
+          "text_quote_selector": {
+            "exact": "[14], and recent calls to value conceptual progress in CS more"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000055.000013.marker",
+        "source_ref": {
+          "citation_keys": [
+            "grothendieck1985recoltes"
+          ],
+          "citation_ordinal": 13,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000013:grothendieck1985recoltes"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Statement on conceptual contributions in theory [link]Aaronson, S., Borodin, A., Chazelle, B., Goldreich, O., Goldwasser, S., Karp, R., Kearns, M., Papadimitriou, C., Sudan, M. and Vadhan, S., 2008. Shtetl-Optimized.",
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_entry",
+        "label": "Statement",
+        "locator": {
+          "end_offset": 13619,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 13401,
+          "text_quote_selector": {
+            "exact": "Statement on conceptual contributions in theory  [link]\nAaronson, S., Borodin, A., Chazelle, B., Goldreich, O., Goldwasser, S., Karp, R., Kearns, M., Papadimitriou, C., Sudan, M. and Vadhan, S., 2008. Shtetl-Optimized."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000056.000014.target.000",
+        "source_ref": {
+          "citation_key": "aaronson2008statement",
+          "citation_ordinal": 14,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0,
+          "target_id": "aaronson2008statement"
+        },
+        "stable_key": "web:0:distill-bibliography-target:aaronson2008statement"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "distill_citation",
+        "kind": "bibliography_ref",
+        "label": "[15]",
+        "locator": {
+          "end_offset": 10850,
+          "fragment_id": "fae3636c-8872-59f4-88b2-c04b02b94020",
+          "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+          "media_kind": "web_article",
+          "start_offset": 10845,
+          "text_quote_selector": {
+            "exact": "[15]."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000056.000014.marker",
+        "source_ref": {
+          "citation_keys": [
+            "aaronson2008statement"
+          ],
+          "citation_ordinal": 14,
+          "element": "d-cite",
+          "format": "html",
+          "fragment_idx": 0
+        },
+        "stable_key": "web:0:distill-bibliography-ref:000014:aaronson2008statement"
+      }
+    ],
+    "media_id": "2b84f0ca-bd34-5db5-91a5-607e50db0e55",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:dc2f8413b93d9f74553f692e402b72ea86015807ec7fac83515d1c04eaecba59",
+    "status": "ready"
+  },
+  "fixture_id": "html-distill-research-debt-full",
+  "source_fixture_path": "reader_apparatus/html/distill-research-debt-full.html",
+  "source_fixture_sha256": "4ab6e407e4825e5796658e692eceef48071e70bdc6539946588d569c3cdec516"
+}

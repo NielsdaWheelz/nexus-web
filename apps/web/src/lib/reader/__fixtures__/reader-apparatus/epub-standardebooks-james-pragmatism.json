@@ -1,0 +1,1117 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:5:ref:000000:epub-text-endnotes.xhtml-note-1",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-1.xhtml",
+          "marker_id": "noteref-1",
+          "package_href": "epub/text/chapter-1.xhtml",
+          "spine_index": 5,
+          "spine_itemref_id": null,
+          "target_id": "note-1",
+          "target_ref": "epub/text/endnotes.xhtml#note-1"
+        },
+        "stable_key": "epub:5:ref:000000:epub-text-endnotes.xhtml-note-1->epub:13:target:epub-text-endnotes.xhtml-note-1",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:6:ref:000000:epub-text-endnotes.xhtml-note-2",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-2.xhtml",
+          "marker_id": "noteref-2",
+          "package_href": "epub/text/chapter-2.xhtml",
+          "spine_index": 6,
+          "spine_itemref_id": null,
+          "target_id": "note-2",
+          "target_ref": "epub/text/endnotes.xhtml#note-2"
+        },
+        "stable_key": "epub:6:ref:000000:epub-text-endnotes.xhtml-note-2->epub:13:target:epub-text-endnotes.xhtml-note-2",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:6:ref:000001:epub-text-endnotes.xhtml-note-3",
+        "relation": "points_to_endnote",
+        "sort_key": "000001.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-2.xhtml",
+          "marker_id": "noteref-3",
+          "package_href": "epub/text/chapter-2.xhtml",
+          "spine_index": 6,
+          "spine_itemref_id": null,
+          "target_id": "note-3",
+          "target_ref": "epub/text/endnotes.xhtml#note-3"
+        },
+        "stable_key": "epub:6:ref:000001:epub-text-endnotes.xhtml-note-3->epub:13:target:epub-text-endnotes.xhtml-note-3",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:7:ref:000000:epub-text-endnotes.xhtml-note-4",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-3.xhtml",
+          "marker_id": "noteref-4",
+          "package_href": "epub/text/chapter-3.xhtml",
+          "spine_index": 7,
+          "spine_itemref_id": null,
+          "target_id": "note-4",
+          "target_ref": "epub/text/endnotes.xhtml#note-4"
+        },
+        "stable_key": "epub:7:ref:000000:epub-text-endnotes.xhtml-note-4->epub:13:target:epub-text-endnotes.xhtml-note-4",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:8:ref:000000:epub-text-endnotes.xhtml-note-5",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-5",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-5",
+          "target_ref": "epub/text/endnotes.xhtml#note-5"
+        },
+        "stable_key": "epub:8:ref:000000:epub-text-endnotes.xhtml-note-5->epub:13:target:epub-text-endnotes.xhtml-note-5",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:8:ref:000001:epub-text-endnotes.xhtml-note-6",
+        "relation": "points_to_endnote",
+        "sort_key": "000001.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-6",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-6",
+          "target_ref": "epub/text/endnotes.xhtml#note-6"
+        },
+        "stable_key": "epub:8:ref:000001:epub-text-endnotes.xhtml-note-6->epub:13:target:epub-text-endnotes.xhtml-note-6",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:8:ref:000002:epub-text-endnotes.xhtml-note-7",
+        "relation": "points_to_endnote",
+        "sort_key": "000002.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-7",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-7",
+          "target_ref": "epub/text/endnotes.xhtml#note-7"
+        },
+        "stable_key": "epub:8:ref:000002:epub-text-endnotes.xhtml-note-7->epub:13:target:epub-text-endnotes.xhtml-note-7",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:9:ref:000000:epub-text-endnotes.xhtml-note-8",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-5.xhtml",
+          "marker_id": "noteref-8",
+          "package_href": "epub/text/chapter-5.xhtml",
+          "spine_index": 9,
+          "spine_itemref_id": null,
+          "target_id": "note-8",
+          "target_ref": "epub/text/endnotes.xhtml#note-8"
+        },
+        "stable_key": "epub:9:ref:000000:epub-text-endnotes.xhtml-note-8->epub:13:target:epub-text-endnotes.xhtml-note-8",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:10:ref:000000:epub-text-endnotes.xhtml-note-9",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-9",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-9",
+          "target_ref": "epub/text/endnotes.xhtml#note-9"
+        },
+        "stable_key": "epub:10:ref:000000:epub-text-endnotes.xhtml-note-9->epub:13:target:epub-text-endnotes.xhtml-note-9",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:10:ref:000001:epub-text-endnotes.xhtml-note-10",
+        "relation": "points_to_endnote",
+        "sort_key": "000001.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-10",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-10",
+          "target_ref": "epub/text/endnotes.xhtml#note-10"
+        },
+        "stable_key": "epub:10:ref:000001:epub-text-endnotes.xhtml-note-10->epub:13:target:epub-text-endnotes.xhtml-note-10",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:10:ref:000002:epub-text-endnotes.xhtml-note-11",
+        "relation": "points_to_endnote",
+        "sort_key": "000002.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-11",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-11",
+          "target_ref": "epub/text/endnotes.xhtml#note-11"
+        },
+        "stable_key": "epub:10:ref:000002:epub-text-endnotes.xhtml-note-11->epub:13:target:epub-text-endnotes.xhtml-note-11",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:11:ref:000000:epub-text-endnotes.xhtml-note-12",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-7.xhtml",
+          "marker_id": "noteref-12",
+          "package_href": "epub/text/chapter-7.xhtml",
+          "spine_index": 11,
+          "spine_itemref_id": null,
+          "target_id": "note-12",
+          "target_ref": "epub/text/endnotes.xhtml#note-12"
+        },
+        "stable_key": "epub:11:ref:000000:epub-text-endnotes.xhtml-note-12->epub:13:target:epub-text-endnotes.xhtml-note-12",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:11:ref:000001:epub-text-endnotes.xhtml-note-13",
+        "relation": "points_to_endnote",
+        "sort_key": "000001.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-7.xhtml",
+          "marker_id": "noteref-13",
+          "package_href": "epub/text/chapter-7.xhtml",
+          "spine_index": 11,
+          "spine_itemref_id": null,
+          "target_id": "note-13",
+          "target_ref": "epub/text/endnotes.xhtml#note-13"
+        },
+        "stable_key": "epub:11:ref:000001:epub-text-endnotes.xhtml-note-13->epub:13:target:epub-text-endnotes.xhtml-note-13",
+        "to_stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-13"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 30970,
+          "fragment_id": "f0020f34-ca6e-5ca6-a71f-1932ff967763",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 30969,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-1.xhtml",
+          "marker_id": "noteref-1",
+          "package_href": "epub/text/chapter-1.xhtml",
+          "spine_index": 5,
+          "spine_itemref_id": null,
+          "target_id": "note-1",
+          "target_ref": "epub/text/endnotes.xhtml#note-1"
+        },
+        "stable_key": "epub:5:ref:000000:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "2",
+        "locator": {
+          "end_offset": 3671,
+          "fragment_id": "f0714f3e-289c-5bef-906b-7f98fd15c49a",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 3670,
+          "text_quote_selector": {
+            "exact": "2"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-2.xhtml",
+          "marker_id": "noteref-2",
+          "package_href": "epub/text/chapter-2.xhtml",
+          "spine_index": 6,
+          "spine_itemref_id": null,
+          "target_id": "note-2",
+          "target_ref": "epub/text/endnotes.xhtml#note-2"
+        },
+        "stable_key": "epub:6:ref:000000:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "3",
+        "locator": {
+          "end_offset": 6900,
+          "fragment_id": "f0714f3e-289c-5bef-906b-7f98fd15c49a",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 6899,
+          "text_quote_selector": {
+            "exact": "3"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000001.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-2.xhtml",
+          "marker_id": "noteref-3",
+          "package_href": "epub/text/chapter-2.xhtml",
+          "spine_index": 6,
+          "spine_itemref_id": null,
+          "target_id": "note-3",
+          "target_ref": "epub/text/endnotes.xhtml#note-3"
+        },
+        "stable_key": "epub:6:ref:000001:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "4",
+        "locator": {
+          "end_offset": 21437,
+          "fragment_id": "2ecb3191-6260-54e5-95d7-dedf5db69c25",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 21436,
+          "text_quote_selector": {
+            "exact": "4"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-3.xhtml",
+          "marker_id": "noteref-4",
+          "package_href": "epub/text/chapter-3.xhtml",
+          "spine_index": 7,
+          "spine_itemref_id": null,
+          "target_id": "note-4",
+          "target_ref": "epub/text/endnotes.xhtml#note-4"
+        },
+        "stable_key": "epub:7:ref:000000:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "5",
+        "locator": {
+          "end_offset": 3803,
+          "fragment_id": "1be5cd85-6424-54e2-9742-b5ee1ef2deea",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 3802,
+          "text_quote_selector": {
+            "exact": "5"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-5",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-5",
+          "target_ref": "epub/text/endnotes.xhtml#note-5"
+        },
+        "stable_key": "epub:8:ref:000000:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "6",
+        "locator": {
+          "end_offset": 20553,
+          "fragment_id": "1be5cd85-6424-54e2-9742-b5ee1ef2deea",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 20552,
+          "text_quote_selector": {
+            "exact": "6"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000001.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-6",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-6",
+          "target_ref": "epub/text/endnotes.xhtml#note-6"
+        },
+        "stable_key": "epub:8:ref:000001:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "7",
+        "locator": {
+          "end_offset": 34199,
+          "fragment_id": "1be5cd85-6424-54e2-9742-b5ee1ef2deea",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 34198,
+          "text_quote_selector": {
+            "exact": "7"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000002.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-4.xhtml",
+          "marker_id": "noteref-7",
+          "package_href": "epub/text/chapter-4.xhtml",
+          "spine_index": 8,
+          "spine_itemref_id": null,
+          "target_id": "note-7",
+          "target_ref": "epub/text/endnotes.xhtml#note-7"
+        },
+        "stable_key": "epub:8:ref:000002:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "8",
+        "locator": {
+          "end_offset": 12017,
+          "fragment_id": "4bde4814-76f9-52aa-87fb-f257d19c335c",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 12016,
+          "text_quote_selector": {
+            "exact": "8"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-5.xhtml",
+          "marker_id": "noteref-8",
+          "package_href": "epub/text/chapter-5.xhtml",
+          "spine_index": 9,
+          "spine_itemref_id": null,
+          "target_id": "note-8",
+          "target_ref": "epub/text/endnotes.xhtml#note-8"
+        },
+        "stable_key": "epub:9:ref:000000:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "9",
+        "locator": {
+          "end_offset": 32300,
+          "fragment_id": "3c3541c8-72b3-53b4-a286-ce53e8badb24",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 32299,
+          "text_quote_selector": {
+            "exact": "9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-9",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-9",
+          "target_ref": "epub/text/endnotes.xhtml#note-9"
+        },
+        "stable_key": "epub:10:ref:000000:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "10",
+        "locator": {
+          "end_offset": 32422,
+          "fragment_id": "3c3541c8-72b3-53b4-a286-ce53e8badb24",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 32420,
+          "text_quote_selector": {
+            "exact": "10"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000001.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-10",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-10",
+          "target_ref": "epub/text/endnotes.xhtml#note-10"
+        },
+        "stable_key": "epub:10:ref:000001:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "11",
+        "locator": {
+          "end_offset": 41102,
+          "fragment_id": "3c3541c8-72b3-53b4-a286-ce53e8badb24",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 41100,
+          "text_quote_selector": {
+            "exact": "11"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000002.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-6.xhtml",
+          "marker_id": "noteref-11",
+          "package_href": "epub/text/chapter-6.xhtml",
+          "spine_index": 10,
+          "spine_itemref_id": null,
+          "target_id": "note-11",
+          "target_ref": "epub/text/endnotes.xhtml#note-11"
+        },
+        "stable_key": "epub:10:ref:000002:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "12",
+        "locator": {
+          "end_offset": 4370,
+          "fragment_id": "c2150832-f485-5d49-bae6-8c752a5a607d",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4368,
+          "text_quote_selector": {
+            "exact": "12"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-7.xhtml",
+          "marker_id": "noteref-12",
+          "package_href": "epub/text/chapter-7.xhtml",
+          "spine_index": 11,
+          "spine_itemref_id": null,
+          "target_id": "note-12",
+          "target_ref": "epub/text/endnotes.xhtml#note-12"
+        },
+        "stable_key": "epub:11:ref:000000:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "13",
+        "locator": {
+          "end_offset": 5296,
+          "fragment_id": "c2150832-f485-5d49-bae6-8c752a5a607d",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 5294,
+          "text_quote_selector": {
+            "exact": "13"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000001.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter-7.xhtml",
+          "marker_id": "noteref-13",
+          "package_href": "epub/text/chapter-7.xhtml",
+          "spine_index": 11,
+          "spine_itemref_id": null,
+          "target_id": "note-13",
+          "target_ref": "epub/text/endnotes.xhtml#note-13"
+        },
+        "stable_key": "epub:11:ref:000001:epub-text-endnotes.xhtml-note-13"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Morrison I. Swift, Human Submission, Part Second, Philadelphia, Liberty Press, 1905, pp. 4\ufeff\u2013\ufeff10. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Morrison",
+        "locator": {
+          "end_offset": 109,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 10,
+          "text_quote_selector": {
+            "exact": "Morrison I. Swift, Human Submission, Part Second, Philadelphia, Liberty Press, 1905, pp. 4\ufeff\u2013\ufeff10. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000006.000000.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-1"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Translated in the Revue Philosophique for January, 1879 (vol. VII). \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Translated",
+        "locator": {
+          "end_offset": 181,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 111,
+          "text_quote_selector": {
+            "exact": "Translated in the Revue Philosophique for January, 1879 (vol. VII). \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000007.000001.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-2"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "\u201cTheorie und Praxis,\u201d Zeitsch. des Oesterreichischen Ingenieur u. Architecten-Vereines, 1905, Nr. 4 u. 6. I find a still more radical pragmatism than Ostwald\u2019s in an address by Professor W. S. Franklin: \u201cI think that the sickliest notion of physics, even if a student gets it, is that it is \u2018the science of masses, molecules and the ether.\u2019 And I think that the healthiest notion, even if a student does not wholly get it, is that physics is the science of the ways of taking hold of bodies and pushing them!\u201d (Science, January 2, 1903.) \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "\u201cTheorie",
+        "locator": {
+          "end_offset": 723,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 183,
+          "text_quote_selector": {
+            "exact": "\u201cTheorie und Praxis,\u201d Zeitsch. des Oesterreichischen Ingenieur u. Architecten-Vereines, 1905, Nr. 4 u. 6. I find a still more radical pragmatism than Ostwald\u2019s in an address by Professor W. S. Franklin: \u201cI think that the sickliest notion of physics, even if a student gets it, is that it is \u2018the science of masses, molecules and the ether.\u2019 And I think that the healthiest notion, even if a student does not wholly get it, is that physics is the science of the ways of taking hold of bodies and pushing them!\u201d (Science, January 2, 1903.) \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000008.000002.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-3"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Foundations of Belief, p. 30. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 761,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 725,
+          "text_quote_selector": {
+            "exact": "The Foundations of Belief, p. 30. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000009.000003.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-4"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Compare A. Bellanger: Les concepts de cause, et l\u2019activit\u00e9 intentionelle de l\u2019esprit. Paris, Alcan, 1905, p. 79 ff. In this, acquaintance with reality\u2019s diversities is as important as understanding their connection. The human passion of curiosity runs on all fours with the systematizing passion. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Compare",
+        "locator": {
+          "end_offset": 1062,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 763,
+          "text_quote_selector": {
+            "exact": "Compare A. Bellanger: Les concepts de cause, et l\u2019activit\u00e9 intentionelle de l\u2019esprit. Paris, Alcan, 1905, p. 79 ff. In this, acquaintance with reality\u2019s diversities is as important as understanding their connection. The human passion of curiosity runs on all fours with the systematizing passion. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000010.000004.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-5"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Conception of God, New York, 1897, p. 292. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 1113,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1064,
+          "text_quote_selector": {
+            "exact": "The Conception of God, New York, 1897, p. 292. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000011.000005.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-6"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Compare on the Ultimate, Mr. Schiller\u2019s essay \u201cActivity and Substance,\u201d in his book entitled Humanism, p. 204. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Compare",
+        "locator": {
+          "end_offset": 1228,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1115,
+          "text_quote_selector": {
+            "exact": "Compare on the Ultimate, Mr. Schiller\u2019s essay \u201cActivity and Substance,\u201d in his book entitled Humanism, p. 204. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000012.000006.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-7"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Life of Reason: Reason in Common Sense, 1905, p. 59. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 1289,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1230,
+          "text_quote_selector": {
+            "exact": "The Life of Reason: Reason in Common Sense, 1905, p. 59. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000013.000007.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-8"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A. E. Taylor, Philosophical Review, vol. XIV, p. 288. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "A.",
+        "locator": {
+          "end_offset": 1347,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1291,
+          "text_quote_selector": {
+            "exact": "A. E. Taylor, Philosophical Review, vol. XIV, p. 288. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000014.000008.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-9"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "H. Rickert, Der Gegenstand der Erkenntniss, chapter on \u201cDie Urtheilsnothwendigkeit.\u201d \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "H.",
+        "locator": {
+          "end_offset": 1436,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1349,
+          "text_quote_selector": {
+            "exact": "H. Rickert, Der Gegenstand der Erkenntniss, chapter on \u201cDie Urtheilsnothwendigkeit.\u201d \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000015.000009.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-10"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "I am not forgetting that Professor Rickert long ago gave up the whole notion of truth being founded on agreement with reality. Reality, according to him, is whatever agrees with truth, and truth is founded solely on our primal duty. This fantastic flight, together with Mr. Joachim\u2019s candid confession of failure in his book The Nature of Truth, seems to me to mark the bankruptcy of rationalism when dealing with this subject. Rickert deals with part of the pragmatistic position under the head of what he calls \u201cRelativismus.\u201d I cannot discuss his text here. Suffice it to say that his argumentation in that chapter is so feeble as to seem almost incredible in so generally able a writer. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "I",
+        "locator": {
+          "end_offset": 2131,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1438,
+          "text_quote_selector": {
+            "exact": "I am not forgetting that Professor Rickert long ago gave up the whole notion of truth being founded on agreement with reality. Reality, according to him, is whatever agrees with truth, and truth is founded solely on our primal duty. This fantastic flight, together with Mr. Joachim\u2019s candid confession of failure in his book The Nature of Truth, seems to me to mark the bankruptcy of rationalism when dealing with this subject. Rickert deals with part of the pragmatistic position under the head of what he calls \u201cRelativismus.\u201d I cannot discuss his text here. Suffice it to say that his argumentation in that chapter is so feeble as to seem almost incredible in so generally able a writer. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000016.000010.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-11"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Personal Idealism, p. 60. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Personal",
+        "locator": {
+          "end_offset": 2161,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2133,
+          "text_quote_selector": {
+            "exact": "Personal Idealism, p. 60. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000011.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-12"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Mr. Taylor in his Elements of Metaphysics uses this excellent pragmatic definition. \u21a9\ufe0e",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Mr.",
+        "locator": {
+          "end_offset": 2249,
+          "fragment_id": "4ab0a4c9-97e3-5d25-b1be-c11df82634df",
+          "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2163,
+          "text_quote_selector": {
+            "exact": "Mr. Taylor in his Elements of Metaphysics uses this excellent pragmatic definition. \u21a9\ufe0e"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000018.000012.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 13,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-13"
+        },
+        "stable_key": "epub:13:target:epub-text-endnotes.xhtml-note-13"
+      }
+    ],
+    "media_id": "f5e8f8c9-57bb-50c9-b895-4b8a0ca90e92",
+    "media_kind": "epub",
+    "source_fingerprint": "sha256:1529009703d0adc1e1d4544c582977bd3f4b09e732f21d330377c99524f48ff4",
+    "status": "ready"
+  },
+  "fixture_id": "epub-standardebooks-james-pragmatism",
+  "source_fixture_path": "epub/standardebooks-william-james-pragmatism.epub",
+  "source_fixture_sha256": "055a87eafc57df5bdfc1775d577942f62ab26876228adc982b211ad4ff123295"
+}

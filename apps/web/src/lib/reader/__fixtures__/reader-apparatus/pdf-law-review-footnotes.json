@@ -1,0 +1,1208 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {
+      "pdf_legal_footnotes": {
+        "adapter_version": "pdf_legal_footnotes_v1",
+        "edge_count": 10,
+        "marker_count": 10,
+        "page_count": 1,
+        "skipped": {},
+        "status": "targets_materialized",
+        "target_count": 10,
+        "unpaired_target_count": 0,
+        "unresolved_marker_count": 0
+      },
+      "pdf_native_link": {
+        "citation_link_count": 0,
+        "edge_count": 0,
+        "internal_link_count": 0,
+        "marker_count": 0,
+        "skipped": {},
+        "status": "no_supported_citation_links",
+        "target_count": 0,
+        "total_link_count": 0,
+        "unresolved_marker_count": 0
+      }
+    },
+    "edges": [
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0001",
+        "relation": "points_to_note",
+        "sort_key": "0001.0001.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "1",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 83.79399871826172,
+            "left": 252.72000122070312,
+            "right": 256.0559997558594,
+            "top": 75.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0001->pdf:legal-footnote-target:0001:0001",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0001"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0002",
+        "relation": "points_to_note",
+        "sort_key": "0001.0002.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "2",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 83.79399871826172,
+            "left": 425.447998046875,
+            "right": 428.78399658203125,
+            "top": 75.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0002->pdf:legal-footnote-target:0001:0002",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0002"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0003",
+        "relation": "points_to_note",
+        "sort_key": "0001.0003.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "3",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 123.79399871826172,
+            "left": 294.083984375,
+            "right": 297.41998291015625,
+            "top": 115.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0003->pdf:legal-footnote-target:0001:0003",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0003"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0004",
+        "relation": "points_to_note",
+        "sort_key": "0001.0004.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "4",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 123.79399871826172,
+            "left": 418.12799072265625,
+            "right": 421.4639892578125,
+            "top": 115.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0004->pdf:legal-footnote-target:0001:0004",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0004"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0005",
+        "relation": "points_to_note",
+        "sort_key": "0001.0005.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "5",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 163.79400634765625,
+            "left": 266.760009765625,
+            "right": 270.09600830078125,
+            "top": 155.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0005->pdf:legal-footnote-target:0001:0005",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0005"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0006",
+        "relation": "points_to_note",
+        "sort_key": "0001.0006.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "6",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 163.79400634765625,
+            "left": 380.82000732421875,
+            "right": 384.156005859375,
+            "top": 155.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0006->pdf:legal-footnote-target:0001:0006",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0006"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0007",
+        "relation": "points_to_note",
+        "sort_key": "0001.0007.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "7",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 203.79400634765625,
+            "left": 306.7560119628906,
+            "right": 310.0920104980469,
+            "top": 195.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0007->pdf:legal-footnote-target:0001:0007",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0007"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0008",
+        "relation": "points_to_note",
+        "sort_key": "0001.0008.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "8",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 203.79400634765625,
+            "left": 435.49200439453125,
+            "right": 438.8280029296875,
+            "top": 195.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0008->pdf:legal-footnote-target:0001:0008",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0008"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0009",
+        "relation": "points_to_note",
+        "sort_key": "0001.0009.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "9",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 243.79400634765625,
+            "left": 317.47198486328125,
+            "right": 320.8079833984375,
+            "top": 235.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0009->pdf:legal-footnote-target:0001:0009",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0009"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_pair",
+        "from_stable_key": "pdf:legal-footnote-ref:0001:0010",
+        "relation": "points_to_note",
+        "sort_key": "0001.0010.edge",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "10",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 243.79400634765625,
+            "left": 428.8680114746094,
+            "right": 435.5400085449219,
+            "top": 235.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0010->pdf:legal-footnote-target:0001:0010",
+        "to_stable_key": "pdf:legal-footnote-target:0001:0010"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "First legal footnote body with a cited source.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "1",
+        "locator": {
+          "exact": "First legal footnote body with a cited source.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 226.563,
+              "x3": 226.563,
+              "x4": 90.0,
+              "y1": 616.475,
+              "y2": 616.475,
+              "y3": 626.093,
+              "y4": 626.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "First legal footnote body with a cited source."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0001.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 626.093017578125,
+            "left": 90.0,
+            "right": 226.56295776367188,
+            "top": 616.4749755859375
+          },
+          "target_label": "1",
+          "target_label_rect": {
+            "bottom": 626.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 616.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0001"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Second legal footnote body with an online archive reference.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "2",
+        "locator": {
+          "exact": "Second legal footnote body with an online archive reference.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 277.544,
+              "x3": 277.544,
+              "x4": 90.0,
+              "y1": 630.475,
+              "y2": 630.475,
+              "y3": 640.093,
+              "y4": 640.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Second legal footnote body with an online archive reference."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0002.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 640.093017578125,
+            "left": 90.0,
+            "right": 277.5439453125,
+            "top": 630.4749755859375
+          },
+          "target_label": "2",
+          "target_label_rect": {
+            "bottom": 640.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 630.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0002"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Third legal footnote body starts on one line and continues on the following line without a new label.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "3",
+        "locator": {
+          "exact": "Third legal footnote body starts on one line and continues on the following line without a new label.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 246.8,
+              "x3": 246.8,
+              "x4": 90.0,
+              "y1": 644.475,
+              "y2": 644.475,
+              "y3": 664.093,
+              "y4": 664.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Third legal footnote body starts on one line and continues on the following line without a new label."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0003.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 664.093017578125,
+            "left": 90.0,
+            "right": 246.79995727539062,
+            "top": 644.4749755859375
+          },
+          "target_label": "3",
+          "target_label_rect": {
+            "bottom": 654.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 644.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0003"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Fourth legal footnote body with a statutory reference.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "4",
+        "locator": {
+          "exact": "Fourth legal footnote body with a statutory reference.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 253.807,
+              "x3": 253.807,
+              "x4": 90.0,
+              "y1": 670.475,
+              "y2": 670.475,
+              "y3": 680.093,
+              "y4": 680.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Fourth legal footnote body with a statutory reference."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0004.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 680.093017578125,
+            "left": 90.0,
+            "right": 253.8069305419922,
+            "top": 670.4749755859375
+          },
+          "target_label": "4",
+          "target_label_rect": {
+            "bottom": 680.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 670.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Fifth legal footnote body with quoted authority.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "5",
+        "locator": {
+          "exact": "Fifth legal footnote body with quoted authority.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 233.192,
+              "x3": 233.192,
+              "x4": 90.0,
+              "y1": 684.475,
+              "y2": 684.475,
+              "y3": 694.093,
+              "y4": 694.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Fifth legal footnote body with quoted authority."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0005.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 694.093017578125,
+            "left": 90.0,
+            "right": 233.19195556640625,
+            "top": 684.4749755859375
+          },
+          "target_label": "5",
+          "target_label_rect": {
+            "bottom": 694.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 684.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0005"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Sixth legal footnote body with a policy source.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "6",
+        "locator": {
+          "exact": "Sixth legal footnote body with a policy source.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 231.624,
+              "x3": 231.624,
+              "x4": 90.0,
+              "y1": 698.475,
+              "y2": 698.475,
+              "y3": 708.093,
+              "y4": 708.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Sixth legal footnote body with a policy source."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0006.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 708.093017578125,
+            "left": 90.0,
+            "right": 231.62396240234375,
+            "top": 698.4749755859375
+          },
+          "target_label": "6",
+          "target_label_rect": {
+            "bottom": 708.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 698.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0006"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Seventh legal footnote body with empirical context.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "7",
+        "locator": {
+          "exact": "Seventh legal footnote body with empirical context.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 247.577,
+              "x3": 247.577,
+              "x4": 90.0,
+              "y1": 712.475,
+              "y2": 712.475,
+              "y3": 722.093,
+              "y4": 722.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Seventh legal footnote body with empirical context."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0007.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 722.093017578125,
+            "left": 90.0,
+            "right": 247.5769500732422,
+            "top": 712.4749755859375
+          },
+          "target_label": "7",
+          "target_label_rect": {
+            "bottom": 722.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 712.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0007"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Eighth legal footnote body with institutional detail.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "8",
+        "locator": {
+          "exact": "Eighth legal footnote body with institutional detail.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 242.915,
+              "x3": 242.915,
+              "x4": 90.0,
+              "y1": 726.475,
+              "y2": 726.475,
+              "y3": 736.093,
+              "y4": 736.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Eighth legal footnote body with institutional detail."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0008.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 736.093017578125,
+            "left": 90.0,
+            "right": 242.9149627685547,
+            "top": 726.4749755859375
+          },
+          "target_label": "8",
+          "target_label_rect": {
+            "bottom": 736.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 726.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0008"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Ninth legal footnote body with a final source.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "9",
+        "locator": {
+          "exact": "Ninth legal footnote body with a final source.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 227.347,
+              "x3": 227.347,
+              "x4": 90.0,
+              "y1": 740.475,
+              "y2": 740.475,
+              "y3": 750.093,
+              "y4": 750.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Ninth legal footnote body with a final source."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0009.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 750.093017578125,
+            "left": 90.0,
+            "right": 227.34695434570312,
+            "top": 740.4749755859375
+          },
+          "target_label": "9",
+          "target_label_rect": {
+            "bottom": 750.093017578125,
+            "left": 72.0,
+            "right": 75.89199829101562,
+            "top": 740.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0009"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Tenth legal footnote body verifies two-digit labels.",
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_target",
+        "kind": "footnote",
+        "label": "10",
+        "locator": {
+          "exact": "Tenth legal footnote body verifies two-digit labels.",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 90.0,
+              "x2": 243.293,
+              "x3": 243.293,
+              "x4": 90.0,
+              "y1": 754.475,
+              "y2": 754.475,
+              "y3": 764.093,
+              "y4": 764.093
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "Tenth legal footnote body verifies two-digit labels."
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0010.target",
+        "source_ref": {
+          "format": "pdf",
+          "page_number": 1,
+          "target_body_rect": {
+            "bottom": 764.093017578125,
+            "left": 90.0,
+            "right": 243.29295349121094,
+            "top": 754.4749755859375
+          },
+          "target_label": "10",
+          "target_label_rect": {
+            "bottom": 764.093017578125,
+            "left": 72.0,
+            "right": 79.78399658203125,
+            "top": 754.4749755859375
+          }
+        },
+        "stable_key": "pdf:legal-footnote-target:0001:0010"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "1",
+        "locator": {
+          "exact": "1",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 252.72,
+              "x2": 256.056,
+              "x3": 256.056,
+              "x4": 252.72,
+              "y1": 75.55,
+              "y2": 75.55,
+              "y3": 83.794,
+              "y4": 83.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0001.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "1",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 83.79399871826172,
+            "left": 252.72000122070312,
+            "right": 256.0559997558594,
+            "top": 75.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0001"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "2",
+        "locator": {
+          "exact": "2",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 425.448,
+              "x2": 428.784,
+              "x3": 428.784,
+              "x4": 425.448,
+              "y1": 75.55,
+              "y2": 75.55,
+              "y3": 83.794,
+              "y4": 83.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "2"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0002.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "2",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 83.79399871826172,
+            "left": 425.447998046875,
+            "right": 428.78399658203125,
+            "top": 75.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0002"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "3",
+        "locator": {
+          "exact": "3",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 294.084,
+              "x2": 297.42,
+              "x3": 297.42,
+              "x4": 294.084,
+              "y1": 115.55,
+              "y2": 115.55,
+              "y3": 123.794,
+              "y4": 123.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "3"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0003.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "3",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 123.79399871826172,
+            "left": 294.083984375,
+            "right": 297.41998291015625,
+            "top": 115.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0003"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "4",
+        "locator": {
+          "exact": "4",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 418.128,
+              "x2": 421.464,
+              "x3": 421.464,
+              "x4": 418.128,
+              "y1": 115.55,
+              "y2": 115.55,
+              "y3": 123.794,
+              "y4": 123.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "4"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0004.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "4",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 123.79399871826172,
+            "left": 418.12799072265625,
+            "right": 421.4639892578125,
+            "top": 115.55000305175781
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0004"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "5",
+        "locator": {
+          "exact": "5",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 266.76,
+              "x2": 270.096,
+              "x3": 270.096,
+              "x4": 266.76,
+              "y1": 155.55,
+              "y2": 155.55,
+              "y3": 163.794,
+              "y4": 163.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "5"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0005.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "5",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 163.79400634765625,
+            "left": 266.760009765625,
+            "right": 270.09600830078125,
+            "top": 155.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0005"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "6",
+        "locator": {
+          "exact": "6",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 380.82,
+              "x2": 384.156,
+              "x3": 384.156,
+              "x4": 380.82,
+              "y1": 155.55,
+              "y2": 155.55,
+              "y3": 163.794,
+              "y4": 163.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "6"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0006.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "6",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 163.79400634765625,
+            "left": 380.82000732421875,
+            "right": 384.156005859375,
+            "top": 155.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0006"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "7",
+        "locator": {
+          "exact": "7",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 306.756,
+              "x2": 310.092,
+              "x3": 310.092,
+              "x4": 306.756,
+              "y1": 195.55,
+              "y2": 195.55,
+              "y3": 203.794,
+              "y4": 203.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "7"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0007.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "7",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 203.79400634765625,
+            "left": 306.7560119628906,
+            "right": 310.0920104980469,
+            "top": 195.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0007"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "8",
+        "locator": {
+          "exact": "8",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 435.492,
+              "x2": 438.828,
+              "x3": 438.828,
+              "x4": 435.492,
+              "y1": 195.55,
+              "y2": 195.55,
+              "y3": 203.794,
+              "y4": 203.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "8"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0008.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "8",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 203.79400634765625,
+            "left": 435.49200439453125,
+            "right": 438.8280029296875,
+            "top": 195.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0008"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "9",
+        "locator": {
+          "exact": "9",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 317.472,
+              "x2": 320.808,
+              "x3": 320.808,
+              "x4": 317.472,
+              "y1": 235.55,
+              "y2": 235.55,
+              "y3": 243.794,
+              "y4": 243.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "9"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0009.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "9",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 243.79400634765625,
+            "left": 317.47198486328125,
+            "right": 320.8079833984375,
+            "top": 235.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0009"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "pdf_legal_footnote_marker",
+        "kind": "footnote_ref",
+        "label": "10",
+        "locator": {
+          "exact": "10",
+          "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+          "page_number": 1,
+          "prefix": null,
+          "quads": [
+            {
+              "x1": 428.868,
+              "x2": 435.54,
+              "x3": 435.54,
+              "x4": 428.868,
+              "y1": 235.55,
+              "y2": 235.55,
+              "y3": 243.794,
+              "y4": 243.794
+            }
+          ],
+          "suffix": null,
+          "text_quote_selector": {
+            "exact": "10"
+          },
+          "type": "pdf_page_geometry"
+        },
+        "locator_status": "exact",
+        "sort_key": "0001.0010.marker",
+        "source_ref": {
+          "format": "pdf",
+          "marker_label": "10",
+          "page_number": 1,
+          "source_rect": {
+            "bottom": 243.79400634765625,
+            "left": 428.8680114746094,
+            "right": 435.5400085449219,
+            "top": 235.5500030517578
+          }
+        },
+        "stable_key": "pdf:legal-footnote-ref:0001:0010"
+      }
+    ],
+    "media_id": "4a1ee469-ea11-5d8b-9d60-0edc576d76bb",
+    "media_kind": "pdf",
+    "source_fingerprint": "sha256:139cd1ada86c63bd3e179509129ead95e43e16176af8cda84bb50ee32dc440cd",
+    "status": "ready"
+  },
+  "fixture_id": "pdf-law-review-footnotes",
+  "source_fixture_path": "pdf/law-review-footnotes.pdf",
+  "source_fixture_sha256": "20147de1c45261dc04f70188223be9bac12296f56ff89a648c197ab291b93195"
+}

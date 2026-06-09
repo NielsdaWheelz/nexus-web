@@ -15,6 +15,7 @@ from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
     PdfExtractionResult,
+    PdfSourcePackageArtifact,
     extract_pdf_artifacts,
 )
 from nexus.services.pdf_metadata import persist_pdf_metadata
@@ -64,6 +65,8 @@ def materialize_pdf_source(
     *,
     media_id: UUID,
     request_id: str | None = None,
+    source_package: PdfSourcePackageArtifact | None = None,
+    source_package_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Persist PDF extraction artifacts without owning source lifecycle state."""
     media = db.get(Media, media_id)
@@ -74,7 +77,13 @@ def materialize_pdf_source(
     if media.processing_status != ProcessingStatus.extracting:
         return {"status": "skipped", "reason": "not_extracting"}
 
-    result = extract_pdf_artifacts(db, media_id, get_storage_client())
+    result = extract_pdf_artifacts(
+        db,
+        media_id,
+        get_storage_client(),
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
     media = db.get(Media, media_id)
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")

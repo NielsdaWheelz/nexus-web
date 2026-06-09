@@ -25,3 +25,12 @@ storage through byte-size-checked helpers.
 
 EPUB assets are private media assets. They are not public owned assets and must
 not be added to Next Image `images.localPatterns`.
+
+## Reader Apparatus
+
+EPUB reader apparatus extraction happens while `epub_ingest.py` still has access
+to raw XHTML semantics such as `epub:type`, DPUB-ARIA roles, element ids, and
+package hrefs. Exact `noteref -> footnote/endnote` relations are normalized into
+the shared reader apparatus model with `epub_fragment_offsets` locators. Counts,
+fixture hashes, and per-source support status are owned by the reader apparatus
+manifest, not this module doc.

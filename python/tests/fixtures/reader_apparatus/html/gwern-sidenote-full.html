@@ -1,0 +1,920 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="nexus-source-id" content="source-gwern-sidenote">
+  <meta name="nexus-fixture-scope" content="curated article body and source-authored endnotes; assets excluded">
+</head>
+<body>
+<div id="markdownBody" class="markdownBody"><div class="abstract">
+<blockquote>
+<p><strong>Sidenotes</strong> &amp; <strong>margin notes</strong> are a typographic convention which improves on footnotes &amp; endnotes by instead putting the notes in the page margin to let the reader instantly read them without needing to refer back and forth to the end of the document (endnotes) or successive pages (footnotes spilling over).</p>
+<p>They are particularly useful for web pages, where ‘footnotes’ are de facto endnotes, and clicking back and forth to endnotes is a pain for readers. (Footnote variants, like “floating footnotes” which pop up on mouse hover, reduce the reader’s effort but don’t eliminate it.)</p>
+<p>However, they are not commonly used, perhaps because web browsers until relatively recently made it hard to implement sidenotes easily &amp; reliably. Tufte-CSS has popularized the idea and since then, there has been a proliferation of slightly variant approaches. I review some of the available implementations.</p>
+<p>For general users, I recommend <a href="#tufte-css">Tufte-CSS-style approaches</a>: it is fast &amp; simple (using only compile-time generation of sidenotes, rendered by static HTML/CSS), popular, and Tufte-CSS-esque libraries are easy to integrate into many website workflows. For heavy footnote users or users who want a drop-in, runtime JavaScript-based solutions like <a href="#sidenotes-js"><code>sidenotes.js</code></a> may be more useful.</p>
+</blockquote>
+</div>
+<p>Sidenotes and margin notes (sometimes also called “asides”) are an alternative to <a href="https://en.wikipedia.org/wiki/Note_(typography)" id="_RGsTuBmb" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Note_(typography)#bodyContent" title="Note (typography)">footnotes/endnotes</a> in design. Where footnotes put additional material in small sections at the bottom of the page, organized by number, and endnotes stuff them at the end of the document, sidenotes &amp; margin notes instead use the large unused left/right margin of the page. If it is numbered &amp; anchored to a specific point in the text, I call it a ‘sidenote’; if it is unnumbered &amp; is merely placed next to a body of text, then I call it a ‘margin note’. (Margin notes are less useful &amp; more obscure, so tend to be unsupported; I occasionally use margin notes for summarizing paragraphs, like the next paragraph here, where they function as extremely small ‘section headers’.)</p>
+<p><span class="margin-note">Making use of margins.</span> Because it’s uncomfortable to read sentences which wrap from edge to edge, particularly for large widths, documents use <a href="https://en.wikipedia.org/wiki/Line_length" id="_CkNu1LPY" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Line_length#bodyContent" title="Line length">short lines</a>. But with large screens, many documents have equally large margins, and wind up looking like a narrow river of text flowing down a vast blank map. This river of text may be studded with the occasional footnote or endnote, including ancillary material like citations or digressions or extended discussion of tricky points or anticipation of objections or just the author being witty, which require constant back and forth from the place in the text where they make sense and where they can actually be read. As a result, who ever reads endnotes in a physical book? Only the most diligent will keep a thumb in the back to actually look up endnotes, and so they are either unread or tend to be relegated to the most utilitarian uses like raw citations.</p>
+<p>The situation is even worse on the Internet, because while footnotes in a book aren’t <em>too</em> bad (as long as they stay on the same page), web pages don’t really have ‘pages’ and ‘footnotes’ wind up degrading to simply endnotes.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a></p>
+<p>Why do we use endnotes? For the most part, we use them for citation metadata, abbreviations/definitions, and more extended discussions (often humorous). But none of these are served well online by endnotes: citation metadata is better provided as hyperlinks to fulltext, <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dfn" id="mozdev-defn" class="link-annotated-partial" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000" title="'&lt;code&gt;&amp;lt;dfn&amp;gt;&lt;/code&gt;: The Definition element', MDN 2026">definitions (<code>&lt;defn&gt;</code>)</a>/<a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/abbr" id="mozdev-abbr" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000" title="'&lt;code&gt;&amp;lt;abbr&amp;gt;&lt;/code&gt;: The Abbreviation element', MDN 2026">abbreviations (<code>&lt;abbr&gt;</code>)</a> have native HTML support as tooltips/popups—leaving only the extended discussions use-case.</p>
+<p><a href="https://en.wikipedia.org/wiki/Robert_Bringhurst" id="_-aF-QfYr" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Robert_Bringhurst#bodyContent" title="Robert Bringhurst">Bringhurst</a> comments on the pros/cons (<em><a href="https://en.wikipedia.org/wiki/The_Elements_of_Typographic_Style" id="_lVaByqB4" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/The_Elements_of_Typographic_Style#bodyContent" title="The Elements of Typographic Style">The Elements of Typographic Style</a></em>, <span class="date-range">2004<sub><span title="2004 was 22 years ago.">22ya</span></sub></span>):</p>
+<blockquote>
+<p>Footnotes are the very emblem of fussiness, but they have their uses. If they are short and infrequent, they can be made economical of space, easy to find when wanted and, when not wanted, easy to ignore. Long footnotes are inevitably a distraction: tedious to read and wearying to look at. Footnotes that extend to a second page (as some long footnotes are bound to do) are an abject failure of design.</p>
+<p>Endnotes can be just as economical of space, less trouble to design and less expensive to set, and they can comfortably run to any length. They also leave the text page clean except for a peppering of superscripts. They do, however, require the serious reader to use two bookmarks and to read with both hands as well as both eyes, swapping back and forth between the popular and the persnickety parts of the text.</p>
+<p>Sidenotes give more life and variety to the page and are the easiest of all to find and read. If carefully designed, they need not enlarge either the page or the cost of printing it. Footnotes rarely need to be larger than 8 or 9 point. Endnotes are typically set in small text sizes: 9 or 10 point. Sidenotes can be set in anything up to the same size as the main text, depending on their frequency and importance, and on the overall format of the page. If they are not too frequent, sidenotes can be set with no superscripts at all (as in this book), or with the same symbol (normally an asterisk) constantly reused, even when several notes appear on a single page.</p>
+</blockquote>
+<p>Our extended discussions ought to be made easy to read in context and not hidden away at the end of the page. Sidenotes let us reuse some of that unused margin, in a way which is comfortable to read, and which is compatible with existing documents &amp; workflows using endnotes: simply move those endnotes into the margin of the text they refer to. The user can comfortably saccade over to a sidenote instantly to skim it and back, the information density of the layout increases, it requires no exotic technologies or rewrites or user education, it has a long respectable history, and it’s just generally a good idea.</p>
+<div class="admonition warning desktop-not">
+<p>To see native sidenotes &amp; margin notes on Gwern.net, use a wider screen.</p>
+</div>
+<section id="examples" class="level1 collapse">
+<h1 class="collapse"><a href="#examples" title="Link to section: § 'Examples'">Examples</a></h1>
+<div class="abstract-collapse">
+<p>Some examples of sidenotes in books; Bringhurst uses sidenotes himself, of course:</p>
+</div>
+<figure>
+<p></p>
+<figcaption><p>Bringhurst <span class="date-range">2004<sub><span title="2004 was 22 years ago.">22ya</span></sub></span> example of sidenotes &amp; margin notes (in this case, it repeats the section heading)</p></figcaption>
+</figure>
+<p>Sidenotes are extensively used in medieval manuscripts and early modern books such as the <a href="https://en.wikipedia.org/wiki/Geneva_Bible#Format" id="_1DCKxFwK" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Geneva_Bible#bodyContent" title="Geneva Bible § Format">Geneva Bible</a> (<a href="/doc/www/github.com/32624e2c68b704c54f95c2e9064a4fd9dca8e4ad.pdf" id="_5oVHfc38" class="link-live link-annotated-partial" data-link-icon="github" data-link-icon-type="svg" data-url-archive="/doc/www/github.com/32624e2c68b704c54f95c2e9064a4fd9dca8e4ad.pdf" data-url-original="https://github.com/raphink/geneve_1564/releases/download/2015-07-08_01/geneve_1564.pdf">first 2 pages</a>) (see also <a href="/red" id="gwern-red" class="prefetch-not link-annotated link-page" title="'Rubrication Design Examples', Gwern 2019">rubrication</a>), or Bayle’s awe-inspiringly ambitious use of (recursive) margin/side notes:</p>
+<figure>
+<p></p>
+<figcaption><p><a href="https://en.wikipedia.org/wiki/Pierre_Bayle" id="_IOnXcOt9" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Pierre_Bayle#bodyContent" title="Pierre Bayle">Pierre Bayle’s</a> <a href="https://en.wikipedia.org/wiki/Dictionnaire_Historique_et_Critique" id="_i7wf4QFW" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Dictionnaire_Historique_et_Critique#bodyContent" title="Dictionnaire Historique et Critique"><em>Historical and Critical Dictionary</em></a>, demonstrating recursive footnotes/sidenotes (<span class="date-range">1737<sub><span title="1737 was 289 years ago.">289ya</span></sub></span>, volume 4, pg901; source: Google Books)</p></figcaption>
+</figure>
+<p>Sidenotes (and margin notes) have been less used in more contemporary books; the best-known popularizer is <a href="https://en.wikipedia.org/wiki/Edward_Tufte" id="_UkdQOR9z" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Edward_Tufte#bodyContent" title="Edward Tufte">Edward Tufte</a>:</p>
+<figure>
+<p></p>
+<figcaption><p>Example of Tufte’s use of sidenotes &amp; margin notes: they provide additional examples, commentary, and citation metadata for the reader in context, without forcing inscrutable lookups buried deep at the end of the chapter (or worse, book) which few readers will ever bother with. (From pg61, “Layering &amp; Separation”, <em>Envisioning Information</em>, Tufte <span class="date-range">1990<sub><span title="1990 was 36 years ago.">36ya</span></sub></span>)</p></figcaption>
+</figure>
+<p><a href="https://en.wikipedia.org/wiki/Donald_Knuth" id="_oKTZh-io" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Donald_Knuth#bodyContent" title="Donald Knuth">Donald Knuth</a> uses margin notes in <a href="https://en.wikipedia.org/wiki/Concrete_Mathematics" id="_ro688N-E" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Concrete_Mathematics#bodyContent" title="Concrete Mathematics"><em>Concrete Mathematics</em></a> for a wide variety of ‘mathematical graffiti’ on the body contents: quotes from famous people or just unhappy students, jokes, criticism, questions to the reader, hints, etc. in his preprint drafts (‘fascicles’) of <a href="https://en.wikipedia.org/wiki/The_Art_of_Computer_Programming" id="_Ekg3NVBB" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/The_Art_of_Computer_Programming#bodyContent" title="The Art of Computer Programming"><em>The Art of Computer Programming</em></a> uses margin notes as a kind of index, listing keywords in the margin as reminders for indexing in the final print version. The density of keywords can make the margins interesting to read on their own; an example from <a href="/doc/www/www.antiquark.com/928f1fd791ea09f97b3484017ed1ba01475ce8e1.pdf" id="_F01iz3JY" class="link-live link-annotated-partial" data-link-icon="pdf" data-link-icon-type="svg" data-link-icon-color="#f40f02" data-url-archive="/doc/www/www.antiquark.com/928f1fd791ea09f97b3484017ed1ba01475ce8e1.pdf" data-url-original="https://www.antiquark.com/blogimg/fasc4b.pdf">TAOCP: pre-fascicle 4B: “A Draft of §7.2.1.7: History of Combinatorial Generation”</a>:</p>
+<figure>
+<p></p>
+<figcaption><p>Margin notes showing keywords for discussion of Chinese/Indian algorithmic history in Knuth.</p></figcaption>
+</figure>
+</section>
+<section id="implementation-strategies" class="level1">
+<h1><a href="#implementation-strategies" title="Link to section: § 'Implementation Strategies'">Implementation Strategies</a></h1>
+<p>So, sidenotes are great. They are also easy in <span class="logotype-latex">L<span class="logotype-latex-a">a</span>T<span class="logotype-latex-e">e</span>X</span> PDFs.<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> that may be used instead of <code>\marginpar</code>{.LaTeX] at almost every place where <code>\marginpar</code>{.LaTeX] cannot be used, eg. inside floats, footnotes, or in frames made with the <code>framed</code> package.”) (where the native <code>\marginpar{}</code>{.LaTeX] command fails) packages.] But how do we use them online for <em>HTML</em>?</p>
+<p>Although sidenotes are ‘just’ snippets of text to the left or right of the main text and it might seem hard to screw it up, as always, there are a lot of ways to accomplish that goal, and many ways we can enhance (or screw up) them.</p>
+<p>Do we put them on the left, right, or both sides? What of the several possible HTML elements are our sidenotes delimited as (<code>&lt;span&gt;</code>, <code>&lt;a&gt;</code>, <code>&lt;div&gt;</code>, <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/aside" id="_k07ks8Je" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000"><code>&lt;aside&gt;</code></a>, <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/small" id="_iQsqtLeu" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000" title="'&lt;code&gt;&amp;lt;small&amp;gt;&lt;/code&gt;: the side comment element', MDN 2026"><code>&lt;small&gt;</code></a>, or even <code>&lt;table&gt;</code>)? Do we use JavaScript, accepting that it’ll ‘flash’ an incorrectly rendered page as the JS loads &amp; runs, and outright break for users with JS turned off (as is increasingly sensible on an ever-more-hostile Internet)? Does the user have to click or do anything to make sidenotes visible? If not, what about on mobile or tiny screens, which don’t <em>have</em> any margins worth speaking of—do they get sidenotes in any form, and if so, do they render ‘inline’ as simply part of their paragraph, or do we display them as separate blocks (‘pop-in’) and by default or after a user click? How are many (or large, or both) sidenotes laid out, do they bump each other down the page or just overlap—it would seem that JS is necessary to avoid overlaps in most approaches, but is that too great a price? How does one add sidenotes support to an existing body of documents (typically Markdown)? Are there any known SEO concerns? (No, unless you do it in a bizarre way.) And so on.</p>
+<p>Overall, I would say that good sidenotes should ideally: render on either both sides or the right (but not the left), use spans or links where possible, use static HTML/CSS, display by default (any user effort defeats the point!) but collapse to pop-ins (because mobile users don’t have screen real estate to spare for optional material although many authors choose expanded) with inline being an option for margin notes depending on how the writer uses them, with sidenotes overlapping as a tradeoff for not requiring JS (the author will just have to rewrite such excessive sidenote usage to avoid overlapping bugs), and endnotes in existing corpuses can be rewritten by whatever tool compiles the HTML into the appropriate span encoding.</p>
+<p>Below I compare implementations I have found, and compile a table of what seems to me to be the key parts of the sidenotes taxonomy.</p>
+<p>My recommendation is that for new or lightly-noted writings, one use Tufte-CSS-style sidenotes. For heavy sidenote use, a JS solution like <code>sidenotes.js</code> is probably necessary.</p>
+</section>
+<section id="comparison" class="level1">
+<h1><a href="#comparison" title="Link to section: § 'Comparison'">Comparison</a></h1>
+<p><!-- NOTE: we disable table sorting beacuse sorting on these categorical or polytomous variables isn't useful (especially when written in Unicode). --></p>
+<div class="width-full table-sort-not">
+<table>
+<caption><p>Comparison of sidenotes implementations for web pages.</p></caption>
+<colgroup>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+<col>
+</colgroup>
+<thead>
+<tr class="header">
+<th><p>Name</p></th>
+<th><p><a href="#definition-active">Active?</a></p></th>
+<th><p><a href="#definition-layout">Layout</a></p></th>
+<th><p><a href="#definition-margin-note">Margin Notes?</a></p></th>
+<th><p><a href="#definition-html-element">Element</a></p></th>
+<th><p>Non-JS?</p></th>
+<th><p><a href="#definition-click-no">No Click?</a></p></th>
+<th><p><a href="#definition-narrow-mobile">Mobile/Narrow</a></p></th>
+<th><p><a href="#definition-collapse-long">Long Collapse?</a></p></th>
+<th><p><a href="#definition-floss">FLOSS</a></p></th>
+<th><p>Pros/Cons</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><p><a href="#tufte-css">Tufte-CSS</a>, Dave Liepmann</p></td>
+<td><p>✅ (<span class="date-range">2014<sub><span title="2014 was 12 years ago.">12ya</span></sub></span>)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>Pop-in (default: collapsed)</p></td>
+<td><p>❌</p></td>
+<td><p><a href="https://en.wikipedia.org/wiki/MIT_License" id="_z7YJ2jxx" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/MIT_License#bodyContent" title="MIT License">MIT</a></p></td>
+<td><p>Static, simple, popular; buggy block elements, endnote-incompatible, limited number supported</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#sidenotes-js"><code>sidenotes.js</code></a>, Said Achmiz</p></td>
+<td><p>✅ (2019)</p></td>
+<td><p><strong>↔︎</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">a</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>✅</p></td>
+<td><p>Pop-in/Endnotes (eg. on hover)</p></td>
+<td><p>✅</p></td>
+<td><p>MIT</p></td>
+<td><p>Scales to many, Pandoc-compatible; slow(er).</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#sidebar-tables">sidebar</a>, Said Achmiz</p></td>
+<td><p>✅ (2020)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">div</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>Pop-in/❌</p></td>
+<td><p>?</p></td>
+<td><p>?</p></td>
+<td><p>Static; not intended for footnotes, one-sided only (currently).</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#ink-switch">Ink &amp; Switch</a></p></td>
+<td><p>✅ (2016)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">aside</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>Pop-in</p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Static; non-Free, no sidenotes.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#robert-nystrom">Robert Nystrom</a></p></td>
+<td><p>✅ (<span class="date-range">2014<sub><span title="2014 was 12 years ago.">12ya</span></sub></span>)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">aside</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>✅</p></td>
+<td><p>Inline</p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Offers inline fallback; custom, non-Free, requires JS.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#matthew-butterick">Matthew Butterick</a></p></td>
+<td><p>✅ (<span class="date-range">2013<sub><span title="2013 was 13 years ago.">13ya</span></sub></span>)</p></td>
+<td><p><strong>←</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">aside</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>Inline</p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Static, simple, offers inline fallback; custom, non-Free, no numbering.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#koos-looijesteijn">Koos Looijesteijn</a></p></td>
+<td><p>✅ (2019)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>❌</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code>/<code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">small</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>✅</p></td>
+<td><p>Pop-in (collapsed)</p></td>
+<td><p>❌</p></td>
+<td><p>❌?</p></td>
+<td><p>App/screen-reader-compatible, searchable; relatively complex, requires JS, non-Free.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#harvard-law-review"><em>Harvard Law Review</em></a></p></td>
+<td><p>✅ (2016?)</p></td>
+<td><p><strong>↔︎</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Pop-in</p></td>
+<td><p>✅ (too short! ☹)</p></td>
+<td><p>❌</p></td>
+<td><p>Uses both margins; custom, non-Free, requires clicks &amp; JS.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#yale-law-journal"><em>Yale Law Journal</em></a></p></td>
+<td><p>✅ (2017?)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">div</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>❌/❌</p></td>
+<td><p>✅ (too short! ☹)</p></td>
+<td><p>❌</p></td>
+<td><p>Floating footnote fallback; custom, non-Free, requires clicks &amp; JS, entire site unusable on mobile.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#knight-institute">Knight Institute</a></p></td>
+<td><p>✅ (?)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Pop-in (collapsed)</p></td>
+<td><p>✅ (too short! ☹)</p></td>
+<td><p>❌</p></td>
+<td><p>Somewhat more readable than <em>Harvard</em>/<em>Yale</em>; custom, non-Free, requires clicks &amp; JS.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#new-york"><em>New York</em></a></p></td>
+<td><p>✅ (?)</p></td>
+<td><p><strong>←</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Floating footnote</p></td>
+<td><p>❌</p></td>
+<td><p>MIT?</p></td>
+<td><p>Floating footnote fallback; left margin, requires clicks for everything, requires JS, unclear license.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#jquery-sidenotes">jQuery.sidenotes</a>, Clark</p></td>
+<td><p>❌ (<span class="date-range">2013<sub><span title="2013 was 13 years ago.">13ya</span></sub></span>)</p></td>
+<td><p><strong>←</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">a</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>✅</p></td>
+<td><p>Endnotes/Pop-in (expanded)</p></td>
+<td><p>❌</p></td>
+<td><p>MIT</p></td>
+<td><p>Featureful; slow, unmaintained, limited number, only on the left?</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#sidenotes-js-correia">Sidenotes.js</a>, Correia</p></td>
+<td><p>❌ (<span class="date-range">2015<sub><span title="2015 was 11 years ago.">11ya</span></sub></span>)</p></td>
+<td><p><strong>↔︎</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html">data</code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Slide-in</p></td>
+<td><p>❌</p></td>
+<td><p>MIT</p></td>
+<td><p>Unique ‘slide-in’ approach; everything else.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#the-india-forum"><em>The India Forum</em></a></p></td>
+<td><p>✅ (?)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>❌</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">a</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Slide-in/Endnotes</p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>Improved slide-in shows all footnotes; everything else.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#tables">HTML tables</a></p></td>
+<td><p>NA (NA)</p></td>
+<td><p><strong>↔︎</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">table</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>❌</p></td>
+<td><p>❌</p></td>
+<td><p>NA</p></td>
+<td><p>Static, simple; no mobile/narrow compatibility, rigid, no features, hard to write or modify.</p></td>
+</tr>
+<tr class="even">
+<td><p><a href="#annotate-molly-white">Annotate</a>, Molly White</p></td>
+<td><p>✅ (2022)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>❌?</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">section</span><span class="dt">&gt;</span></code>/<code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">div</span><span class="dt">&gt;</span></code></p></td>
+<td><p>❌</p></td>
+<td><p>✅</p></td>
+<td><p>✅/?</p></td>
+<td><p>❌</p></td>
+<td><p>MIT</p></td>
+<td><p>Annotates ‘ranges’ instead of being limited to an anchor/number; due to intended <a href="https://en.wikipedia.org/wiki/Robert_Fisk" id="_ojsJTRcp" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Robert_Fisk#bodyContent" title="Robert Fisk">fisking</a> use-case, can run off screen.</p></td>
+</tr>
+<tr class="odd">
+<td><p><a href="#george-pollard">George POllard</a></p></td>
+<td><p>✅ (2019)</p></td>
+<td><p><strong>→</strong></p></td>
+<td><p>✅</p></td>
+<td><p><code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">span</span><span class="dt">&gt;</span></code>/<code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">aside</span><span class="dt">&gt;</span>``<span class="dt">&lt;</span><span class="kw">figure</span><span class="dt">&gt;</span></code></p></td>
+<td><p>✅</p></td>
+<td><p>✅</p></td>
+<td><p>Inline</p></td>
+<td><p>❌</p></td>
+<td><p>CC-BY-NC-SA</p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Table columns:</p>
+<ol>
+<li><p><strong>Name</strong>: name/creator</p></li>
+<li><p><strong>Active</strong>: <span id="definition-active">whether appeared actively maintained when last checked (usually ~2020)</span></p></li>
+<li><p><strong>Layout</strong>: <span id="definition-layout">whether it puts notes in the left, right, or both margins</span></p></li>
+<li><p><strong>Margin Notes</strong>: <span id="definition-margin-note">whether it appears to support margin notes (sidenotes without a number &amp; anchor inside the text, just free-floating text)</span></p></li>
+<li><p><strong>Element</strong>: <span id="definition-html-element">which HTML element/tag is used to denote the sidenote in the HTML source (eg. Markdown puts in a <code>&lt;a&gt;</code> linking to a definition in the footer)</span></p></li>
+<li><p><strong>Non-JS</strong>: whether JavaScript required (which is bad if it can be done without JS)</p></li>
+<li><p><strong>No Click</strong>: <span id="definition-click-no">whether the reader has to effortfully click on a note to see it (rather than visible by default or easily seen with hover)</span></p></li>
+<li><p><strong>Mobile/Narrow</strong>: <span id="definition-narrow-mobile">how it handles mobile browsers and/or narrow screens (often the same)</span></p></li>
+<li><p><strong>Long Collapse</strong>: <span id="definition-collapse-long">how it handles long notes which would threaten to overload the margin and push notes ‘off-screen’</span></p></li>
+<li><p><strong>FLOSS</strong>: <span id="definition-floss">whether OSI-approved copyright license</span></p></li>
+<li><p><strong>Pros/Cons</strong>: miscellaneous comments.</p></li>
+</ol>
+</section>
+<section id="implementations" class="level1">
+<h1><a href="#implementations" title="Link to section: § 'Implementations'">Implementations</a></h1>
+<section id="tufte-css" class="level2">
+<h2><a href="#tufte-css" title="Link to section: § 'Tufte-CSS'">Tufte-CSS</a></h2>
+<p>Experiments in using CSS3 for sidenotes date back to at least <span class="date-range">2003<sub><span title="2003 was 23 years ago.">23ya</span></sub></span>, but by far the most popular implementation, and the primary inspiration for most sidenotes users, is the c. <span class="date-range">2014<sub><span title="2014 was 12 years ago.">12ya</span></sub></span> <a href="/doc/www/edwardtufte.github.io/e43d8239ed3fa1d513e2b4d071b6a7c0c8a98bff.html#sidenotes" id="_8jwBZQVd" class="prefetch-not link-live link-annotated" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b" data-url-archive="/doc/www/edwardtufte.github.io/e43d8239ed3fa1d513e2b4d071b6a7c0c8a98bff.html#sidenotes" data-url-original="https://edwardtufte.github.io/tufte-css/#sidenotes" title="'Tufte-CSS: Sidenotes: Footnotes and Marginal Notes', Liepmann 2026">Tufte-CSS</a> (<a href="https://github.com/edwardtufte/tufte-css" id="_babnO1Gi" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b" title="edwardtufte/tufte-css: Style your webpage like Edward Tufte’s handouts">Github</a>). Tufte-CSS is outdated in respects, but does sidenotes sensibly:</p>
+<figure>
+<p></p>
+<figcaption><p>Tufte-CSS’s section on sidenotes/margin notes, demonstrating sidenotes/margin notes (default desktop appearance).</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>Tufte-CSS “pop-in” sidenotes, collapsed vs uncollapsed (on a narrow window or mobile)</p></figcaption>
+</figure>
+<p>A Tufte-CSS-formatted sidenote looks like this:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode XML"><code class="sourceCode xml"><span id="cb1-1">&lt;<span class="kw">label</span><span class="ot"> for=</span><span class="st">"sn-extensive-use-of-sidenotes"</span><span class="ot"> class=</span><span class="st">"margin-toggle sidenote-number"</span>&gt;&lt;/<span class="kw">label</span>&gt;</span>
+<span id="cb1-2"></span>
+<span id="cb1-3">&lt;<span class="kw">input</span><span class="ot"> type=</span><span class="st">"checkbox"</span><span class="ot"> id=</span><span class="st">"sn-extensive-use-of-sidenotes"</span><span class="ot"> class=</span><span class="st">"margin-toggle"</span>&gt;</span>
+<span id="cb1-4"></span>
+<span id="cb1-5">&lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"sidenote"</span>&gt;This is a sidenote.&lt;/<span class="kw">span</span>&gt;</span></code></pre></div>
+<p>By default (on desktop), the notes are floated right into the margin; no measures are taken to avoid collisions or overlaps (presumably if you have that problem, you ought to just rewrite your page or fix it yourself). On narrow windows &amp; mobile, a media-query overrides the regular CSS, so the margin notes are not floated, simply indented, and toggled. The CSS looks like:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode CSS collapse"><code class="sourceCode css"><span id="cb2-1"><span class="fu">.sidenote</span><span class="op">,</span></span>
+<span id="cb2-2"><span class="fu">.marginnote</span> {</span>
+<span id="cb2-3">    <span class="kw">float</span>: <span class="dv">right</span><span class="op">;</span></span>
+<span id="cb2-4">    <span class="kw">clear</span>: <span class="dv">right</span><span class="op">;</span></span>
+<span id="cb2-5">    <span class="kw">margin-right</span>: <span class="dv">-60</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb2-6">    <span class="kw">width</span>: <span class="dv">50</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb2-7">    <span class="kw">margin-top</span>: <span class="dv">0.3</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb2-8">    <span class="kw">margin-bottom</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb2-9">    <span class="kw">font-size</span>: <span class="dv">1.1</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb2-10">    <span class="kw">line-height</span>: <span class="dv">1.3</span><span class="op">;</span></span>
+<span id="cb2-11">    <span class="kw">vertical-align</span>: <span class="dv">baseline</span><span class="op">;</span></span>
+<span id="cb2-12">    <span class="kw">position</span>: <span class="dv">relative</span><span class="op">;</span></span>
+<span id="cb2-13">}</span>
+<span id="cb2-14"></span>
+<span id="cb2-15"><span class="fu">...</span></span>
+<span id="cb2-16">label<span class="fu">.sidenote-number</span> {</span>
+<span id="cb2-17">    <span class="kw">display</span>: <span class="dv">inline</span><span class="op">;</span></span>
+<span id="cb2-18">}</span>
+<span id="cb2-19"></span>
+<span id="cb2-20">label<span class="fu">.margin-toggle</span><span class="in">:not(</span><span class="fu">.sidenote-number</span><span class="in">)</span> {</span>
+<span id="cb2-21">    <span class="kw">display</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb2-22">}</span>
+<span id="cb2-23"></span>
+<span id="cb2-24"><span class="fu">...</span></span>
+<span id="cb2-25"><span class="co">/* The mobile fallback: */</span></span>
+<span id="cb2-26"><span class="im">@media</span> (<span class="kw">max-width</span>: <span class="dv">760</span><span class="dt">px</span>) {</span>
+<span id="cb2-27">    <span class="fu">.sidenote</span><span class="op">,</span></span>
+<span id="cb2-28">        <span class="fu">.marginnote</span> {</span>
+<span id="cb2-29">            <span class="kw">display</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb2-30">        }</span>
+<span id="cb2-31">        <span class="fu">.margin-toggle</span><span class="in">:checked</span> <span class="op">+</span> <span class="fu">.sidenote</span><span class="op">,</span></span>
+<span id="cb2-32">        <span class="fu">.margin-toggle</span><span class="in">:checked</span> <span class="op">+</span> <span class="fu">.marginnote</span> {</span>
+<span id="cb2-33">            <span class="kw">display</span>: <span class="dv">block</span><span class="op">;</span></span>
+<span id="cb2-34">            <span class="kw">float</span>: <span class="dv">left</span><span class="op">;</span></span>
+<span id="cb2-35">            <span class="kw">left</span>: <span class="dv">1</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb2-36">            <span class="kw">clear</span>: <span class="dv">both</span><span class="op">;</span></span>
+<span id="cb2-37">            <span class="kw">width</span>: <span class="dv">95</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb2-38">            <span class="kw">margin</span>: <span class="dv">1</span><span class="dt">rem</span> <span class="dv">2.5</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb2-39">            <span class="kw">vertical-align</span>: <span class="dv">baseline</span><span class="op">;</span></span>
+<span id="cb2-40">            <span class="kw">position</span>: <span class="dv">relative</span><span class="op">;</span></span>
+<span id="cb2-41">        }</span>
+<span id="cb2-42">}</span></code></pre></div>
+<p>Margin notes are implemented similarly to sidenotes because a margin note can just be a sidenote whose number is hidden (at the possibility of some user confusion at the ‘missing’ endnote/sidenote, fixable with further CSS tweaks using number counters).</p>
+<p>One thing to note about Tufte-CSS is that, like books, it displays sidenotes by default. Many websites experimenting with note variations throw away the greatest advantage—the effortlessness of reading sidenotes by simply saccading left/right—in favor of hassling the user and forcing them to do quite as much work by clicking various UI elements to expand/collapse notes, defeating much of the point compared to a normal hyperlinked endnote.</p>
+<p>Tufte-CSS requires no JavaScript and is pure HTML/CSS, delegating layout to the browser. It is simple, fast, supports mobile well, and widely-used—it is definitely the most popular of HTML sidenote implementations. Its disadvantages are it will not handle gracefully many complex<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a> or lengthy sidenotes (which will overlap), and Tufte-CSS-style notes are not generated by default by many systems (so some sort of rewrite step is necessary to integrate Tufte-CSS into however one actually creates one’s website).</p>
+<p>Because Tufte-CSS sidenotes/margin notes are located inline, rather than put at the end of the text like most document systems implement it (eg. Pandoc), one needs either to use JS to rewrite endnotes at runtime or to rewrite them at compile-time. Many projects generate Tufte-CSS sidenote spans directly or rewrite standard Markdown <code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">a</span><span class="dt">&gt;</span></code> endnotes to spans, such as the R packages <a href="https://cran.r-project.org/web/packages/tufte/index.html" id="_SoEe6TY8" class="link-live" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b">“tufte”</a> &amp; <a href="/doc/www/eddelbuettel.github.io/957664909f6773b4a2a8ec20a7ff67fe933d16dd.html" id="_Y57QdI7V" class="link-live link-annotated-partial" data-url-archive="/doc/www/eddelbuettel.github.io/957664909f6773b4a2a8ec20a7ff67fe933d16dd.html" data-url-original="https://eddelbuettel.github.io/tint/" title="Allaire et al 2016">“Tint Is Not Tufte: An implementation in R Markdown”</a>. For Pandoc, <a href="https://github.com/jez/pandoc-sidenote" id="_7R1IHzNU" data-link-icon="PNDC" data-link-icon-type="text,quad,sans" title="jez/pandoc-sidenote: Convert Pandoc Markdown-style footnotes into sidenotes">pandoc-sidenote</a> is a Haskell <a href="https://pandoc.org/filters.html" id="_NWtic2X6" class="link-live" data-link-icon="PNDC" data-link-icon-type="text,quad,sans" title="Pandoc filters">Pandoc filter</a> which rewrites Pandoc’s endnotes in Tufte-CSS-style spans, and can be used with Pandoc-based site builders like Hakyll or Jekyll (for the latter, see <a href="https://github.com/jez/tufte-pandoc-jekyll" id="_MhsbxLPf" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b" title="A Jekyll theme for using Tufte CSS with Jekyll + Pandoc">tufte-pandoc-jekyll</a> &amp; <a href="https://github.com/clayh53/tufte-jekyll" id="_vMMg0Csp" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b" title="Minimal Jekyll blog styled to resemble the look and layout of Edward Tufte's books">tufte-jekyll</a>); <a href="https://github.com/gpaumier/gp2/commit/6f132a4cc684df807b0f3b6ad9d337e073bc3260" id="_-V8IeN48" data-link-icon="github" data-link-icon-type="svg" title="Writer: Convert footnotes to Tufte-CSS side notes">Guillaume Paumier</a> &amp; <a href="/doc/www/mattwetmore.me/497c496a2e5173d40a147d5724c60dabb2b19925.html" id="_dbIq6NBd" class="link-live link-annotated-partial" data-url-archive="/doc/www/mattwetmore.me/497c496a2e5173d40a147d5724c60dabb2b19925.html" data-url-original="https://mattwetmore.me/posts/hakyll-custom-writer" title="Using custom Pandoc writers with Hakyll">Matt Palmer</a> have Lua versions.</p>
+<p>Tufte-CSS user examples: <a href="/doc/www/nicolasduquette.com/ec9dd711761f49cc9a6e0b42c065cf0af28c70b7.html" id="_6gln2hsB" class="link-live link-annotated-partial" data-url-archive="/doc/www/nicolasduquette.com/ec9dd711761f49cc9a6e0b42c065cf0af28c70b7.html" data-url-original="http://nicolasduquette.com/research.html">Nicolas J. Duquette</a>, <a href="/doc/www/schmud.de/7e79d2718e09893133f95bf52c99417003529f01.html" id="_682Ok3zC" class="link-live link-annotated-partial" data-url-archive="/doc/www/schmud.de/7e79d2718e09893133f95bf52c99417003529f01.html" data-url-original="https://schmud.de/posts/2020-08-04-mother-of-mothers.html" title="The Mothers of the Mother of All Demos">David Schmudde</a>, <a href="/doc/www/digitalwords.net/75b95df3524f43bbcc1db69cb776516eb6776848.html" id="_Opb4Eo3d" class="link-live link-annotated-partial" data-url-archive="/doc/www/digitalwords.net/75b95df3524f43bbcc1db69cb776516eb6776848.html" data-url-original="https://digitalwords.net/about/" title="אודות">in Hebrew</a>, <a href="/doc/www/blog.sulami.xyz/1da092c478c1f23e2704fea540edab8cf6e613e0.html" id="_6-emfcfJ" class="link-live link-annotated-partial" data-url-archive="/doc/www/blog.sulami.xyz/1da092c478c1f23e2704fea540edab8cf6e613e0.html" data-url-original="https://blog.sulami.xyz/posts/common-lisp-restarts/" title="Restarts in Common Lisp">Robin Schroer</a>, <a href="/doc/www/blog.auxon.io/bd90c1d9fbd86cf686699792ed4c0c1a58c46544.html" id="_AzlUtbpe" class="link-live link-annotated-partial" data-url-archive="/doc/www/blog.auxon.io/bd90c1d9fbd86cf686699792ed4c0c1a58c46544.html" data-url-original="https://blog.auxon.io/2019/10/25/type-level-registers/" title="Using Type-Level Programming in Rust to Make Safer Hardware Abstractions">Dan Pittman</a>, <a href="/doc/www/www.shapeoperator.com/8dcf2f7a3127cb59791a51645e64c060a5375621.html" id="_BhIBZSAH" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.shapeoperator.com/8dcf2f7a3127cb59791a51645e64c060a5375621.html" data-url-original="https://www.shapeoperator.com/2016/12/12/sunset-geometry/" title="Sunset Geometry">Jason Merrill</a>, <a href="https://andzuck.com/blog/sfw/" id="_0Jtt8ivv" class="link-live link-annotated-partial" title="Super Free Will">Andrew Zuckerman</a>, <a href="/doc/www/taeer.bar-yam.me/cb46b12b7b54bf5744abb7fd61d68a8ed5366c7a.html" id="_BjbQGgTT" class="link-live link-annotated-partial" data-url-archive="/doc/www/taeer.bar-yam.me/cb46b12b7b54bf5744abb7fd61d68a8ed5366c7a.html" data-url-original="https://taeer.bar-yam.me/blog/posts/hakyll-tikz/" title="Hakyll + TikZ">Taeer Bar-Yam</a>, <a href="/doc/www/risk-engineering.org/6b44766648fd0d81faaef77d660f36914fe8cbe5.html" id="_lVgudMjc" class="link-live link-annotated-partial" data-url-archive="/doc/www/risk-engineering.org/6b44766648fd0d81faaef77d660f36914fe8cbe5.html" data-url-original="https://risk-engineering.org/concept/Rasmussen-practical-drift" title="'Rasmussen and practical drift: Drift towards danger and the normalization of deviance', 2017">Eric Marsden (<em>Risk Engineering</em>)</a>, <a href="/doc/www/tomcritchlow.com/0e6068f5191d296b2066cc3ce2f2225658926559.html" id="_VpxlMRih" class="link-live link-annotated-partial" data-url-archive="/doc/www/tomcritchlow.com/0e6068f5191d296b2066cc3ce2f2225658926559.html" data-url-original="https://tomcritchlow.com/2019/11/18/yes-and/" title="'Yes! and... How to be effective in the theatre of work', 2019">Tom Critchlow</a>, <a href="/doc/www/philcrissman.net/2be66e7d3c5afe820d5758edaa08280ece76fe1d.html" id="_K6ZKW3B0" class="link-live link-annotated-partial" data-url-archive="/doc/www/philcrissman.net/2be66e7d3c5afe820d5758edaa08280ece76fe1d.html" data-url-original="http://philcrissman.net/posts/eulers-fizzbuzz/" title="Euler’s FizzBuzz">Phil Crissman</a>.</p>
+<p>Similar approaches (some of these are more limited than Tufte-CSS; typically, authors fail to handle narrow/mobile):</p>
+<ul>
+<li><p><a href="https://numinous.productions/ttft/" id="matuschak-nielsen-2019" class="link-live link-annotated" data-link-icon="MN" data-link-icon-type="text" title="'How Can We Develop Transformative Tools For Thought?', Matuschak &amp; Nielsen 2019">“How can we develop transformative tools for thought?”</a>, Andy Matuschak &amp; Michael Nielsen 2019 (mobile: floating footnotes)</p></li>
+<li><p><a href="https://www.arxiv-vanity.com/" id="_runCExro" title="arXiv Vanity">Arxiv Vanity</a> (mobile: floating footnotes)</p></li>
+<li><p><a href="https://nintil.com/science-ending-frontier" id="_Y5ZbWtXS" class="link-live" data-link-icon="𝓝" data-link-icon-type="text" data-link-icon-color="#c05b4d" title="Science">Nintil</a> (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/danilafe.com/f525a8a1afd129158b4da9bd105bb12b6997683f.html" id="_8apc6o2F" class="link-live link-annotated-partial" data-url-archive="/doc/www/danilafe.com/f525a8a1afd129158b4da9bd105bb12b6997683f.html" data-url-original="https://danilafe.com/blog/sidenotes/" title="JavaScript-Free Sidenotes in Hugo">Danila Fedorin’s</a> sidenotes (mobile: pop-in, collapsed) are inspired by Koos Looijesteijn’s approach, Fedorin’s implementation removes the JS but at the cost of guaranteeing accessibility and inheriting Tufte-CSS’s limitations on block elements/Markdown in sidenotes</p></li>
+<li><p><a href="/doc/www/pair-code.github.io/c331351a690011a2a37f7ee1c75bf771f01df3a3.html" id="bäuerle-wexler-2020" class="link-live link-annotated" data-url-archive="/doc/www/pair-code.github.io/c331351a690011a2a37f7ee1c75bf771f01df3a3.html" data-url-original="https://pair-code.github.io/interpretability/text-dream/blogpost/" title="A visual investigation of nightmares in Sesame Street by Alex Bäuerle (@a13xba) and James Wexler (@bengiswex) of PAIR.">“What does BERT dream of?”</a> (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/increment.com/ee36c21b6f3b2364fe87eed5b67472e63aa723f2.html" id="asparouhova-2019" class="link-live link-annotated-partial" data-url-archive="/doc/www/increment.com/ee36c21b6f3b2364fe87eed5b67472e63aa723f2.html" data-url-original="https://increment.com/open-source/the-rise-of-few-maintainer-projects/" title="'The rise of few-maintainer projects: As casual contributions—coordinated by a handful of maintainers—become ever more prevalent, how should we reset our expectations for OSS?', Nadia Asparouhova 2019"><em>Increment</em></a> (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/mattwilcox.net/d9de993eca3bceb7b1eb8810a3ff362b96a20c97.html" id="_vo-rcBY7" class="link-live link-annotated-partial" data-url-archive="/doc/www/mattwilcox.net/d9de993eca3bceb7b1eb8810a3ff362b96a20c97.html" data-url-original="https://mattwilcox.net/musing/the-ineffectiveness-of-icons" title="The ineffectiveness of lonely icons: If your target audience is a general population, you should not be using icons alone to convey anything meaningful. By doing so, you have made assumptions that are unlikely to be appropriate to a general audience.">Matt Wilcox</a>, with an unusual use of margin notes for paragraph/section <em>summaries</em>, similar to my use (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/glench.com/4f59c13421125467f5cbe9f2cbf830d3a1415519.html" id="_db0lvEpc" class="link-live link-annotated-partial" data-url-archive="/doc/www/glench.com/4f59c13421125467f5cbe9f2cbf830d3a1415519.html" data-url-original="http://glench.com/closed-source/dictionaryofnumbers/" title="Dictionary of Numbers">“Dictionary of Numbers”</a>, Glen Chiacchieri (mobile: ❌)</p></li>
+<li><p><a href="/doc/www/letters.temporarystate.net/633ff3d37db53263cc8fe0712441b636c3d9c708.html" id="_JxJlocR1" class="link-live link-annotated-partial" data-url-archive="/doc/www/letters.temporarystate.net/633ff3d37db53263cc8fe0712441b636c3d9c708.html" data-url-original="https://letters.temporarystate.net/entry/3/" title="Monospace Typography">Roman Gornitsky (The Temporary State)</a> (mobile: ❌)</p></li>
+<li><p><a href="/doc/www/clagnut.com/c62f57e42fe341a699bb99c5f473cbad5a38f37e.html" id="_dNXm9guP" class="link-live link-annotated-partial" data-url-archive="/doc/www/clagnut.com/c62f57e42fe341a699bb99c5f473cbad5a38f37e.html" data-url-original="https://clagnut.com/blog/2395" title="All you need to know about hyphenation in CSS">Richard Rutter</a> (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/jamesyu.org/b0d639c4ec1bcf237375f7c6cf00d9bbaf30e8a9.html" id="yu-gpt-3-2020" class="link-live link-annotated" data-url-archive="/doc/www/jamesyu.org/b0d639c4ec1bcf237375f7c6cf00d9bbaf30e8a9.html" data-url-original="https://jamesyu.org/singular/" title="'Singular: Possible futures of the singularity', Yu &amp; GPT-3 2020">“Singular: Possible futures of the singularity”</a>, James Yu &amp; GPT-3 (mobile: click-to-expand as a sticky pop-up)</p></li>
+<li><p><a href="/doc/www/vincebuffalo.com/ff0a25c608cc9a469d6d06ea90a7789d875ededa.html" id="_z259Ptze" class="link-live link-annotated-partial" data-url-archive="/doc/www/vincebuffalo.com/ff0a25c608cc9a469d6d06ea90a7789d875ededa.html" data-url-original="https://vincebuffalo.com/blog/2020/08/20/the-problem-of-detecting-polygenic-selection-from-temporal-data.html" title="The Problem of Detecting Polygenic Selection from Temporal Data">“The Problem of Detecting Polygenic Selection from Temporal Data”</a>, Vince Buffalo (mobile: pop-in, expanded)</p></li>
+<li><p><a href="/doc/www/fransdejonge.com/839b30a0dcd5b99be535e7975cd76f51ff45a463.html" id="_5bN23KBY" class="link-live link-annotated-partial" data-url-archive="/doc/www/fransdejonge.com/839b30a0dcd5b99be535e7975cd76f51ff45a463.html" data-url-original="https://fransdejonge.com/wp-content/uploads/2010/01/sidenotes.html">“How to do sidenotes in HTML documents using CSS and JavaScript”</a>, Frans de Jonge <span class="date-range">2005<sub><span title="2005 was 21 years ago.">21ya</span></sub></span> (an early example, with consideration of cross-browser compatibility for the era)</p></li>
+<li><p><a href="/doc/www/omar.website/41f329c0b1c01c7c073276676c141e800809f2e0.html" id="_7tLKYBDu" class="link-live link-annotated-partial" data-url-archive="/doc/www/omar.website/41f329c0b1c01c7c073276676c141e800809f2e0.html" data-url-original="https://omar.website/posts/against-recognition/" title="Against recognition">Omar Rizwan</a> (Hugo)</p></li>
+<li><p><a href="https://runyourown.social/" id="_wrfROCgv" title="How to run a small social network site for your friends">Darius Kazemi/Emma Winston</a> (‘margin notes’, no apparent use of numbering to support ‘sidenotes’; nice retro theme; <code>&lt;aside&gt;</code>; pop-in, expanded; no truncation/wrapping; absolute positioning offset based on div around associated paragraph, so can’t handle overlaps which leads to bugs as <a href="/doc/design/typography/sidenote/2022-10-31-dariuskazemi-runyourownsocial-exampleofoverlappingsidenotesbug.png" id="_OpKIXdWc" class="link-annotated-partial" data-link-icon="image" data-link-icon-type="svg" data-image-height="2787" data-image-width="1720" data-aspect-ratio="50 / 81">can be seen</a> in that page; apparently extraneous use of grid?)</p></li>
+<li><p><a href="https://verdagon.dev/blog/perfect-replayability-prototyped" id="ovadia-2022" class="link-live" title="'Heisenbugs: The most elusive kind of bug, and how to capture them with Perfect Replayability—Eliminate heisenbugs and endless debugging sessions!', Evan Ovadia 2022-06-29">Vale</a> (notable for strange handling of mobile: the sidenotes are hidden and their footnote numbers left in place, by being moved to the end of a section and grouped in a single list while being collapsed; clicking or tapping the footnote jumps to the end-block but does <em>not</em> expand them, and they must be clicked on to expand them all.)</p></li>
+<li><p><a href="https://tylervigen.com/the-mystery-of-the-bloomfield-bridge" id="_3mxJdOxL" class="link-annotated-partial" data-link-icon="V" data-link-icon-type="text,sans" data-link-icon-color="#ba0f27">Tyler Vigen</a>: pop-in-only; tooltips used for ‘hover’, which is a bad idea<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></p></li>
+<li><p><a href="https://entropicthoughts.com/markov-chains-for-queueing-systems" id="_ZcgPPOKS" title="'Markov Chains for Queueing Systems', kqr 2022">xkqr</a> (input checkbox mobile approach)</p></li>
+<li><p>examples with <strong>no mobile</strong> (❌) support:</p>
+<ul>
+<li><p><a href="/doc/www/www.typography.com/2b041cceb9decbf98ea6ee0c4d690a8e544851bc.html" id="hoefler-2020" class="prefetch-not link-live link-annotated-partial" data-url-archive="/doc/www/www.typography.com/2b041cceb9decbf98ea6ee0c4d690a8e544851bc.html" data-url-original="https://www.typography.com/blog/text-for-proofing-fonts" title="'Text for Proofing Fonts: A farewell to &lt;em&gt;The Quick Brown Fox&lt;/em&gt;', Jonathan Hoefler 2020">Hoefler&amp;Co.</a></p></li>
+<li><p><a href="/doc/www/www.michaelpetralia.com/ee47655d51c43da621647c5259120b5d932171cb.html" id="_Jr3fDPLi" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.michaelpetralia.com/ee47655d51c43da621647c5259120b5d932171cb.html" data-url-original="http://www.michaelpetralia.com/theartofliving_epictetus.html" title="The Art of Living (Epictetus circa A.D. 100), as interpreted by Sharon Lebell">Michael Petralia</a></p></li>
+<li><p>The Morning After WordPress template’s “asides” (<a href="https://thecityasaproject.org/2020/05/a-pilgrimage-round-my-room-virtual-travel-to-the-holy-land-in-the-middle-ages/" id="_29CUBk9W" title="A Pilgrimage Round my Room: Virtual Travel to the Holy Land in the Middle Ages">example</a>)</p></li>
+<li><p><a href="/doc/www/mazzo.li/0dc716142b410dc5bb3dcee57210f5b4c7566645.html" id="_HvD6bDlh" class="link-live link-annotated-partial" data-url-archive="/doc/www/mazzo.li/0dc716142b410dc5bb3dcee57210f5b4c7566645.html" data-url-original="https://mazzo.li/posts/vectorized-atan2.html" title="Speeding up atan2f by 50x">Francesco</a> (overloads <code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">section</span><span class="dt">&gt;</span></code> &amp; manually overrides list markers for numbering for one section per sidenote, with fragile grid default positioning; mobile is just desktop but made microscopic)</p></li>
+</ul></li>
+</ul>
+</section>
+<section id="sidenotes-js" class="level2">
+<h2><a href="#sidenotes-js" title="Link to section: § 'sidenotes.js'"><code>sidenotes.js</code></a></h2>
+<p><a href="/static/js/sidenotes.js" id="_SJ1XZYUh" class="prefetch-not link-annotated-partial" data-link-icon="code" data-link-icon-type="svg" data-link-icon-color="#f6da19"><code>sidenotes.js</code></a> was developed by <a href="https://wiki.obormot.net/" id="_rEJYARlj" class="link-live link-annotated-partial" title="Welcome to OborWiki">Said Achmiz</a> in 2019 for use on Gwern.net after looking at Tufte-CSS and deciding that Tufte-CSS’s simple approach (while appropriate for most users) would fail on particularly-heavily endnoted pages:</p>
+<figure>
+<p></p>
+<figcaption><p>Demonstration of <code>sidenotes.js</code> handling multiple large dense endnote annotations on <a href="/doc/radiance/2002-scholz-radiance" id="scholz-et-al-2013" class="prefetch-not link-annotated link-page" title="'Radiance: A Novel', Scholz et al 2013"><em>Radiance</em></a>.</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>Pop-in of footnotes (handled by <code>extracts.js</code>/<code>popins.js</code> as a special-case of generalized annotations).</p></figcaption>
+</figure>
+<p>The advantage over Tufte-css is that <code>sidenotes.js</code> ‘manually’ lays out sidenotes at runtime to minimize overlap while trying to keep sidenotes within the same window as the anchor, enabling it to handle almost arbitrarily many long endnotes without rendering any unreadable. Sidenotes/endnotes can be arbitrarily long and contain most block elements like code blocks, blockquotes, lists, images, tables, etc. While it’s at it, sidenotes are highlighted &amp; their matching anchors highlighted on hover, too-long sidenotes are partially collapsed (the user clicks to expand them). Further, it supports a custom “margin note” feature: any HTML spans of text with the class <code class="sourceCode css">margin-note</code> will be popped out of the text into the margin if there is room, or it will be left in place &amp; italicized. (I place margin notes at the beginning of paragraphs as summaries, letting users more easily skim.) Finally, as a bit of an easter egg inspired by <a href="https://en.wikipedia.org/wiki/Xeyes" id="_lD0SYW0i" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Xeyes#bodyContent" title="Xeyes"><code>xeyes</code></a>, the sidenote return-to-anchor arrows are angled up or down so as to point to the original link in the body.</p>
+<p>The disadvantage compared to pure static HTML/CSS approaches is that the JS needs to load and copy the endnotes into sidenotes, reflow as necessary over the whole page, which is user-visible &amp; distracting; this is noticeable even putting the load in the HEAD to speed it up. It can also interact with other complicated features and while it will handle heavy note loads much better than most static approaches (most of which don’t even try to avoid errors like overlaps), it still has the occasional subtle bug.</p>
+<p>For narrow windows, other approaches can be used. On Gwern.net, I use <a href="/static/js/popups.js" id="achmiz-2019" class="prefetch-not link-annotated" data-link-icon="code" data-link-icon-type="svg" data-link-icon-color="#f6da19" title="'&lt;code&gt;popups.js&lt;/code&gt;', Achmiz 2019">floating footnotes</a> which ‘pop up’ when the user hovers over a footnote anchor<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a>, which avoids the need to navigate to the end of the page &amp; back.</p>
+<p><code>sidenotes.js</code> assumes that the document has been generated from Pandoc Markdown and has normal Pandoc endnotes (of the form <code>&lt;a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"&gt;&lt;sup&gt;1&lt;/sup&gt;&lt;/a&gt;</code> for the anchor, and <code>&lt;li id="fn1" role="doc-endnote"&gt;&lt;p&gt;Example&lt;/p&gt;&lt;/li&gt;</code> for the endnote body at the end of the document). Hence, implementing sidenotes with it requires little more than a JS import like <code>&lt;script src="/static/js/sidenotes.js" async&gt;&lt;/script&gt;</code>. (This has some advantages: for example, footnotes/sidenotes remain linkable—one can link to <code>#fn1</code> or <code>#sn1</code> as desired.<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>)</p>
+<p>Users or similar implementations:</p>
+<ul>
+<li><p><a href="https://www.fantasticanachronism.com/2020/01/17/having-had-no-predecessor-to-imitate/index.html" id="menard-2020" class="link-annotated" title="Having Had No Predecessor to Imitate, He Had No Successor Capable of Imitating Him">Fantastic Anachronism</a></p></li>
+<li><p>Leo Gao (eg. <a href="/doc/www/bmk.sh/8fcbeadddf8de25abf54dc7705ae3f5756fb6059.html" id="_L0MIvP0a" class="link-live link-annotated-partial" data-url-archive="/doc/www/bmk.sh/8fcbeadddf8de25abf54dc7705ae3f5756fb6059.html" data-url-original="https://bmk.sh/2019/10/27/The-Difficulties-of-Text-Generation-with-Autoregressive-Language-Models/" title="The Difficulties of Text Generation using Autoregressive Language Models: A Brief Overview">1</a>, <a href="https://bmk.sh/2020/05/29/GPT-3-A-Brief-Summary/" id="_qaU3XsWO" class="link-live link-annotated-partial" title="Why GPT-3 Matters">2</a>) designed his site inspired a little by Gwern.net, and uses sidenotes similarly; his approach seems to be simpler. (mobile: endnotes)</p></li>
+<li><p>OpenAI (eg. <a href="https://openai.com/research/how-ai-training-scales" id="mccandlish-et-al-2018" class="link-annotated" data-link-icon="openai" data-link-icon-type="svg" title="How AI Training Scales: We’ve discovered that the gradient noise scale, a simple statistical metric, predicts the parallelizability of neural network training on a wide range of tasks. Since complex tasks tend to have noisier gradients, increasingly large batch sizes are likely to become useful in the future, removing one potential limit to further growth of AI systems. More broadly, these results show that neural network training need not be considered a mysterious art, but can be rigorized and systematized.">1</a>) (mobile: endnotes)</p></li>
+<li><p><a href="/doc/www/blog.platypope.org/7a3fe0312ad89a34694e95c7893a9dcb568e5488.html" id="_gn9HQVgC" class="link-live link-annotated-partial" data-url-archive="/doc/www/blog.platypope.org/7a3fe0312ad89a34694e95c7893a9dcb568e5488.html" data-url-original="http://blog.platypope.org/2010/1/7/solving-puzzles-with-computer-science/" title="Solving puzzles with (computer) science">Marshall (Vandegrift) Bockrath</a>, from <a href="/doc/www/blog.platypope.org/c5b7710e52f2b1be0c8ebef0bb3100a1b103b99e.html" id="_xiB8wSOH" class="link-live link-annotated-partial" data-url-archive="/doc/www/blog.platypope.org/c5b7710e52f2b1be0c8ebef0bb3100a1b103b99e.html" data-url-original="http://blog.platypope.org/2012/4/5/restore-features/" title="Restoring Features">pre-2012</a>! (mobile: ❌)</p></li>
+</ul>
+<section id="sidebar-tables" class="level3">
+<h3><a href="#sidebar-tables" title="Link to section: § 'Sidebar Tables'">Sidebar Tables</a></h3>
+<p>Said Achmiz has developed a pure CSS+HTML variant of sidenotes which is intended for easy cross-referencing of block elements such as small tables rather than footnotes. The block elements are floated inside a double <code>&lt;div&gt;</code> with the main column having a maximum width, so at wider windows the sidebar blocks slip rightwards into the margin (while their inner <code>&lt;div&gt;</code>s make them align left within the margin).</p>
+<p>A demonstration of this sidebar is a <a href="https://woa.obormot.net/Athletics" id="_AOtEp691" class="link-live" title="Worlds of Adventure"><em>Dungeons &amp; Dragons</em> manual on the “Athletics” skill</a>, where the tables &amp; specialty skills are conveniently placed in the margin where possible, shrinking as necessary, but ultimately being popped inline for sufficiently narrow windows. There are so many tables that if they were placed in the main column, as usual, the text would be constantly interrupted and widely separated; the sidebar layout more closely replicates the dense layout of <a href="https://en.wikipedia.org/wiki/Dungeons_%26_Dragons" id="_PlMe0RB-" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Dungeons_%26_Dragons#bodyContent" title="&lt;em&gt;Dungeons &amp; Dragons&lt;/em&gt;">D&amp;D</a> manuals, which is important when the players will be frequently consulting it for details.</p>
+<figure>
+<p></p>
+<figcaption><p>Sidebar, full width</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>Sidebar, inline</p></figcaption>
+</figure>
+<p>(<a href="https://www.maxkohler.com/posts/continuous-typography/" id="_XKWDPL1y" title="Continuous Typography: Notes toward a continuous framework for screen typography">Max Kohler</a> abuses <code>&lt;aside&gt;</code> elements + grid layouts to achieve something somewhat similar but inferior in that all his sidenotes get stacked at the end—which defeats the point of having sidenotes.)</p>
+</section>
+</section>
+<section id="ink-switch" class="level2">
+<h2><a href="#ink-switch" title="Link to section: § 'Ink &amp; Switch'">Ink &amp; Switch</a></h2>
+<p><a href="/doc/www/www.inkandswitch.com/2950b5101ad7d25ba0a3066f279c555ead5c18c7.html" id="_zd7HMZvI" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.inkandswitch.com/2950b5101ad7d25ba0a3066f279c555ead5c18c7.html" data-url-original="https://www.inkandswitch.com/index.html" title="Ink &amp;amp; Switch">Ink &amp; Switch’s</a> pages like <a href="/doc/www/www.inkandswitch.com/7b1c7b3505ade1a1ecebbd9af85f8ed37270cbeb.html" id="kleppmann-et-al-2019-blog" class="link-live link-annotated" data-url-archive="/doc/www/www.inkandswitch.com/7b1c7b3505ade1a1ecebbd9af85f8ed37270cbeb.html" data-url-original="https://www.inkandswitch.com/local-first.html" title="'Local-first software: You own your data, in spite of the cloud [web]', Kleppmann et al 2019">“Local-first software: You own your data, in spite of the cloud”’s</a> 2016 static margin notes feature looks much like Tufte-CSS in using HTML/CSS to create right-aligned sidenotes, although Ink &amp; Switch eschews explicit footnote numbering and its pop-ins are uncollapsed by default.</p>
+<figure>
+<p></p>
+<figcaption><p>Ink &amp; Switch, “Local-first software” margin notes</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>Ink &amp; Switch, “Local-first software” margin notes, mobile (pop-in, default expanded)</p></figcaption>
+</figure>
+<p>Implementation-wise, it takes a noticeably different tack in which CSS features it uses. The HTML itself is just an <code class="sourceCode html"><span class="dt">&lt;</span><span class="kw">aside</span><span class="dt">&gt;</span></code> element:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode XML"><code class="sourceCode xml"><span id="cb3-1">&lt;<span class="kw">aside</span>&gt;&lt;<span class="kw">p</span>&gt;&lt;<span class="kw">a</span><span class="ot"> href=</span><span class="st">"https://ourincrediblejourney.tumblr.com/"</span>&gt;Our incredible journey&lt;/<span class="kw">a</span>&gt;</span>
+<span id="cb3-2">    is a blog that documents startup products getting shut down after an acquisition.&lt;/<span class="kw">p</span>&gt;<span class="er">&lt;</span>​/​aside&gt;</span></code></pre></div>
+<p>But <a href="https://gitlab.developers.cam.ac.uk/cst/dtg/trvedata/local-first/-/commit/7a8819e817a85173af7033e64bcdcc5054b9af50?expanded=1#e74ca419c79e4a87cb170f6eb8a6c0d2719e1c73_0_726" id="_FF583oU_" title="Web article style files (7a8819e8) &lt;span class=separator-inline&gt;•&lt;/span&gt; Commits &lt;span class=separator-inline&gt;•&lt;/span&gt; Computer Lab / Digital Technology Group / TRVE Data / local-first">their CSS</a> uses <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/calc" id="_FIfPonQ8" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000" title="'&lt;code&gt;calc()&lt;/code&gt; - CSS: Cascading Style Sheets', MDN 2026"><code>calc()</code></a> extensively to create positioning &amp; readjust overlaps without JS:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode CSS collapse"><code class="sourceCode css"><span id="cb4-1">article aside<span class="op">,</span> figcaption<span class="op">,</span> header<span class="op">&gt;</span><span class="pp">#byline</span> {</span>
+<span id="cb4-2">  <span class="va">--aside-offset</span>: <span class="dv">1</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb4-3">  <span class="va">--aside-offset-lineheight</span>: <span class="dv">1.5</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb4-4">  <span class="kw">box-sizing</span>: <span class="dv">border-box</span><span class="op">;</span></span>
+<span id="cb4-5">  <span class="kw">margin-bottom</span>: <span class="fu">calc(var(</span><span class="va">--padding</span><span class="fu">)</span> <span class="op">*</span> <span class="dv">2</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-6">  <span class="kw">padding</span>: <span class="fu">var(</span><span class="va">--padding</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-7">  <span class="kw">position</span>: <span class="dv">absolute</span><span class="op">;</span></span>
+<span id="cb4-8">  <span class="kw">right</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb4-9">  <span class="kw">width</span>: <span class="fu">var(</span><span class="va">--aside-width</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-10">}</span>
+<span id="cb4-11"></span>
+<span id="cb4-12">aside<span class="op">,</span> figcaption<span class="op">,</span> figure img<span class="op">,</span> figure video {</span>
+<span id="cb4-13">  <span class="kw">border-radius</span>: <span class="fu">calc(var(</span><span class="va">--padding</span><span class="fu">)</span><span class="op">/</span><span class="dv">4</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-14">  <span class="kw">max-width</span>: <span class="dv">100</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb4-15">}</span>
+<span id="cb4-16"></span>
+<span id="cb4-17">aside<span class="op">,</span> aside<span class="op">&gt;*,</span> <span class="pp">#byline</span><span class="op">,</span> <span class="pp">#byline</span> li<span class="op">,</span> figcaption<span class="op">,</span> figcaption<span class="op">&gt;*,</span> blockquote footer {</span>
+<span id="cb4-18">  <span class="kw">font-size</span>: <span class="dv">0.8125</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb4-19">  <span class="kw">font-weight</span>: <span class="dv">400</span><span class="op">;</span></span>
+<span id="cb4-20">  -ms-hyphens: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb4-21">  <span class="kw">-webkit-hyphens</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb4-22">  <span class="kw">hyphens</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb4-23">  <span class="kw">line-height</span>: <span class="dv">1.25</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb4-24">  <span class="kw">margin-bottom</span>: <span class="dv">0.5</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb4-25">  <span class="kw">text-align</span>: <span class="dv">left</span><span class="op">;</span></span>
+<span id="cb4-26">}</span>
+<span id="cb4-27"></span>
+<span id="cb4-28"><span class="fu">...</span></span>
+<span id="cb4-29"><span class="co">/* aside and figcaption nudge ---------------- */</span></span>
+<span id="cb4-30"></span>
+<span id="cb4-31"><span class="co">/* using these can cause overlapping of elements. if you apply to one aside, you may</span></span>
+<span id="cb4-32"><span class="co">    need to apply and adjust other that precede clearing the blocks figcaption or section */</span></span>
+<span id="cb4-33"></span>
+<span id="cb4-34"><span class="fu">.move-up-1</span> {</span>
+<span id="cb4-35">  <span class="kw">margin-top</span>: <span class="fu">calc(</span>(<span class="fu">var(</span><span class="va">--aside-offset</span><span class="fu">)</span> <span class="op">+</span> (<span class="fu">var(</span><span class="va">--aside-offset-lineheight</span><span class="fu">)</span><span class="op">*</span><span class="dv">1</span>))<span class="op">/</span><span class="dv">-1</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-36">}</span>
+<span id="cb4-37"></span>
+<span id="cb4-38"><span class="fu">.move-up-2</span> {</span>
+<span id="cb4-39">  <span class="kw">margin-top</span>: <span class="fu">calc(</span>(<span class="fu">var(</span><span class="va">--aside-offset</span><span class="fu">)</span> <span class="op">+</span> (<span class="fu">var(</span><span class="va">--aside-offset-lineheight</span><span class="fu">)</span><span class="op">*</span><span class="dv">2</span>))<span class="op">/</span><span class="dv">-1</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-40">}</span>
+<span id="cb4-41"><span class="fu">...</span></span>
+<span id="cb4-42"><span class="fu">.move-up-25</span> {</span>
+<span id="cb4-43">  <span class="kw">margin-top</span>: <span class="fu">calc(</span>(<span class="fu">var(</span><span class="va">--aside-offset</span><span class="fu">)</span> <span class="op">+</span> (<span class="fu">var(</span><span class="va">--aside-offset-lineheight</span><span class="fu">)</span><span class="op">*</span><span class="dv">25</span>))<span class="op">/</span><span class="dv">-1</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb4-44">}</span></code></pre></div>
+<p>One downside is that there is no support for numbering I can see, so they’re all margin notes. The CSS is considerably more complex and I’m not sure what the complexity gains one compared to Tufte-CSS—correctness?</p>
+</section>
+<section id="robert-nystrom" class="level2">
+<h2><a href="#robert-nystrom" title="Link to section: § 'Robert Nystrom'">Robert Nystrom</a></h2>
+<p>Game programmer Robert Nystrom’s <span class="date-range">2014<sub><span title="2014 was 12 years ago.">12ya</span></sub></span> book <a href="https://gameprogrammingpatterns.com/" id="_O4jrpnEq" class="link-live link-annotated-partial" data-link-icon="GPP" data-link-icon-type="text,tri,sans" data-link-icon-color="#1487c1" title="Game Programming Patterns"><em>Game Programming Patterns</em></a>, makes heavy use of sidenotes implemented in HTML/CSS/JS, mostly similar to Tufte-CSS.</p>
+<figure>
+<p></p>
+<figcaption><p><em>Game Programming Patterns</em>, desktop sidenotes</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p><em>Game Programming Patterns</em>, mobile (inline, expanded by default)</p></figcaption>
+</figure>
+<p>He takes a different approach: sidenotes are written using the HTML <code>&lt;aside&gt;</code> element, and a <code>&lt;span&gt;</code> with each aside’s ID specifies their placement in the text; <a href="https://gameprogrammingpatterns.com/script.js" id="_M5EjE7Z-" class="link-live" data-link-icon="GPP" data-link-icon-type="text,tri,sans" data-link-icon-color="#1487c1">the JS</a> then moves the aside into the margin. He designed it to handle resizing below &lt;800px not by pop-in footnotes in a block, but by media-queries simply shifting the aside into the text, inline. (With no JS, the fallback is also including it inline.)</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode XML"><code class="sourceCode xml"><span id="cb5-1">&lt;<span class="kw">p</span>&gt;Let<span class="dv">&amp;#8217;</span>s say we want a happy face to appear on screen. Our program starts looping</span>
+<span id="cb5-2">through the framebuffer, coloring pixels. What we don<span class="dv">&amp;#8217;</span>t realize is that the</span>
+<span id="cb5-3">video driver is pulling from the framebuffer right as we<span class="dv">&amp;#8217;</span>re writing to it. As it</span>
+<span id="cb5-4">scans across the pixels we<span class="dv">&amp;#8217;</span>ve written, our face starts to appear, but then it</span>
+<span id="cb5-5">outpaces us and moves into pixels we haven<span class="dv">&amp;#8217;</span>t written yet. The result is</span>
+<span id="cb5-6">&lt;<span class="kw">em</span>&gt;tearing&lt;/<span class="kw">em</span>&gt;, a hideous visual bug where you see half of something drawn on screen.&lt;/<span class="kw">p</span>&gt;</span>
+<span id="cb5-7">&lt;<span class="kw">p</span>&gt;&lt;<span class="kw">span</span><span class="ot"> name=</span><span class="st">"tearing"</span>&gt;&lt;/<span class="kw">span</span>&gt;&lt;/<span class="kw">p</span>&gt;</span>
+<span id="cb5-8">&lt;<span class="kw">p</span>&gt;&lt;<span class="kw">img</span><span class="ot"> src=</span><span class="st">"images/double-buffer-tearing.png"</span><span class="ot"> alt=</span><span class="st">"A series of images of an in-progress frame</span></span>
+<span id="cb5-9"><span class="st">    being rendered. A pointer writes pixels while another reads them. The reader outpaces the writer</span></span>
+<span id="cb5-10"><span class="st">    until it starts reading pixels that haven't been rendered yet."</span>&gt;&lt;/<span class="kw">p</span>&gt;</span>
+<span id="cb5-11">&lt;<span class="kw">aside</span><span class="ot"> name=</span><span class="st">"tearing"</span>&gt;</span>
+<span id="cb5-12"></span>
+<span id="cb5-13">&lt;<span class="kw">p</span>&gt;We start drawing pixels just as the video driver starts reading from the</span>
+<span id="cb5-14">framebuffer (Fig. 1). The video driver eventually catches up to the renderer and</span>
+<span id="cb5-15">then races past it to pixels we haven<span class="dv">&amp;#8217;</span>t written yet (Fig. 2). We finish drawing</span>
+<span id="cb5-16">(Fig. 3), but the driver doesn<span class="dv">&amp;#8217;</span>t catch those new pixels.&lt;/<span class="kw">p</span>&gt;</span>
+<span id="cb5-17">&lt;<span class="kw">p</span>&gt;The result (Fig. 4) is that the user sees half of the drawing. The name</span>
+<span id="cb5-18"><span class="dv">&amp;#8220;</span>tearing<span class="dv">&amp;#8221;</span> comes from the fact that it looks like the bottom half was torn off.&lt;/<span class="kw">p</span>&gt;</span>
+<span id="cb5-19">​<span class="er">&lt;</span>​/​aside&gt;</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode CSS"><code class="sourceCode css"><span id="cb6-1"><span class="im">@media</span> <span class="kw">only</span> <span class="dv">screen</span> <span class="kw">and</span> (<span class="kw">min-width</span>: <span class="dv">800</span><span class="dt">px</span>) {</span>
+<span id="cb6-2">  <span class="fu">.page</span> {</span>
+<span id="cb6-3">    <span class="kw">padding-right</span>: <span class="dv">300</span><span class="dt">px</span><span class="op">;</span> }</span>
+<span id="cb6-4"></span>
+<span id="cb6-5">  aside {</span>
+<span id="cb6-6">    <span class="kw">position</span>: <span class="dv">absolute</span><span class="op">;</span></span>
+<span id="cb6-7">    <span class="kw">width</span>: <span class="dv">240</span><span class="dt">px</span><span class="op">;</span></span>
+<span id="cb6-8">    <span class="kw">right</span>: <span class="dv">30</span><span class="dt">px</span><span class="op">;</span></span>
+<span id="cb6-9">    <span class="kw">padding</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb6-10">    <span class="kw">background</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb6-11">    <span class="kw">border</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb6-12">    <span class="kw">padding-left</span>: <span class="dv">22</span><span class="dt">px</span><span class="op">;</span></span>
+<span id="cb6-13">    <span class="kw">border-radius</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb6-14">    <span class="kw">border-left</span>: <span class="dv">solid</span> <span class="dv">8</span><span class="dt">px</span> <span class="cn">#f0e9db</span><span class="op">;</span> }</span>
+<span id="cb6-15">  aside p<span class="op">,</span> aside li {</span>
+<span id="cb6-16">      <span class="kw">font</span>: <span class="dv">14</span><span class="dt">px</span>/<span class="dv">20</span><span class="dt">px</span> <span class="st">"Source Sans Pro"</span><span class="op">,</span> <span class="st">"Lucida Grande"</span><span class="op">,</span> <span class="st">"Lucida Sans Unicode"</span><span class="op">,</span> Verdana<span class="op">,</span> <span class="dv">sans-serif</span><span class="op">;</span> } }</span></code></pre></div>
+<p>It’s unclear to me whether the JS is necessary, or whether inline is the best fallback for sidenotes. The use of <code>&lt;aside&gt;</code> is also a complication, as few formats include any native support for that.</p>
+<p>Nystrom’s books are an interesting read for programmers, and also have some other interesting design aspects: see <a href="/doc/www/journal.stuffwithstuff.com/fb24a3839951b3baa921cc269e62a63a28d68f3f.html" id="_XbuMOb4M" class="link-live link-annotated-partial" data-url-archive="/doc/www/journal.stuffwithstuff.com/fb24a3839951b3baa921cc269e62a63a28d68f3f.html" data-url-original="https://journal.stuffwithstuff.com/2014/04/22/zero-to-95688-how-i-wrote-game-programming-patterns/" title="Zero to 95,688: How I wrote Game Programming Patterns">“Zero to 95,688: How I wrote <em>Game Programming Patterns</em>”</a>/<a href="/doc/www/journal.stuffwithstuff.com/d7ed7bde45193444bfe119748c2b1cc8ea054ab9.html" id="_NLD4L-U5" class="link-live link-annotated-partial" data-url-archive="/doc/www/journal.stuffwithstuff.com/d7ed7bde45193444bfe119748c2b1cc8ea054ab9.html" data-url-original="https://journal.stuffwithstuff.com/2020/04/05/crafting-crafting-interpreters/">“Crafting <em>Crafting Interpreters</em>”</a> on the build system &amp; literate programming &amp; his hand-drawn illustration workflow; &amp; <a href="https://journal.stuffwithstuff.com/2014/11/03/bringing-my-web-book-to-print-and-ebook/" id="_GGxWwFdi" class="link-live" title="Zero to 353 Pages: Bringing My Web Book to Print and E-book">“Zero to 353 Pages: Bringing My Web Book to Print and eBook”</a> on working with EPUB &amp; typesetting the print book.</p>
+</section>
+<section id="matthew-butterick" class="level2">
+<h2><a href="#matthew-butterick" title="Link to section: § 'Matthew Butterick'">Matthew Butterick</a></h2>
+<p><a href="https://en.wikipedia.org/wiki/Matthew_Butterick" id="_W2_JhED7" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Matthew_Butterick#bodyContent" title="Matthew Butterick">Matthew Butterick’s</a> <span class="date-range">2013<sub><span title="2013 was 13 years ago.">13ya</span></sub></span> ebook/website <a href="https://practicaltypography.com/" id="_GBEQptdA" class="link-annotated-partial" title="Butterick’s &lt;em&gt;Practical Typography&lt;/em&gt;"><em>Practical Typography</em></a> uses margin notes, but in a sidenotes way, on the left:</p>
+<figure>
+<p></p>
+<figcaption><p>Margin note left in <a href="https://practicaltypography.com/web-and-email-addresses.html" id="_xNFym2GB" title="Web &amp;amp; email addresses"><em>Practical Typography</em></a>.</p></figcaption>
+</figure>
+<p>They fallback to pop-ins defaulted to expanded on narrow/mobile windows:</p>
+<figure>
+<p></p>
+<figcaption><p>The same margin note, on a narrow window: it now appears as a pop-in block element, but expanded without the user needing to click (as they would in Tufte-CSS).</p></figcaption>
+</figure>
+<p>The approach is HTML/CSS, but using <code>&lt;aside&gt;</code> elements, which are styled in CSS:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode CSS collapse"><code class="sourceCode css"><span id="cb7-1">title-block<span class="op">,</span> aside {</span>
+<span id="cb7-2">    <span class="kw">display</span>: <span class="dv">block</span><span class="op">;</span></span>
+<span id="cb7-3">    <span class="kw">float</span>: <span class="dv">left</span><span class="op">;</span></span>
+<span id="cb7-4">    <span class="kw">position</span>: <span class="dv">absolute</span><span class="op">;</span></span>
+<span id="cb7-5">    <span class="kw">margin-left</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb7-6">    <span class="kw">left</span>: <span class="dv">2.5</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb7-7">    <span class="kw">width</span>: <span class="fu">calc(</span><span class="dv">2.5</span><span class="dt">rem</span> <span class="op">*</span> <span class="dv">3</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb7-8">    <span class="kw">text-align</span>: <span class="dv">right</span><span class="op">;</span></span>
+<span id="cb7-9">    <span class="kw">list-style-type</span>: <span class="dv">none</span><span class="op">;</span></span>
+<span id="cb7-10">    <span class="kw">clear</span>:<span class="dv">both</span><span class="op">;</span> <span class="kw">margin-bottom</span>: <span class="dv">1</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb7-11">    <span class="kw">font-variant-numeric</span>: <span class="dv">normal</span><span class="op">;</span></span>
+<span id="cb7-12">}</span>
+<span id="cb7-13"></span>
+<span id="cb7-14"><span class="im">@media</span> <span class="dv">all</span> <span class="kw">and</span> (<span class="kw">min-width</span>:<span class="dv">1200</span><span class="dt">px</span>) {</span>
+<span id="cb7-15">    aside {</span>
+<span id="cb7-16">        <span class="kw">left</span> : <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb7-17">        <span class="kw">width</span>: <span class="fu">calc(</span><span class="dv">2.5</span><span class="dt">rem</span> <span class="op">*</span> <span class="dv">4</span><span class="fu">)</span><span class="op">;</span></span>
+<span id="cb7-18">    }</span>
+<span id="cb7-19">}</span>
+<span id="cb7-20"></span>
+<span id="cb7-21"><span class="im">@media</span> <span class="dv">all</span> <span class="kw">and</span> (<span class="kw">max-width</span>:<span class="dv">520</span><span class="dt">px</span>) {</span>
+<span id="cb7-22">    title-block<span class="op">,</span> aside { <span class="kw">float</span>: <span class="bu">inherit</span><span class="op">;</span></span>
+<span id="cb7-23">    <span class="kw">position</span>: <span class="bu">inherit</span><span class="op">;</span></span>
+<span id="cb7-24">    <span class="kw">width</span>: <span class="dv">100</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb7-25">    <span class="kw">text-align</span>: <span class="dv">left</span><span class="op">;</span>}</span>
+<span id="cb7-26"></span>
+<span id="cb7-27">    aside {</span>
+<span id="cb7-28">        <span class="kw">background</span>: <span class="cn">#fefefe</span><span class="op">;</span></span>
+<span id="cb7-29">        <span class="kw">padding</span>: <span class="dv">0.3</span><span class="dt">rem</span> <span class="dv">0.5</span><span class="dt">rem</span><span class="op">;</span></span>
+<span id="cb7-30">        <span class="kw">width</span>: <span class="dv">90</span><span class="dt">%</span><span class="op">;</span></span>
+<span id="cb7-31">        <span class="kw">border</span>: <span class="dv">1</span><span class="dt">px</span> <span class="dv">solid</span> <span class="cn">#ccc</span><span class="op">;</span></span>
+<span id="cb7-32">        <span class="kw">border-left</span>: <span class="dv">3</span><span class="dt">px</span> <span class="dv">solid</span> <span class="cn">#ccc</span><span class="op">;</span></span>
+<span id="cb7-33">    }</span>
+<span id="cb7-34"></span>
+<span id="cb7-35">    aside <span class="op">&gt;</span> p<span class="in">:last-child</span> {</span>
+<span id="cb7-36">        <span class="kw">margin-bottom</span>: <span class="dv">0</span><span class="op">;</span></span>
+<span id="cb7-37">    }</span>
+<span id="cb7-38">}</span></code></pre></div>
+<p>Presumably Butterick used his Racket-based <a href="https://docs.racket-lang.org/pollen/" id="_Gzp1yaHg" title="Pollen: the book is a program">Pollen document system</a> with custom tags, since the base system doesn’t cover notes; <a href="/doc/www/sanchom.github.io/bcee2b4f2f0bbcf37f2f90f20cd5633e698fc93e.html" id="_ygcAd7db" class="link-live link-annotated-partial" data-url-archive="/doc/www/sanchom.github.io/bcee2b4f2f0bbcf37f2f90f20cd5633e698fc93e.html" data-url-original="https://sanchom.github.io/pollen-footnotes.html" title="Sancho McCann">Sancho McCann</a> &amp; <a href="/doc/www/www.jonashietala.se/c1750f65797cc293b6769a6afa0988e38e5b8f27.html" id="_ED5roiOh" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.jonashietala.se/c1750f65797cc293b6769a6afa0988e38e5b8f27.html" data-url-original="https://www.jonashietala.se/blog/2019/03/04/pollen_sidenotes/">Jonas Hietala</a> has documented Pollen sidenotes.</p>
+</section>
+<section id="koos-looijesteijn" class="level2">
+<h2><a href="#koos-looijesteijn" title="Link to section: § 'Koos Looijesteijn'">Koos Looijesteijn</a></h2>
+<p><a href="/doc/www/www.kooslooijesteijn.net/1dfd705c6fa765d958b938b766aa260d62631b83.html" id="_65sEDYOd" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.kooslooijesteijn.net/1dfd705c6fa765d958b938b766aa260d62631b83.html" data-url-original="https://www.kooslooijesteijn.net/">Koos Looijesteijn’s</a> loosely Tufte-CSS-like sidenotes are right-aligned, symbol rather than number incremented, and narrow/mobile collapsed pop-ins:</p>
+<figure>
+<p></p>
+<figcaption><p>KL, desktop</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>KL, mobile (pop-in clicked)</p></figcaption>
+</figure>
+<p>In <a href="/doc/www/www.kooslooijesteijn.net/8d9e1850ec45c0ce5ad67d9b8d3367253351d3c9.html" id="_9O_QVuWs" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.kooslooijesteijn.net/8d9e1850ec45c0ce5ad67d9b8d3367253351d3c9.html" data-url-original="https://www.kooslooijesteijn.net/blog/semantic-sidenotes">“Semantic sidenotes for the web”</a> 2019, he discusses his approach, intended to satisfy additional requirements:</p>
+<blockquote>
+<ul>
+<li><p>The span that the sidenote refers to should have a proper semantic HTML element (no abuse of elements made for other purposes)</p></li>
+<li><p>The content of the sidenote should have a similarly valid HTML tag. Additionally:</p>
+<ul>
+<li><p>The sidenote content may contain span elements such as <code>&lt;a&gt;</code> and <code>&lt;em&gt;</code>.</p></li>
+<li><p>The sidenote content may contain clickable elements that can receive keyboard focus.</p></li>
+<li><p>The sidenote content must be stylable.</p></li>
+</ul></li>
+<li><p>The elements should not cause auto closing of their parent <code>&lt;p&gt;</code> tag.</p></li>
+<li><p>Reader modes and apps like Pocket and RSS readers should show sidenote content in a typographically acceptable way. That means at the very least that I can’t rely on website’s CSS to place and style the elements correctly.</p></li>
+<li><p>The sidenote content should be read by screen readers, in a flow that makes sense. That likely means the two parts should be placed together.</p></li>
+</ul>
+</blockquote>
+<p>He came up with something initially like Tufte-CSS, but rejected pure <code>&lt;span&gt;</code>, <code>&lt;aside&gt;</code> as being not quite the right semantics, purely static as breaking reader mode/apps, and settled on JS-enhanced <code>&lt;span&gt;</code>/<code>&lt;small&gt;</code> combination.</p>
+</section>
+<section id="harvard-law-review" class="level2">
+<h2><a href="#harvard-law-review" title="Link to section: § 'Harvard Law Review'">Harvard Law Review</a></h2>
+<p>The <a href="https://en.wikipedia.org/wiki/Harvard_Law_Review" id="_tziwz-Y2" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Harvard_Law_Review#bodyContent" title="Harvard Law Review">Harvard Law Review’s</a> website has, since at least 2016, employed sidenotes, as is particularly appropriate for legal writing, which notoriously overuses footnotes for citations, precedents, and digressions. From <a href="https://harvardlawreview.org/print/vol-133/the-potential-use-test-and-the-northwest-passage/" id="_AlRa_Hbm" title="The Potential-Use Test and the Northwest Passage">“The Potential-Use Test and the Northwest Passage”</a><span> (HLR editors 2020):</span></p>
+<figure>
+<p></p>
+<figcaption><p>HLR, desktop; note the default collapse/fade</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>HLR, mobile (pop-in on click)</p></figcaption>
+</figure>
+<p>HLR’s proprietary are bidirectional, JS-based, and collapsed pop-in on mobile; they use <code>&lt;span&gt;</code>s which are rearranged by the JS:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode XML"><code class="sourceCode xml"><span id="cb8-1">Canada, on the other hand, asserts that the Northwest Passage constitutes internal waters and does</span>
+<span id="cb8-2">not fall under any definition of international strait.</span>
+<span id="cb8-3">&lt;<span class="kw">sup</span><span class="ot"> class=</span><span class="st">"footnote-ref js-article-aside-trigger "</span>&gt;&lt;<span class="kw">i</span><span class="ot"> class=</span><span class="st">"ref-txt"</span>&gt;2&lt;/<span class="kw">em</span>&gt;&lt;<span class="kw">i</span><span class="ot"> class=</span><span class="st">"close-txt"</span>&gt;<span class="dv">&amp;times;</span>&lt;/<span class="kw">em</span>&gt;&lt;/<span class="kw">sup</span>&gt;</span>
+<span id="cb8-4">&lt;<span class="kw">cite</span><span class="ot"> class=</span><span class="st">"article-aside footnote short-crop"</span>&gt;</span>
+<span id="cb8-5">    &lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"article-aside-txt"</span>&gt;</span>
+<span id="cb8-6">        &lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"footnote-num"</span>&gt;2.&lt;/<span class="kw">span</span>&gt;</span>
+<span id="cb8-7">        &lt;<span class="kw">em</span>&gt;See&lt;/<span class="kw">em</span>&gt; Territorial Sea Geographical Coordinates (Area 7) Order, SOR/1985-872 (Can.) (detailing Canada’s</span>
+<span id="cb8-8">        claims to land and waters that include the Northwest Passage); Note from the Canadian Embassy, Washington, D.C.,</span>
+<span id="cb8-9">        to the U.S. Department of State (June 11, 1985), &lt;<span class="kw">em</span>&gt;reprinted in&lt;/<span class="kw">em</span>&gt; 2 &lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"small-caps"</span>&gt;Marion Nash (Leich),</span>
+<span id="cb8-10">        Dep’t of State, Cumulative Digest of United States Practice in International Law 1981–1988&lt;/<span class="kw">span</span>&gt;, at 2047 (1994).</span>
+<span id="cb8-11">    &lt;/<span class="kw">span</span>&gt;</span>
+<span id="cb8-12">&lt;/<span class="kw">cite</span>&gt;</span></code></pre></div>
+<p>Since it uses inline <code>&lt;span&gt;</code> in the usual Tufte-CSS, one might wonder why the JS is necessary, but checking with NoScript, one sees that without the JS, the sidenotes are all piled up on the left margin, overlapping badly, so the JS does the ‘alternating’. (Is it possible to use CSS to do this alternation automatically, removing the need for JS to do bidirectional sidenotes?)</p>
+<p>More distressingly, HLR’s sidenotes are also on default collapsed on <em>desktop</em>, trimmed at a shockingly short length—typically not even half a sentence! While collapsing long footnotes is a good idea, it’s puzzling to collapse at such a short length that literally every sidenote will be collapsed, since this again defeats the point of having sidenotes, and making it hard to see if a sidenote is worth clicking on since only the first few words are exposed so one cannot even see if the sidenote is short (merely a bit of citation) or long (a more in-depth discussion).</p>
+</section>
+<section id="yale-law-journal" class="level2">
+<h2><a href="#yale-law-journal" title="Link to section: § 'Yale Law Journal'">Yale Law Journal</a></h2>
+<p>The <a href="https://en.wikipedia.org/wiki/The_Yale_Law_Journal" id="_f6Ris1dJ" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/The_Yale_Law_Journal#bodyContent" title="&lt;em&gt;The Yale Law Journal&lt;/em&gt;"><em>Yale Law Journal</em></a>, like HLR, uses sidenotes in online articles like <a href="https://www.yalelawjournal.org/note/amazons-antitrust-paradox" id="_mWE2vQUW" class="link-live" title="Yale Law Journal - Amazon’s Antitrust Paradox">“Amazon’s Antitrust Paradox”</a> (Khan 2017), since at least 2016. Like HLR, all sidenotes are aggressively collapsed to near-unreadability, requiring a click to expand, whereupon they turn into floating footnotes.</p>
+<figure>
+<p></p>
+<figcaption><p>YLJ, default desktop</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p>YLJ, sidenotes clicked on to expand</p></figcaption>
+</figure>
+<p>They are JS-based, relocating footnotes grouped at the end of the article, but inside <code>&lt;div&gt;</code> elements rather than <code>&lt;a&gt;</code> elements like usual:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode XML collapse"><code class="sourceCode xml"><span id="cb9-1">&lt;<span class="kw">div</span><span class="ot"> id=</span><span class="st">"footnote_wrapper"</span><span class="ot"> style=</span><span class="st">"position:relative;"</span>&gt;</span>
+<span id="cb9-2">    &lt;<span class="kw">div</span><span class="ot"> id=</span><span class="st">"footnote_1"</span><span class="ot"> style=</span><span class="st">"display: none;"</span><span class="ot"> class=</span><span class="st">"footnote_truncated"</span>&gt;</span>
+<span id="cb9-3">        &lt;<span class="kw">div</span><span class="ot"> class=</span><span class="st">"truncated_footnote_number"</span>&gt;1&lt;/<span class="kw">div</span>&gt;</span>
+<span id="cb9-4">        &lt;<span class="kw">div</span><span class="ot"> class=</span><span class="st">"truncated_footnote_inner"</span>&gt;&lt;<span class="kw">span</span>&gt; &lt;/<span class="kw">span</span>&gt;David &lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"SpellE"</span>&gt;Streitfeld&lt;/<span class="kw">span</span>&gt;,</span>
+<span id="cb9-5">            &lt;<span class="kw">em</span>&gt;As Competition Wanes, Amazon Cuts Back Discounts&lt;/<span class="kw">em</span>&gt;,</span>
+<span id="cb9-6">            &lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"forced_sans_reg"</span>&gt;N.Y. Times&lt;/<span class="kw">span</span>&gt; (July 4, 2013), http<span class="dv">&amp;hellip;</span></span>
+<span id="cb9-7">            &lt;/<span class="kw">div</span>&gt;</span>
+<span id="cb9-8">    &lt;/<span class="kw">div</span>&gt;</span>
+<span id="cb9-9">...&lt;/<span class="kw">div</span>&gt;</span></code></pre></div>
+<p>Worse, YLJ appears to have no narrow or mobile support whatsoever—the page just gets smaller. YLJ is unreadable on mobile, requiring zooming &amp; panning.</p>
+</section>
+<section id="knight-institute" class="level2">
+<h2><a href="#knight-institute" title="Link to section: § 'Knight Institute'">Knight Institute</a></h2>
+<p>The <a href="https://knightcolumbia.org/page/about-the-knight-institute" id="_WFKgTfr_" class="link-live">Knight First Amendment Institute</a> of <a href="https://en.wikipedia.org/wiki/Columbia_University" id="_P4bEdtUH" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Columbia_University#bodyContent" title="Columbia University">Columbia University</a> uses sidenotes somewhat like HLR/YLJ in its longform pages (eg. <a href="https://knightcolumbia.org/content/the-case-for-digital-public-infrastructure" id="_ZWGETPXz" class="link-live" title="The Case for Digital Public Infrastructure">“The Case for Digital Public Infrastructure: Harnessing past successes in public broadcasting to build community-oriented digital tools”</a>, Zuckerman 2020):</p>
+<figure>
+<p></p>
+<figcaption><p>Knight Institute sidenotes (not expanded)</p></figcaption>
+</figure>
+<p>They are JS-based, right-aligned, collapsed (but with a slightly more generous length limit than HLR/YLJ), and fallback to Tufte-CSS-like pop-in blocks (default collapsed). As similar as it seems to those, Knight appears to have rolled its own JS, as the <code>site.js</code>’s implementation doesn’t have any Google/Github hits.</p>
+<p>The fading, font size, and default collapsing of ‘long’ sidenotes are all not nearly as extreme as HLR/YLJ, so the Knight sidenotes are substantially more pleasant to read, as it’s much easier to see what sidenotes are merely a brief citation and what actually include additional commentary. (The use of buttons &amp; chevrons are also nice touches in explaining the functionality to the reader.)</p>
+</section>
+<section id="new-york" class="level2">
+<h2><a href="#new-york" title="Link to section: § 'New York'"><em>New York</em></a></h2>
+<p><a href="https://en.wikipedia.org/wiki/New_York_(magazine)" id="_FHAvTZ-E" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/New_York_(magazine)#bodyContent" title="New York (magazine)"><em>New York</em>’s</a> website CMS <a href="https://github.com/clay" id="_fZwU3ZNY" data-link-icon="github" data-link-icon-type="svg">Clay/Kiln</a> (used on NYmag.com/Vulture/the Cut/Grub Street/Slate) provide JS-based left sidenotes which require hover to expose and then fall back to click-driven floating footnotes:</p>
+<figure>
+<p></p>
+<figcaption><p><em>Vulture</em>, desktop (on hover)</p></figcaption>
+</figure>
+<figure>
+<p></p>
+<figcaption><p><em>Vulture</em>, mobile (after clicking)</p></figcaption>
+</figure>
+<p>NY uses spans, but they are put at the end and then JS reveals them when the user hovers:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode XML"><code class="sourceCode xml"><span id="cb10-1">&lt;<span class="kw">span</span><span class="ot"> class=</span><span class="st">"clay-annotated kiln-phrase"</span><span class="ot"> aria-describedby=</span><span class="st">"annotation-1"</span><span class="ot"> tabindex=</span><span class="st">"0"</span>&gt;Virgin Airlines first-class lounge&lt;/<span class="kw">span</span>&gt;</span>
+<span id="cb10-2">...</span>
+<span id="cb10-3">&lt;<span class="kw">div</span><span class="ot"> data-uri=</span><span class="st">"www.vulture.com/_components/annotations/instances/cjg2jwsso00c23k62pm0yv0qg@published"</span></span>
+<span id="cb10-4"><span class="ot">     class=</span><span class="st">"annotations"</span><span class="ot"> data-editable=</span><span class="st">"content"</span>&gt;</span>
+<span id="cb10-5">    &lt;<span class="kw">span</span><span class="ot"> role=</span><span class="st">"tooltip"</span><span class="ot"> id=</span><span class="st">"annotation-1"</span><span class="ot"> data-uri=</span><span class="st">"www.vulture.com/_components/annotation/instances/cjg2jx3el00c73k62em8v15xy@published"</span></span>
+<span id="cb10-6"><span class="ot">       class=</span><span class="st">"annotation"</span><span class="ot"> data-editable=</span><span class="st">"text"</span>&gt;</span>
+<span id="cb10-7">       Offers spa treatments, “expert mixologists”, and, at Heathrow, a “lodge and viewing deck” with an “après-ski vibe.”</span>
+<span id="cb10-8">   &lt;/<span class="kw">span</span>&gt;</span>
+<span id="cb10-9">&lt;/<span class="kw">div</span>&gt;</span></code></pre></div>
+<p>I couldn’t find mention of sidenotes in the various Clay/Kiln Github repos but there are enough of them and it’s all complicated enough I may have missed them, so I don’t know if the relevant JS/CSS is MIT-licensed like the Clay/Kiln ecosystem generally seems to be.</p>
+<p>While floating footnotes on mobile is a justifiable choice, the rest is not, and I do not like this sidenote design at all.</p>
+</section>
+<section id="jquery-sidenotes" class="level2">
+<h2><a href="#jquery-sidenotes" title="Link to section: § 'jQuery.sidenotes'">JQuery.sidenotes</a></h2>
+<p>Andrew Clark’s <span class="date-range">2013<sub><span title="2013 was 13 years ago.">13ya</span></sub></span> <a href="/doc/www/acdlite.github.io/1cf5242c04b07c38d8735d308dd988c984d7486d.html" id="_z2DxftCf" class="link-live link-annotated-partial" data-url-archive="/doc/www/acdlite.github.io/1cf5242c04b07c38d8735d308dd988c984d7486d.html" data-url-original="https://acdlite.github.io/jquery.sidenotes/">jQuery.sidenotes</a> (<a href="https://github.com/acdlite/jquery.sidenotes" id="_ppE_jHo9" data-link-icon="github" data-link-icon-type="svg">Github</a>) JS library implements sidenotes to the left, parsing Markdown endnotes; for narrow windows, it does inlined ‘pop-in’ but expanded by default; and for mobile it is just endnotes. Unusually, Clark’s demo puts sidenotes on the <em>left</em> margin (there doesn’t seem to be an option for placing on the right, or both), and includes some keybindings.</p>
+<figure>
+<p></p>
+<figcaption><p>jQuery.sidenotes (default desktop appearance)</p></figcaption>
+</figure>
+<p>The pop-in appearance looks like Tufte-CSS’s.</p>
+<p>The implementation seems to take the expected approach of popping matching elements out into the margin with media queries controlling width-related behavior.</p>
+<p>Clark’s jQuery.sidenotes offers more features than usual, but I’m not sure how useful they are. It’s also quite ‘heavyweight’ in being weighed down by jQuery/NPM infrastructure. One further caveat: I think the expected format/classes of endnotes has long since changed and the library has not been updated since <span class="date-range">2013<sub><span title="2013 was 13 years ago.">13ya</span></sub></span>, at least for Pandoc, so jQuery.sidenotes’s defaults will probably break for recent Markdown documents.</p>
+</section>
+<section id="sidenotes-js-correia" class="level2">
+<h2><a href="#sidenotes-js-correia" title="Link to section: § 'Sidenotes.js, Correia'">Sidenotes.js, Correia</a></h2>
+<p>Bruno Correia’s <span class="date-range">2015<sub><span title="2015 was 11 years ago.">11ya</span></sub></span> <a href="/doc/www/bcorreia.com/9391388996e15d2540a7df67121d3cd4cd9e597b.html" id="_4krIliZD" class="link-live link-annotated-partial" data-url-archive="/doc/www/bcorreia.com/9391388996e15d2540a7df67121d3cd4cd9e597b.html" data-url-original="http://bcorreia.com/projects/sidenotes.js/src/demo.html">Sidenotes.js</a> (<a href="https://github.com/bcorreia/sidenotes.js" id="__3G3uWuA" data-link-icon="github" data-link-icon-type="svg">Github</a>), not to be confused with Said Achmiz’s <a href="#sidenotes-js"><code>sidenotes.js</code></a>, takes an entirely different approach to both presentation &amp; encoding of sidenotes. Instead of reusing the existing margin, Sidenotes.js creates a new view by <em>sliding</em> a sticky-element ‘tab’ into view with the sidenote contents, hiding the original page:</p>
+<figure>
+<p></p>
+<figcaption><p>Sidenotes.js, before/after clicking on an annotated link (desktop)</p></figcaption>
+</figure>
+<p>On narrow or mobile, the slid-in new page just takes up the whole screen.</p>
+<p>The annotations are themselves written as <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes/data-*" id="_uyZ4Qwah" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000" title="'HTML: HyperText Markup Language', MDN 2026">custom data attributes</a> on elements such as links (by default, others are supported):</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode HTML"><code class="sourceCode html"><span id="cb11-1"><span class="dt">&lt;</span><span class="kw">p</span><span class="dt">&gt;</span>While the two headsmen were engaged in making fast cords to his flukes,</span>
+<span id="cb11-2">and in other ways getting the mass in readiness for towing,</span>
+<span id="cb11-3">some <span class="dt">&lt;</span><span class="kw">a</span></span>
+<span id="cb11-4"><span class="ot">    href=</span><span class="st">"#"</span></span>
+<span id="cb11-5"><span class="ot">    data-sidenote=</span><span class="st">"</span><span class="dv">&amp;gt;</span><span class="st">strong</span><span class="dv">&amp;lt;</span><span class="st">Conversation:</span><span class="dv">&amp;gt;</span><span class="st">/strong</span><span class="dv">&amp;lt;</span><span class="st"> the informal exchange of ideas by spoken words:</span></span>
+<span id="cb11-6"><span class="st">                   'the two men were deep in conversation'."</span><span class="dt">&gt;</span></span>
+<span id="cb11-7">    conversation<span class="dt">&lt;/</span><span class="kw">a</span><span class="dt">&gt;</span></span>
+<span id="cb11-8">ensued between them.<span class="dt">&lt;/</span><span class="kw">p</span><span class="dt">&gt;</span></span></code></pre></div>
+<p>This is a unique approach entirely unlike the others and an interesting experiment, but I do not recommend it for sidenotes.</p>
+</section>
+<section id="the-india-forum" class="level2">
+<h2><a href="#the-india-forum" title="Link to section: § 'The India Forum'"><em>The India Forum</em></a></h2>
+<p><a href="https://www.theindiaforum.in/article/revolt-upper-castes" id="_YlfEYsEd" class="link-live" title="The Revolt of the Upper Castes"><em>The India Forum</em></a> uses jQuery for a slide-in approach but improves over Correia’s by showing all the sidenotes in a pane after clicking:</p>
+<figure>
+<p></p>
+<figcaption><p>TIF, after clicking on footnotes</p></figcaption>
+</figure>
+<p>The ‘slide-in’ approach can be contrasted with the ‘slide-up’ approach used by Wikipedia:</p>
+<figure>
+<p></p>
+<figcaption><p>Screenshot of <a href="https://en.wikipedia.org/wiki/Artemy_Vedel" id="_5fAqG3Ch" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Artemy_Vedel#bodyContent" title="Artemy Vedel">Artemy Vedel</a> WP article after tapping a footnote in a mobile browser, showing a faded body and a highlighted footnote section which has ‘slid up’; this shows the footnote text (usually a brief citation) without shifting the overall layout or being too small to read.</p></figcaption>
+</figure>
+<p>And some other sites, like <a href="https://www.arcana.computer/" id="_Y2gorMM9">Justin Duke</a>:</p>
+<figure>
+<p></p>
+<figcaption><p>A tapped ‘footnote’ on Justin Duke’s website, showing how the footnote text has ‘slid up’ from the bottom in a floating/sticky element.</p></figcaption>
+</figure>
+<p>The ‘slide-in’ from left/right can make use of margin on bigger screens, but there is usually no margin on cramped mobile screens, so one faces a fundamental choice between inserting the footnote/sidenote text ‘into’ the body, usually forcing layout shift, and ‘over’ the body, obscuring some of it. (For Gwern.net, pop-ins were the only acceptable solution as they are less <a href="https://en.wikipedia.org/wiki/Mode_(user_interface)" id="_5AakFcZu" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Mode_(user_interface)#bodyContent" title="Mode (user interface)">modal</a>: they let the reader continue navigating/reading the page, no matter how deep they drill into the recursively-linked pop-ins.)</p>
+</section>
+<section id="tables" class="level2">
+<h2><a href="#tables" title="Link to section: § 'Tables'">Tables</a></h2>
+<p><a href="/doc/www/jkorpela.fi/1bc64a5a5733131c1da1a42ac1f8ddb1875e8540.html#side" id="__6NuYf6v" class="prefetch-not link-live" data-url-archive="/doc/www/jkorpela.fi/1bc64a5a5733131c1da1a42ac1f8ddb1875e8540.html#side" data-url-original="https://jkorpela.fi/www/fn.html#side" title="Footnotes, endnotes, and sidenotes on Web pages: Sidenotes as an alternative">Jukka “Yucca” Korpela</a>, ~2007, demonstrates a completely different approach using HTML <em>tables</em>: define two columns with different sizes/style, and put the sidenotes in the second column.</p>
+<blockquote>
+<p>There are many possible approaches to including sidenotes on web pages. Having studied alternate methods like CSS positioning and floating, I have come to the conclusion that the simplest method gives the best results. This method consists of a two-column table, with the main text in one column, the sidenotes in the other. Using the CSS methods, it becomes awkward to control the heights of pieces of text so that each sidenote starts at the same vertical position as the main text that it relates to.</p>
+</blockquote>
+<p>Easy:</p>
+<figure>
+<p></p>
+<figcaption><p>Sidenotes via 2-column HTML tables.</p></figcaption>
+</figure>
+<p>This has the usual advantages/disadvantages of using tables for web design: it is fast, avoids JavaScript &amp; (most) CSS complexities, and is straightforward; but it is rigid, degrades on smaller screens, difficult to write (eg. no numbering in Korpela’s examples, making them margin notes, unless the author manually adds superscripts or otherwise complicates it).</p>
+<p>I include this for its historical interest—while this strategy may have made sense in <span class="date-range">2007<sub><span title="2007 was 19 years ago.">19ya</span></sub></span>, the tradeoffs now are highly unfavorable given that <a href="#tufte-css">Tufte-CSS</a> etc. work, and I’m not sure anyone should use it.</p>
+</section>
+<section id="annotate-molly-white" class="level2">
+<h2><a href="#annotate-molly-white" title="Link to section: § 'Annotate, Molly White'">Annotate, Molly White</a></h2>
+<p><a href="https://github.com/molly/annotate" id="_Ig8V5sGr" data-link-icon="github" data-link-icon-type="svg">“Annotate”</a> (<a href="/doc/www/molly.github.io/da3cf94f692d30649f9c768fce60298cc3b6ff27.html" id="_HU33R0S8" class="link-live link-annotated-partial" data-url-archive="/doc/www/molly.github.io/da3cf94f692d30649f9c768fce60298cc3b6ff27.html" data-url-original="https://molly.github.io/annotate/">demo</a>) is a CSS+JS framework by <a href="https://en.wikipedia.org/wiki/Molly_White_(writer)" id="_Q_xvQocL" class="link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Molly_White_(writer)#bodyContent" title="Molly White (writer)">Molly White</a>, created for her <a href="https://www.mollywhite.net/annotations/latecomers-guide-to-crypto/" id="_EhrKvnia" title="The (Edited) Latecomer's Guide to Crypto">“The Edited Latecomers’ Guide To Crypto”</a>, which is a heavily-commentated (side by side) fisking of an article on cryptocurrency.</p>
+<p>Perhaps because the commentary may be longer than the text &amp; complex, Annotate takes a novel approach: text+commentary pairs live in <code>&lt;section&gt;</code> elements, interleaving <code>&lt;div&gt;</code>s (possibly nested or ‘grouped’), with <code>&lt;mark&gt;</code> elements to specify highlighted ranges (eg. in yellow highlighting) for which part of the text a commentary is referring to. The CSS then uses CSS grids (row-based layout) to lay them out side by side. (JavaScript is used for live highlighting/focusing of ranges when clicked on, but otherwise appears optional.)</p>
+<p>For mobile, it defaults to expanded pop-ins but does not appear to make any effort to interleave or separate pairs to ensure that the commentary for each visible highlighted range is also visible.</p>
+<figure>
+<p></p>
+<figcaption><p>Screenshot from its Github repo of Annotate used on “The Edited Latecomers’ Guide To Crypto”.</p></figcaption>
+</figure>
+</section>
+<section id="george-pollard" class="level2">
+<h2><a href="#george-pollard" title="Link to section: § 'George Pollard'">George Pollard</a></h2>
+<p>Inspired by <a href="https://typeclasses.com/coerce" id="_b1HMQrv4" title="Newtype coercion [in Haskell]">Type Classes</a> &amp; Tufte-CSS; pure CSS (<a href="/doc/www/github.com/95fa140d36c9d680e27ee9b6ac05f63e4ef26439.html" id="__VOZy52k" class="link-live link-annotated-partial" data-link-icon="github" data-link-icon-type="svg" data-url-archive="/doc/www/github.com/95fa140d36c9d680e27ee9b6ac05f63e4ef26439.html" data-url-original="https://github.com/Porges/ways-to-play/tree/main" title="&lt;code&gt;ways-to-play&lt;/code&gt;: ‘A Site About Games’">website repo</a>), by <a href="https://games.porg.es/about/" id="_9n2l7pIG">George Pollard</a>.</p>
+<p>Example pages: <a href="https://games.porg.es/games/pigeon-lottery/" id="_l_AGwAbr" title="The Pigeon Lottery">“The Pigeon Lottery”</a>, <a href="/doc/www/games.porg.es/cb761da47b7c6dac6f316142be9193cd98d57a43.html" id="_Z2rOsSL2" class="link-live link-annotated-partial" data-url-archive="/doc/www/games.porg.es/cb761da47b7c6dac6f316142be9193cd98d57a43.html" data-url-original="https://games.porg.es/articles/cards/japan/hanafuda/art/">“The History &amp; Art of <em>Hanafuda</em>”</a>.</p>
+<figure>
+<p></p>
+<figcaption><p>Screenshot of “The Pigeon Lottery” showing rubricated margin-notes &amp; sidenotes.</p></figcaption>
+</figure>
+</section>
+<section id="miscellaneous" class="level2">
+<h2><a href="#miscellaneous" title="Link to section: § 'Miscellaneous'">Miscellaneous</a></h2>
+<p>Some implementations are just bad ideas or not worth discussing in detail with screenshots:</p>
+<ul>
+<li><p><a href="/doc/www/ilovetypography.com/1fad52b71b998e788c985ab0b0b2c9dd0eb8cc82.html" id="boardley-2019" class="link-live link-annotated-partial" data-link-icon-color="#e05f4c" data-url-archive="/doc/www/ilovetypography.com/1fad52b71b998e788c985ab0b0b2c9dd0eb8cc82.html" data-url-original="https://ilovetypography.com/2019/03/14/the-first-printed-math-books/" title="'The First Printed Math Books', Boardley 2019">ILoveTypography.com</a> uses image captions &amp; margin notes which, like Tufte-CSS, are floated/outdented right, but bizarrely, it uses <em>figure captions</em>—just <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/figcaption" id="_DhMt93Vv" data-link-icon="FF" data-link-icon-type="text,sans" data-link-icon-color="#e66000"><code>&lt;figcaption&gt;</code></a> with a special class inside an empty <code>&lt;figure&gt;</code> with no images!</p>
+<p>This is invalid HTML, fails badly in some cases (eg. in the linked example, one margin note is almost unreadable because it overlaps with a giant pull-quote illustration), and has no advantage over a <code>&lt;span&gt;</code> that I can find; it does at least degrade gracefully into pop-in (default expanded) block elements on narrow/mobile.</p></li>
+<li><p><a href="/doc/www/bldgblog.com/1ece3b776c5acd51d17bf8080d18eafd863ada89.html" id="_AIDGWQL3" class="link-live link-annotated-partial" data-link-icon="BLDG" data-link-icon-type="text,quad,mono" data-url-archive="/doc/www/bldgblog.com/1ece3b776c5acd51d17bf8080d18eafd863ada89.html" data-url-original="https://bldgblog.com/2015/12/four-floor-war/" title="The Four-Floor War">BLDBLOG</a> generally avoids complex layout and footnotes entirely, and doesn’t have much margin to put sidenotes in, so I was surprised while reading the archives to find one post which has a left margin note, and even more surprised to check the HTML source and see that the ‘margin note’ is in fact a <em>header</em>: a <code>&lt;h6&gt;</code>.</p>
+<p>Huh‽ It turns out that the header is floated left with some gruesome CSS. Said Achmiz summaries how the Rube Goldberg contraption works:</p>
+<blockquote>
+<p>The CSS uses absolute positioning. The nearest positioned ancestor is <code>&lt;article&gt;</code>, not <code>.entry-content</code>. Within <code>&lt;article&gt;</code>, <code>.entry-content</code> is right-floated and has a fixed width. This creates a variable-width space on the left (determined by how much horizontal space is left within <code>&lt;article</code>&gt; after that fixed width is subtracted). The sidenote <code>&lt;h6&gt;</code> is then set with <code>position:absolute</code> and <code>left:0</code>. Vertical position is left unspecified, relying on the way browsers implement absolute positioning (ie. to place an element where it would be placed if position were <code>static</code>) to put it in the right place. Fragile, unsemantic, &amp; hacky.</p>
+</blockquote></li>
+<li><p><a href="https://mitadmissions.org/blogs/entry/we-are-reinstating-our-sat-act-requirement-for-future-admissions-cycles/" id="_dE6k70iz" title="We are reinstating our SAT/ACT requirement for future admissions cycles">MIT Admissions</a> uses a footnote-sidenote hybrid:</p>
+<figure>
+<p></p>
+<figcaption><p>MIT Admissions blog, demonstrating fixed-floating sidenote</p></figcaption>
+</figure>
+<p>Span-annotated footnote links (with the trigger text lightly highlighted in red), on hover, trigger JS to create a single sticky/floating ‘sidenote’ which is located in the bottom-right corner; hovers on other footnotes replace it with their contents. (Layout does not take into account the sidebar or anything that may already be there, and the footnote popup box simply appears over it.)</p>
+<p>For mobile/narrow windows, it uses pop-in, but not as a block element, instead, inline with red-colored brackets to delimit it:</p>
+<figure>
+<p></p>
+<figcaption><p>Mobile: popins but using rubricated bracket delimiters.</p></figcaption>
+</figure></li>
+<li><p><a href="https://verdagon.dev/home" id="_sHrBdBmf" class="link-live">Evan Ovadia</a> (<a href="https://verdagon.dev/blog/linear-types-borrowing" id="_9bK-yU7c" class="link-live" title="What Vale Taught Me About Linear Types, Borrowing, and Memory Safety">eg.</a>): content &amp; sidenotes are put into pairs of columns. Presumably does not handle many long sidenotes gracefully.</p>
+<p>For mobile/narrow, it collapses them as a row of numbered links to expand on click.</p></li>
+<li><p><a href="/doc/www/www.chiark.greenend.org.uk/c7f1d02cc8bcaa2dc60327eb246e77d995dfc7bb.html" id="tatham-2024" class="link-live link-annotated-partial" data-url-archive="/doc/www/www.chiark.greenend.org.uk/c7f1d02cc8bcaa2dc60327eb246e77d995dfc7bb.html" data-url-original="https://www.chiark.greenend.org.uk/~sgtatham/quasiblog/commit-messages/" title="'Writing commit messages', Simon Tatham 2024-05-19">Simon Tatham</a>: uses a highly unusual footnote format which I can’t decide if it’s a footnote or a sidenote.</p>
+<p>Footnotes are duplicated in button toggles &amp; at the bottom; footnote numbered anchors are set to the right margin, and when clicked, ‘popin’, but <em>to the side</em> of the text, which reflows into a left text column vs right footnote column (no JS, just CSS+HTML):</p>
+<figure>
+<p></p>
+<figcaption><p>Tatham’s popin-sidenotes, expanded</p></figcaption>
+</figure></li>
+</ul>
+</section>
+</section>
+<section id="see-also" class="level1">
+<h1><a href="#see-also" title="Link to section: § 'See Also'">See Also</a></h1>
+<ul>
+<li><p><a href="https://en.wikipedia.org/wiki/Project_Xanadu" id="_IoX4XOuz" class="link-annotated-partial link-live" data-link-icon="wikipedia" data-link-icon-type="svg" data-url-iframe="https://en.m.wikipedia.org/wiki/Project_Xanadu#bodyContent" title="Project Xanadu">Project Xanadu</a></p></li>
+</ul>
+</section>
+<section id="external-links" class="level1">
+<h1><a href="#external-links" title="Link to section: § 'External Links'">External Links</a></h1>
+<ul>
+<li><p>Discussion: <a href="/doc/www/news.ycombinator.com/234e87555e57f598cea46211e0647759e1c08d75.html" id="_YQhJ0mV-" class="link-live link-annotated-partial" data-link-icon="hacker-news" data-link-icon-type="svg" data-link-icon-color="#f26522" data-url-archive="/doc/www/news.ycombinator.com/234e87555e57f598cea46211e0647759e1c08d75.html" data-url-original="https://news.ycombinator.com/item?id=37619361">HN</a></p></li>
+<li><p><a href="/doc/www/quotebacks.net/48c9ea5d72678d2ee2635800af40549bd44c0117.html" id="_N4zs6dCm" class="link-live link-annotated-partial" data-url-archive="/doc/www/quotebacks.net/48c9ea5d72678d2ee2635800af40549bd44c0117.html" data-url-original="https://quotebacks.net/">Quotebacks</a> (<a href="/doc/www/tomcritchlow.com/223a45bf84b23e4e4acb1927f69db995c398a6d8.html" id="_PVH9M68p" class="link-live link-annotated-partial" data-url-archive="/doc/www/tomcritchlow.com/223a45bf84b23e4e4acb1927f69db995c398a6d8.html" data-url-original="https://tomcritchlow.com/2020/06/09/quotebacks/">“Introducing: Quotebacks—A Chrome extension to quote the web”</a>)</p></li>
+<li><p><a href="/doc/www/skorokithakis.github.io/cd02a501754f4820776091332111b42f1abf0666.html" id="_ZQmFtLRx" class="link-live link-annotated-partial" data-url-archive="/doc/www/skorokithakis.github.io/cd02a501754f4820776091332111b42f1abf0666.html" data-url-original="https://skorokithakis.github.io/expounder/">“Expounder”</a>, Stavros Korokithakis (inline alternative to <a href="#mozdev-abbr"><code>&lt;abbr</code></a>/<a href="#mozdev-defn"><code>&lt;defn&gt;</code></a> tags)</p></li>
+<li><p><a href="/doc/www/shkspr.mobi/14ee16fb5c9c9b291fb48874e7323a9c3af22bea.html" id="_ad_miZuD" class="link-live link-annotated-partial" data-url-archive="/doc/www/shkspr.mobi/14ee16fb5c9c9b291fb48874e7323a9c3af22bea.html" data-url-original="https://shkspr.mobi/blog/2020/07/usability-of-footnotes/">“Usability of Footnotes”</a>; <a href="/doc/www/shkspr.mobi/a3b3331c5ae8138bafd9645b43576e0c3072e2dd.html" id="_2w5nE0f3" class="link-live link-annotated-partial" data-url-archive="/doc/www/shkspr.mobi/a3b3331c5ae8138bafd9645b43576e0c3072e2dd.html" data-url-original="https://shkspr.mobi/blog/2020/12/a-terrible-way-to-do-footnotes-in-html/">“A (terrible?) way to do footnotes in HTML”</a></p></li>
+<li><p><a href="https://ncase.me/nutshell-wip/" id="_A2Mj0shq" class="link-live">“Nutshell”</a>, Nicky Case 2021</p></li>
+<li><p><a href="https://www.lesswrong.com/posts/A33sgjYoM4Ko9viJv/lw-beta-feature-side-comments" id="_WmbXIFlW" class="link-live" data-link-icon="LW" data-link-icon-type="text" data-link-icon-color="#7faf83" data-url-iframe="https://www.greaterwrong.com/posts/A33sgjYoM4Ko9viJv/lw-beta-feature-side-comments?format=preview&amp;theme=classic">“LW Beta Feature: Side-Comments”</a></p></li>
+<li><p><a href="https://austinkleon.substack.com/p/a-library-of-words" id="_8E-6Z_PS" data-link-icon="substack" data-link-icon-type="svg" data-link-icon-color="#ff6719" title="Austin Kleon, 2023-02-07">“A library of words: Discovering <em>Roget’s Thesaurus</em>”</a></p></li>
+</ul>
+</section>
+<section id="footnotes" class="footnotes footnotes-end-of-document" role="doc-endnotes">
+<hr>
+<ol>
+<li id="fn1"><p>You <em>can</em> imagine web pages with true footnotes: where a sticky bottom margin is created, reserved for footnotes, and JS inserts the relevant footnotes into that as the user scrolls, but I’m not sure I’ve ever seen this outside of book skeuomorph web designs with explicit pagination, and screens are small enough that users would chafe at the loss of <a href="/doc/www/localhost/b10fecbcd593be015967911bf85109b3720d3175.html" id="_LEEuvaQf" class="link-live link-annotated-partial" data-link-icon="twitter" data-link-icon-type="svg" data-link-icon-color="#1da1f2" data-href-mobile="https://nitter.net/admittedlyhuman/status/430532517389561856" data-url-archive="/doc/www/localhost/b10fecbcd593be015967911bf85109b3720d3175.html" data-url-original="https://x.com/admittedlyhuman/status/430532517389561856" title="Every vertical pixel used for the UI bar signifies a theft from those who hunger and are not fed, those who are cold and are not clothed.">vertical pixels</a>.</p>
+<p>Then should we put our notes on entirely separate pages? No: this only adds to the reader’s burden, and it’s even more work for the author. (The dedicated might embrace hypertextuality and create an enormous web of small nuggets of text which include and go beyond endnotes, but for people writing online, URLs/pages tend to be “heavyweight”, and a commitment, often corresponding to a single file on disk; creating hundreds of endnote-sized URLs also creates its own problems like naming, refinding, and navigating them.)<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2"><p>You can use the <a href="https://ctan.org/pkg/sidenotes" id="_a6i_6isq" class="link-live" data-link-icon="tex" data-link-icon-type="svg" title="The package allows typesetting of texts with notes, figures, citations, captions and tables in the margin. This is common (for example) in science text books."><code>sidenotes</code></a>/<a href="https://ctan.org/pkg/sidenotesplus" id="_iznzvf9H" class="link-live" data-link-icon="tex" data-link-icon-type="svg" title="sidenotesplus: Place referenced notes, alerts, figures and tables into the document margin"><code>sidenotesplus</code></a>/<a href="https://ctan.org/pkg/snotez" id="_KQArcPNG" class="link-live" data-link-icon="tex" data-link-icon-type="svg" title="snotez: Typeset notes, in the margin"><code>snotez</code></a> packages, or the somewhat different [<code>marginnote</code>](https://ctan.org/pkg/marginnote “This package provides the command <code>\marginnote</code>{.LaTeX<a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn3"><p>Tufte-CSS sidenotes do not correctly support block elements like lists or paragraphs, because spans are inline and those are block elements; but <a href="https://github.com/edwardtufte/tufte-css/issues/93#issuecomment-670695382" id="_OgdiCo8m" data-link-icon="ET" data-link-icon-type="text" data-link-icon-color="#b1282b" title="HTML list elements in sidenote do not appear correctly">this is fixable</a>.<a href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn4"><p>A simple way to provide ‘on hover’ annotations is to use HTML title tooltips, which was <a href="/design-graveyard#tooltips" id="gwern-design-graveyard--tooltips" class="prefetch-not link-annotated-partial link-page">my first popup system attempt</a>; Tyler Vigen attempts to provide his collapsed-inline footnotes as tooltips as well to minimize clicking &amp; effort.</p>
+<p>But while simple, tooltips bring in many problem discussed in my tooltip post-mortem, and several of them show up here: there is no way to ‘expand’ or search any of the tooltips, and because tooltips are capable only of containing plain text, while footnotes can (and Vigen’s do) contain multiple block elements like blockquotes or photos. There is no useful way to condense such footnotes into a tooltip, and Vigen’s tooltips often silently drop large parts of the footnote—rendering them worse than useless.<a href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn5"><p>Some websites, like Grantland or Stratechery, support floating footnotes… but only when the user clicks! (Better is Grantland’s <a href="https://grantland.com/one-hundred-years-arm-bars-gracie-jiu-jitsu-mma/" id="_we5qkve8" title="One Hundred Years of arm bars: A family epic spanning the Gracie jiu-jitsu dynasty’s generations of combat and betrayal, from the Amazon to Hollywood to the UFC">history of the Gracies</a>, which helps the reader keep the clan straight by popping into the left margin an annotated family tree whenever they click a Gracie name.) FiveThirtyEight, on the other hand, does pop-in footnotes—but not sidenotes, despite ample margin. Compare <a href="https://www.theatlantic.com/magazine/archive/2005/04/host/303812/" id="_R6hDtKAD" data-link-icon="A" data-link-icon-type="text,italic" data-link-icon-color="#e7131a" title="Host"><em>Atlantic</em>’s web rendering</a> using pop-ins with the original <a href="/doc/sociology/2005-wallace.pdf" id="wallace-2005" class="link-annotated-partial" data-link-icon="pdf" data-link-icon-type="svg" data-link-icon-color="#f40f02" title="Host: Deep into the mercenary world of take–no–prisoners political talk radio">2005 David Foster Wallace</a> print essay which used elaborate recursive sidenotes integrated in unusual geometries. (Said Achmiz offers <a href="/doc/design/typography/sidenote/2005-wallace-redesign.pdf" id="achmiz-2020-2" class="link-annotated-partial" data-link-icon="pdf" data-link-icon-type="svg" data-link-icon-color="#f40f02" title="'Host: Deep into the mercenary world of take-no-prisoners political talk radio [footnote redesign]', Achmiz 2020">an example</a> of a less ugly redesign of that.)<a href="#fnref5" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn6"><p>Although arguably one should not (and I avoid doing so). If a footnote needs to be linked, it should be given a <code>&lt;span&gt;</code> anchor with a name. Pandoc footnote anchors/numbers are inherently unstable, and worse, tend to fail silently: the link just changes to a different footnote, and continues to ‘work’. And if anyone <em>needs</em> to link a specific footnote it may be time to rewrite that footnote into a more-linkable section or appendix.<a href="#fnref6" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
+
+      <noscript>
+      <div id="noscript-warning-footer" class="markdownBody noscript-container">
+        <div class="admonition error colors-invert" title="Warning to NoScript Users">
+          <div class="admonition-title">
+            <p><strong>Error:</strong> JavaScript disabled.</p>
+          </div>
+          <p>Backlinks, similar links, and the bibliography require JS enabled to load.</p>
+        </div>
+      </div>
+      </noscript>
+      <section id="backlinks-section" class="level1">
+        <h1><a href="#backlinks-section" title="Link to section: § 'Backlinks'">Backlinks</a></h1>
+        <a id="backlinks" href="/metadata/annotation/backlink/%252Fsidenote.html" title="Reverse citations/backlinks for this page (the list of other pages which link to this page)." class="backlinks include-strict collapsible" data-link-icon="arrows-pointing-inwards-to-dot" data-link-icon-type="svg">[Backlinks (what links here)]</a>
+      </section>
+      <section id="similars-section" class="level1">
+        <h1><a href="#similars-section" title="Link to section: § 'Similar Links'">Similar Links</a></h1>
+        <a id="similars" href="/metadata/annotation/similar/%252Fsidenote.html" title="Similar links for this link (by text embedding). Lazily-transcluded version at footer of page for easier scrolling." class="similars include-strict collapsible" data-link-icon="≈" data-link-icon-type="text">[Similar links by topic]</a>
+        </section>
+      <section id="link-bibliography-section" class="level1 collapse">
+        <h1 class="collapse"><a href="#link-bibliography-section" title="Link to section: § 'Bibliography'">Bibliography</a></h1> <!-- NOTE: In theory, '.collapse' on a '<h1>' is redundant with the '<section>'; but added to parallel Pandoc-generated headers which set all attributes/classes on both. -->
+        <a id="link-bibliography" href="/metadata/annotation/link-bibliography/%252Fsidenote.html" title="Bibliography of links cited in this page (forward citations). Lazily-transcluded version at footer of page for easier scrolling." class="include-even-when-collapsed link-bibliography" data-link-icon="bibliography" data-link-icon-type="svg">[Bibliography of links/references used in page]</a>
+          </section>
+      
+      </div> 
+</body>
+</html>

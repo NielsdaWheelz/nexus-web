@@ -152,6 +152,10 @@ class Settings(BaseSettings):
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
     max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
+    max_arxiv_source_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        alias="MAX_ARXIV_SOURCE_BYTES",
+    )
     ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
@@ -298,6 +302,22 @@ class Settings(BaseSettings):
     max_epub_archive_parse_time_ms: int = Field(
         default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS"
     )
+    max_latex_source_archive_entries: int = Field(
+        default=10_000,
+        alias="MAX_LATEX_SOURCE_ARCHIVE_ENTRIES",
+    )
+    max_latex_source_archive_total_uncompressed_bytes: int = Field(
+        default=536_870_912,
+        alias="MAX_LATEX_SOURCE_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES",
+    )  # 512 MB
+    max_latex_source_archive_single_entry_uncompressed_bytes: int = Field(
+        default=134_217_728,
+        alias="MAX_LATEX_SOURCE_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES",
+    )  # 128 MB
+    max_latex_source_archive_compression_ratio: int = Field(
+        default=100,
+        alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
+    )
 
     # Key encryption for BYOK API keys.
     # Base64-encoded 32-byte key for XChaCha20-Poly1305 encryption
@@ -410,6 +430,12 @@ class Settings(BaseSettings):
         "max_epub_archive_compression_ratio": 100,
         "max_epub_archive_parse_time_ms": 30_000,
     }
+    _LATEX_SOURCE_ARCHIVE_CEILINGS = {
+        "max_latex_source_archive_entries": 10_000,
+        "max_latex_source_archive_total_uncompressed_bytes": 536_870_912,
+        "max_latex_source_archive_single_entry_uncompressed_bytes": 134_217_728,
+        "max_latex_source_archive_compression_ratio": 100,
+    }
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
@@ -519,6 +545,16 @@ class Settings(BaseSettings):
                 )
 
         for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
+            value = getattr(self, field_name)
+            if value > ceiling:
+                raise ValueError(
+                    f"{field_name.upper()}={value} exceeds archive safety ceiling {ceiling}. "
+                    "Runtime values may be stricter (lower) but never weaker."
+                )
+            if value < 1:
+                raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
+
+        for field_name, ceiling in self._LATEX_SOURCE_ARCHIVE_CEILINGS.items():
             value = getattr(self, field_name)
             if value > ceiling:
                 raise ValueError(

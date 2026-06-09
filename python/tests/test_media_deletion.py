@@ -1,11 +1,20 @@
 """Document deletion behavior tests."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 
-from nexus.db.models import Fragment, ResourceEdge, ResourceExternalSnapshot
+from nexus.db.models import (
+    Fragment,
+    Media,
+    MediaFile,
+    MediaKind,
+    MediaSourceAttempt,
+    ProcessingStatus,
+    ResourceEdge,
+    ResourceExternalSnapshot,
+)
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.resource_graph.cleanup import (
@@ -13,6 +22,7 @@ from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
 from tests.factories import (
     create_test_conversation_with_message,
     create_test_highlight,
@@ -20,6 +30,7 @@ from tests.factories import (
     create_test_media,
 )
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -171,6 +182,88 @@ def test_delete_document_removes_default_and_administered_libraries(
             {"media_id": media_id},
         ).fetchone()
     assert row is None
+
+
+def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
+    auth_client, direct_db: DirectSessionManager, monkeypatch
+):
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+    storage = FakeStorageClient()
+    monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+
+    media_id = uuid4()
+    attempt_id = uuid4()
+    original_path = build_storage_path(media_id, "pdf")
+    captured_source_path = build_source_artifact_storage_path(media_id, attempt_id, "html")
+    arxiv_source_path = build_source_artifact_storage_path(media_id, attempt_id, "tar")
+    storage.put_object(original_path, b"%PDF-1.4 test", "application/pdf")
+    storage.put_object(captured_source_path, b"<article>Source</article>", "text/html")
+    storage.put_object(arxiv_source_path, b"tar bytes", "application/x-tar")
+
+    with direct_db.session() as session:
+        session.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.pdf.value,
+                title="Delete nested source artifacts",
+                processing_status=ProcessingStatus.ready_for_reading,
+                created_by_user_id=user_id,
+            )
+        )
+        session.add(
+            MediaFile(
+                media_id=media_id,
+                storage_path=original_path,
+                content_type="application/pdf",
+                size_bytes=13,
+            )
+        )
+        session.add(
+            MediaSourceAttempt(
+                id=attempt_id,
+                media_id=media_id,
+                created_by_user_id=user_id,
+                source_type="remote_pdf_url",
+                attempt_no=1,
+                status="succeeded",
+                intent_key="test-source-artifact-delete",
+                requested_url="https://arxiv.org/pdf/2606.01109",
+                canonical_source_url="https://arxiv.org/pdf/2606.01109",
+                source_payload={
+                    "remote_kind": "pdf",
+                    "storage_path": captured_source_path,
+                    "arxiv_source_package": {
+                        "status": "fetched",
+                        "storage_path": arxiv_source_path,
+                    },
+                },
+            )
+        )
+        session.commit()
+
+    direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
+    direct_db.register_cleanup("media_file", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+    add_response = auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    assert add_response.status_code == 201, add_response.text
+
+    delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+
+    assert delete_response.status_code == 200, delete_response.text
+    assert delete_response.json()["data"]["hard_deleted"] is True
+    assert storage.get_object(original_path) is None
+    assert storage.get_object(captured_source_path) is None
+    assert storage.get_object(arxiv_source_path) is None
 
 
 def test_delete_document_hard_deletes_web_article_fragments_and_chunks(

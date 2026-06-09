@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
+import "@/lib/reader/apparatus.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { readThemeCookie } from "@/lib/theme/cookie";
 import { BRAND_BG_DARK, BRAND_BG_LIGHT } from "@/lib/brand";

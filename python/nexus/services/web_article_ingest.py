@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime
 from uuid import UUID
@@ -28,6 +29,11 @@ from nexus.services.media_processing_state import (
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
+from nexus.services.reader_apparatus import (
+    attach_fragment_locators,
+    replace_media_apparatus,
+    source_fingerprint,
+)
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_indexing import index_web_article_evidence
@@ -186,6 +192,16 @@ def _do_ingest(
             fragment_idx=0,
             media_title=ingest_result.title,
         )
+        source_apparatus = (
+            prepared
+            if ingest_result.source_html == ingest_result.content_html
+            else prepare_web_article_fragment(
+                html=ingest_result.source_html,
+                base_url=ingest_result.base_url,
+                fragment_idx=0,
+                media_title=ingest_result.title,
+            )
+        )
     except Exception as exc:
         error_message = f"Article prep failed: {exc}"
         if mark_terminal_media_state:
@@ -224,6 +240,28 @@ def _do_ingest(
 
     if mark_terminal_media_state:
         mark_ready_for_reading(db, media)
+
+    replace_media_apparatus(
+        db,
+        media_id=media_id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "web_article",
+            canonical_url,
+            hashlib.sha256(ingest_result.content_html.encode("utf-8")).hexdigest(),
+            hashlib.sha256(ingest_result.source_html.encode("utf-8")).hexdigest(),
+            prepared.canonical_text,
+        ),
+        items=attach_fragment_locators(
+            media_id=media_id,
+            fragment_id=fragment.id,
+            media_kind="web_article",
+            canonical_text=prepared.canonical_text,
+            items=source_apparatus.apparatus_items,
+            html_sanitized=prepared.html_sanitized,
+        ),
+        edges=source_apparatus.apparatus_edges,
+    )
 
     fragment_id = fragment.id
     media_language = media.language

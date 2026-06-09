@@ -20,8 +20,16 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Fragment, MediaKind, ProcessingStatus
 from nexus.services.media_source_ingest import accept_url_source
 from tests.helpers import create_test_user_id
+from tests.reader_apparatus_corpus import (
+    expected_counts,
+    fixture_case_ids,
+    fixture_cases_by_real_media_contract,
+    fixture_text,
+)
 
 pytestmark = pytest.mark.integration
+
+WEB_GENERIC_URL_APPARATUS_CASES = fixture_cases_by_real_media_contract("web_article_capture_api")
 
 
 class TestIngestionStateTransitions:
@@ -372,6 +380,130 @@ class TestFragmentPersistence:
             canonical_text = fragment["canonical_text"]
             assert blocks[0]["start_offset"] == 0
             assert blocks[-1]["end_offset"] == len(canonical_text)
+
+    def test_generic_url_ingest_persists_reader_apparatus_with_exact_locator(
+        self,
+        db_session: Session,
+        httpserver,
+    ):
+        """Generic URL ingest preserves semantic classes needed for apparatus."""
+        pytest.importorskip("nexus.services.node_ingest")
+        from nexus.tasks.ingest_web_article import run_ingest_sync
+
+        user_id = create_test_user_id()
+        _create_user(db_session, user_id)
+
+        httpserver.expect_request("/apparatus").respond_with_data(
+            """
+            <!DOCTYPE html>
+            <html>
+            <head><meta charset="utf-8"><title>Apparatus Article</title></head>
+            <body>
+              <article>
+                <h1>Apparatus Article</h1>
+                <p>Primary paragraph with enough words for Readability extraction
+                and one source-authored margin note in the same paragraph.
+                <span class="marginnote">A source-authored margin note survives.</span>
+                </p>
+                <p>Second paragraph provides enough article text so the extraction
+                heuristics treat this as a substantive web article.</p>
+                <p>Third paragraph keeps the fixture stable across Readability
+                versions by avoiding a too-short article body.</p>
+                <p>Fourth paragraph gives the deterministic fixture enough
+                content to persist a normal reader fragment.</p>
+              </article>
+            </body>
+            </html>
+            """,
+            content_type="text/html; charset=utf-8",
+        )
+
+        url = httpserver.url_for("/apparatus")
+        result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
+        media_id = result.media_id
+        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+
+        if ingest_result.get("status") != "success":
+            pytest.skip(f"Node.js web article ingest unavailable: {ingest_result}")
+
+        row = db_session.execute(
+            text("""
+                SELECT s.status, s.item_count, s.edge_count,
+                       i.kind, i.body_text, i.locator_status, i.locator
+                FROM reader_apparatus_states s
+                JOIN reader_apparatus_items i ON i.state_id = s.id
+                WHERE s.media_id = :media_id
+            """),
+            {"media_id": media_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "ready"
+        assert row[1] == 1
+        assert row[2] == 0
+        assert row[3] == "margin_note"
+        assert row[4] == "A source-authored margin note survives."
+        assert row[5] == "exact"
+        assert row[6]["type"] == "web_text_offsets"
+
+    @pytest.mark.parametrize(
+        "case",
+        WEB_GENERIC_URL_APPARATUS_CASES,
+        ids=fixture_case_ids(WEB_GENERIC_URL_APPARATUS_CASES),
+    )
+    def test_generic_url_ingest_extracts_apparatus_from_source_html(
+        self,
+        db_session: Session,
+        httpserver,
+        case: dict[str, object],
+    ):
+        """Generic URL ingest uses fetched source HTML for apparatus, not Readability-only HTML."""
+        pytest.importorskip("nexus.services.node_ingest")
+        from nexus.tasks.ingest_web_article import run_ingest_sync
+
+        user_id = create_test_user_id()
+        _create_user(db_session, user_id)
+
+        route = f"/{case['id']}"
+        httpserver.expect_request(route).respond_with_data(
+            fixture_text(case),
+            content_type="text/html; charset=utf-8",
+        )
+
+        url = httpserver.url_for(route)
+        result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
+        media_id = result.media_id
+        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+
+        if ingest_result.get("status") != "success":
+            pytest.skip(f"Node.js web article ingest unavailable: {ingest_result}")
+
+        item_counts = dict(
+            db_session.execute(
+                text("""
+                    SELECT i.kind, COUNT(*)
+                    FROM reader_apparatus_states s
+                    JOIN reader_apparatus_items i ON i.state_id = s.id
+                    WHERE s.media_id = :media_id
+                    GROUP BY i.kind
+                """),
+                {"media_id": media_id},
+            ).fetchall()
+        )
+        edge_counts = dict(
+            db_session.execute(
+                text("""
+                    SELECT e.relation, COUNT(*)
+                    FROM reader_apparatus_states s
+                    JOIN reader_apparatus_edges e ON e.state_id = s.id
+                    WHERE s.media_id = :media_id
+                    GROUP BY e.relation
+                """),
+                {"media_id": media_id},
+            ).fetchall()
+        )
+
+        assert item_counts == expected_counts(case, "item_kinds")
+        assert edge_counts == expected_counts(case, "edge_relations")
 
 
 class TestProcessingAttempts:

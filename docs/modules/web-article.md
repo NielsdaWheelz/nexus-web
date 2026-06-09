@@ -31,3 +31,23 @@ Browser article capture persists the raw captured HTML as a private source
 artifact at acceptance time, then queues `ingest_media_source`. Sanitization,
 no-readable-text, indexing, and metadata failures update the accepted media row
 and latest source attempt instead of dropping the capture.
+
+## Reader Apparatus
+
+Web article reader apparatus extraction is owned by the web article structure
+pipeline before sanitization strips semantic source attributes. The parser uses
+source-authored evidence such as DPUB-ARIA roles, JATS `xref @rid`, Distill
+custom citation tags, MediaWiki reference links, and Tufte sidenote structure.
+Tufte-style numbered sidenotes and unnumbered margin notes keep explicit
+`sidenote` / `margin_note` semantics, and standalone `span.marginnote` elements
+may surface as target-only sidecar rows with no synthetic marker edge. It does
+not infer apparatus from bare superscripts or client-rendered DOM heuristics.
+The fixture manifest owns exact source support levels and expected counts.
+
+HTML bibliography support is intentionally link-layer conservative. MediaWiki
+`sup.reference -> li#cite_note` note graphs are supported, and rendered
+`CITEREF...` works-cited entries linked from those note bodies are emitted as
+bibliography rows and citation edges. Distill fixtures emit cited `d-cite` /
+`dt-cite` targets and Distill footnotes; script-only bibliography records with
+no in-document marker are counted as out-of-scope absences and are not
+standalone apparatus rows.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import posixpath
 import re
@@ -62,8 +63,22 @@ from nexus.services.media_processing_state import (
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.pdf_indexing import index_pdf_evidence
-from nexus.services.remote_file_client import REMOTE_FILE_CONTENT_TYPES, fetch_to_storage
-from nexus.services.remote_file_ingest import remote_file_kind_from_url
+from nexus.services.pdf_ingest import PdfSourcePackageArtifact
+from nexus.services.reader_apparatus import (
+    attach_fragment_locators,
+    replace_media_apparatus,
+    source_fingerprint,
+)
+from nexus.services.remote_file_client import (
+    REMOTE_FILE_CONTENT_TYPES,
+    fetch_binary_to_storage,
+    fetch_to_storage,
+)
+from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url, remote_file_kind_from_url
+from nexus.services.source_attempt_artifacts import (
+    clone_source_payload_for_new_attempt,
+    source_attempt_storage_paths,
+)
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_ingest import materialize_web_article_source
@@ -1296,7 +1311,7 @@ def _clone_attempt_for_media(
         canonical_source_url=previous.canonical_source_url,
         provider=previous.provider,
         provider_target_ref=previous.provider_target_ref,
-        source_payload=dict(previous.source_payload or {}),
+        source_payload=clone_source_payload_for_new_attempt(previous.source_payload),
         request_id=request_id,
         idempotency_key=idempotency_key,
         status=_ATTEMPT_ACCEPTED,
@@ -1476,6 +1491,7 @@ def _supersede_source_media(
         .one_or_none()
     )
     if attempt is not None:
+        _raise_if_artifact_bearing_attempt_transfer(attempt)
         if attempt.created_by_user_id is not None:
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db,
@@ -1516,6 +1532,8 @@ def transfer_source_attempts_to_media(
     )
     if not attempts:
         return
+    for attempt in attempts:
+        _raise_if_artifact_bearing_attempt_transfer(attempt)
 
     next_attempt_no = int(
         db.execute(
@@ -1535,6 +1553,14 @@ def transfer_source_attempts_to_media(
             attempt.finished_at = now
         attempt.updated_at = now
     db.flush()
+
+
+def _raise_if_artifact_bearing_attempt_transfer(attempt: MediaSourceAttempt) -> None:
+    if not source_attempt_storage_paths(attempt.source_payload):
+        return
+    raise RuntimeError(
+        "Source attempt storage artifacts must be rehomed before transferring media ownership."
+    )
 
 
 def enqueue_podcast_episode_transcript_source_attempt(
@@ -2075,6 +2101,27 @@ def _run_browser_article_capture(
         media.title = title[:255]
     _persist_browser_article_metadata(db, media, payload)
     mark_ready_for_reading(db, media)
+    replace_media_apparatus(
+        db,
+        media_id=media_id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "web_article",
+            attempt.requested_url or media.requested_url,
+            storage_path,
+            hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
+            canonical_text,
+        ),
+        items=attach_fragment_locators(
+            media_id=media_id,
+            fragment_id=fragment.id,
+            media_kind="web_article",
+            canonical_text=prepared.canonical_text,
+            items=prepared.apparatus_items,
+            html_sanitized=prepared.html_sanitized,
+        ),
+        edges=prepared.apparatus_edges,
+    )
     fragment_id = fragment.id
     db.commit()
 
@@ -2115,10 +2162,21 @@ def _run_remote_file(
         storage_client=storage_client,
     )
     validate_file_ingest_request(kind, fetched.content_type, fetched.size_bytes)
+    source_package, source_package_diagnostics, source_package_storage_path = (
+        _try_fetch_arxiv_source_package(
+            media_id=media.id,
+            attempt_id=attempt.id,
+            requested_url=requested_url,
+            kind=kind,
+            storage_client=storage_client,
+        )
+    )
 
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is None:
         _delete_storage_object(storage_client, storage_path)
+        if source_package_storage_path:
+            _delete_storage_object(storage_client, source_package_storage_path)
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media.canonical_source_url = normalize_url_for_display(fetched.final_url)
     media.updated_at = func.now()
@@ -2136,9 +2194,93 @@ def _run_remote_file(
         media_file.storage_path = storage_path
         media_file.content_type = fetched.content_type
         media_file.size_bytes = fetched.size_bytes
+    attempt = db.get(MediaSourceAttempt, attempt.id)
+    if attempt is not None and (source_package is not None or source_package_diagnostics):
+        source_payload = dict(attempt.source_payload or {})
+        source_payload["arxiv_source_package"] = source_package_diagnostics or {
+            "status": "fetched",
+            "source_url": source_package.source_url,
+            "storage_path": source_package.storage_path,
+            "content_type": source_package.content_type,
+            "size_bytes": source_package.size_bytes,
+            "sha256_hex": source_package.sha256_hex,
+        }
+        attempt.source_payload = source_payload
     db.commit()
 
-    return _materialize_existing_file_source(db, media_id, kind, request_id)
+    return _materialize_existing_file_source(
+        db,
+        media_id,
+        kind,
+        request_id,
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
+
+
+def _try_fetch_arxiv_source_package(
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+    requested_url: str,
+    kind: str,
+    storage_client: StorageClientBase,
+) -> tuple[PdfSourcePackageArtifact | None, dict[str, object] | None, str | None]:
+    if kind != MediaKind.pdf.value:
+        return None, None, None
+    arxiv_source = arxiv_pdf_source_from_url(requested_url)
+    if arxiv_source is None:
+        return None, None, None
+
+    storage_path = build_source_artifact_storage_path(media_id, attempt_id, "tar")
+    try:
+        fetched = fetch_binary_to_storage(
+            url=arxiv_source.source_url,
+            storage_path=storage_path,
+            storage_client=storage_client,
+            content_type="application/x-tar",
+            max_bytes=get_settings().max_arxiv_source_bytes,
+            accept="application/e-print,application/x-tar,application/gzip,application/octet-stream,*/*;q=0.8",
+        )
+    except Exception as exc:
+        error_code, error_message = _source_error_fields(exc)
+        return (
+            None,
+            {
+                "status": "fetch_failed",
+                "arxiv_id": arxiv_source.arxiv_id,
+                "source_url": arxiv_source.source_url,
+                "error_code": error_code,
+                "error_message": error_message,
+            },
+            None,
+        )
+
+    artifact = PdfSourcePackageArtifact(
+        storage_path=storage_path,
+        content_type=fetched.content_type,
+        size_bytes=fetched.size_bytes,
+        sha256_hex=fetched.sha256_hex,
+        source_url=fetched.final_url,
+        source_kind="arxiv_source",
+        source_ref={
+            "arxiv_id": arxiv_source.arxiv_id,
+            "requested_pdf_url": requested_url,
+        },
+    )
+    return (
+        artifact,
+        {
+            "status": "fetched",
+            "arxiv_id": arxiv_source.arxiv_id,
+            "source_url": artifact.source_url,
+            "storage_path": artifact.storage_path,
+            "content_type": artifact.content_type,
+            "size_bytes": artifact.size_bytes,
+            "sha256_hex": artifact.sha256_hex,
+        },
+        storage_path,
+    )
 
 
 def _run_existing_file(
@@ -2165,11 +2307,20 @@ def _materialize_existing_file_source(
     media_id: UUID,
     kind: str,
     request_id: str | None,
+    *,
+    source_package: PdfSourcePackageArtifact | None = None,
+    source_package_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if kind == MediaKind.pdf.value:
         from nexus.services.pdf_lifecycle import materialize_pdf_source
 
-        return materialize_pdf_source(db, media_id=media_id, request_id=request_id)
+        return materialize_pdf_source(
+            db,
+            media_id=media_id,
+            request_id=request_id,
+            source_package=source_package,
+            source_package_diagnostics=source_package_diagnostics,
+        )
     if kind == MediaKind.epub.value:
         from nexus.services.epub_lifecycle import materialize_epub_source
 

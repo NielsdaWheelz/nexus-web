@@ -1,0 +1,4477 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000000:epub-text-endnotes.xhtml-note-1",
+        "relation": "points_to_endnote",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-1",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-1",
+          "target_ref": "epub/text/endnotes.xhtml#note-1"
+        },
+        "stable_key": "epub:2:ref:000000:epub-text-endnotes.xhtml-note-1->epub:3:target:epub-text-endnotes.xhtml-note-1",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000001:epub-text-endnotes.xhtml-note-2",
+        "relation": "points_to_endnote",
+        "sort_key": "000001.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-2",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-2",
+          "target_ref": "epub/text/endnotes.xhtml#note-2"
+        },
+        "stable_key": "epub:2:ref:000001:epub-text-endnotes.xhtml-note-2->epub:3:target:epub-text-endnotes.xhtml-note-2",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000002:epub-text-endnotes.xhtml-note-3",
+        "relation": "points_to_endnote",
+        "sort_key": "000002.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-3",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-3",
+          "target_ref": "epub/text/endnotes.xhtml#note-3"
+        },
+        "stable_key": "epub:2:ref:000002:epub-text-endnotes.xhtml-note-3->epub:3:target:epub-text-endnotes.xhtml-note-3",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000003:epub-text-endnotes.xhtml-note-4",
+        "relation": "points_to_endnote",
+        "sort_key": "000003.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-4",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-4",
+          "target_ref": "epub/text/endnotes.xhtml#note-4"
+        },
+        "stable_key": "epub:2:ref:000003:epub-text-endnotes.xhtml-note-4->epub:3:target:epub-text-endnotes.xhtml-note-4",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000004:epub-text-endnotes.xhtml-note-5",
+        "relation": "points_to_endnote",
+        "sort_key": "000004.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-5",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-5",
+          "target_ref": "epub/text/endnotes.xhtml#note-5"
+        },
+        "stable_key": "epub:2:ref:000004:epub-text-endnotes.xhtml-note-5->epub:3:target:epub-text-endnotes.xhtml-note-5",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000005:epub-text-endnotes.xhtml-note-6",
+        "relation": "points_to_endnote",
+        "sort_key": "000005.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-6",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-6",
+          "target_ref": "epub/text/endnotes.xhtml#note-6"
+        },
+        "stable_key": "epub:2:ref:000005:epub-text-endnotes.xhtml-note-6->epub:3:target:epub-text-endnotes.xhtml-note-6",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000006:epub-text-endnotes.xhtml-note-7",
+        "relation": "points_to_endnote",
+        "sort_key": "000006.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-7",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-7",
+          "target_ref": "epub/text/endnotes.xhtml#note-7"
+        },
+        "stable_key": "epub:2:ref:000006:epub-text-endnotes.xhtml-note-7->epub:3:target:epub-text-endnotes.xhtml-note-7",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000007:epub-text-endnotes.xhtml-note-8",
+        "relation": "points_to_endnote",
+        "sort_key": "000007.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-8",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-8",
+          "target_ref": "epub/text/endnotes.xhtml#note-8"
+        },
+        "stable_key": "epub:2:ref:000007:epub-text-endnotes.xhtml-note-8->epub:3:target:epub-text-endnotes.xhtml-note-8",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000008:epub-text-endnotes.xhtml-note-9",
+        "relation": "points_to_endnote",
+        "sort_key": "000008.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-9",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-9",
+          "target_ref": "epub/text/endnotes.xhtml#note-9"
+        },
+        "stable_key": "epub:2:ref:000008:epub-text-endnotes.xhtml-note-9->epub:3:target:epub-text-endnotes.xhtml-note-9",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000009:epub-text-endnotes.xhtml-note-10",
+        "relation": "points_to_endnote",
+        "sort_key": "000009.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-10",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-10",
+          "target_ref": "epub/text/endnotes.xhtml#note-10"
+        },
+        "stable_key": "epub:2:ref:000009:epub-text-endnotes.xhtml-note-10->epub:3:target:epub-text-endnotes.xhtml-note-10",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000010:epub-text-endnotes.xhtml-note-11",
+        "relation": "points_to_endnote",
+        "sort_key": "000010.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-11",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-11",
+          "target_ref": "epub/text/endnotes.xhtml#note-11"
+        },
+        "stable_key": "epub:2:ref:000010:epub-text-endnotes.xhtml-note-11->epub:3:target:epub-text-endnotes.xhtml-note-11",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000011:epub-text-endnotes.xhtml-note-12",
+        "relation": "points_to_endnote",
+        "sort_key": "000011.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-12",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-12",
+          "target_ref": "epub/text/endnotes.xhtml#note-12"
+        },
+        "stable_key": "epub:2:ref:000011:epub-text-endnotes.xhtml-note-12->epub:3:target:epub-text-endnotes.xhtml-note-12",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000012:epub-text-endnotes.xhtml-note-13",
+        "relation": "points_to_endnote",
+        "sort_key": "000012.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-13",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-13",
+          "target_ref": "epub/text/endnotes.xhtml#note-13"
+        },
+        "stable_key": "epub:2:ref:000012:epub-text-endnotes.xhtml-note-13->epub:3:target:epub-text-endnotes.xhtml-note-13",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-13"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000013:epub-text-endnotes.xhtml-note-14",
+        "relation": "points_to_endnote",
+        "sort_key": "000013.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-14",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-14",
+          "target_ref": "epub/text/endnotes.xhtml#note-14"
+        },
+        "stable_key": "epub:2:ref:000013:epub-text-endnotes.xhtml-note-14->epub:3:target:epub-text-endnotes.xhtml-note-14",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-14"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000014:epub-text-endnotes.xhtml-note-15",
+        "relation": "points_to_endnote",
+        "sort_key": "000014.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-15",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-15",
+          "target_ref": "epub/text/endnotes.xhtml#note-15"
+        },
+        "stable_key": "epub:2:ref:000014:epub-text-endnotes.xhtml-note-15->epub:3:target:epub-text-endnotes.xhtml-note-15",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-15"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000015:epub-text-endnotes.xhtml-note-16",
+        "relation": "points_to_endnote",
+        "sort_key": "000015.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-16",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-16",
+          "target_ref": "epub/text/endnotes.xhtml#note-16"
+        },
+        "stable_key": "epub:2:ref:000015:epub-text-endnotes.xhtml-note-16->epub:3:target:epub-text-endnotes.xhtml-note-16",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-16"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000016:epub-text-endnotes.xhtml-note-17",
+        "relation": "points_to_endnote",
+        "sort_key": "000016.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-17",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-17",
+          "target_ref": "epub/text/endnotes.xhtml#note-17"
+        },
+        "stable_key": "epub:2:ref:000016:epub-text-endnotes.xhtml-note-17->epub:3:target:epub-text-endnotes.xhtml-note-17",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-17"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000017:epub-text-endnotes.xhtml-note-18",
+        "relation": "points_to_endnote",
+        "sort_key": "000017.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-18",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-18",
+          "target_ref": "epub/text/endnotes.xhtml#note-18"
+        },
+        "stable_key": "epub:2:ref:000017:epub-text-endnotes.xhtml-note-18->epub:3:target:epub-text-endnotes.xhtml-note-18",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-18"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000018:epub-text-endnotes.xhtml-note-19",
+        "relation": "points_to_endnote",
+        "sort_key": "000018.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-19",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-19",
+          "target_ref": "epub/text/endnotes.xhtml#note-19"
+        },
+        "stable_key": "epub:2:ref:000018:epub-text-endnotes.xhtml-note-19->epub:3:target:epub-text-endnotes.xhtml-note-19",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-19"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000019:epub-text-endnotes.xhtml-note-20",
+        "relation": "points_to_endnote",
+        "sort_key": "000019.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-20",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-20",
+          "target_ref": "epub/text/endnotes.xhtml#note-20"
+        },
+        "stable_key": "epub:2:ref:000019:epub-text-endnotes.xhtml-note-20->epub:3:target:epub-text-endnotes.xhtml-note-20",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-20"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000020:epub-text-endnotes.xhtml-note-21",
+        "relation": "points_to_endnote",
+        "sort_key": "000020.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-21",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-21",
+          "target_ref": "epub/text/endnotes.xhtml#note-21"
+        },
+        "stable_key": "epub:2:ref:000020:epub-text-endnotes.xhtml-note-21->epub:3:target:epub-text-endnotes.xhtml-note-21",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-21"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000021:epub-text-endnotes.xhtml-note-22",
+        "relation": "points_to_endnote",
+        "sort_key": "000021.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-22",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-22",
+          "target_ref": "epub/text/endnotes.xhtml#note-22"
+        },
+        "stable_key": "epub:2:ref:000021:epub-text-endnotes.xhtml-note-22->epub:3:target:epub-text-endnotes.xhtml-note-22",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-22"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000022:epub-text-endnotes.xhtml-note-23",
+        "relation": "points_to_endnote",
+        "sort_key": "000022.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-23",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-23",
+          "target_ref": "epub/text/endnotes.xhtml#note-23"
+        },
+        "stable_key": "epub:2:ref:000022:epub-text-endnotes.xhtml-note-23->epub:3:target:epub-text-endnotes.xhtml-note-23",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-23"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000023:epub-text-endnotes.xhtml-note-24",
+        "relation": "points_to_endnote",
+        "sort_key": "000023.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-24",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-24",
+          "target_ref": "epub/text/endnotes.xhtml#note-24"
+        },
+        "stable_key": "epub:2:ref:000023:epub-text-endnotes.xhtml-note-24->epub:3:target:epub-text-endnotes.xhtml-note-24",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-24"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000024:epub-text-endnotes.xhtml-note-25",
+        "relation": "points_to_endnote",
+        "sort_key": "000024.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-25",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-25",
+          "target_ref": "epub/text/endnotes.xhtml#note-25"
+        },
+        "stable_key": "epub:2:ref:000024:epub-text-endnotes.xhtml-note-25->epub:3:target:epub-text-endnotes.xhtml-note-25",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-25"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000025:epub-text-endnotes.xhtml-note-26",
+        "relation": "points_to_endnote",
+        "sort_key": "000025.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-26",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-26",
+          "target_ref": "epub/text/endnotes.xhtml#note-26"
+        },
+        "stable_key": "epub:2:ref:000025:epub-text-endnotes.xhtml-note-26->epub:3:target:epub-text-endnotes.xhtml-note-26",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-26"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000026:epub-text-endnotes.xhtml-note-27",
+        "relation": "points_to_endnote",
+        "sort_key": "000026.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-27",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-27",
+          "target_ref": "epub/text/endnotes.xhtml#note-27"
+        },
+        "stable_key": "epub:2:ref:000026:epub-text-endnotes.xhtml-note-27->epub:3:target:epub-text-endnotes.xhtml-note-27",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-27"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000027:epub-text-endnotes.xhtml-note-28",
+        "relation": "points_to_endnote",
+        "sort_key": "000027.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-28",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-28",
+          "target_ref": "epub/text/endnotes.xhtml#note-28"
+        },
+        "stable_key": "epub:2:ref:000027:epub-text-endnotes.xhtml-note-28->epub:3:target:epub-text-endnotes.xhtml-note-28",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-28"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000028:epub-text-endnotes.xhtml-note-29",
+        "relation": "points_to_endnote",
+        "sort_key": "000028.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-29",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-29",
+          "target_ref": "epub/text/endnotes.xhtml#note-29"
+        },
+        "stable_key": "epub:2:ref:000028:epub-text-endnotes.xhtml-note-29->epub:3:target:epub-text-endnotes.xhtml-note-29",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-29"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000029:epub-text-endnotes.xhtml-note-30",
+        "relation": "points_to_endnote",
+        "sort_key": "000029.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-30",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-30",
+          "target_ref": "epub/text/endnotes.xhtml#note-30"
+        },
+        "stable_key": "epub:2:ref:000029:epub-text-endnotes.xhtml-note-30->epub:3:target:epub-text-endnotes.xhtml-note-30",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-30"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000030:epub-text-endnotes.xhtml-note-31",
+        "relation": "points_to_endnote",
+        "sort_key": "000030.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-31",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-31",
+          "target_ref": "epub/text/endnotes.xhtml#note-31"
+        },
+        "stable_key": "epub:2:ref:000030:epub-text-endnotes.xhtml-note-31->epub:3:target:epub-text-endnotes.xhtml-note-31",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-31"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000031:epub-text-endnotes.xhtml-note-32",
+        "relation": "points_to_endnote",
+        "sort_key": "000031.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-32",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-32",
+          "target_ref": "epub/text/endnotes.xhtml#note-32"
+        },
+        "stable_key": "epub:2:ref:000031:epub-text-endnotes.xhtml-note-32->epub:3:target:epub-text-endnotes.xhtml-note-32",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-32"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000032:epub-text-endnotes.xhtml-note-33",
+        "relation": "points_to_endnote",
+        "sort_key": "000032.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-33",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-33",
+          "target_ref": "epub/text/endnotes.xhtml#note-33"
+        },
+        "stable_key": "epub:2:ref:000032:epub-text-endnotes.xhtml-note-33->epub:3:target:epub-text-endnotes.xhtml-note-33",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-33"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000033:epub-text-endnotes.xhtml-note-34",
+        "relation": "points_to_endnote",
+        "sort_key": "000033.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-34",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-34",
+          "target_ref": "epub/text/endnotes.xhtml#note-34"
+        },
+        "stable_key": "epub:2:ref:000033:epub-text-endnotes.xhtml-note-34->epub:3:target:epub-text-endnotes.xhtml-note-34",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-34"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000034:epub-text-endnotes.xhtml-note-35",
+        "relation": "points_to_endnote",
+        "sort_key": "000034.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-35",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-35",
+          "target_ref": "epub/text/endnotes.xhtml#note-35"
+        },
+        "stable_key": "epub:2:ref:000034:epub-text-endnotes.xhtml-note-35->epub:3:target:epub-text-endnotes.xhtml-note-35",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-35"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000035:epub-text-endnotes.xhtml-note-36",
+        "relation": "points_to_endnote",
+        "sort_key": "000035.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-36",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-36",
+          "target_ref": "epub/text/endnotes.xhtml#note-36"
+        },
+        "stable_key": "epub:2:ref:000035:epub-text-endnotes.xhtml-note-36->epub:3:target:epub-text-endnotes.xhtml-note-36",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-36"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000036:epub-text-endnotes.xhtml-note-37",
+        "relation": "points_to_endnote",
+        "sort_key": "000036.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-37",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-37",
+          "target_ref": "epub/text/endnotes.xhtml#note-37"
+        },
+        "stable_key": "epub:2:ref:000036:epub-text-endnotes.xhtml-note-37->epub:3:target:epub-text-endnotes.xhtml-note-37",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-37"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000037:epub-text-endnotes.xhtml-note-38",
+        "relation": "points_to_endnote",
+        "sort_key": "000037.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-38",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-38",
+          "target_ref": "epub/text/endnotes.xhtml#note-38"
+        },
+        "stable_key": "epub:2:ref:000037:epub-text-endnotes.xhtml-note-38->epub:3:target:epub-text-endnotes.xhtml-note-38",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-38"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000038:epub-text-endnotes.xhtml-note-39",
+        "relation": "points_to_endnote",
+        "sort_key": "000038.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-39",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-39",
+          "target_ref": "epub/text/endnotes.xhtml#note-39"
+        },
+        "stable_key": "epub:2:ref:000038:epub-text-endnotes.xhtml-note-39->epub:3:target:epub-text-endnotes.xhtml-note-39",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-39"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000039:epub-text-endnotes.xhtml-note-40",
+        "relation": "points_to_endnote",
+        "sort_key": "000039.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-40",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-40",
+          "target_ref": "epub/text/endnotes.xhtml#note-40"
+        },
+        "stable_key": "epub:2:ref:000039:epub-text-endnotes.xhtml-note-40->epub:3:target:epub-text-endnotes.xhtml-note-40",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-40"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000040:epub-text-endnotes.xhtml-note-41",
+        "relation": "points_to_endnote",
+        "sort_key": "000040.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-41",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-41",
+          "target_ref": "epub/text/endnotes.xhtml#note-41"
+        },
+        "stable_key": "epub:2:ref:000040:epub-text-endnotes.xhtml-note-41->epub:3:target:epub-text-endnotes.xhtml-note-41",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-41"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000041:epub-text-endnotes.xhtml-note-42",
+        "relation": "points_to_endnote",
+        "sort_key": "000041.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-42",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-42",
+          "target_ref": "epub/text/endnotes.xhtml#note-42"
+        },
+        "stable_key": "epub:2:ref:000041:epub-text-endnotes.xhtml-note-42->epub:3:target:epub-text-endnotes.xhtml-note-42",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-42"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000042:epub-text-endnotes.xhtml-note-43",
+        "relation": "points_to_endnote",
+        "sort_key": "000042.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-43",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-43",
+          "target_ref": "epub/text/endnotes.xhtml#note-43"
+        },
+        "stable_key": "epub:2:ref:000042:epub-text-endnotes.xhtml-note-43->epub:3:target:epub-text-endnotes.xhtml-note-43",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-43"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000043:epub-text-endnotes.xhtml-note-44",
+        "relation": "points_to_endnote",
+        "sort_key": "000043.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-44",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-44",
+          "target_ref": "epub/text/endnotes.xhtml#note-44"
+        },
+        "stable_key": "epub:2:ref:000043:epub-text-endnotes.xhtml-note-44->epub:3:target:epub-text-endnotes.xhtml-note-44",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-44"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000044:epub-text-endnotes.xhtml-note-45",
+        "relation": "points_to_endnote",
+        "sort_key": "000044.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-45",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-45",
+          "target_ref": "epub/text/endnotes.xhtml#note-45"
+        },
+        "stable_key": "epub:2:ref:000044:epub-text-endnotes.xhtml-note-45->epub:3:target:epub-text-endnotes.xhtml-note-45",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-45"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000045:epub-text-endnotes.xhtml-note-46",
+        "relation": "points_to_endnote",
+        "sort_key": "000045.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-46",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-46",
+          "target_ref": "epub/text/endnotes.xhtml#note-46"
+        },
+        "stable_key": "epub:2:ref:000045:epub-text-endnotes.xhtml-note-46->epub:3:target:epub-text-endnotes.xhtml-note-46",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-46"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000046:epub-text-endnotes.xhtml-note-47",
+        "relation": "points_to_endnote",
+        "sort_key": "000046.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-47",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-47",
+          "target_ref": "epub/text/endnotes.xhtml#note-47"
+        },
+        "stable_key": "epub:2:ref:000046:epub-text-endnotes.xhtml-note-47->epub:3:target:epub-text-endnotes.xhtml-note-47",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-47"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000047:epub-text-endnotes.xhtml-note-48",
+        "relation": "points_to_endnote",
+        "sort_key": "000047.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-48",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-48",
+          "target_ref": "epub/text/endnotes.xhtml#note-48"
+        },
+        "stable_key": "epub:2:ref:000047:epub-text-endnotes.xhtml-note-48->epub:3:target:epub-text-endnotes.xhtml-note-48",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-48"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000048:epub-text-endnotes.xhtml-note-49",
+        "relation": "points_to_endnote",
+        "sort_key": "000048.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-49",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-49",
+          "target_ref": "epub/text/endnotes.xhtml#note-49"
+        },
+        "stable_key": "epub:2:ref:000048:epub-text-endnotes.xhtml-note-49->epub:3:target:epub-text-endnotes.xhtml-note-49",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-49"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000049:epub-text-endnotes.xhtml-note-50",
+        "relation": "points_to_endnote",
+        "sort_key": "000049.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-50",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-50",
+          "target_ref": "epub/text/endnotes.xhtml#note-50"
+        },
+        "stable_key": "epub:2:ref:000049:epub-text-endnotes.xhtml-note-50->epub:3:target:epub-text-endnotes.xhtml-note-50",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-50"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000050:epub-text-endnotes.xhtml-note-51",
+        "relation": "points_to_endnote",
+        "sort_key": "000050.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-51",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-51",
+          "target_ref": "epub/text/endnotes.xhtml#note-51"
+        },
+        "stable_key": "epub:2:ref:000050:epub-text-endnotes.xhtml-note-51->epub:3:target:epub-text-endnotes.xhtml-note-51",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-51"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000051:epub-text-endnotes.xhtml-note-52",
+        "relation": "points_to_endnote",
+        "sort_key": "000051.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-52",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-52",
+          "target_ref": "epub/text/endnotes.xhtml#note-52"
+        },
+        "stable_key": "epub:2:ref:000051:epub-text-endnotes.xhtml-note-52->epub:3:target:epub-text-endnotes.xhtml-note-52",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-52"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "from_stable_key": "epub:2:ref:000052:epub-text-endnotes.xhtml-note-53",
+        "relation": "points_to_endnote",
+        "sort_key": "000052.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-53",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-53",
+          "target_ref": "epub/text/endnotes.xhtml#note-53"
+        },
+        "stable_key": "epub:2:ref:000052:epub-text-endnotes.xhtml-note-53->epub:3:target:epub-text-endnotes.xhtml-note-53",
+        "to_stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-53"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 28327,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 28326,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-1",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-1",
+          "target_ref": "epub/text/endnotes.xhtml#note-1"
+        },
+        "stable_key": "epub:2:ref:000000:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "2",
+        "locator": {
+          "end_offset": 37462,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 37461,
+          "text_quote_selector": {
+            "exact": "2"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000001.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-2",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-2",
+          "target_ref": "epub/text/endnotes.xhtml#note-2"
+        },
+        "stable_key": "epub:2:ref:000001:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "3",
+        "locator": {
+          "end_offset": 38523,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 38522,
+          "text_quote_selector": {
+            "exact": "3"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000002.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-3",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-3",
+          "target_ref": "epub/text/endnotes.xhtml#note-3"
+        },
+        "stable_key": "epub:2:ref:000002:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "4",
+        "locator": {
+          "end_offset": 38673,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 38672,
+          "text_quote_selector": {
+            "exact": "4"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000003.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-4",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-4",
+          "target_ref": "epub/text/endnotes.xhtml#note-4"
+        },
+        "stable_key": "epub:2:ref:000003:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "5",
+        "locator": {
+          "end_offset": 39051,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 39050,
+          "text_quote_selector": {
+            "exact": "5"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000004.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-5",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-5",
+          "target_ref": "epub/text/endnotes.xhtml#note-5"
+        },
+        "stable_key": "epub:2:ref:000004:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "6",
+        "locator": {
+          "end_offset": 39381,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 39380,
+          "text_quote_selector": {
+            "exact": "6"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000005.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-6",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-6",
+          "target_ref": "epub/text/endnotes.xhtml#note-6"
+        },
+        "stable_key": "epub:2:ref:000005:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "7",
+        "locator": {
+          "end_offset": 39539,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 39538,
+          "text_quote_selector": {
+            "exact": "7"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000006.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-7",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-7",
+          "target_ref": "epub/text/endnotes.xhtml#note-7"
+        },
+        "stable_key": "epub:2:ref:000006:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "8",
+        "locator": {
+          "end_offset": 40114,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40113,
+          "text_quote_selector": {
+            "exact": "8"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000007.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-8",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-8",
+          "target_ref": "epub/text/endnotes.xhtml#note-8"
+        },
+        "stable_key": "epub:2:ref:000007:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "9",
+        "locator": {
+          "end_offset": 40241,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40240,
+          "text_quote_selector": {
+            "exact": "9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000008.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-9",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-9",
+          "target_ref": "epub/text/endnotes.xhtml#note-9"
+        },
+        "stable_key": "epub:2:ref:000008:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "10",
+        "locator": {
+          "end_offset": 40286,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40284,
+          "text_quote_selector": {
+            "exact": "10"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000009.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-10",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-10",
+          "target_ref": "epub/text/endnotes.xhtml#note-10"
+        },
+        "stable_key": "epub:2:ref:000009:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "11",
+        "locator": {
+          "end_offset": 40473,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40471,
+          "text_quote_selector": {
+            "exact": "11"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000010.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-11",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-11",
+          "target_ref": "epub/text/endnotes.xhtml#note-11"
+        },
+        "stable_key": "epub:2:ref:000010:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "12",
+        "locator": {
+          "end_offset": 40773,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40771,
+          "text_quote_selector": {
+            "exact": "12"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000011.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-12",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-12",
+          "target_ref": "epub/text/endnotes.xhtml#note-12"
+        },
+        "stable_key": "epub:2:ref:000011:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "13",
+        "locator": {
+          "end_offset": 40870,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40868,
+          "text_quote_selector": {
+            "exact": "13"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000012.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-13",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-13",
+          "target_ref": "epub/text/endnotes.xhtml#note-13"
+        },
+        "stable_key": "epub:2:ref:000012:epub-text-endnotes.xhtml-note-13"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "14",
+        "locator": {
+          "end_offset": 40941,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 40939,
+          "text_quote_selector": {
+            "exact": "14"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000013.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-14",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-14",
+          "target_ref": "epub/text/endnotes.xhtml#note-14"
+        },
+        "stable_key": "epub:2:ref:000013:epub-text-endnotes.xhtml-note-14"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "15",
+        "locator": {
+          "end_offset": 41592,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 41590,
+          "text_quote_selector": {
+            "exact": "15"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000014.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-15",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-15",
+          "target_ref": "epub/text/endnotes.xhtml#note-15"
+        },
+        "stable_key": "epub:2:ref:000014:epub-text-endnotes.xhtml-note-15"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "16",
+        "locator": {
+          "end_offset": 41852,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 41850,
+          "text_quote_selector": {
+            "exact": "16"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000015.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-16",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-16",
+          "target_ref": "epub/text/endnotes.xhtml#note-16"
+        },
+        "stable_key": "epub:2:ref:000015:epub-text-endnotes.xhtml-note-16"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "17",
+        "locator": {
+          "end_offset": 41900,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 41898,
+          "text_quote_selector": {
+            "exact": "17"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000016.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-17",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-17",
+          "target_ref": "epub/text/endnotes.xhtml#note-17"
+        },
+        "stable_key": "epub:2:ref:000016:epub-text-endnotes.xhtml-note-17"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "18",
+        "locator": {
+          "end_offset": 42065,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 42063,
+          "text_quote_selector": {
+            "exact": "18"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-18",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-18",
+          "target_ref": "epub/text/endnotes.xhtml#note-18"
+        },
+        "stable_key": "epub:2:ref:000017:epub-text-endnotes.xhtml-note-18"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "19",
+        "locator": {
+          "end_offset": 42567,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 42565,
+          "text_quote_selector": {
+            "exact": "19"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000018.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-19",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-19",
+          "target_ref": "epub/text/endnotes.xhtml#note-19"
+        },
+        "stable_key": "epub:2:ref:000018:epub-text-endnotes.xhtml-note-19"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "20",
+        "locator": {
+          "end_offset": 42654,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 42652,
+          "text_quote_selector": {
+            "exact": "20"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-20",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-20",
+          "target_ref": "epub/text/endnotes.xhtml#note-20"
+        },
+        "stable_key": "epub:2:ref:000019:epub-text-endnotes.xhtml-note-20"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "21",
+        "locator": {
+          "end_offset": 42942,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 42940,
+          "text_quote_selector": {
+            "exact": "21"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000020.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-21",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-21",
+          "target_ref": "epub/text/endnotes.xhtml#note-21"
+        },
+        "stable_key": "epub:2:ref:000020:epub-text-endnotes.xhtml-note-21"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "22",
+        "locator": {
+          "end_offset": 43295,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 43293,
+          "text_quote_selector": {
+            "exact": "22"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000021.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-22",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-22",
+          "target_ref": "epub/text/endnotes.xhtml#note-22"
+        },
+        "stable_key": "epub:2:ref:000021:epub-text-endnotes.xhtml-note-22"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "23",
+        "locator": {
+          "end_offset": 45161,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 45159,
+          "text_quote_selector": {
+            "exact": "23"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000022.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-23",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-23",
+          "target_ref": "epub/text/endnotes.xhtml#note-23"
+        },
+        "stable_key": "epub:2:ref:000022:epub-text-endnotes.xhtml-note-23"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "24",
+        "locator": {
+          "end_offset": 45917,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 45915,
+          "text_quote_selector": {
+            "exact": "24"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000023.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-24",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-24",
+          "target_ref": "epub/text/endnotes.xhtml#note-24"
+        },
+        "stable_key": "epub:2:ref:000023:epub-text-endnotes.xhtml-note-24"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "25",
+        "locator": {
+          "end_offset": 46090,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46088,
+          "text_quote_selector": {
+            "exact": "25"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000024.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-25",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-25",
+          "target_ref": "epub/text/endnotes.xhtml#note-25"
+        },
+        "stable_key": "epub:2:ref:000024:epub-text-endnotes.xhtml-note-25"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "26",
+        "locator": {
+          "end_offset": 46141,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46139,
+          "text_quote_selector": {
+            "exact": "26"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000025.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-26",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-26",
+          "target_ref": "epub/text/endnotes.xhtml#note-26"
+        },
+        "stable_key": "epub:2:ref:000025:epub-text-endnotes.xhtml-note-26"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "27",
+        "locator": {
+          "end_offset": 46220,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46218,
+          "text_quote_selector": {
+            "exact": "27"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000026.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-27",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-27",
+          "target_ref": "epub/text/endnotes.xhtml#note-27"
+        },
+        "stable_key": "epub:2:ref:000026:epub-text-endnotes.xhtml-note-27"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "28",
+        "locator": {
+          "end_offset": 46328,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46326,
+          "text_quote_selector": {
+            "exact": "28"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000027.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-28",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-28",
+          "target_ref": "epub/text/endnotes.xhtml#note-28"
+        },
+        "stable_key": "epub:2:ref:000027:epub-text-endnotes.xhtml-note-28"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "29",
+        "locator": {
+          "end_offset": 46520,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46518,
+          "text_quote_selector": {
+            "exact": "29"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000028.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-29",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-29",
+          "target_ref": "epub/text/endnotes.xhtml#note-29"
+        },
+        "stable_key": "epub:2:ref:000028:epub-text-endnotes.xhtml-note-29"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "30",
+        "locator": {
+          "end_offset": 46848,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46846,
+          "text_quote_selector": {
+            "exact": "30"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000029.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-30",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-30",
+          "target_ref": "epub/text/endnotes.xhtml#note-30"
+        },
+        "stable_key": "epub:2:ref:000029:epub-text-endnotes.xhtml-note-30"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "31",
+        "locator": {
+          "end_offset": 46993,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 46991,
+          "text_quote_selector": {
+            "exact": "31"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000030.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-31",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-31",
+          "target_ref": "epub/text/endnotes.xhtml#note-31"
+        },
+        "stable_key": "epub:2:ref:000030:epub-text-endnotes.xhtml-note-31"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "32",
+        "locator": {
+          "end_offset": 48325,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 48323,
+          "text_quote_selector": {
+            "exact": "32"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000031.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-32",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-32",
+          "target_ref": "epub/text/endnotes.xhtml#note-32"
+        },
+        "stable_key": "epub:2:ref:000031:epub-text-endnotes.xhtml-note-32"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "33",
+        "locator": {
+          "end_offset": 48483,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 48481,
+          "text_quote_selector": {
+            "exact": "33"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000032.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-33",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-33",
+          "target_ref": "epub/text/endnotes.xhtml#note-33"
+        },
+        "stable_key": "epub:2:ref:000032:epub-text-endnotes.xhtml-note-33"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "34",
+        "locator": {
+          "end_offset": 48755,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 48753,
+          "text_quote_selector": {
+            "exact": "34"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000033.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-34",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-34",
+          "target_ref": "epub/text/endnotes.xhtml#note-34"
+        },
+        "stable_key": "epub:2:ref:000033:epub-text-endnotes.xhtml-note-34"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "35",
+        "locator": {
+          "end_offset": 48824,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 48822,
+          "text_quote_selector": {
+            "exact": "35"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000034.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-35",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-35",
+          "target_ref": "epub/text/endnotes.xhtml#note-35"
+        },
+        "stable_key": "epub:2:ref:000034:epub-text-endnotes.xhtml-note-35"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "36",
+        "locator": {
+          "end_offset": 49058,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 49056,
+          "text_quote_selector": {
+            "exact": "36"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000035.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-36",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-36",
+          "target_ref": "epub/text/endnotes.xhtml#note-36"
+        },
+        "stable_key": "epub:2:ref:000035:epub-text-endnotes.xhtml-note-36"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "37",
+        "locator": {
+          "end_offset": 49315,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 49313,
+          "text_quote_selector": {
+            "exact": "37"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000036.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-37",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-37",
+          "target_ref": "epub/text/endnotes.xhtml#note-37"
+        },
+        "stable_key": "epub:2:ref:000036:epub-text-endnotes.xhtml-note-37"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "38",
+        "locator": {
+          "end_offset": 49716,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 49714,
+          "text_quote_selector": {
+            "exact": "38"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000037.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-38",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-38",
+          "target_ref": "epub/text/endnotes.xhtml#note-38"
+        },
+        "stable_key": "epub:2:ref:000037:epub-text-endnotes.xhtml-note-38"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "39",
+        "locator": {
+          "end_offset": 49751,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 49749,
+          "text_quote_selector": {
+            "exact": "39"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000038.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-39",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-39",
+          "target_ref": "epub/text/endnotes.xhtml#note-39"
+        },
+        "stable_key": "epub:2:ref:000038:epub-text-endnotes.xhtml-note-39"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "40",
+        "locator": {
+          "end_offset": 49781,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 49779,
+          "text_quote_selector": {
+            "exact": "40"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000039.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-40",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-40",
+          "target_ref": "epub/text/endnotes.xhtml#note-40"
+        },
+        "stable_key": "epub:2:ref:000039:epub-text-endnotes.xhtml-note-40"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "41",
+        "locator": {
+          "end_offset": 50230,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 50228,
+          "text_quote_selector": {
+            "exact": "41"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000040.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-41",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-41",
+          "target_ref": "epub/text/endnotes.xhtml#note-41"
+        },
+        "stable_key": "epub:2:ref:000040:epub-text-endnotes.xhtml-note-41"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "42",
+        "locator": {
+          "end_offset": 51447,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 51445,
+          "text_quote_selector": {
+            "exact": "42"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000041.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-42",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-42",
+          "target_ref": "epub/text/endnotes.xhtml#note-42"
+        },
+        "stable_key": "epub:2:ref:000041:epub-text-endnotes.xhtml-note-42"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "43",
+        "locator": {
+          "end_offset": 51566,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 51564,
+          "text_quote_selector": {
+            "exact": "43"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000042.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-43",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-43",
+          "target_ref": "epub/text/endnotes.xhtml#note-43"
+        },
+        "stable_key": "epub:2:ref:000042:epub-text-endnotes.xhtml-note-43"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "44",
+        "locator": {
+          "end_offset": 51843,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 51841,
+          "text_quote_selector": {
+            "exact": "44"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000043.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-44",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-44",
+          "target_ref": "epub/text/endnotes.xhtml#note-44"
+        },
+        "stable_key": "epub:2:ref:000043:epub-text-endnotes.xhtml-note-44"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "45",
+        "locator": {
+          "end_offset": 53031,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 53029,
+          "text_quote_selector": {
+            "exact": "45"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000044.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-45",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-45",
+          "target_ref": "epub/text/endnotes.xhtml#note-45"
+        },
+        "stable_key": "epub:2:ref:000044:epub-text-endnotes.xhtml-note-45"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "46",
+        "locator": {
+          "end_offset": 53325,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 53323,
+          "text_quote_selector": {
+            "exact": "46"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000045.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-46",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-46",
+          "target_ref": "epub/text/endnotes.xhtml#note-46"
+        },
+        "stable_key": "epub:2:ref:000045:epub-text-endnotes.xhtml-note-46"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "47",
+        "locator": {
+          "end_offset": 53422,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 53420,
+          "text_quote_selector": {
+            "exact": "47"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000046.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-47",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-47",
+          "target_ref": "epub/text/endnotes.xhtml#note-47"
+        },
+        "stable_key": "epub:2:ref:000046:epub-text-endnotes.xhtml-note-47"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "48",
+        "locator": {
+          "end_offset": 53830,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 53828,
+          "text_quote_selector": {
+            "exact": "48"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000047.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-48",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-48",
+          "target_ref": "epub/text/endnotes.xhtml#note-48"
+        },
+        "stable_key": "epub:2:ref:000047:epub-text-endnotes.xhtml-note-48"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "49",
+        "locator": {
+          "end_offset": 53966,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 53964,
+          "text_quote_selector": {
+            "exact": "49"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-49",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-49",
+          "target_ref": "epub/text/endnotes.xhtml#note-49"
+        },
+        "stable_key": "epub:2:ref:000048:epub-text-endnotes.xhtml-note-49"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "50",
+        "locator": {
+          "end_offset": 54012,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 54010,
+          "text_quote_selector": {
+            "exact": "50"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000049.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-50",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-50",
+          "target_ref": "epub/text/endnotes.xhtml#note-50"
+        },
+        "stable_key": "epub:2:ref:000049:epub-text-endnotes.xhtml-note-50"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "51",
+        "locator": {
+          "end_offset": 54053,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 54051,
+          "text_quote_selector": {
+            "exact": "51"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-51",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-51",
+          "target_ref": "epub/text/endnotes.xhtml#note-51"
+        },
+        "stable_key": "epub:2:ref:000050:epub-text-endnotes.xhtml-note-51"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "52",
+        "locator": {
+          "end_offset": 54148,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 54146,
+          "text_quote_selector": {
+            "exact": "52"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-52",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-52",
+          "target_ref": "epub/text/endnotes.xhtml#note-52"
+        },
+        "stable_key": "epub:2:ref:000051:epub-text-endnotes.xhtml-note-52"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote_ref",
+        "label": "53",
+        "locator": {
+          "end_offset": 54202,
+          "fragment_id": "5adf48ea-b7e9-5145-9aad-f00e609b21a3",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 54200,
+          "text_quote_selector": {
+            "exact": "53"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000052.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "poetry.xhtml",
+          "marker_id": "noteref-53",
+          "package_href": "epub/text/poetry.xhtml",
+          "spine_index": 2,
+          "spine_itemref_id": null,
+          "target_id": "note-53",
+          "target_ref": "epub/text/endnotes.xhtml#note-53"
+        },
+        "stable_key": "epub:2:ref:000052:epub-text-endnotes.xhtml-note-53"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "\u201cA.B.C.\u2019s\u201d signifes endemic teashops, found in all parts of London. The initials signify \u201cAerated Bread Company, Limited.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "\u201cA.B.C.\u2019s\u201d",
+        "locator": {
+          "end_offset": 134,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 10,
+          "text_quote_selector": {
+            "exact": "\u201cA.B.C.\u2019s\u201d signifes endemic teashops, found in all parts of London. The initials signify \u201cAerated Bread Company, Limited.\u201d \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000006.000000.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-1"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Not only the title, but the plan and a good deal of the incidental symbolism of the poem were suggested by Miss Jessie L. Weston\u2019s book on the Grail legend: From Ritual to Romance (Macmillan, Cambridge) Indeed, so deeply am I indebted, Miss Weston\u2019s book will elucidate the difficulties of the poem much better than my notes can do; and I recommend it (apart from the great interest of the book itself) to any who think such elucidation of the poem worth the trouble. To another work of anthropology I am indebted in general, one which has influenced our generation profoundly; I mean The Golden Bough; I have used especially the two volumes Adonis, Attis, Osiris. Anyone who is acquainted with these works will immediately recognise in the poem certain references to vegetation ceremonies. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Not",
+        "locator": {
+          "end_offset": 928,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 136,
+          "text_quote_selector": {
+            "exact": "Not only the title, but the plan and a good deal of the incidental symbolism of the poem were suggested by Miss Jessie L. Weston\u2019s book on the Grail legend: From Ritual to Romance (Macmillan, Cambridge) Indeed, so deeply am I indebted, Miss Weston\u2019s book will elucidate the difficulties of the poem much better than my notes can do; and I recommend it (apart from the great interest of the book itself) to any who think such elucidation of the poem worth the trouble. To another work of anthropology I am indebted in general, one which has influenced our generation profoundly; I mean The Golden Bough; I have used especially the two volumes Adonis, Attis, Osiris. Anyone who is acquainted with these works will immediately recognise in the poem certain references to vegetation ceremonies. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000007.000001.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-2"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-2"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Ezekiel 2:1. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 948,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 930,
+          "text_quote_selector": {
+            "exact": "Cf. Ezekiel 2:1. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000008.000002.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-3"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-3"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Ecclesiastes 12:5. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 974,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 950,
+          "text_quote_selector": {
+            "exact": "Cf. Ecclesiastes 12:5. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000009.000003.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-4"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-4"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Tristan und Isolde, I, verses 5\u2060\u2013\u20608. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 1017,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 976,
+          "text_quote_selector": {
+            "exact": "V. Tristan und Isolde, I, verses 5\u2060\u2013\u20608. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000010.000004.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-5"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-5"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Tristan und Isolde, III, verse 24. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 1058,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1019,
+          "text_quote_selector": {
+            "exact": "V. Tristan und Isolde, III, verse 24. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000011.000005.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-6"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-6"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "I am not familiar with the exact constitution of the Tarot pack of cards, from which I have obviously departed to suit my own convenience. The Hanged Man, a member of the traditional pack, fits my purpose in two ways: because he is associated in my mind with the Hanged God of Frazer, and because I associate him with the hooded figure in the passage of the disciples to Emmaus in Part V. The Phoenician Sailor and the Merchant appear later; also the \u201ccrowds of people,\u201d and Death by Water is executed in Part IV. The Man with Three Staves (an authentic member of the Tarot pack) I associate, quite arbitrarily, with the Fisher King himself. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "I",
+        "locator": {
+          "end_offset": 1703,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1060,
+          "text_quote_selector": {
+            "exact": "I am not familiar with the exact constitution of the Tarot pack of cards, from which I have obviously departed to suit my own convenience. The Hanged Man, a member of the traditional pack, fits my purpose in two ways: because he is associated in my mind with the Hanged God of Frazer, and because I associate him with the hooded figure in the passage of the disciples to Emmaus in Part V. The Phoenician Sailor and the Merchant appear later; also the \u201ccrowds of people,\u201d and Death by Water is executed in Part IV. The Man with Three Staves (an authentic member of the Tarot pack) I associate, quite arbitrarily, with the Fisher King himself. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000012.000006.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-7"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-7"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Baudelaire: \u201cFourmillante cit\u00e9, cit\u00e9; pleine de r\u00eaves, O\u00f9 le spectre en plein jour raccroche le passant.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 1818,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1705,
+          "text_quote_selector": {
+            "exact": "Cf. Baudelaire:\n\n\u201cFourmillante cit\u00e9, cit\u00e9; pleine de r\u00eaves,\nO\u00f9 le spectre en plein jour raccroche le passant.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000013.000007.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-8"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-8"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Inferno, iii. 55\u2060\u2013\u20607. \u201csi lunga tratta di gente, ch\u2019io non avrei mai creduto che morte tanta n\u2019avesse disfatta.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 1940,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1820,
+          "text_quote_selector": {
+            "exact": "Cf. Inferno, iii. 55\u2060\u2013\u20607.\n\n\u201csi lunga tratta\ndi gente, ch\u2019io non avrei mai creduto\nche morte tanta n\u2019avesse disfatta.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000014.000008.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-9"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-9"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Inferno, iv. 25\u2060\u2013\u20607: \u201cQuivi, secondo che per ascoltare, non avea pianto, ma\u2019 che di sospiri, che l\u2019aura eterna facevan tremare.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2078,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 1942,
+          "text_quote_selector": {
+            "exact": "Cf. Inferno, iv. 25\u2060\u2013\u20607:\n\n\u201cQuivi, secondo che per ascoltare,\nnon avea pianto, ma\u2019 che di sospiri,\nche l\u2019aura eterna facevan tremare.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000015.000009.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-10"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-10"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "A phenomenon which I have often noticed. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "A",
+        "locator": {
+          "end_offset": 2122,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2080,
+          "text_quote_selector": {
+            "exact": "A phenomenon which I have often noticed. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000016.000010.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-11"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-11"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. the Dirge in Webster\u2019s White Devil. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2165,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2124,
+          "text_quote_selector": {
+            "exact": "Cf. the Dirge in Webster\u2019s White Devil. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000011.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-12"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-12"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Baudelaire, Preface to Fleurs du Mal. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 2209,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2167,
+          "text_quote_selector": {
+            "exact": "V. Baudelaire, Preface to Fleurs du Mal. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000018.000012.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-13"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-13"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Antony and Cleopatra, II. ii., l. 190. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2255,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2211,
+          "text_quote_selector": {
+            "exact": "Cf. Antony and Cleopatra, II. ii., l. 190. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000013.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-14"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-14"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Laquearia. V. Aeneid, I. 726: dependent lychni laquearibus aureis incensi, et noctem flammis funalia vincunt. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Laquearia.",
+        "locator": {
+          "end_offset": 2370,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2257,
+          "text_quote_selector": {
+            "exact": "Laquearia. V. Aeneid, I. 726:\n\ndependent lychni laquearibus aureis\nincensi, et noctem flammis funalia vincunt.\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000020.000014.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-15"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-15"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Sylvan scene. V. Milton, Paradise Lost, iv. 140. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Sylvan",
+        "locator": {
+          "end_offset": 2422,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2372,
+          "text_quote_selector": {
+            "exact": "Sylvan scene. V. Milton, Paradise Lost, iv. 140. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000021.000015.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-16"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-16"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Ovid, Metamorphoses, vi, Philomela. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 2464,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2424,
+          "text_quote_selector": {
+            "exact": "V. Ovid, Metamorphoses, vi, Philomela. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000022.000016.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-17"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-17"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Part III, l. 204. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2489,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2466,
+          "text_quote_selector": {
+            "exact": "Cf. Part III, l. 204. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000023.000017.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-18"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-18"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Part III, l. 195. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2514,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2491,
+          "text_quote_selector": {
+            "exact": "Cf. Part III, l. 195. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000024.000018.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-19"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-19"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Webster: \u201cIs the wind in that door still?\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2564,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2516,
+          "text_quote_selector": {
+            "exact": "Cf. Webster: \u201cIs the wind in that door still?\u201d \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000025.000019.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-20"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-20"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Part I, l. 37, 48. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2590,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2566,
+          "text_quote_selector": {
+            "exact": "Cf. Part I, l. 37, 48. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000026.000020.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-21"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-21"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. the game of chess in Middleton\u2019s Women Beware Women. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2650,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2592,
+          "text_quote_selector": {
+            "exact": "Cf. the game of chess in Middleton\u2019s Women Beware Women. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000027.000021.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-22"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-22"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Spenser, Prothalamion. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 2679,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2652,
+          "text_quote_selector": {
+            "exact": "V. Spenser, Prothalamion. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000028.000022.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-23"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-23"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. The Tempest, I. ii. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2706,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2681,
+          "text_quote_selector": {
+            "exact": "Cf. The Tempest, I. ii. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000029.000023.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-24"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-24"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Marvell, \u201cTo His Coy Mistress.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2745,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2708,
+          "text_quote_selector": {
+            "exact": "Cf. Marvell, \u201cTo His Coy Mistress.\u201d \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000030.000024.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-25"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-25"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Day, Parliament of Bees: \u201cWhen of the sudden, listening, you shall hear, A noise of horns and hunting, which shall bring Actaeon to Diana in the spring, Where all shall see her naked skin\u2060 \u2060\u2026\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 2947,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2747,
+          "text_quote_selector": {
+            "exact": "Cf. Day, Parliament of Bees:\n\n\u201cWhen of the sudden, listening, you shall hear,\nA noise of horns and hunting, which shall bring\nActaeon to Diana in the spring,\nWhere all shall see her naked skin\u2060 \u2060\u2026\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000031.000025.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-26"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-26"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "I do not know the origin of the ballad from which these lines are taken: it was reported to me from Sydney, Australia. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "I",
+        "locator": {
+          "end_offset": 3069,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 2949,
+          "text_quote_selector": {
+            "exact": "I do not know the origin of the ballad from which these lines are taken: it was reported to me from Sydney, Australia. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000032.000026.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-27"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-27"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Verlaine, Parsifal. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 3095,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 3071,
+          "text_quote_selector": {
+            "exact": "V. Verlaine, Parsifal. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000033.000027.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-28"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-28"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The currants were quoted at a price \u201ccarriage and insurance free to London\u201d; and the Bill of Lading etc. were to be handed to the buyer upon payment of the sight draft. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 3267,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 3097,
+          "text_quote_selector": {
+            "exact": "The currants were quoted at a price \u201ccarriage and insurance free to London\u201d; and the Bill of Lading etc. were to be handed to the buyer upon payment of the sight draft. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000034.000028.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-29"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-29"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Tiresias, although a mere spectator and not indeed a \u201ccharacter,\u201d is yet the most important personage in the poem, uniting all the rest. Just as the one-eyed merchant, seller of currants, melts into the Phoenician Sailor, and the latter is not wholly distinct from Ferdinand Prince of Naples, so all the women are one woman, and the two sexes meet in Tiresias. What Tiresias sees, in fact, is the substance of the poem. The whole passage from Ovid is of great anthropological interest: \u201c\u2026 Cum Iunone iocos et maior vestra profecto est Quam, quae contingit maribus,\u2019 dixisse, \u2018voluptas.\u2019 Illa negat; placuit quae sit sententia docti Quaerere Tiresiae: venus huic erat utraque nota. Nam duo magnorum viridi coeuntia silva Corpora serpentum baculi violaverat ictu Deque viro factus, mirabile, femina septem Egerat autumnos; octavo rursus eosdem Vidit et \u2018est vestrae si tanta potentia plagae,\u2019 Dixit \u2018ut auctoris sortem in contraria mutet, Nunc quoque vos feriam!\u2019 percussis anguibus isdem Forma prior rediit genetivaque venit imago. Arbiter hic igitur sumptus de lite iocosa Dicta Iovis firmat; gravius Saturnia iusto Nec pro materia fertur doluisse suique Iudicis aeterna damnavit lumina nocte, At pater omnipotens (neque enim licet inrita cuiquam Facta dei fecisse deo) pro lumine adempto Scire futura dedit poenamque levavit honore.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Tiresias,",
+        "locator": {
+          "end_offset": 4607,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 3269,
+          "text_quote_selector": {
+            "exact": "Tiresias, although a mere spectator and not indeed a \u201ccharacter,\u201d is yet the most important personage in the poem, uniting all the rest. Just as the one-eyed merchant, seller of currants, melts into the Phoenician Sailor, and the latter is not wholly distinct from Ferdinand Prince of Naples, so all the women are one woman, and the two sexes meet in Tiresias. What Tiresias sees, in fact, is the substance of the poem. The whole passage from Ovid is of great anthropological interest:\n\n\u201c\u2026 Cum Iunone iocos et maior vestra profecto est\nQuam, quae contingit maribus,\u2019 dixisse, \u2018voluptas.\u2019\nIlla negat; placuit quae sit sententia docti\nQuaerere Tiresiae: venus huic erat utraque nota.\nNam duo magnorum viridi coeuntia silva\nCorpora serpentum baculi violaverat ictu\nDeque viro factus, mirabile, femina septem\nEgerat autumnos; octavo rursus eosdem\nVidit et \u2018est vestrae si tanta potentia plagae,\u2019\nDixit \u2018ut auctoris sortem in contraria mutet,\nNunc quoque vos feriam!\u2019 percussis anguibus isdem\nForma prior rediit genetivaque venit imago.\nArbiter hic igitur sumptus de lite iocosa\nDicta Iovis firmat; gravius Saturnia iusto\nNec pro materia fertur doluisse suique\nIudicis aeterna damnavit lumina nocte,\nAt pater omnipotens (neque enim licet inrita cuiquam\nFacta dei fecisse deo) pro lumine adempto\nScire futura dedit poenamque levavit honore.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000035.000029.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-30"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-30"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "This may not appear as exact as Sappho\u2019s lines, but I had in mind the \u201clongshore\u201d or \u201cdory\u201d fisherman, who returns at nightfall. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "This",
+        "locator": {
+          "end_offset": 4739,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4609,
+          "text_quote_selector": {
+            "exact": "This may not appear as exact as Sappho\u2019s lines, but I had in mind the \u201clongshore\u201d or \u201cdory\u201d fisherman, who returns at nightfall. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000036.000030.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-31"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-31"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Goldsmith, the song in The Vicar of Wakefield. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 4792,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4741,
+          "text_quote_selector": {
+            "exact": "V. Goldsmith, the song in The Vicar of Wakefield. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000037.000031.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-32"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-32"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. The Tempest, I. ii. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 4818,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4794,
+          "text_quote_selector": {
+            "exact": "V. The Tempest, I. ii. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000038.000032.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-33"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-33"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The interior of St. Magnus Martyr is to my mind one of the finest among Wren\u2019s interiors. See The Proposed Demolition of Nineteen City Churches (P. S. King & Son, Ltd.). \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 4991,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4820,
+          "text_quote_selector": {
+            "exact": "The interior of St. Magnus Martyr is to my mind one of the finest among Wren\u2019s interiors. See The Proposed Demolition of Nineteen City Churches (P. S. King & Son, Ltd.). \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000039.000033.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-34"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-34"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The Song of the (three) Thames-daughters begins here. From line 292 to 306 inclusive they speak in turn. V. G\u00f6tterd\u00e4mmerung, III. i: the Rhine-daughters. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 5148,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 4993,
+          "text_quote_selector": {
+            "exact": "The Song of the (three) Thames-daughters begins here. From line 292 to 306 inclusive they speak in turn. V. G\u00f6tterd\u00e4mmerung, III. i: the Rhine-daughters. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000040.000034.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-35"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-35"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Froude, Elizabeth, Vol. I, ch. iv, letter of De Quadra to Philip of Spain: \u201cIn the afternoon we were in a barge, watching the games on the river. (The queen) was alone with Lord Robert and myself on the poop, when they began to talk nonsense, and went so far that Lord Robert at last said, as I was on the spot there was no reason why they should not be married if the queen pleased.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 5541,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 5150,
+          "text_quote_selector": {
+            "exact": "V. Froude, Elizabeth, Vol. I, ch. iv, letter of De Quadra to Philip of Spain:\n\n\u201cIn the afternoon we were in a barge, watching the games on the river. (The queen) was alone with Lord Robert and myself on the poop, when they began to talk nonsense, and went so far that Lord Robert at last said, as I was on the spot there was no reason why they should not be married if the queen pleased.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000041.000035.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-36"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-36"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Purgatorio, v. 133: \u201cRicorditi di me, che son la Pia; Siena mi fe\u2019, disfecemi Maremma.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 5638,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 5543,
+          "text_quote_selector": {
+            "exact": "Cf. Purgatorio, v. 133:\n\n\u201cRicorditi di me, che son la Pia;\nSiena mi fe\u2019, disfecemi Maremma.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000042.000036.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-37"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-37"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. St. Augustine\u2019s Confessions: \u201cto Carthage then I came, where a cauldron of unholy loves sang all about mine ears.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 5759,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 5640,
+          "text_quote_selector": {
+            "exact": "V. St. Augustine\u2019s Confessions: \u201cto Carthage then I came, where a cauldron of unholy loves sang all about mine ears.\u201d \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000043.000037.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-38"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-38"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The complete text of the Buddha\u2019s Fire Sermon (which corresponds in importance to the Sermon on the Mount) from which these words are taken, will be found translated in the late Henry Clarke Warren\u2019s Buddhism in Translation (Harvard Oriental Series). Mr. Warren was one of the great pioneers of Buddhist studies in the Occident. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 6091,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 5761,
+          "text_quote_selector": {
+            "exact": "The complete text of the Buddha\u2019s Fire Sermon (which corresponds in importance to the Sermon on the Mount) from which these words are taken, will be found translated in the late Henry Clarke Warren\u2019s Buddhism in Translation (Harvard Oriental Series). Mr. Warren was one of the great pioneers of Buddhist studies in the Occident. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000044.000038.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-39"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-39"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "From St. Augustine\u2019s Confessions again. The collocation of these two representatives of eastern and western asceticism, as the culmination of this part of the poem, is not an accident. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "From",
+        "locator": {
+          "end_offset": 6279,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 6093,
+          "text_quote_selector": {
+            "exact": "From St. Augustine\u2019s Confessions again. The collocation of these two representatives of eastern and western asceticism, as the culmination of this part of the poem, is not an accident. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000045.000039.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-40"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-40"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "In the first part of Part V three themes are employed: the journey to Emmaus, the approach to the Chapel Perilous (see Miss Weston\u2019s book) and the present decay of eastern Europe. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "In",
+        "locator": {
+          "end_offset": 6462,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 6281,
+          "text_quote_selector": {
+            "exact": "In the first part of Part V three themes are employed: the journey to Emmaus, the approach to the Chapel Perilous (see Miss Weston\u2019s book) and the present decay of eastern Europe. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000046.000040.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-41"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-41"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "This is Turdus aonalaschkae pallasii, the hermit thrush, which I have heard in Quebec County. Chapman says (Handbook of Birds of Eastern North America) \u201cit is most at home in secluded woodland and thickety retreats.\u2060 \u2060\u2026 Its notes are not remarkable for variety or volume, but in purity and sweetness of tone and exquisite modulation they are unequalled.\u201d Its \u201cwater-dripping song\u201d is justly celebrated. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "This",
+        "locator": {
+          "end_offset": 6868,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 6464,
+          "text_quote_selector": {
+            "exact": "This is Turdus aonalaschkae pallasii, the hermit thrush, which I have heard in Quebec County. Chapman says (Handbook of Birds of Eastern North America) \u201cit is most at home in secluded woodland and thickety retreats.\u2060 \u2060\u2026 Its notes are not remarkable for variety or volume, but in purity and sweetness of tone and exquisite modulation they are unequalled.\u201d Its \u201cwater-dripping song\u201d is justly celebrated. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000047.000041.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-42"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-42"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The following lines were stimulated by the account of one of the Antarctic expeditions (I forget which, but I think one of Shackleton\u2019s): it was related that the party of explorers, at the extremity of their strength, had the constant delusion that there was one more member than could actually be counted. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "The",
+        "locator": {
+          "end_offset": 7178,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 6870,
+          "text_quote_selector": {
+            "exact": "The following lines were stimulated by the account of one of the Antarctic expeditions (I forget which, but I think one of Shackleton\u2019s): it was related that the party of explorers, at the extremity of their strength, had the constant delusion that there was one more member than could actually be counted. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000048.000042.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-43"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-43"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Through line 376. Cf. Hermann Hesse, Blick ins Chaos: \u201cSchon ist halb Europa, schon ist zumindest der halbe Osten Europas auf dem Wege zum Chaos, f\u00e4hrt betrunken im heiligem Wahn am Abgrund entlang und singt dazu, singt betrunken und hymnisch wie Dmitri Karamasoff sang. Ueber diese Lieder lacht der B\u00fcrger beleidigt, der Heilige und Seher h\u00f6rt sie mit Tr\u00e4nen.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Through",
+        "locator": {
+          "end_offset": 7545,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 7180,
+          "text_quote_selector": {
+            "exact": "Through line 376. Cf. Hermann Hesse, Blick ins Chaos:\n\n\u201cSchon ist halb Europa, schon ist zumindest der halbe Osten Europas auf dem Wege zum Chaos, f\u00e4hrt betrunken im heiligem Wahn am Abgrund entlang und singt dazu, singt betrunken und hymnisch wie Dmitri Karamasoff sang. Ueber diese Lieder lacht der B\u00fcrger beleidigt, der Heilige und Seher h\u00f6rt sie mit Tr\u00e4nen.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000049.000043.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-44"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-44"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "\u201cDatta, dayadhvam, damyata\u201d (Give, sympathize, control). The fable of the meaning of the Thunder is found in the Brihadaranyaka\u2060\u2014Upanishad, 5, 1. A translation is found in Deussen\u2019s Sechzig Upanishads des Veda, p. 489. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "\u201cDatta,",
+        "locator": {
+          "end_offset": 7767,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 7547,
+          "text_quote_selector": {
+            "exact": "\u201cDatta, dayadhvam, damyata\u201d (Give, sympathize, control). The fable of the meaning of the Thunder is found in the Brihadaranyaka\u2060\u2014Upanishad, 5, 1. A translation is found in Deussen\u2019s Sechzig Upanishads des Veda, p. 489. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000050.000044.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-45"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-45"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Webster, The White Devil, v. vi: \u201c\u2026 they\u2019ll remarry Ere the worm pierce your winding-sheet, ere the spider Make a thin curtain for your epitaphs.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 7923,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 7769,
+          "text_quote_selector": {
+            "exact": "Cf. Webster, The White Devil, v. vi:\n\n\u201c\u2026 they\u2019ll remarry\nEre the worm pierce your winding-sheet, ere the spider\nMake a thin curtain for your epitaphs.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000051.000045.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-46"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-46"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Cf. Inferno, xxxiii. 46: \u201ced io sentii chiavar l\u2019uscio di sotto all\u2019orribile torre.\u201d Also F. H. Bradley, Appearance and Reality, p. 346: \u201cMy external sensations are no less private to myself than are my thoughts or my feelings. In either case my experience falls within my own circle, a circle closed on the outside; and, with all its elements alike, every sphere is opaque to the others which surround it.\u2060 \u2060\u2026 In brief, regarded as an existence which appears in a soul, the whole world for each is peculiar and private to that soul.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Cf.",
+        "locator": {
+          "end_offset": 8465,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 7925,
+          "text_quote_selector": {
+            "exact": "Cf. Inferno, xxxiii. 46:\n\n\u201ced io sentii chiavar l\u2019uscio di sotto\nall\u2019orribile torre.\u201d\n\nAlso F. H. Bradley, Appearance and Reality, p. 346:\n\n\u201cMy external sensations are no less private to myself than are my thoughts or my feelings. In either case my experience falls within my own circle, a circle closed on the outside; and, with all its elements alike, every sphere is opaque to the others which surround it.\u2060 \u2060\u2026 In brief, regarded as an existence which appears in a soul, the whole world for each is peculiar and private to that soul.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000052.000046.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-47"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-47"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Weston, From Ritual to Romance; chapter on the Fisher King. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 8531,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8467,
+          "text_quote_selector": {
+            "exact": "V. Weston, From Ritual to Romance; chapter on the Fisher King. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000053.000047.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-48"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-48"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Purgatorio, xxvi. 148. \u201c \u2018Ara vos prec per aquella valor \u2018que vos guida al som de l\u2019escalina, \u2018sovegna vos a temps de ma dolor.\u2019 Poi s\u2019ascose nel foco che gli affina.\u201d \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 8707,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8533,
+          "text_quote_selector": {
+            "exact": "V. Purgatorio, xxvi. 148.\n\n\u201c \u2018Ara vos prec per aquella valor\n\u2018que vos guida al som de l\u2019escalina,\n\u2018sovegna vos a temps de ma dolor.\u2019\nPoi s\u2019ascose nel foco che gli affina.\u201d\n\n\u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000054.000048.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-49"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-49"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Pervigilium Veneris. Cf. Philomela in Parts II and III. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 8769,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8709,
+          "text_quote_selector": {
+            "exact": "V. Pervigilium Veneris. Cf. Philomela in Parts II and III. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000055.000049.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-50"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-50"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. G\u00e9rard de Nerval, Sonnet El Desdichado. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 8815,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8771,
+          "text_quote_selector": {
+            "exact": "V. G\u00e9rard de Nerval, Sonnet El Desdichado. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000056.000050.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-51"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-51"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "V. Kyd\u2019s Spanish Tragedy. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "V.",
+        "locator": {
+          "end_offset": 8844,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8817,
+          "text_quote_selector": {
+            "exact": "V. Kyd\u2019s Spanish Tragedy. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000057.000051.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-52"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-52"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Shantih. Repeated as here, a formal ending to an Upanishad. \u201cThe Peace which passeth understanding\u201d is a feeble translation of the content of this word. \u21a9",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "endnote",
+        "label": "Shantih.",
+        "locator": {
+          "end_offset": 9000,
+          "fragment_id": "43c104e5-f892-551d-b404-7eca852e74ff",
+          "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 8846,
+          "text_quote_selector": {
+            "exact": "Shantih. Repeated as here, a formal ending to an Upanishad. \u201cThe Peace which passeth understanding\u201d is a feeble translation of the content of this word. \u21a9"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000058.000052.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "endnotes.xhtml",
+          "package_href": "epub/text/endnotes.xhtml",
+          "spine_index": 3,
+          "spine_itemref_id": null,
+          "target_href": "epub/text/endnotes.xhtml",
+          "target_id": "note-53"
+        },
+        "stable_key": "epub:3:target:epub-text-endnotes.xhtml-note-53"
+      }
+    ],
+    "media_id": "9cd26268-dc15-514a-be67-1cc20e5057ff",
+    "media_kind": "epub",
+    "source_fingerprint": "sha256:bb2cf67ecbae91e73f02cc222576c9ef191b3175026b2e1dabf4a04cac95d2dc",
+    "status": "ready"
+  },
+  "fixture_id": "epub-standardebooks-eliot-poetry-advanced",
+  "source_fixture_path": "epub/standardebooks-t-s-eliot-poetry-advanced.epub",
+  "source_fixture_sha256": "cb8605e49a6f2d79cc99d26fe0e5cdfbde4c1f3738e8497ee6cda5f5198506ab"
+}

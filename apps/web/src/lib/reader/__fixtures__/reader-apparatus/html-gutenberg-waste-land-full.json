@@ -1,0 +1,23 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": false,
+      "has_probable_items": false,
+      "has_sidecar_items": false,
+      "supports_hover_preview": false,
+      "supports_jump_to_marker": false,
+      "supports_jump_to_target": false
+    },
+    "diagnostics": {},
+    "edges": [],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [],
+    "media_id": "bb1da8b2-e4c0-5e26-b652-657be8c18ad3",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:1e5a2379f860bebfaa96a0993a6563a2f426ddc03540a9a8715d56803cf103cf",
+    "status": "empty"
+  },
+  "fixture_id": "html-gutenberg-waste-land-full",
+  "source_fixture_path": "reader_apparatus/html/gutenberg-waste-land-full.html",
+  "source_fixture_sha256": "130f5633ee1e8818c989afb76c4fe509bbc2a87615b3a542dddd4e806ece9717"
+}

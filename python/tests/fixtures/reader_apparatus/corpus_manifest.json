@@ -1,0 +1,3712 @@
+{
+    "version": 1,
+    "source_count": 20,
+    "policy": {
+        "raw_fixture_rule": "Commit full source media only when redistribution is documented in the manifest and the fixture is deterministic.",
+        "url_only_rule": "Sources with unclear redistribution rights stay URL-only. Redistributable sources with unsupported extraction may be committed only under an explicit unsupported-adapter contract that makes no apparatus coverage claim.",
+        "verification_rule": "A green automated fixture means the declared fixture contract passed. Fixture-scope all-language requires structured independent DOM/archive proof or a gold graph; broader adapter support, live upstream drift, and frontend surfacing need separate contracts."
+    },
+    "original_objective_source_count": 20,
+    "original_objective_sources": [
+        {
+            "url": "https://numinous.productions/ttft/",
+            "corpus_source_id": "source-numinous-ttft",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://paulgraham.com/greatwork.html",
+            "blocked_source_id": "blocked-paulgraham-greatwork",
+            "replacement_source_id": "source-gutenberg-argonautica-html",
+            "objective_status": "blocked_replaced",
+            "replacement_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://distill.pub/2016/misread-tsne/",
+            "corpus_source_id": "source-distill-misread-tsne",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+            "corpus_source_id": "source-distill-gp",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://gwern.net/sidenote",
+            "corpus_source_id": "source-gwern-sidenote",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://edwardtufte.github.io/tufte-css/?utm_source=chatgpt.com",
+            "corpus_url": "https://edwardtufte.github.io/tufte-css/",
+            "corpus_source_id": "source-tufte-css",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+            "corpus_source_id": "source-wikipedia-waste-land",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://arxiv.org/pdf/1706.03762",
+            "corpus_source_id": "source-arxiv-attention",
+            "objective_status": "pdf_native_link_graph_verified"
+        },
+        {
+            "url": "https://distill.pub/2020/growing-ca/",
+            "corpus_source_id": "source-distill-growing-ca",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://distill.pub/2017/research-debt/",
+            "corpus_source_id": "source-distill-research-debt",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://arxiv.org/pdf/2606.01109",
+            "corpus_source_id": "source-arxiv-2606-01109",
+            "objective_status": "source_package_verified"
+        },
+        {
+            "url": "https://hughesky.com/pdf/the-waste-land.pdf",
+            "blocked_source_id": "blocked-hughesky-waste-land-pdf",
+            "replacement_source_id": "source-commons-waste-land-pdf",
+            "objective_status": "blocked_replaced",
+            "replacement_status": "unsupported_adapter_negative"
+        },
+        {
+            "url": "https://www.gutenberg.org/cache/epub/1321/pg1321-images.html",
+            "corpus_source_id": "source-gutenberg-waste-land-html",
+            "objective_status": "committed_fixture_negative_graph_verified"
+        },
+        {
+            "url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry.epub",
+            "corpus_source_id": "source-standardebooks-eliot-poetry",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry_advanced.epub",
+            "corpus_source_id": "source-standardebooks-eliot-poetry-advanced",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://www.gutenberg.org/ebooks/1321.epub3.images",
+            "corpus_source_id": "source-gutenberg-waste-land-epub",
+            "objective_status": "committed_fixture_negative_graph_verified"
+        },
+        {
+            "url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism.epub",
+            "corpus_source_id": "source-standardebooks-james-pragmatism",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism_advanced.epub",
+            "corpus_source_id": "source-standardebooks-james-pragmatism-advanced",
+            "objective_status": "committed_fixture_graph_verified"
+        },
+        {
+            "url": "https://philpapers.org/archive/LOPAIZ.pdf",
+            "corpus_source_id": "source-philpapers-lop-aiz",
+            "objective_status": "unsupported_adapter_negative"
+        },
+        {
+            "url": "https://harvardlawreview.org/wp-content/uploads/2014/03/forvol127_zittrain.pdf",
+            "corpus_source_id": "source-harvard-zittrain",
+            "objective_status": "pattern_only"
+        }
+    ],
+    "blocked_motivating_sources": [
+        {
+            "id": "blocked-paulgraham-greatwork",
+            "original_source_id": "source-paulgraham-greatwork",
+            "url": "https://paulgraham.com/greatwork.html",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Legacy flat HTML notes: inline bracketed numeric links href=#fNNn point to a trailing Notes block with a[name=fNNn] targets and no backlinks.",
+            "reason": "raw_source_rights_unclear",
+            "replacement_source_id": "source-gutenberg-argonautica-html",
+            "fixture_ids": [
+                "html-legacy-named-notes"
+            ],
+            "audit_summary": "Live page audit recorded 29 #fNNn/name=fNNn legacy note pairs; raw article remains uncommitted because redistribution rights are unclear, so the source is not counted as full-source corpus coverage.",
+            "current_contract": "blocked motivating source only; synthetic fixture keeps the legacy named-note parser shape covered without copying source text",
+            "license_provenance": {
+                "status": "pattern_fixture_only_not_raw_source",
+                "source_title": "How to Do Great Work",
+                "publisher": "Paul Graham",
+                "evidence_url": "https://paulgraham.com/greatwork.html",
+                "license_name": null,
+                "license_url": null,
+                "raw_source_commit_allowed": false,
+                "raw_source_policy": "restricted_or_unclear_raw_source_synthetic_pattern_only",
+                "attribution_required": null,
+                "checked_at": "2026-06-09"
+            },
+            "raw_source_fixture_eligibility": {
+                "status": "not_eligible_or_unverified",
+                "can_commit_raw_source": false,
+                "commit_scope": "none",
+                "evidence_url": "https://paulgraham.com/greatwork.html",
+                "license_name": null,
+                "license_url": null,
+                "attribution_required": null,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Public page without affirmative reuse license; keep URL-only unless permission is recorded.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "blocked-hughesky-waste-land-pdf",
+            "original_source_id": "source-hughesky-waste-land-pdf",
+            "url": "https://hughesky.com/pdf/the-waste-land.pdf",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "PDF poem edition; temporary inspection found no internal link graph.",
+            "reason": "raw_source_rights_unclear",
+            "replacement_source_id": "source-commons-waste-land-pdf",
+            "fixture_ids": [],
+            "audit_summary": "Mirror PDF lacks documented redistribution provenance; replaced in the counted corpus by the Wikimedia Commons-hosted public-domain scan with pinned bytes.",
+            "current_contract": "blocked motivating source only; no Hughesky bytes are committed or counted as reader-apparatus fixture coverage",
+            "license_provenance": {
+                "status": "url_only_restricted_or_unclear",
+                "source_title": "The Waste Land",
+                "publisher": "Hughesky PDF mirror",
+                "evidence_url": "https://hughesky.com/pdf/the-waste-land.pdf",
+                "license_name": null,
+                "license_url": null,
+                "raw_source_commit_allowed": false,
+                "raw_source_policy": "url_only_restricted_or_unclear_license",
+                "attribution_required": null,
+                "checked_at": "2026-06-09"
+            },
+            "raw_source_fixture_eligibility": {
+                "status": "not_eligible_or_unverified",
+                "can_commit_raw_source": false,
+                "commit_scope": "none",
+                "evidence_url": "https://hughesky.com/pdf/the-waste-land.pdf",
+                "license_name": null,
+                "license_url": null,
+                "attribution_required": null,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Mirror lacks provenance/license; prefer Project Gutenberg, Standard Ebooks, or Wikimedia sources.",
+                "checked_at": "2026-06-09"
+            }
+        }
+    ],
+    "source_corpus": [
+        {
+            "id": "source-numinous-ttft",
+            "url": "https://numinous.productions/ttft/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Standalone inline margin notes authored as span.marginnote elements with no linked marker graph.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-numinous-ttft-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 40 standalone source-authored margin notes and no marker edges",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "How can we develop transformative tools for thought?",
+                "publisher": "Numinous Productions",
+                "evidence_url": "https://numinous.productions/ttft/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_html_text_and_source_markup_no_unvetted_assets",
+                "evidence_url": "https://numinous.productions/ttft/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Source page declares CC BY 4.0; commit only curated article HTML/source markup and preserve attribution.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-gutenberg-argonautica-html",
+            "url": "https://www.gutenberg.org/cache/epub/830/pg830-images.html",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Project Gutenberg/Ebookmaker linked endnotes: a#linknoteref-N markers target empty a#linknote-N anchors whose following p.footnote body starts with a backlink to the marker.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-gutenberg-argonautica-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 39 Project Gutenberg linknote markers, endnote bodies, backlinks, and marker-to-target edges",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Argonautica",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/830",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_gutenberg_html_fixture_with_license_terms",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "project_gutenberg_html_with_license_terms",
+                "evidence_url": "https://www.gutenberg.org/ebooks/830",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Project Gutenberg catalog marks the ebook public domain in the United States; fixture preserves the full Project Gutenberg license terms.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-distill-misread-tsne",
+            "url": "https://distill.pub/2016/misread-tsne/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Legacy Distill dt-cite plus script type=text/bibliography metadata.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-distill-misread-tsne-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 1 Distill citation markers, 1 citation edges, and 0 source-authored Distill footnotes",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "How to Use t-SNE Effectively",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2016/misread-tsne/",
+                "license_name": "Creative Commons Attribution 2.0 Generic",
+                "license_url": "https://creativecommons.org/licenses/by/2.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_article_html_owned_assets_only",
+                "evidence_url": "https://distill.pub/2016/misread-tsne/",
+                "license_name": "Creative Commons Attribution 2.0 Generic",
+                "license_url": "https://creativecommons.org/licenses/by/2.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Curated article HTML preserves source-authored Distill apparatus markup; external media, scripts, and styles are excluded unless separately reviewed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-distill-gp",
+            "url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Modern Distill d-cite, d-footnote, and rendered citation list.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-distill-gp-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 10 Distill citation markers, 12 citation edges, and 3 source-authored Distill footnotes; 1 script-only uncited bibliography record is censused as out-of-scope and not emitted",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "A Visual Exploration of Gaussian Processes",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_article_html_owned_assets_only",
+                "evidence_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Curated article HTML preserves source-authored Distill apparatus markup; external media, scripts, and styles are excluded unless separately reviewed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-gwern-sidenote",
+            "url": "https://gwern.net/sidenote",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "DPUB-like linked sidenote/endnote graph with backlinks.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-gwern-sidenote-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 6 Gwern doc-noteref markers and 6 endnote targets",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Sidenotes In Web Design",
+                "publisher": "Gwern Branwen",
+                "evidence_url": "https://gwern.net/sidenote",
+                "license_name": "CC0 1.0 Universal",
+                "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_html_text_and_source_markup_no_external_mirrors",
+                "evidence_url": "https://gwern.net/about",
+                "license_name": "Creative Commons CC0 public domain dedication",
+                "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Gwern states site content is CC0; exclude separately hosted PDFs, mirrors, and unrelated assets unless reviewed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-tufte-css",
+            "url": "https://edwardtufte.github.io/tufte-css/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Tufte CSS label/input adjacency for numbered sidenotes and unnumbered margin notes.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-tufte-css-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 3 Tufte sidenotes, 4 Tufte margin notes, and 7 label/input marker edges",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Tufte CSS",
+                "publisher": "Tufte CSS",
+                "evidence_url": "https://edwardtufte.github.io/tufte-css/",
+                "license_name": "MIT License",
+                "license_url": "https://github.com/edwardtufte/tufte-css/blob/gh-pages/LICENSE",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_demo_html_css_with_mit_notice",
+                "evidence_url": "https://github.com/edwardtufte/tufte-css",
+                "license_name": "MIT License",
+                "license_url": "https://github.com/edwardtufte/tufte-css/blob/gh-pages/LICENSE",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Repository is MIT; preserve notice and avoid unreviewed quotes/fonts/assets in committed fixture scope.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-wikipedia-waste-land",
+            "url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "MediaWiki sup.reference markers pointing to li#cite_note entries with backlinks, plus nested CITEREF works-cited links inside note bodies.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-wikipedia-waste-land-full"
+            ],
+            "current_contract": "curated text fixture independently verifies all 240 MediaWiki reference markers, 198 reference targets, exact repeated-target fan-in, 199 nested CITEREF works-cited links, and 77 rendered works-cited entries",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Wikipedia",
+                "evidence_url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+                "license_name": "Creative Commons Attribution-ShareAlike 4.0 International / GFDL text",
+                "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_text_fixture_allowed_media_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_text_only_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_text_html_without_images_with_cc_by_sa_attribution",
+                "evidence_url": "https://foundation.wikimedia.org/wiki/ToU",
+                "license_name": "Creative Commons Attribution-ShareAlike 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+                "attribution_required": true,
+                "share_alike_required": true,
+                "asset_review_required": true,
+                "notes": "Wikipedia text is CC BY-SA; rendered page media vary and must be excluded or separately licensed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-arxiv-attention",
+            "url": "https://arxiv.org/pdf/1706.03762",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "Digital PDF with internal links, scholarly references, and named cite.* PDF destinations.",
+            "fixture_policy": "committed_existing_fixture_pdf_native_link_graph_verified",
+            "fixture_ids": [
+                "pdf-attention-native-link-graph"
+            ],
+            "current_contract": "verified native cite.* PDF link graph: 76 exact bibliography_ref markers, 40 bibliography_entry targets, and 76 marker-to-target edges; no generic PDF text, superscript, TEI, or law-review extraction claimed",
+            "manual_verification": "pdf_native_link_graph_verified_not_generic_pdf_extraction",
+            "license_provenance": {
+                "status": "legacy_existing_needs_revalidation",
+                "source_title": "Attention Is All You Need",
+                "publisher": "arXiv",
+                "evidence_url": "https://arxiv.org/abs/1706.03762",
+                "license_name": null,
+                "license_url": null,
+                "raw_source_commit_allowed": false,
+                "raw_source_policy": "legacy_existing_fixture_not_authorizing_new_raw_commits",
+                "attribution_required": null,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "pdf_native_link_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "legacy_existing_only",
+                "can_commit_raw_source": false,
+                "commit_scope": "legacy_existing_fixture_only",
+                "evidence_url": "https://arxiv.org/abs/1706.03762",
+                "license_name": null,
+                "license_url": null,
+                "attribution_required": null,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Existing PDF fixture remains non-precedential; arXiv access is not treated as a new redistribution grant.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-distill-growing-ca",
+            "url": "https://distill.pub/2020/growing-ca/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Modern Distill d-cite and d-footnote graph.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-distill-growing-ca-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 29 Distill citation markers, 39 citation edges, and 5 source-authored Distill footnotes; 4 script-only uncited bibliography records are censused as out-of-scope and not emitted",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Growing Neural Cellular Automata",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2020/growing-ca/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_article_html_owned_assets_only",
+                "evidence_url": "https://distill.pub/2020/growing-ca/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Curated article HTML preserves source-authored Distill apparatus markup; external media, scripts, and styles are excluded unless separately reviewed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-distill-research-debt",
+            "url": "https://distill.pub/2017/research-debt/",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Modern Distill d-cite and d-footnote graph.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "html-distill-research-debt-full"
+            ],
+            "current_contract": "curated source fixture independently verifies all 15 Distill citation markers, 22 citation edges, and 7 source-authored Distill footnotes",
+            "manual_verification": "source_dom_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Research Debt",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2017/research-debt/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "curated_article_html_owned_assets_only",
+                "evidence_url": "https://distill.pub/2017/research-debt/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Curated article HTML preserves source-authored Distill apparatus markup; external media, scripts, and styles are excluded unless separately reviewed.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-arxiv-2606-01109",
+            "url": "https://arxiv.org/pdf/2606.01109",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "Digital PDF with no native internal citation links; arXiv source package exposes TeX cite commands and bibliography metadata that require a source-first adapter.",
+            "fixture_policy": "committed_source_package_fixture",
+            "fixture_ids": [
+                "arxiv-2606-source-package"
+            ],
+            "current_contract": "committed arXiv source package fixture verifies 15 TeX citation commands, 20 cite-key edges, 17 cited BibTeX targets, and 1 source-authored TeX footnote; no PDF geometry claim",
+            "manual_verification": "source_package_latex_biblatex_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Digging Up Citations: FOSSIL, a Dataset and Workflow for Reference Extraction in Law and the Humanities",
+                "publisher": "arXiv",
+                "evidence_url": "https://arxiv.org/abs/2606.01109",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_arxiv_source_package_allowed_cc_by_4_0",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "source_package_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "arxiv_source_package_with_cc_by_attribution",
+                "evidence_url": "https://arxiv.org/abs/2606.01109",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "Official arXiv record links this version to CC BY 4.0; committed source package is used for source-first citation extraction, not PDF geometry extraction.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-commons-waste-land-pdf",
+            "url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "Scanned/OCR literary PDF edition with printed notes text but zero encoded PDF link annotations or supported legal-footnote geometry.",
+            "fixture_policy": "committed_full_unsupported_pdf_adapter",
+            "fixture_ids": [
+                "pdf-commons-waste-land-negative"
+            ],
+            "current_contract": "Committed Commons public-domain PDF fixture verifies current PDF apparatus adapters produce empty apparatus for a scanned/OCR literary edition with printed notes and no encoded PDF note graph; no OCR/plain-text literary note extraction or citation-completeness claim exists.",
+            "manual_verification": "pdf_literary_unsupported_adapter_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The waste land",
+                "publisher": "Wikimedia Commons",
+                "evidence_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+                "license_name": "Public domain in the United States",
+                "license_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf#Licensing",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_commons_public_domain_pdf_fixture",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "full_source_unsupported_adapter",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "commons_public_domain_pdf",
+                "evidence_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+                "license_name": "Public domain in the United States",
+                "license_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf#Licensing",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Wikimedia Commons file page documents public-domain status in the United States, Internet Archive provenance, 72 pages, and pinned Commons-hosted bytes; fixture uses the Commons upload, not IA direct bytes or the Hughesky mirror.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-gutenberg-waste-land-html",
+            "url": "https://www.gutenberg.org/cache/epub/1321/pg1321-images.html",
+            "media_kind": "web_article",
+            "format": "html",
+            "apparatus_shape": "Public-domain HTML with a notes chapter but no encoded marker-to-note graph.",
+            "fixture_policy": "committed_full_negative_fixture",
+            "fixture_ids": [
+                "html-gutenberg-waste-land-full"
+            ],
+            "current_contract": "curated full Project Gutenberg HTML fixture verifies the source has a notes chapter and no inline note-ref graph; no invented edges",
+            "manual_verification": "source_dom_negative_graph_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_gutenberg_html_fixture_with_license_terms",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_negative_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "project_gutenberg_html_with_license_terms",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg ebook not restricted by U.S. copyright law",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Preserve Project Gutenberg license/trademark terms and note non-U.S. uncertainty.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-standardebooks-eliot-poetry",
+            "url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry.epub",
+            "media_kind": "epub",
+            "format": "epub",
+            "apparatus_shape": "Standard Ebooks EPUB with cross-fragment doc-noteref markers targeting doc-endnotes entries.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "epub-standardebooks-eliot-poetry"
+            ],
+            "current_contract": "real-media fixture verifies all 53 source-archive noteref identities as exact endnote_ref to endnote edges",
+            "manual_verification": "source_archive_noteref_identity_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Poetry",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_fixture_allowed",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "full_epub",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Standard Ebooks dedicates ebook files to the public domain/CC0; work is believed U.S. public domain.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-standardebooks-eliot-poetry-advanced",
+            "url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry_advanced.epub",
+            "media_kind": "epub",
+            "format": "epub",
+            "apparatus_shape": "Standard Ebooks advanced EPUB with the same cross-fragment endnote graph.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "epub-standardebooks-eliot-poetry-advanced"
+            ],
+            "current_contract": "real-media fixture verifies all 53 source-archive noteref identities as exact endnote_ref to endnote edges",
+            "manual_verification": "source_archive_noteref_identity_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Poetry",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_fixture_allowed",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "full_epub",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Standard Ebooks dedicates ebook files to the public domain/CC0; work is believed U.S. public domain.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-gutenberg-waste-land-epub",
+            "url": "https://www.gutenberg.org/ebooks/1321.epub3.images",
+            "media_kind": "epub",
+            "format": "epub",
+            "apparatus_shape": "Public-domain EPUB with a notes chapter but no encoded marker-to-note graph.",
+            "fixture_policy": "committed_full_negative_fixture",
+            "fixture_ids": [
+                "epub-gutenberg-waste-land-negative"
+            ],
+            "current_contract": "real-media fixture verifies empty apparatus and independent archive scan finds zero authored noteref links",
+            "manual_verification": "source_archive_noteref_absence_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_negative_fixture_allowed",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_negative_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "project_gutenberg_epub_with_license_terms",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg ebook not restricted by U.S. copyright law",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Preserve Project Gutenberg license/trademark terms and note non-U.S. uncertainty.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-standardebooks-james-pragmatism",
+            "url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism.epub",
+            "media_kind": "epub",
+            "format": "epub",
+            "apparatus_shape": "Standard Ebooks EPUB with chapter-local noteref markers targeting endnotes.xhtml.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "epub-standardebooks-james-pragmatism"
+            ],
+            "current_contract": "real-media fixture verifies all 13 source-archive noteref identities as exact endnote_ref to endnote edges",
+            "manual_verification": "source_archive_noteref_identity_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Pragmatism",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_fixture_allowed",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "full_epub",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Standard Ebooks dedicates ebook files to the public domain/CC0; work is believed U.S. public domain.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-standardebooks-james-pragmatism-advanced",
+            "url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism_advanced.epub",
+            "media_kind": "epub",
+            "format": "epub",
+            "apparatus_shape": "Standard Ebooks advanced EPUB with the same cross-fragment endnote graph.",
+            "fixture_policy": "committed_full_fixture",
+            "fixture_ids": [
+                "epub-standardebooks-james-pragmatism-advanced"
+            ],
+            "current_contract": "real-media fixture verifies all 13 source-archive noteref identities as exact endnote_ref to endnote edges",
+            "manual_verification": "source_archive_noteref_identity_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Pragmatism",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_fixture_allowed",
+                "attribution_required": false,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "committed_fixture_graph_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible",
+                "can_commit_raw_source": true,
+                "commit_scope": "full_epub",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "attribution_required": false,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Standard Ebooks dedicates ebook files to the public domain/CC0; work is believed U.S. public domain.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-philpapers-lop-aiz",
+            "url": "https://philpapers.org/archive/LOPAIZ.pdf",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "Digital PDF with external URI links, numbered notes, and author-year references; no native internal citation graph.",
+            "fixture_policy": "committed_full_unsupported_pdf_adapter",
+            "fixture_ids": [
+                "pdf-philpapers-lop-aiz-unsupported"
+            ],
+            "derived_fixture_ids": [
+                "tei-philpapers-lop-aiz-grobid-0-8-2"
+            ],
+            "current_contract": "committed CC BY PDF fixture verifies the current PDF adapters produce empty apparatus for unsupported scholarly notes/references; derived GROBID TEI fixture verifies partial probable bibliography extraction with conservative author-year target recovery, but no hand-audited gold graph or citation completeness claim exists",
+            "manual_verification": "full_source_fixture_no_supported_pdf_adapter_negative_verified",
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Affective Injustice",
+                "publisher": "PhilArchive / PhilPapers",
+                "evidence_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "raw_source_commit_allowed": true,
+                "raw_source_policy": "committed_full_pdf_fixture_allowed_cc_by_4_0_for_unsupported_adapter_contract",
+                "attribution_required": true,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "full_source_unsupported_adapter",
+            "raw_source_fixture_eligibility": {
+                "status": "eligible_with_conditions",
+                "can_commit_raw_source": true,
+                "commit_scope": "full_pdf_with_cc_by_attribution",
+                "evidence_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": true,
+                "share_alike_required": false,
+                "asset_review_required": true,
+                "notes": "PDF states this author accepted manuscript is openly available under CC BY 4.0; committed fixture is an unsupported-adapter negative contract until PDF note/reference extraction and verification exist.",
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "source-harvard-zittrain",
+            "url": "https://harvardlawreview.org/wp-content/uploads/2014/03/forvol127_zittrain.pdf",
+            "media_kind": "pdf",
+            "format": "pdf",
+            "apparatus_shape": "Legal article PDF with same-page lower-band footnote layout and no internal PDF links in temporary inspection.",
+            "fixture_policy": "minimal_pdf_pattern_fixture",
+            "fixture_ids": [
+                "pdf-law-review-footnotes"
+            ],
+            "current_contract": "synthetic law-review PDF fixture covers paired same-page lower-band numeric footnotes; raw Harvard PDF remains uncommitted because rights are unclear",
+            "manual_verification": "synthetic_law_review_pdf_footnote_pattern_verified",
+            "license_provenance": {
+                "status": "pattern_fixture_only_not_raw_source",
+                "source_title": "PERMA: SCOPING AND ADDRESSING THE PROBLEM OF LINK AND REFERENCE ROT IN LEGAL CITATIONS",
+                "publisher": "Harvard Law Review",
+                "evidence_url": "https://harvardlawreview.org/wp-content/uploads/2014/03/forvol127_zittrain.pdf",
+                "license_name": null,
+                "license_url": null,
+                "raw_source_commit_allowed": false,
+                "raw_source_policy": "restricted_or_unclear_raw_source_synthetic_pdf_pattern_only",
+                "attribution_required": null,
+                "checked_at": "2026-06-09"
+            },
+            "apparatus_support_level": "pattern_verified",
+            "raw_source_fixture_eligibility": {
+                "status": "not_eligible_or_unverified",
+                "can_commit_raw_source": false,
+                "commit_scope": "none",
+                "evidence_url": "https://harvardlawreview.org/wp-content/uploads/2014/03/forvol127_zittrain.pdf",
+                "license_name": null,
+                "license_url": null,
+                "attribution_required": null,
+                "share_alike_required": false,
+                "asset_review_required": false,
+                "notes": "Public PDF without open license recorded; permissions appear publisher-controlled.",
+                "checked_at": "2026-06-09"
+            }
+        }
+    ],
+    "automated_fixtures": [
+        {
+            "id": "html-distill-custom-citations",
+            "path": "reader_apparatus/html/distill-custom-citations.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_ids": [
+                "source-distill-gp",
+                "source-distill-growing-ca",
+                "source-distill-research-debt"
+            ],
+            "modeled_source_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+            "title": "Distill rendered citation fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 581,
+            "sha256": "3511f48060fbff87df8248a35f32eff43fb51b1f7f11bd2d171dd4a93fc56084",
+            "anchor_evidence": "d-cite key=Rasmussen2004 targets li#Rasmussen2004; d-footnote carries source-authored note text.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_entry": 1,
+                    "bibliography_ref": 1,
+                    "footnote": 1,
+                    "footnote_ref": 1
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 1,
+                    "points_to_note": 1
+                },
+                "edge_confidences": {
+                    "exact": 2
+                },
+                "edge_methods": {
+                    "distill_citation": 1,
+                    "distill_footnote": 1
+                },
+                "body_needles": [
+                    "Gaussian Processes in Machine Learning",
+                    "short explanatory note"
+                ],
+                "min_exact_locators": 2
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-distill-legacy-bibtex",
+            "path": "reader_apparatus/html/distill-legacy-bibtex.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_ids": [
+                "source-distill-misread-tsne"
+            ],
+            "modeled_source_url": "https://distill.pub/2016/misread-tsne/",
+            "title": "Distill legacy BibTeX citation fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 778,
+            "sha256": "3ac85d7abbd3b0a5d83edc5d0414aab567e47ef915bdf154d1d7bee125b428c2",
+            "anchor_evidence": "dt-cite key=maaten2008visualizing targets script type=text/bibliography entry key.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_entry": 1,
+                    "bibliography_ref": 1
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 1
+                },
+                "edge_confidences": {
+                    "exact": 1
+                },
+                "edge_methods": {
+                    "distill_citation": 1
+                },
+                "body_needles": [
+                    "Visualizing data using t-SNE",
+                    "Journal of Machine Learning Research"
+                ],
+                "min_exact_locators": 1
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-gwern-dpub-endnotes",
+            "path": "reader_apparatus/html/gwern-dpub-endnotes.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_ids": [
+                "source-gwern-sidenote"
+            ],
+            "modeled_source_url": "https://gwern.net/sidenote",
+            "title": "DPUB endnotes fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 491,
+            "sha256": "a278df5c66f0238eec741998a49d4bbd434f056d07e4a59c1c6463895911fc74",
+            "anchor_evidence": "role=doc-noteref href=#fn1 targets li#fn1 inside role=doc-endnotes with backlink.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "endnote": 1,
+                    "endnote_ref": 1
+                },
+                "edge_relations": {
+                    "points_to_endnote": 1
+                },
+                "edge_confidences": {
+                    "exact": 1
+                },
+                "edge_methods": {
+                    "html_semantic": 1
+                },
+                "body_needles": [
+                    "source-authored note with a backlink"
+                ],
+                "min_exact_locators": 1
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-tufte-sidenote",
+            "path": "reader_apparatus/html/tufte-sidenote.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_ids": [
+                "source-tufte-css"
+            ],
+            "modeled_source_url": "https://edwardtufte.github.io/tufte-css/",
+            "title": "Tufte sidenote fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 324,
+            "sha256": "1518bd5967c5a6808b0fa543e7920dae97e292822e6f4e3b7d1f4b1c258be8e5",
+            "anchor_evidence": "label.sidenote-number[for=sn-demo] followed by input#sn-demo and adjacent .sidenote; parser preserves explicit sidenote semantics.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "sidenote": 1,
+                    "sidenote_ref": 1
+                },
+                "edge_relations": {
+                    "points_to_sidenote": 1
+                },
+                "edge_confidences": {
+                    "strong": 1
+                },
+                "edge_methods": {
+                    "tufte_sidenote": 1
+                },
+                "body_needles": [
+                    "source-authored Tufte sidenote"
+                ],
+                "min_exact_locators": 1
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-mediawiki-references",
+            "path": "reader_apparatus/html/mediawiki-references.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_ids": [
+                "source-wikipedia-waste-land"
+            ],
+            "modeled_source_url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+            "title": "MediaWiki references fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 573,
+            "sha256": "9aa5c8bc93f8920e9eb1f0023c89fe3dc1dd00317e2031144da8e51ed7e0bbbc",
+            "anchor_evidence": "sup.reference#cite_ref-* a[href=#cite_note-*] targets li#cite_note-* with backlink.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 1,
+                    "footnote_ref": 1
+                },
+                "edge_relations": {
+                    "points_to_note": 1
+                },
+                "edge_confidences": {
+                    "strong": 1
+                },
+                "edge_methods": {
+                    "html_link_graph": 1
+                },
+                "body_needles": [
+                    "discrepancy between line numbers"
+                ],
+                "min_exact_locators": 1
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-gutenberg-notes-chapter-negative",
+            "path": "reader_apparatus/html/gutenberg-notes-chapter-negative.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_negative_pattern",
+            "stress_fixture_role": "minimal notes-chapter negative parser guard",
+            "source_ids": [],
+            "modeled_source_url": "https://www.gutenberg.org/cache/epub/1321/pg1321-images.html",
+            "title": "Gutenberg notes chapter negative fixture",
+            "license_note": "synthetic minimal fixture modeled after public-domain source structure",
+            "byte_length": 376,
+            "sha256": "3f47a166b7dc3d959733e9beee9b79b541fc04955b44dd7b905de49323f12f46",
+            "anchor_evidence": "A notes chapter exists, but prose has no inline marker-to-note anchor.",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [],
+                "min_exact_locators": 0
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-gutenberg-argonautica-full",
+            "path": "reader_apparatus/html/gutenberg-argonautica-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "gutenberg_linknotes",
+            "source_ids": [
+                "source-gutenberg-argonautica-html"
+            ],
+            "source_url": "https://www.gutenberg.org/cache/epub/830/pg830-images.html",
+            "modeled_source_url": "https://www.gutenberg.org/cache/epub/830/pg830-images.html",
+            "title": "The Argonautica",
+            "license_note": "Project Gutenberg public-domain ebook in the United States with full Project Gutenberg license terms preserved",
+            "byte_length": 379840,
+            "sha256": "febac281be426f11651b6c04e502cbcd472686b5b823fb3378fbe81641a260f9",
+            "anchor_evidence": "Full Project Gutenberg HTML fixture preserves 39 contiguous linknoteref-N markers, 39 linknote-N anchors, 39 p.footnote bodies with backlinks, and the full Project Gutenberg license footer.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "endnote": 39,
+                    "endnote_ref": 39
+                },
+                "item_confidences": {
+                    "strong": 78
+                },
+                "item_methods": {
+                    "html_project_gutenberg_linknote": 78
+                },
+                "edge_relations": {
+                    "points_to_endnote": 39
+                },
+                "edge_confidences": {
+                    "strong": 39
+                },
+                "edge_methods": {
+                    "html_project_gutenberg_linknote": 39
+                },
+                "body_needles": [
+                    "Naucratis",
+                    "Anth. Pal.",
+                    "isle of Revealing"
+                ],
+                "min_exact_locators": 39,
+                "source_needles": [
+                    "THE FULL PROJECT GUTENBERG",
+                    "linknoteref-39",
+                    "linknote-39"
+                ],
+                "independent_dom_graph": {
+                    "marker_count": 39,
+                    "target_count": 39,
+                    "backlink_count": 39,
+                    "has_project_gutenberg_license": true
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Argonautica",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/830",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_gutenberg_html_fixture_with_license_terms",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-gutenberg-waste-land-full",
+            "path": "reader_apparatus/html/gutenberg-waste-land-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full_negative",
+            "source_family": "gutenberg",
+            "source_ids": [
+                "source-gutenberg-waste-land-html"
+            ],
+            "source_url": "https://www.gutenberg.org/cache/epub/1321/pg1321-images.html",
+            "modeled_source_url": "https://www.gutenberg.org/cache/epub/1321/pg1321-images.html",
+            "title": "The Waste Land",
+            "license_note": "Project Gutenberg public-domain ebook in the United States with full Project Gutenberg license terms preserved",
+            "byte_length": 59933,
+            "sha256": "130f5633ee1e8818c989afb76c4fe509bbc2a87615b3a542dddd4e806ece9717",
+            "anchor_evidence": "Full Project Gutenberg HTML fixture preserves the NOTES ON THE WASTE LAND chapter and full Project Gutenberg license footer, but has no inline note-ref marker graph.",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [],
+                "min_exact_locators": 0,
+                "source_needles": [
+                    "NOTES ON",
+                    "Line 20",
+                    "THE FULL PROJECT GUTENBERG"
+                ],
+                "independent_dom_negative_graph": {
+                    "has_notes_chapter": true,
+                    "has_project_gutenberg_license": true,
+                    "inline_note_ref_count": 0,
+                    "note_target_count": 0
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_gutenberg_html_fixture_with_license_terms",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-legacy-named-notes",
+            "path": "reader_apparatus/html/legacy-named-notes.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_pattern",
+            "source_family": "legacy_named_notes",
+            "source_ids": [],
+            "modeled_source_url": "https://paulgraham.com/greatwork.html",
+            "title": "Legacy named notes fixture",
+            "license_note": "synthetic minimal fixture modeled after source-authored markup shape",
+            "byte_length": 541,
+            "sha256": "c3aa08bb12aa0e4cf47210066c2d55bbd5e2ebb9387166a094417da0f97b94a0",
+            "anchor_evidence": "a[href=#f1n] marker targets a[name=f1n] in a Notes block; no backlinks or semantic roles. Modeled after blocked Paul Graham live shape without copied source text.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 2,
+                    "footnote_ref": 2
+                },
+                "item_confidences": {
+                    "strong": 4
+                },
+                "item_methods": {
+                    "html_legacy_named_notes": 4
+                },
+                "edge_relations": {
+                    "points_to_note": 2
+                },
+                "edge_confidences": {
+                    "strong": 2
+                },
+                "edge_methods": {
+                    "html_legacy_named_notes": 2
+                },
+                "body_needles": [
+                    "First source-authored legacy note body",
+                    "Second source-authored legacy note body"
+                ],
+                "min_exact_locators": 2
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            },
+            "blocked_source_ids": [
+                "blocked-paulgraham-greatwork"
+            ]
+        },
+        {
+            "id": "html-legacy-named-notes-negative",
+            "path": "reader_apparatus/html/legacy-named-notes-negative.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "minimal_negative_pattern",
+            "source_ids": [],
+            "modeled_source_url": "synthetic:legacy-named-notes",
+            "title": "Legacy named notes negative fixture",
+            "license_note": "synthetic test fixture",
+            "byte_length": 302,
+            "sha256": "158a471d9b0534565454737dc73b3fe3ba5336c711084cf727fc46c492dc1495",
+            "anchor_evidence": "A marker links to a named anchor, but target has no semantic role and no backlink.",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [],
+                "min_exact_locators": 0
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-synthetic-noteref",
+            "path": "epub/reader-apparatus-note.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "synthetic_archive",
+            "source_ids": [],
+            "source_url": "python/tests/fixtures/epub/reader-apparatus-note.epub",
+            "title": "Synthetic EPUB note fixture",
+            "license_note": "synthetic test fixture",
+            "byte_length": 1190,
+            "sha256": "ce63bfa76e30cb056ca5f4e5b2b21f6f7f3cc0bcf19315c5667410d416767b82",
+            "expected": {
+                "status": "ready",
+                "chapter_count": 1,
+                "item_kinds": {
+                    "footnote": 1,
+                    "footnote_ref": 1
+                },
+                "edge_relations": {
+                    "points_to_note": 1
+                },
+                "edge_confidences": {
+                    "exact": 1
+                },
+                "edge_methods": {
+                    "html_semantic": 1
+                },
+                "body_needles": [
+                    "EPUB note body for reader apparatus"
+                ]
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-gutenberg-waste-land-negative",
+            "path": "epub/waste-land-epub3.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "committed_full_negative",
+            "source_ids": [
+                "source-gutenberg-waste-land-epub"
+            ],
+            "source_url": "https://www.gutenberg.org/ebooks/1321.epub3.images",
+            "title": "The Waste Land",
+            "license_note": "Project Gutenberg public-domain ebook in the USA",
+            "byte_length": 83841,
+            "sha256": "de1125e11abf9ede2417527a2a9043f8186464833f303e17297fbb2e18272c04",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": []
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Project Gutenberg",
+                "evidence_url": "https://www.gutenberg.org/ebooks/1321",
+                "license_name": "Project Gutenberg public-domain ebook in the USA",
+                "license_url": "https://www.gutenberg.org/policy/license.html",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_negative_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-standardebooks-eliot-poetry",
+            "path": "epub/standardebooks-t-s-eliot-poetry.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "committed_full",
+            "source_ids": [
+                "source-standardebooks-eliot-poetry"
+            ],
+            "source_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry.epub?source=download",
+            "title": "Poetry",
+            "license_note": "Standard Ebooks public-domain/CC0 production fixture",
+            "byte_length": 470962,
+            "sha256": "7fc1c684ff08b36b4ac9a3900fafd4b5b4d6c2ba31662a05b9dc5a97368baaa2",
+            "expected": {
+                "status": "ready",
+                "chapter_count": 6,
+                "item_kinds": {
+                    "endnote": 53,
+                    "endnote_ref": 53
+                },
+                "edge_relations": {
+                    "points_to_endnote": 53
+                },
+                "edge_confidences": {
+                    "exact": 53
+                },
+                "edge_methods": {
+                    "epub_noteref": 53
+                },
+                "body_needles": [
+                    "Aerated Bread Company",
+                    "The Peace which passeth understanding"
+                ]
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Poetry",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-standardebooks-eliot-poetry-advanced",
+            "path": "epub/standardebooks-t-s-eliot-poetry-advanced.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "committed_full",
+            "source_ids": [
+                "source-standardebooks-eliot-poetry-advanced"
+            ],
+            "source_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry/downloads/t-s-eliot_poetry_advanced.epub?source=download",
+            "title": "Poetry",
+            "license_note": "Standard Ebooks public-domain/CC0 production fixture",
+            "byte_length": 582941,
+            "sha256": "cb8605e49a6f2d79cc99d26fe0e5cdfbde4c1f3738e8497ee6cda5f5198506ab",
+            "expected": {
+                "status": "ready",
+                "chapter_count": 6,
+                "item_kinds": {
+                    "endnote": 53,
+                    "endnote_ref": 53
+                },
+                "edge_relations": {
+                    "points_to_endnote": 53
+                },
+                "edge_confidences": {
+                    "exact": 53
+                },
+                "edge_methods": {
+                    "epub_noteref": 53
+                },
+                "body_needles": [
+                    "Aerated Bread Company",
+                    "The Peace which passeth understanding"
+                ]
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Poetry",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/t-s-eliot/poetry",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-standardebooks-james-pragmatism",
+            "path": "epub/standardebooks-william-james-pragmatism.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "committed_full",
+            "source_ids": [
+                "source-standardebooks-james-pragmatism"
+            ],
+            "source_url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism.epub?source=download",
+            "title": "Pragmatism",
+            "license_note": "Standard Ebooks public-domain/CC0 production fixture",
+            "byte_length": 661212,
+            "sha256": "055a87eafc57df5bdfc1775d577942f62ab26876228adc982b211ad4ff123295",
+            "expected": {
+                "status": "ready",
+                "chapter_count": 16,
+                "item_kinds": {
+                    "endnote": 13,
+                    "endnote_ref": 13
+                },
+                "edge_relations": {
+                    "points_to_endnote": 13
+                },
+                "edge_confidences": {
+                    "exact": 13
+                },
+                "edge_methods": {
+                    "epub_noteref": 13
+                },
+                "body_needles": [
+                    "Morrison I. Swift",
+                    "Elements of Metaphysics"
+                ]
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Pragmatism",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "epub-standardebooks-james-pragmatism-advanced",
+            "path": "epub/standardebooks-william-james-pragmatism-advanced.epub",
+            "media_kind": "epub",
+            "fixture_format": "epub",
+            "fixture_kind": "committed_full",
+            "source_ids": [
+                "source-standardebooks-james-pragmatism-advanced"
+            ],
+            "source_url": "https://standardebooks.org/ebooks/william-james/pragmatism/downloads/william-james_pragmatism_advanced.epub?source=download",
+            "title": "Pragmatism",
+            "license_note": "Standard Ebooks public-domain/CC0 production fixture",
+            "byte_length": 834443,
+            "sha256": "dde746bac2ee6f99cf386068b951838e5686fa771ba6cf85c9dd092db2568355",
+            "expected": {
+                "status": "ready",
+                "chapter_count": 16,
+                "item_kinds": {
+                    "endnote": 13,
+                    "endnote_ref": 13
+                },
+                "edge_relations": {
+                    "points_to_endnote": 13
+                },
+                "edge_confidences": {
+                    "exact": 13
+                },
+                "edge_methods": {
+                    "epub_noteref": 13
+                },
+                "body_needles": [
+                    "Morrison I. Swift",
+                    "Elements of Metaphysics"
+                ]
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Pragmatism",
+                "publisher": "Standard Ebooks",
+                "evidence_url": "https://standardebooks.org/ebooks/william-james/pragmatism",
+                "license_name": "CC0 1.0 Universal / public domain in the United States",
+                "license_url": "https://standardebooks.org/about/standard-ebooks-and-the-public-domain",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "pdf-law-review-footnotes",
+            "path": "pdf/law-review-footnotes.pdf",
+            "media_kind": "pdf",
+            "fixture_format": "pdf",
+            "fixture_kind": "synthetic_pdf_pattern",
+            "source_family": "pdf_legal_footnotes",
+            "source_ids": [
+                "source-harvard-zittrain"
+            ],
+            "modeled_source_url": "https://harvardlawreview.org/wp-content/uploads/2014/03/forvol127_zittrain.pdf",
+            "title": "Synthetic law-review footnotes fixture",
+            "license_note": "synthetic minimal fixture modeled after law-review footnote layout",
+            "byte_length": 8727,
+            "sha256": "20147de1c45261dc04f70188223be9bac12296f56ff89a648c197ab291b93195",
+            "anchor_evidence": "Raised numeric body markers 1-10 pair with lower-page note labels 1-10; table number 1 is not a marker.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 10,
+                    "footnote_ref": 10
+                },
+                "item_confidences": {
+                    "strong": 20
+                },
+                "item_methods": {
+                    "pdf_legal_footnote_target": 10,
+                    "pdf_legal_footnote_marker": 10
+                },
+                "edge_relations": {
+                    "points_to_note": 10
+                },
+                "edge_confidences": {
+                    "strong": 10
+                },
+                "edge_methods": {
+                    "pdf_legal_footnote_pair": 10
+                },
+                "body_needles": [
+                    "First legal footnote body",
+                    "continues on the following line",
+                    "Tenth legal footnote body verifies two-digit labels"
+                ],
+                "pdf_legal_footnotes": {
+                    "status": "targets_materialized",
+                    "adapter_version": "pdf_legal_footnotes_v1",
+                    "page_count": 1,
+                    "marker_count": 10,
+                    "target_count": 10,
+                    "edge_count": 10,
+                    "unresolved_marker_count": 0,
+                    "unpaired_target_count": 0,
+                    "skipped": {}
+                }
+            },
+            "license_provenance": {
+                "status": "synthetic_test_fixture",
+                "source_title": null,
+                "publisher": "Nexus test suite",
+                "evidence_url": "repo:synthetic-reader-apparatus-fixture",
+                "license_name": "repository test fixture",
+                "license_url": null,
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "synthetic_fixture_allowed_no_source_text_copy",
+                "source_text_copied": false,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "pdf-philpapers-lop-aiz-unsupported",
+            "path": "pdf/philpapers-lop-aiz.pdf",
+            "media_kind": "pdf",
+            "fixture_format": "pdf",
+            "fixture_kind": "committed_full_unsupported_adapter",
+            "source_family": "pdf_scholarly_unsupported",
+            "source_ids": [
+                "source-philpapers-lop-aiz"
+            ],
+            "source_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+            "title": "Affective Injustice",
+            "license_note": "author accepted manuscript under Creative Commons Attribution 4.0 International",
+            "byte_length": 252744,
+            "sha256": "cd19f4439cb3a0747bbff29c8ac2386c8f38727f0821916f5109b2304d052867",
+            "anchor_evidence": "PDF contains Endnotes and References sections plus external DOI/URI links, but no internal or named citation links supported by current PDF adapters.",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "item_confidences": {},
+                "item_methods": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [
+                    "CC BY",
+                    "Endnotes",
+                    "References"
+                ],
+                "pdf_unsupported_scholarly": {
+                    "status": "unsupported_adapter_no_apparatus",
+                    "page_count": 22,
+                    "endnote_count": 18,
+                    "has_references_section": true,
+                    "link_counts": {
+                        "total": 21,
+                        "internal": 0,
+                        "external_uri": 21,
+                        "named_cite": 0
+                    },
+                    "diagnostics": {
+                        "pdf_native_link": {
+                            "status": "no_supported_citation_links",
+                            "marker_count": 0,
+                            "target_count": 0,
+                            "edge_count": 0,
+                            "unresolved_marker_count": 0,
+                            "total_link_count": 21,
+                            "internal_link_count": 0,
+                            "citation_link_count": 0,
+                            "skipped": {
+                                "non_citation_destination": 21
+                            }
+                        },
+                        "pdf_legal_footnotes": {
+                            "status": "no_supported_legal_footnotes",
+                            "adapter_version": "pdf_legal_footnotes_v1",
+                            "page_count": 22,
+                            "marker_count": 0,
+                            "target_count": 0,
+                            "edge_count": 0,
+                            "unresolved_marker_count": 0,
+                            "unpaired_target_count": 0,
+                            "skipped": {}
+                        }
+                    }
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Affective Injustice",
+                "publisher": "PhilArchive / PhilPapers",
+                "evidence_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_pdf_fixture_allowed_cc_by_4_0_for_unsupported_adapter_contract",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "pdf-commons-waste-land-negative",
+            "path": "pdf/commons-waste-land.pdf",
+            "media_kind": "pdf",
+            "fixture_format": "pdf",
+            "fixture_kind": "committed_full_unsupported_adapter",
+            "source_family": "pdf_literary_unsupported",
+            "source_ids": [
+                "source-commons-waste-land-pdf"
+            ],
+            "source_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+            "download_url": "https://upload.wikimedia.org/wikipedia/commons/c/cf/The_waste_land_%28IA_wasteland00elio_0%29.pdf",
+            "modeled_source_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+            "title": "The waste land",
+            "license_note": "Wikimedia Commons public-domain PDF fixture for the United States; Commons upload bytes pinned, IA direct bytes intentionally not used",
+            "byte_length": 2249117,
+            "sha256": "067ee1272fffb0657ed59b8bb8f0c4eb72ea5e2fdf7c118a858b9395f5e159da",
+            "anchor_evidence": "Full Commons-hosted PDF fixture has 72 pages, printed/OCR notes text, and zero PDF link annotations; current PDF adapters must not infer apparatus from OCR/plain text.",
+            "expected": {
+                "status": "empty",
+                "item_kinds": {},
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [
+                    "THE WASTE LAND",
+                    "I. THE BURIAL OF THE DEAD",
+                    "NOT only the title",
+                    "Datta, dayadfivam, damyata",
+                    "Shantih"
+                ],
+                "pdf_unsupported_literary": {
+                    "status": "unsupported_adapter_no_apparatus",
+                    "page_count": 72,
+                    "has_printed_notes": true,
+                    "link_counts": {
+                        "total": 0,
+                        "internal": 0,
+                        "external_uri": 0,
+                        "named_cite": 0
+                    },
+                    "diagnostics": {
+                        "pdf_native_link": {
+                            "status": "no_supported_citation_links",
+                            "marker_count": 0,
+                            "target_count": 0,
+                            "edge_count": 0,
+                            "unresolved_marker_count": 0,
+                            "total_link_count": 0,
+                            "internal_link_count": 0,
+                            "citation_link_count": 0,
+                            "skipped": {}
+                        },
+                        "pdf_legal_footnotes": {
+                            "status": "no_supported_legal_footnotes",
+                            "adapter_version": "pdf_legal_footnotes_v1",
+                            "page_count": 72,
+                            "marker_count": 0,
+                            "target_count": 0,
+                            "edge_count": 0,
+                            "unresolved_marker_count": 0,
+                            "unpaired_target_count": 0,
+                            "skipped": {}
+                        }
+                    }
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The waste land",
+                "publisher": "Wikimedia Commons",
+                "evidence_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf",
+                "license_name": "Public domain in the United States",
+                "license_url": "https://commons.wikimedia.org/wiki/File:The_waste_land_(IA_wasteland00elio_0).pdf#Licensing",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_full_commons_public_domain_pdf_fixture",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "tei-philpapers-lop-aiz-grobid-0-8-2",
+            "path": "reader_apparatus/tei/philpapers-lop-aiz.grobid-0.8.2.tei.xml",
+            "media_kind": "pdf",
+            "fixture_format": "tei",
+            "fixture_kind": "committed_derived_tei",
+            "source_family": "grobid_tei_scholarly",
+            "source_ids": [
+                "source-philpapers-lop-aiz"
+            ],
+            "source_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+            "title": "Affective Injustice",
+            "license_note": "GROBID 0.8.2 TEI derived from committed PhilPapers CC BY 4.0 PDF fixture",
+            "byte_length": 137277,
+            "sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+            "anchor_evidence": "GROBID TEI contains bibliography entries, bibliographic refs, coordinates, and unresolved refs. It is a partial parser fixture, not a citation-completeness fixture.",
+            "expected": {
+                "status": "partial",
+                "item_kinds": {
+                    "bibliography_entry": 92,
+                    "bibliography_ref": 158
+                },
+                "item_confidences": {
+                    "probable": 250
+                },
+                "item_methods": {
+                    "grobid_tei_bibliography_entry": 92,
+                    "grobid_tei_bibliography_ref": 158
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 147
+                },
+                "edge_confidences": {
+                    "probable": 147
+                },
+                "edge_methods": {
+                    "grobid_tei_bibliography_ref": 113,
+                    "grobid_tei_author_year_match": 34
+                },
+                "body_needles": [
+                    "ADective Economies",
+                    "Emotional Imperialism",
+                    "anger, aDective injustice"
+                ],
+                "grobid_tei_scholarly": {
+                    "status": "partial",
+                    "adapter_version": "grobid_tei_scholarly_v1",
+                    "tei_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+                    "bibliography_entry_count": 92,
+                    "bibliography_ref_count": 158,
+                    "resolved_bibliography_ref_count": 147,
+                    "author_year_resolved_bibliography_ref_count": 34,
+                    "unresolved_bibliography_ref_count": 7,
+                    "ambiguous_author_year_ref_count": 1,
+                    "suppressed_fragment_ref_count": 4,
+                    "suppressed_fragment_edge_count": 5,
+                    "unique_resolved_target_count": 76,
+                    "skipped": {
+                        "bibliography_ref_suspicious_direct_target": 2,
+                        "bibliography_ref_fragment_author_year_match_suppressed": 2
+                    }
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Affective Injustice",
+                "publisher": "PhilArchive / PhilPapers",
+                "evidence_url": "https://philpapers.org/archive/LOPAIZ.pdf",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_derived_tei_fixture_allowed_cc_by_4_0_source",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "arxiv-2606-source-package",
+            "path": "reader_apparatus/arxiv/2606.01109-source.tar",
+            "media_kind": "pdf",
+            "fixture_format": "arxiv_source",
+            "fixture_kind": "committed_source_package",
+            "source_family": "arxiv_latex_biblatex",
+            "source_ids": [
+                "source-arxiv-2606-01109"
+            ],
+            "source_url": "https://arxiv.org/e-print/2606.01109",
+            "title": "Digging Up Citations: FOSSIL, a Dataset and Workflow for Reference Extraction in Law and the Humanities",
+            "license_note": "arXiv source package under CC BY 4.0",
+            "byte_length": 73713,
+            "sha256": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+            "anchor_evidence": "extended_abstract.tex uses biblatex citation commands and refs.bib contains the cited entries.",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_entry": 17,
+                    "bibliography_ref": 15,
+                    "footnote": 1
+                },
+                "item_confidences": {
+                    "exact": 33
+                },
+                "item_methods": {
+                    "latex_biblatex_bibliography": 17,
+                    "latex_biblatex_citation": 15,
+                    "latex_footnote": 1
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 20
+                },
+                "edge_confidences": {
+                    "exact": 20
+                },
+                "edge_methods": {
+                    "latex_biblatex_citation": 20
+                },
+                "body_needles": [
+                    "Annotated References in the Historiography on Venice",
+                    "PDF-TEI Editor",
+                    "These authors contributed equally"
+                ],
+                "latex_biblatex": {
+                    "status": "ready",
+                    "citation_marker_count": 15,
+                    "citation_edge_count": 20,
+                    "cited_bibliography_entry_count": 17,
+                    "bib_entry_count": 22,
+                    "uncited_bib_entry_count": 5,
+                    "footnote_count": 1,
+                    "missing_citation_keys": []
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Digging Up Citations: FOSSIL, a Dataset and Workflow for Reference Extraction in Law and the Humanities",
+                "publisher": "arXiv",
+                "evidence_url": "https://arxiv.org/abs/2606.01109",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_source_package_fixture_allowed",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "pdf-attention-native-link-graph",
+            "path": "pdf/attention.pdf",
+            "media_kind": "pdf",
+            "fixture_format": "pdf",
+            "fixture_kind": "committed_existing_fixture_pdf_native_link_graph_verified",
+            "source_ids": [
+                "source-arxiv-attention"
+            ],
+            "source_url": "https://arxiv.org/abs/1706.03762",
+            "title": "Attention Is All You Need",
+            "license_note": "arXiv-hosted paper fixture used by existing repo tests",
+            "byte_length": 2215244,
+            "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_ref": 76,
+                    "bibliography_entry": 40
+                },
+                "item_confidences": {
+                    "exact": 116
+                },
+                "item_methods": {
+                    "pdf_native_link": 76,
+                    "pdf_native_link_target": 40
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 76
+                },
+                "edge_confidences": {
+                    "exact": 76
+                },
+                "edge_methods": {
+                    "pdf_native_link_target": 76
+                },
+                "body_needles": [
+                    "Long short-term memory",
+                    "Neural machine translation by jointly learning to align and translate"
+                ],
+                "pdf_link_counts": {
+                    "internal": 95,
+                    "named_cite": 76,
+                    "total": 113,
+                    "unique_named_cite_destinations": 40
+                },
+                "diagnostics": {
+                    "pdf_native_link": {
+                        "status": "targets_materialized",
+                        "marker_count": 76,
+                        "target_count": 40,
+                        "edge_count": 76,
+                        "unresolved_marker_count": 0
+                    }
+                }
+            },
+            "license_provenance": {
+                "status": "legacy_existing_needs_revalidation",
+                "source_title": "Attention Is All You Need",
+                "publisher": "arXiv",
+                "evidence_url": "https://arxiv.org/abs/1706.03762",
+                "license_name": null,
+                "license_url": null,
+                "fixture_commit_allowed": false,
+                "fixture_commit_policy": "legacy_existing_fixture_not_authorizing_new_raw_commits",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-distill-misread-tsne-full",
+            "path": "reader_apparatus/html/distill-misread-tsne-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "distill",
+            "source_ids": [
+                "source-distill-misread-tsne"
+            ],
+            "source_url": "https://distill.pub/2016/misread-tsne/",
+            "modeled_source_url": "https://distill.pub/2016/misread-tsne/",
+            "title": "How to Use t-SNE Effectively",
+            "license_note": "Distill article fixture under Creative Commons Attribution 2.0 Generic; external assets excluded",
+            "byte_length": 32291,
+            "sha256": "5e11a076a04f92a23eb160b4d673fbafcaacff73292472358a14e795c60f2433",
+            "anchor_evidence": "independent DOM verifier derives all d-cite/dt-cite keys, d-footnote nodes, and cited bibliography targets from the curated source fixture",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_entry": 1,
+                    "bibliography_ref": 1
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 1
+                },
+                "edge_confidences": {
+                    "exact": 1
+                },
+                "edge_methods": {
+                    "distill_citation": 1
+                },
+                "body_needles": [
+                    "Visualizing data using t-SNE",
+                    "Journal of Machine Learning Research"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "citation_marker_count": 1,
+                    "citation_edge_count": 1,
+                    "blank_citation_key_count": 0,
+                    "cited_target_count": 1,
+                    "rendered_bibliography_entry_count": 0,
+                    "script_bibliography_entry_count": 1,
+                    "uncited_bibliography_entry_count": 0,
+                    "uncited_bibliography_keys": [],
+                    "footnote_count": 0
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "How to Use t-SNE Effectively",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2016/misread-tsne/",
+                "license_name": "Creative Commons Attribution 2.0 Generic",
+                "license_url": "https://creativecommons.org/licenses/by/2.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-distill-gp-full",
+            "path": "reader_apparatus/html/distill-gp-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "distill",
+            "source_ids": [
+                "source-distill-gp"
+            ],
+            "source_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+            "modeled_source_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+            "title": "A Visual Exploration of Gaussian Processes",
+            "license_note": "Distill article fixture under Creative Commons Attribution 4.0 International; external assets excluded",
+            "byte_length": 195525,
+            "sha256": "c7795c61d917aae5bbe53f939158dc01288315b5d4b0cb041765c83e49fc6357",
+            "anchor_evidence": "independent DOM verifier derives all d-cite/dt-cite keys, d-footnote nodes, and cited bibliography targets from the curated source fixture",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "bibliography_entry": 11,
+                    "bibliography_ref": 10,
+                    "footnote": 3,
+                    "footnote_ref": 3
+                },
+                "edge_relations": {
+                    "cites_bibliography_entry": 12,
+                    "points_to_note": 3
+                },
+                "edge_confidences": {
+                    "exact": 15
+                },
+                "edge_methods": {
+                    "distill_citation": 12,
+                    "distill_footnote": 3
+                },
+                "body_needles": [
+                    "Gaussian Processes in Machine Learning",
+                    "Deep Neural Networks as Gaussian Processes"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "citation_marker_count": 10,
+                    "citation_edge_count": 12,
+                    "blank_citation_key_count": 0,
+                    "cited_target_count": 11,
+                    "rendered_bibliography_entry_count": 11,
+                    "script_bibliography_entry_count": 12,
+                    "uncited_bibliography_entry_count": 1,
+                    "uncited_bibliography_keys": [
+                        "McHutchon2011"
+                    ],
+                    "footnote_count": 3
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "A Visual Exploration of Gaussian Processes",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-distill-growing-ca-full",
+            "path": "reader_apparatus/html/distill-growing-ca-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "distill",
+            "source_ids": [
+                "source-distill-growing-ca"
+            ],
+            "source_url": "https://distill.pub/2020/growing-ca/",
+            "modeled_source_url": "https://distill.pub/2020/growing-ca/",
+            "title": "Growing Neural Cellular Automata",
+            "license_note": "Distill article fixture under Creative Commons Attribution 4.0 International; external assets excluded",
+            "byte_length": 120869,
+            "sha256": "7ca4cb707dcda6bdc1720dd12e174024f82b5447c8dea2bfefb0169453d56a39",
+            "anchor_evidence": "independent DOM verifier derives all d-cite/dt-cite keys, d-footnote nodes, and cited bibliography targets from the curated source fixture",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 5,
+                    "footnote_ref": 5,
+                    "bibliography_entry": 38,
+                    "bibliography_ref": 29
+                },
+                "edge_relations": {
+                    "points_to_note": 5,
+                    "cites_bibliography_entry": 39
+                },
+                "edge_confidences": {
+                    "exact": 44
+                },
+                "edge_methods": {
+                    "distill_footnote": 5,
+                    "distill_citation": 39
+                },
+                "body_needles": [
+                    "Top-down models in biology",
+                    "Self-regulatory feedback loops"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "citation_marker_count": 29,
+                    "citation_edge_count": 39,
+                    "blank_citation_key_count": 0,
+                    "cited_target_count": 38,
+                    "rendered_bibliography_entry_count": 38,
+                    "script_bibliography_entry_count": 42,
+                    "uncited_bibliography_entry_count": 4,
+                    "uncited_bibliography_keys": [
+                        "CANEAT2018",
+                        "Elmenreich2011EvolvingSC",
+                        "Morphogenesis1993",
+                        "NeuralODE"
+                    ],
+                    "footnote_count": 5
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Growing Neural Cellular Automata",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2020/growing-ca/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-distill-research-debt-full",
+            "path": "reader_apparatus/html/distill-research-debt-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "distill",
+            "source_ids": [
+                "source-distill-research-debt"
+            ],
+            "source_url": "https://distill.pub/2017/research-debt/",
+            "modeled_source_url": "https://distill.pub/2017/research-debt/",
+            "title": "Research Debt",
+            "license_note": "Distill article fixture under Creative Commons Attribution 4.0 International; external assets excluded",
+            "byte_length": 35928,
+            "sha256": "4ab6e407e4825e5796658e692eceef48071e70bdc6539946588d569c3cdec516",
+            "anchor_evidence": "independent DOM verifier derives all d-cite/dt-cite keys, d-footnote nodes, and cited bibliography targets from the curated source fixture",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 7,
+                    "footnote_ref": 7,
+                    "bibliography_entry": 22,
+                    "bibliography_ref": 15
+                },
+                "edge_relations": {
+                    "points_to_note": 7,
+                    "cites_bibliography_entry": 22
+                },
+                "edge_confidences": {
+                    "exact": 29
+                },
+                "edge_methods": {
+                    "distill_footnote": 7,
+                    "distill_citation": 22
+                },
+                "body_needles": [
+                    "The Mythical Man-Month",
+                    "Visual Complex Analysis"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "citation_marker_count": 15,
+                    "citation_edge_count": 22,
+                    "blank_citation_key_count": 0,
+                    "cited_target_count": 22,
+                    "rendered_bibliography_entry_count": 22,
+                    "script_bibliography_entry_count": 22,
+                    "uncited_bibliography_entry_count": 0,
+                    "uncited_bibliography_keys": [],
+                    "footnote_count": 7
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Research Debt",
+                "publisher": "Distill",
+                "evidence_url": "https://distill.pub/2017/research-debt/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-wikipedia-waste-land-full",
+            "path": "reader_apparatus/html/wikipedia-waste-land-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "mediawiki",
+            "source_ids": [
+                "source-wikipedia-waste-land"
+            ],
+            "source_url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+            "modeled_source_url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+            "title": "The Waste Land",
+            "license_note": "MediaWiki text fixture under Wikimedia text licensing; media assets excluded",
+            "byte_length": 320484,
+            "sha256": "afe9e4fb61ffd20520e953c83dd0628301dd0288d8dd5a700dc90c99ffd9ab1e",
+            "anchor_evidence": "independent DOM verifier derives the marker-target graph from source-authored HTML links and backlinks",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "footnote": 198,
+                    "footnote_ref": 240,
+                    "bibliography_entry": 77,
+                    "bibliography_ref": 199
+                },
+                "edge_relations": {
+                    "points_to_note": 240,
+                    "cites_bibliography_entry": 199
+                },
+                "edge_confidences": {
+                    "strong": 240,
+                    "exact": 199
+                },
+                "edge_methods": {
+                    "html_link_graph": 240,
+                    "mediawiki_cited_work": 199
+                },
+                "body_needles": [
+                    "Ackroyd 1984",
+                    "Eliot 1961"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "marker_count": 240,
+                    "target_count": 198,
+                    "backlink_count": 240,
+                    "nested_cited_work_link_count": 199,
+                    "nested_cited_work_target_count": 71,
+                    "nested_cited_work_resolved_target_count": 71,
+                    "nested_cited_work_unresolved_target_count": 0,
+                    "cited_work_entry_count": 77,
+                    "unreferenced_cited_work_entry_count": 6
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "The Waste Land",
+                "publisher": "Wikipedia",
+                "evidence_url": "https://en.wikipedia.org/wiki/The_Waste_Land",
+                "license_name": "Creative Commons Attribution-ShareAlike 4.0 International / GFDL text",
+                "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_text_fixture_allowed_media_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-gwern-sidenote-full",
+            "path": "reader_apparatus/html/gwern-sidenote-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "gwern",
+            "source_ids": [
+                "source-gwern-sidenote"
+            ],
+            "source_url": "https://gwern.net/sidenote",
+            "modeled_source_url": "https://gwern.net/sidenote",
+            "title": "Sidenotes In Web Design",
+            "license_note": "Gwern article fixture under site CC0 statement; external assets excluded",
+            "byte_length": 136889,
+            "sha256": "f355e71a755d053c2d858586574a00d9b47c6d344365b1c9512308204a0fd85a",
+            "anchor_evidence": "independent DOM verifier derives the marker-target graph from source-authored HTML links and backlinks",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "endnote": 6,
+                    "endnote_ref": 6
+                },
+                "edge_relations": {
+                    "points_to_endnote": 6
+                },
+                "edge_confidences": {
+                    "exact": 6
+                },
+                "edge_methods": {
+                    "html_semantic": 6
+                },
+                "body_needles": [
+                    "vertical pixels",
+                    "sidenotesplus"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "marker_count": 6,
+                    "target_count": 6,
+                    "backlink_count": 6
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Sidenotes In Web Design",
+                "publisher": "Gwern Branwen",
+                "evidence_url": "https://gwern.net/sidenote",
+                "license_name": "CC0 1.0 Universal",
+                "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-tufte-css-full",
+            "path": "reader_apparatus/html/tufte-css-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "tufte",
+            "source_ids": [
+                "source-tufte-css"
+            ],
+            "source_url": "https://edwardtufte.github.io/tufte-css/",
+            "modeled_source_url": "https://edwardtufte.github.io/tufte-css/",
+            "title": "Tufte CSS",
+            "license_note": "Tufte CSS article fixture under MIT License; external media/assets excluded",
+            "byte_length": 19284,
+            "sha256": "c9945c114aae2f6997bba51294202fc0fc43e4f4acc4cfd692ef76fb61b4f981",
+            "anchor_evidence": "independent DOM verifier derives all label.margin-toggle/input.margin-toggle pairs and adjacent sidenote/marginnote targets from the curated source fixture",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "sidenote": 3,
+                    "sidenote_ref": 3,
+                    "margin_note": 4,
+                    "margin_note_ref": 4
+                },
+                "edge_relations": {
+                    "points_to_sidenote": 3,
+                    "points_to_margin_note": 4
+                },
+                "edge_confidences": {
+                    "strong": 7
+                },
+                "edge_methods": {
+                    "tufte_sidenote": 3,
+                    "tufte_margin_note": 4
+                },
+                "body_needles": [
+                    "Beautiful Evidence",
+                    "This is a margin note. Notice there isn\u2019t a number preceding the note.",
+                    "Blue text, while also a widely recognizable clickable-text indicator"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "sidenote_count": 3,
+                    "margin_note_count": 4,
+                    "marker_count": 7
+                }
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "Tufte CSS",
+                "publisher": "Tufte CSS",
+                "evidence_url": "https://github.com/edwardtufte/tufte-css/blob/gh-pages/LICENSE",
+                "license_name": "MIT License",
+                "license_url": "https://github.com/edwardtufte/tufte-css/blob/gh-pages/LICENSE",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        },
+        {
+            "id": "html-numinous-ttft-full",
+            "path": "reader_apparatus/html/numinous-ttft-full.html",
+            "media_kind": "web_article",
+            "fixture_format": "html",
+            "fixture_kind": "committed_full",
+            "source_family": "numinous",
+            "source_ids": [
+                "source-numinous-ttft"
+            ],
+            "source_url": "https://numinous.productions/ttft/",
+            "modeled_source_url": "https://numinous.productions/ttft/",
+            "title": "How can we develop transformative tools for thought?",
+            "license_note": "Numinous article fixture under Creative Commons Attribution 4.0 International; external media/assets excluded",
+            "byte_length": 146019,
+            "sha256": "57828945f05e22dffeb378cdd1fd10f6469c6608802debd5237769f5b0290b5a",
+            "anchor_evidence": "independent DOM verifier derives all standalone span.marginnote elements and verifies there is no label/input marker graph",
+            "expected": {
+                "status": "ready",
+                "item_kinds": {
+                    "margin_note": 40
+                },
+                "edge_relations": {},
+                "edge_confidences": {},
+                "edge_methods": {},
+                "body_needles": [
+                    "Douglas Engelbart, Augmenting Human Intellect",
+                    "Why books don\u2019t work"
+                ],
+                "min_exact_locators": 1,
+                "independent_dom_graph": {
+                    "margin_note_count": 40,
+                    "edge_count": 0
+                },
+                "independent_dom_body_sha256s": [
+                    "98221c41f43810cd9011ceff2b74d4543def0f397a5303a3dfb46a52a1380876",
+                    "e2b4b3ce0f9e356075926ab06aea31e51e750f0e307613a53d0adecc5b3c8956",
+                    "2ef3693813f8d34ffa8b513edb0c74b28b1dd7e8a0ee451378392ad9be95390a",
+                    "f41143e8472467e3dddda5c571cca39c615db6a24e8f6a9c4b61f225a263f17f",
+                    "c89a3379fdab30b21b1d28fa0e31ff67f4db3e5479fb6d8f3e16e0d214fceed4",
+                    "c66632cad7dd63179cf3cacd1b887663c3791c48f133e5253e827fa6b81a1698",
+                    "3615d1dbfe3c716b4a0118a0392af918f02c479b446f9129ff6bae29586c458b",
+                    "a95eacb2ddd12356d1c99b0f2c95404af90269db0aeb46e6cf5c79162b3a3a3c",
+                    "c5fd58a379aae23398effe874644b4483d41ea14ff2c2f9340ae5ebb9a254e4a",
+                    "fa6dc68cbb2c52a477d9586b87a2a959eeb7f4f62f04ed94233ee47beeb4dbd1",
+                    "00c00b5c081f14a108dea89dedee776b65cb8e061f762246bdd2fc0d0294f4d2",
+                    "aa4c18e9fa1406a267ac264094864eecdf426e6076eb35777599fc79965fbbf3",
+                    "d1bf2e7b7b8a4e3508ef32df7f82d6cf6776a795bd33dd23aba6739a37785d78",
+                    "d2d6382831829fa23c8500988e3a78840a00447d6c8cacae664734520b54bae9",
+                    "a044aab6fdf503a8b1d9723bbe1a3d0b89efbe271de34f44f8c43aebd3abbd1c",
+                    "170d01f38f9db42ace8cdccc6f0f6203482f873b0d1b9596a01f1604f7d40f1a",
+                    "ab626e300174b5a7a32d9a33878dd289c5f1cc5c49cfb21e000f9c1c325b85fa",
+                    "6706d1ee2ef3d86c897f5c55a00d09085cf70fba88885ff598d519455cc7d7bb",
+                    "6bccfa2c765a205b1f2d441dfb846d976dd915c4069d95a12f753a685a66e92f",
+                    "a18fe4784d6af5bfd6024c84a62c150d86b354e1c2db648adf4b6f55f77fc31b",
+                    "13cdaf5fe67212e096717d5f30deb0554e1bbe69820a78d779381d2deb761638",
+                    "518bbf512437315f1bd08c6f00df82ea391970c9999e1f60f0f941d17bc18912",
+                    "a3a2637e939bb96f5a9548fe929387ebf0e0b962c19b70211de0dc71c3641c8c",
+                    "955a6fd9e057e633e4faa9e90d8b5014935f5504db2490525bdf48e62e541320",
+                    "645f4d2cefc90f1758c2d0d0e531d5df6e9129a8ae025bba3be8de550cbd8a07",
+                    "42b48ee4aa5cdfce30832e50cbad054874fa1eb5697c0e0837991dbccf47b682",
+                    "efa07fc52ba2b7a4773069b986dd198e44735dadf68a56fb74076a5f8ae9537c",
+                    "1ea3f8bbff784be6bef8b362b94dc185893e2a8f8e6cc5cba0e12d57c1f3281b",
+                    "6cf4f596b397dff947be97b0de0691a4fe7575ed032819f125e0bda6c8195e91",
+                    "53cb526b1436be639ab1b8706b2f14ee40c8aa5e56cc7f8aaf58957bb2ed37d8",
+                    "42f19967725638ea5c8062bfe7a0e94267e8210d70e6af2d2080b2e0e75526a7",
+                    "e86bd29b8bd344901150ad0b0bcefa2b3b406e7b2db2c74654d81f9813000378",
+                    "e3a3818670662e4e46d70a0b9f3e6d067bd783c6762a666f3fd4c372ef8feb06",
+                    "acfaf460e527f8e14125c1212c990b123638dbd8056cb9c01ddf4d275c0d996d",
+                    "8bd482414f6cdf96b5d8e505e78c5250526c255025b8168154947f84d17695d3",
+                    "e75c6a6495d642e3d3bc377a6e175d70e4eec4259a104cc6db8f4945b444c199",
+                    "d13fc47859ddc20a6fb2699d514200e34db0b04fbb209cf3137d8dfc1ec864b3",
+                    "bfb3dec41a0a2817257369ec899c6a042dc2b8789dcd74ad13132025cdd77103",
+                    "c8e056f43bf8d05da0625b700a89f08ce4bdbae1cf128aee2f4324a05f433416",
+                    "db919fdc2a4978b94aceb7e8bfba4ee35cb82f1c07f3a94c3dace11c1e77c7da"
+                ]
+            },
+            "license_provenance": {
+                "status": "verified_redistributable",
+                "source_title": "How can we develop transformative tools for thought?",
+                "publisher": "Numinous Productions",
+                "evidence_url": "https://numinous.productions/ttft/",
+                "license_name": "Creative Commons Attribution 4.0 International",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "fixture_commit_allowed": true,
+                "fixture_commit_policy": "committed_curated_article_fixture_allowed_external_assets_excluded",
+                "source_text_copied": true,
+                "checked_at": "2026-06-09"
+            }
+        }
+    ],
+    "provenance_schema_version": 1,
+    "non_apparatus_fixture_files": [
+        {
+            "path": "pdf/diffusion.pdf",
+            "media_kind": "pdf",
+            "fixture_role": "legacy_pdf_ingest_fixture",
+            "may_be_used_for_reader_apparatus": false,
+            "provenance_status": "legacy_unverified",
+            "reason": "Existing PDF parser fixture; not part of the 20-source reader apparatus corpus."
+        },
+        {
+            "path": "pdf/svms.pdf",
+            "media_kind": "pdf",
+            "fixture_role": "legacy_pdf_ingest_fixture",
+            "may_be_used_for_reader_apparatus": false,
+            "provenance_status": "legacy_unverified",
+            "reason": "Existing PDF parser fixture; not part of the 20-source reader apparatus corpus."
+        }
+    ],
+    "web_article_generic_url_contract": {
+        "schema_version": 1,
+        "contract": "web_article_generic_url_source_html_api",
+        "test_selector": "tests/test_ingest_web_article.py::TestFragmentPersistence::test_generic_url_ingest_extracts_apparatus_from_source_html",
+        "fixture_contract_source": "web_article_capture_api",
+        "apparatus_source": "fetched_source_html",
+        "reader_fragment_source": "readability_content_html",
+        "fixture_ids": [
+            "html-distill-custom-citations",
+            "html-distill-legacy-bibtex",
+            "html-gwern-dpub-endnotes",
+            "html-tufte-sidenote",
+            "html-mediawiki-references",
+            "html-gutenberg-notes-chapter-negative",
+            "html-gutenberg-argonautica-full",
+            "html-gutenberg-waste-land-full",
+            "html-legacy-named-notes",
+            "html-legacy-named-notes-negative",
+            "html-distill-misread-tsne-full",
+            "html-distill-gp-full",
+            "html-distill-growing-ca-full",
+            "html-distill-research-debt-full",
+            "html-wikipedia-waste-land-full",
+            "html-gwern-sidenote-full",
+            "html-tufte-css-full",
+            "html-numinous-ttft-full"
+        ]
+    },
+    "real_media_fixture_contracts": {
+        "html-distill-custom-citations": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-distill-legacy-bibtex": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-gwern-dpub-endnotes": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-tufte-sidenote": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-mediawiki-references": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-gutenberg-notes-chapter-negative": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-gutenberg-argonautica-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-gutenberg-waste-land-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-legacy-named-notes": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-legacy-named-notes-negative": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "epub-synthetic-noteref": {
+            "contract": "epub_upload_synthetic_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_epub_noteref_persists_reader_apparatus"
+        },
+        "epub-gutenberg-waste-land-negative": {
+            "contract": "epub_upload_negative_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_epub_waste_land_notes_chapter_does_not_invent_reader_apparatus"
+        },
+        "epub-standardebooks-eliot-poetry": {
+            "contract": "epub_upload_standardebooks_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparatus"
+        },
+        "epub-standardebooks-eliot-poetry-advanced": {
+            "contract": "epub_upload_standardebooks_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparatus"
+        },
+        "epub-standardebooks-james-pragmatism": {
+            "contract": "epub_upload_standardebooks_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparatus"
+        },
+        "epub-standardebooks-james-pragmatism-advanced": {
+            "contract": "epub_upload_standardebooks_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparatus"
+        },
+        "pdf-law-review-footnotes": {
+            "contract": "pdf_upload_legal_footnotes_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus"
+        },
+        "pdf-philpapers-lop-aiz-unsupported": {
+            "contract": "pdf_upload_unsupported_pdf_adapter_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus"
+        },
+        "pdf-commons-waste-land-negative": {
+            "contract": "pdf_upload_unsupported_pdf_adapter_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus"
+        },
+        "tei-philpapers-lop-aiz-grobid-0-8-2": {
+            "contract": "tei_unit_contract",
+            "test_selector": "tests/test_reader_apparatus_fixture_contracts.py::test_reader_apparatus_grobid_tei_fixture_matches_independent_graph",
+            "reason": "Derived GROBID TEI is a parser fixture and is not uploaded through the media file ingest/API path."
+        },
+        "arxiv-2606-source-package": {
+            "contract": "source_package_unit_and_remote_pdf_api_contract",
+            "test_selector": "tests/test_reader_apparatus_fixture_contracts.py::test_reader_apparatus_arxiv_source_package_fixture_matches_independent_graph",
+            "api_test_selector": "tests/test_from_url.py::TestFromUrlRemoteFiles::test_arxiv_pdf_from_url_persists_source_package_apparatus_api",
+            "reason": "The committed arXiv source package has an independent parser graph contract and is also exercised through the remote arXiv PDF ingest path into the reader apparatus API; rows remain source-package sidecar rows with missing PDF geometry locators."
+        },
+        "pdf-attention-native-link-graph": {
+            "contract": "pdf_upload_native_link_graph_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_pdf_attention_persists_native_link_graph_reader_apparatus"
+        },
+        "html-distill-misread-tsne-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-distill-gp-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-distill-growing-ca-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-distill-research-debt-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-wikipedia-waste-land-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-gwern-sidenote-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-tufte-css-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        },
+        "html-numinous-ttft-full": {
+            "contract": "web_article_capture_api",
+            "test_selector": "tests/real_media/test_reader_apparatus.py::test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix"
+        }
+    },
+    "real_media_contract_schema_version": 1,
+    "frontend_api_payload_schema_version": 1,
+    "frontend_api_payload_fixtures": [
+        {
+            "fixture_id": "arxiv-2606-source-package",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/arxiv-2606-source-package.json",
+            "payload_sha256": "8a00691d494f24f6e5724f408b4408e594957db12176a4245401e439da6cf2ef",
+            "source_fixture_sha256": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "epub-gutenberg-waste-land-negative",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-gutenberg-waste-land-negative.json",
+            "payload_sha256": "0abda5ce05703bf91691d4a4bf62b9eab03109a5bd42e3966c2ea7d50e210e52",
+            "source_fixture_sha256": "de1125e11abf9ede2417527a2a9043f8186464833f303e17297fbb2e18272c04",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-standardebooks-eliot-poetry.json",
+            "payload_sha256": "47bad5cbd70c3b5291859fa085147771d6d3fff91cc23ebb817b7b8a306507b3",
+            "source_fixture_sha256": "7fc1c684ff08b36b4ac9a3900fafd4b5b4d6c2ba31662a05b9dc5a97368baaa2",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry-advanced",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-standardebooks-eliot-poetry-advanced.json",
+            "payload_sha256": "2aaa2d9ecdf03ded39859c02d16bd48d53fb8751db146aed43d37cbdce1cb9b2",
+            "source_fixture_sha256": "cb8605e49a6f2d79cc99d26fe0e5cdfbde4c1f3738e8497ee6cda5f5198506ab",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-standardebooks-james-pragmatism.json",
+            "payload_sha256": "8eb9344140acfc5401a7137be136c80663c727c55c85644e8f3e00b4453a57fc",
+            "source_fixture_sha256": "055a87eafc57df5bdfc1775d577942f62ab26876228adc982b211ad4ff123295",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism-advanced",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-standardebooks-james-pragmatism-advanced.json",
+            "payload_sha256": "0d7850297ace59fcb1476444934ea8d8d7bf19c74244eee1937c05363601191d",
+            "source_fixture_sha256": "dde746bac2ee6f99cf386068b951838e5686fa771ba6cf85c9dd092db2568355",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "epub-synthetic-noteref",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/epub-synthetic-noteref.json",
+            "payload_sha256": "90b103c892d5b569ac776f3f83c39bd12ff14ddec5fbde7794875828647bff65",
+            "source_fixture_sha256": "ce63bfa76e30cb056ca5f4e5b2b21f6f7f3cc0bcf19315c5667410d416767b82",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-custom-citations",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-custom-citations.json",
+            "payload_sha256": "f4be80adc002ee6ed578cdeb6d04f43af77ab28222262892679684587babe6ac",
+            "source_fixture_sha256": "3511f48060fbff87df8248a35f32eff43fb51b1f7f11bd2d171dd4a93fc56084",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-gp-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-gp-full.json",
+            "payload_sha256": "2d2934e150cfe4605f4f4b3217aa8c6b30a926c3f0cf79fffc62d45419c65a12",
+            "source_fixture_sha256": "c7795c61d917aae5bbe53f939158dc01288315b5d4b0cb041765c83e49fc6357",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-growing-ca-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-growing-ca-full.json",
+            "payload_sha256": "1691d2f9edc321a6a02c1ddbef7243a6aeca28184ee4ffe01ee4fa94c615bb8c",
+            "source_fixture_sha256": "7ca4cb707dcda6bdc1720dd12e174024f82b5447c8dea2bfefb0169453d56a39",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-legacy-bibtex",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-legacy-bibtex.json",
+            "payload_sha256": "7a6d625f2f528fe8e8a0ec1c881c2b53ca209d9ecf1bbcb6d4a62f8e720e5b85",
+            "source_fixture_sha256": "3ac85d7abbd3b0a5d83edc5d0414aab567e47ef915bdf154d1d7bee125b428c2",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-misread-tsne-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-misread-tsne-full.json",
+            "payload_sha256": "8184418edac46c791eec5cfa8bb208ffd5d2091de09665f37c0fb31e0edb51b3",
+            "source_fixture_sha256": "5e11a076a04f92a23eb160b4d673fbafcaacff73292472358a14e795c60f2433",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-distill-research-debt-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-distill-research-debt-full.json",
+            "payload_sha256": "f309879363160527eaa74265b029bdcb3eac3c31f00e341b8eb0853890fb0adf",
+            "source_fixture_sha256": "4ab6e407e4825e5796658e692eceef48071e70bdc6539946588d569c3cdec516",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-gutenberg-argonautica-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-gutenberg-argonautica-full.json",
+            "payload_sha256": "6ecf6607f7001c17621937ae0a08573eb5a6be79af5e9f4fa7f0396789d4c621",
+            "source_fixture_sha256": "febac281be426f11651b6c04e502cbcd472686b5b823fb3378fbe81641a260f9",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-gutenberg-notes-chapter-negative",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-gutenberg-notes-chapter-negative.json",
+            "payload_sha256": "c4fbebef07d7d27820e300bebd380a72f89867ccd30c84809967ddfd69bce5d4",
+            "source_fixture_sha256": "3f47a166b7dc3d959733e9beee9b79b541fc04955b44dd7b905de49323f12f46",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "html-gutenberg-waste-land-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-gutenberg-waste-land-full.json",
+            "payload_sha256": "e8f0d6d8f9b605c10adea5604401606f083b4d2b5af53f9dfedad057a695ae4c",
+            "source_fixture_sha256": "130f5633ee1e8818c989afb76c4fe509bbc2a87615b3a542dddd4e806ece9717",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "html-gwern-dpub-endnotes",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-gwern-dpub-endnotes.json",
+            "payload_sha256": "789b6979e4a2e855af821a4427895fd41aae007df040992ff1264c59945c2f60",
+            "source_fixture_sha256": "a278df5c66f0238eec741998a49d4bbd434f056d07e4a59c1c6463895911fc74",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-gwern-sidenote-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-gwern-sidenote-full.json",
+            "payload_sha256": "49eb5f1235fce95dabbeecfe19ee7fe629971e56fd1f053dd383bdea639d5d4f",
+            "source_fixture_sha256": "f355e71a755d053c2d858586574a00d9b47c6d344365b1c9512308204a0fd85a",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-legacy-named-notes",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-legacy-named-notes.json",
+            "payload_sha256": "f6ae401b18838e1d644e8d42f158007d137f6fd85c98773324749f1eedea693c",
+            "source_fixture_sha256": "c3aa08bb12aa0e4cf47210066c2d55bbd5e2ebb9387166a094417da0f97b94a0",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-legacy-named-notes-negative",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-legacy-named-notes-negative.json",
+            "payload_sha256": "45599cc409931b3632ae595f9bc873453aaa93dc81d2d723092e72c2a7ab6d92",
+            "source_fixture_sha256": "158a471d9b0534565454737dc73b3fe3ba5336c711084cf727fc46c492dc1495",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "html-mediawiki-references",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-mediawiki-references.json",
+            "payload_sha256": "38366a655d7b735f094a57bf9739457775edf34245004dab3909acdf97c8d2a1",
+            "source_fixture_sha256": "9aa5c8bc93f8920e9eb1f0023c89fe3dc1dd00317e2031144da8e51ed7e0bbbc",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-numinous-ttft-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-numinous-ttft-full.json",
+            "payload_sha256": "788bf43c657231034bdbd6b515eef8c0031f6e0416c9dd4e039032e8c9ff8634",
+            "source_fixture_sha256": "57828945f05e22dffeb378cdd1fd10f6469c6608802debd5237769f5b0290b5a",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-tufte-css-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-tufte-css-full.json",
+            "payload_sha256": "f5d852d63c9abb60fa5c818bca7935cae40b3f026d506fa6cd2d4a3f4ab0bd46",
+            "source_fixture_sha256": "c9945c114aae2f6997bba51294202fc0fc43e4f4acc4cfd692ef76fb61b4f981",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-tufte-sidenote",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-tufte-sidenote.json",
+            "payload_sha256": "eddb7b8c246fd4b7dbb1eef653f8b1b85c26f9af953c56e166d3f831aa052944",
+            "source_fixture_sha256": "1518bd5967c5a6808b0fa543e7920dae97e292822e6f4e3b7d1f4b1c258be8e5",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "html-wikipedia-waste-land-full",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/html-wikipedia-waste-land-full.json",
+            "payload_sha256": "3ff9d7f6eb5563e076801787077c7de9616ca4ad6ae45f95a6ec0029db4c6cfd",
+            "source_fixture_sha256": "afe9e4fb61ffd20520e953c83dd0628301dd0288d8dd5a700dc90c99ffd9ab1e",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "pdf-attention-native-link-graph",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/pdf-attention-native-link-graph.json",
+            "payload_sha256": "e607e535667bc88ad768aeaecf80e06f4b0518344b9f5d0ce74e2f56af755aa2",
+            "source_fixture_sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "pdf-commons-waste-land-negative",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/pdf-commons-waste-land-negative.json",
+            "payload_sha256": "abc43f23315ac7110260e0b78d40c3d08ebeb4b465f07e1f6188b14f8b6e9635",
+            "source_fixture_sha256": "067ee1272fffb0657ed59b8bb8f0c4eb72ea5e2fdf7c118a858b9395f5e159da",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "pdf-law-review-footnotes",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/pdf-law-review-footnotes.json",
+            "payload_sha256": "4b7d3277cd707c8b0bd9d750f440b11a7afd80e2750a749e17c5dff4ee1f3aed",
+            "source_fixture_sha256": "20147de1c45261dc04f70188223be9bac12296f56ff89a648c197ab291b93195",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        },
+        {
+            "fixture_id": "pdf-philpapers-lop-aiz-unsupported",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/pdf-philpapers-lop-aiz-unsupported.json",
+            "payload_sha256": "2601d6a43d3db15dbd3e6c383f272bec1fc09db63ceefb5a18cb40f711c5d84d",
+            "source_fixture_sha256": "cd19f4439cb3a0747bbff29c8ac2386c8f38727f0821916f5109b2304d052867",
+            "surface_contract": "reader_apparatus_empty_sidecar"
+        },
+        {
+            "fixture_id": "tei-philpapers-lop-aiz-grobid-0-8-2",
+            "path": "apps/web/src/lib/reader/__fixtures__/reader-apparatus/tei-philpapers-lop-aiz-grobid-0-8-2.json",
+            "payload_sha256": "d0733579b7d8cd9a8122fa3e8fc12a26a649b1d9c2a90aa56ca3d8e8354e1643",
+            "source_fixture_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+            "surface_contract": "reader_apparatus_sidecar_rows"
+        }
+    ],
+    "frontend_surface_contract_schema_version": 3,
+    "frontend_surface_contracts": [
+        {
+            "fixture_id": "arxiv-2606-source-package",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "epub-gutenberg-waste-land-negative",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry-advanced",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism-advanced",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "epub-synthetic-noteref",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-custom-citations",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-gp-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-growing-ca-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-legacy-bibtex",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-misread-tsne-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-distill-research-debt-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-gutenberg-argonautica-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-gutenberg-notes-chapter-negative",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "html-gutenberg-waste-land-full",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "html-gwern-dpub-endnotes",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-gwern-sidenote-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "html-legacy-named-notes",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-legacy-named-notes-negative",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "html-mediawiki-references",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-numinous-ttft-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "html-tufte-css-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "html-tufte-sidenote",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "html-wikipedia-waste-land-full",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment"
+            ]
+        },
+        {
+            "fixture_id": "pdf-attention-native-link-graph",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "pdf-commons-waste-land-negative",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "pdf-law-review-footnotes",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        },
+        {
+            "fixture_id": "pdf-philpapers-lop-aiz-unsupported",
+            "expected_reader_tools_surface": "citations_tab_omitted",
+            "verification_status": "reader_shell_omission_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "media_pane_shell_omission"
+            ]
+        },
+        {
+            "fixture_id": "tei-philpapers-lop-aiz-grobid-0-8-2",
+            "expected_reader_tools_surface": "citations_tab_rows",
+            "verification_status": "payload_projection_and_direct_surface_tested",
+            "verified_layers": [
+                "api_payload_fixture",
+                "payload_schema_projection",
+                "direct_component_render",
+                "direct_component_desktop_alignment",
+                "media_pane_shell_publication"
+            ]
+        }
+    ],
+    "gold_graph_schema_version": 1,
+    "gold_graph_fixtures": [
+        {
+            "fixture_id": "html-distill-growing-ca-full",
+            "path": "reader_apparatus/gold_graphs/html-distill-growing-ca-full.json",
+            "gold_graph_sha256": "577e4e50d9b5858baaae3f11b8c209a6a8657d553e2d90171e638eff20be6454",
+            "fixture_sha256": "7ca4cb707dcda6bdc1720dd12e174024f82b5447c8dea2bfefb0169453d56a39",
+            "coverage": "adapter_scope_exhaustive",
+            "audit_basis": "dom_distill_rendered_bibliography_and_footnotes"
+        },
+        {
+            "fixture_id": "html-numinous-ttft-full",
+            "path": "reader_apparatus/gold_graphs/html-numinous-ttft-full.json",
+            "gold_graph_sha256": "9f9bcbe9d9e350192f09dfa735b21a4457eb57e6b78472ca1a3f7c2bc54db788",
+            "fixture_sha256": "57828945f05e22dffeb378cdd1fd10f6469c6608802debd5237769f5b0290b5a",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "dom_standalone_margin_note_graph"
+        },
+        {
+            "fixture_id": "html-gwern-sidenote-full",
+            "path": "reader_apparatus/gold_graphs/html-gwern-sidenote-full.json",
+            "gold_graph_sha256": "467d477bed5200778278afe9b0bd7daf72867bb14ca43882ffe6cce14173da59",
+            "fixture_sha256": "f355e71a755d053c2d858586574a00d9b47c6d344365b1c9512308204a0fd85a",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "dom_gwern_endnote_graph"
+        },
+        {
+            "fixture_id": "html-tufte-css-full",
+            "path": "reader_apparatus/gold_graphs/html-tufte-css-full.json",
+            "gold_graph_sha256": "4fe95163a779ff92a6a72aab00091c9e7c0a9fe533671474696eafdc6fd7d717",
+            "fixture_sha256": "c9945c114aae2f6997bba51294202fc0fc43e4f4acc4cfd692ef76fb61b4f981",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "dom_tufte_margin_toggle_graph"
+        },
+        {
+            "fixture_id": "html-wikipedia-waste-land-full",
+            "path": "reader_apparatus/gold_graphs/html-wikipedia-waste-land-full.json",
+            "gold_graph_sha256": "f3d44d00adc806b55c6313581d1ffad7da421b4ba8110cbbeda3bc875974514d",
+            "fixture_sha256": "afe9e4fb61ffd20520e953c83dd0628301dd0288d8dd5a700dc90c99ffd9ab1e",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "dom_mediawiki_reference_and_cited_work_graph"
+        },
+        {
+            "fixture_id": "html-gutenberg-argonautica-full",
+            "path": "reader_apparatus/gold_graphs/html-gutenberg-argonautica-full.json",
+            "gold_graph_sha256": "1fc7b807b898bd766be7d9eb50f3a3d4b0624aa3f9412494bc498245e6860ebb",
+            "fixture_sha256": "febac281be426f11651b6c04e502cbcd472686b5b823fb3378fbe81641a260f9",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "dom_project_gutenberg_linknote_graph"
+        },
+        {
+            "fixture_id": "pdf-attention-native-link-graph",
+            "path": "reader_apparatus/gold_graphs/pdf-attention-native-link-graph.json",
+            "gold_graph_sha256": "243a4a5ad761c7a631d583a51c668c481b21ed54adde430b590e0d1bde2475bf",
+            "fixture_sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+            "coverage": "fixture_exhaustive",
+            "audit_basis": "pdf_native_link_named_destination_graph"
+        },
+        {
+            "fixture_id": "tei-philpapers-lop-aiz-grobid-0-8-2",
+            "path": "reader_apparatus/gold_graphs/tei-philpapers-lop-aiz-grobid-0-8-2.json",
+            "gold_graph_sha256": "cbecef543fce1d6dea896c649373d4910df3bbb430af188e181be5f7c500b8fa",
+            "fixture_sha256": "41f8b00d794bd5e93d291d4a8a44beee31285aa29978b4474761645e3966b698",
+            "coverage": "sample_scope",
+            "audit_basis": "hand_selected_grobid_tei_reference_sample"
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry",
+            "path": "reader_apparatus/gold_graphs/epub-standardebooks-eliot-poetry.json",
+            "gold_graph_sha256": "a25d5db6ae850e6e0f61609443678f4899ac6ae372c2387bf24d3b5399131d9e",
+            "fixture_sha256": "7fc1c684ff08b36b4ac9a3900fafd4b5b4d6c2ba31662a05b9dc5a97368baaa2",
+            "coverage": "adapter_scope_exhaustive",
+            "audit_basis": "epub_archive_xhtml_semantic_noteref"
+        },
+        {
+            "fixture_id": "epub-standardebooks-eliot-poetry-advanced",
+            "path": "reader_apparatus/gold_graphs/epub-standardebooks-eliot-poetry-advanced.json",
+            "gold_graph_sha256": "10c7f80e1d918ece058f913ca30ffa990d1dd92a33c72682d99e3972b4eca4a1",
+            "fixture_sha256": "cb8605e49a6f2d79cc99d26fe0e5cdfbde4c1f3738e8497ee6cda5f5198506ab",
+            "coverage": "adapter_scope_exhaustive",
+            "audit_basis": "epub_archive_xhtml_semantic_noteref"
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism",
+            "path": "reader_apparatus/gold_graphs/epub-standardebooks-james-pragmatism.json",
+            "gold_graph_sha256": "1df3a18d19b7ddb1daa294853fbbef83472bea2fdf25b99791197c2d1fda5bf5",
+            "fixture_sha256": "055a87eafc57df5bdfc1775d577942f62ab26876228adc982b211ad4ff123295",
+            "coverage": "adapter_scope_exhaustive",
+            "audit_basis": "epub_archive_xhtml_semantic_noteref"
+        },
+        {
+            "fixture_id": "epub-standardebooks-james-pragmatism-advanced",
+            "path": "reader_apparatus/gold_graphs/epub-standardebooks-james-pragmatism-advanced.json",
+            "gold_graph_sha256": "f0d42ea6c4d9bf50cc3c70927814b6866d938f8127b8f1675a23f785976b63be",
+            "fixture_sha256": "dde746bac2ee6f99cf386068b951838e5686fa771ba6cf85c9dd092db2568355",
+            "coverage": "adapter_scope_exhaustive",
+            "audit_basis": "epub_archive_xhtml_semantic_noteref"
+        },
+        {
+            "fixture_id": "epub-gutenberg-waste-land-negative",
+            "path": "reader_apparatus/gold_graphs/epub-gutenberg-waste-land-negative.json",
+            "gold_graph_sha256": "30fcda4a921691d8b6b92d0452f5727beff30719dc0c375004e2dabdd5c7c6cd",
+            "fixture_sha256": "de1125e11abf9ede2417527a2a9043f8186464833f303e17297fbb2e18272c04",
+            "coverage": "negative_exhaustive",
+            "audit_basis": "epub_archive_negative_candidate_census"
+        }
+    ],
+    "verifier_tier_schema_version": 1,
+    "verifier_tiers": {
+        "html-distill-custom-citations": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-distill-legacy-bibtex": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-gwern-dpub-endnotes": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-tufte-sidenote": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-mediawiki-references": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-gutenberg-notes-chapter-negative": {
+            "tier": "synthetic_negative",
+            "scope": "negative_pattern_fixture"
+        },
+        "html-gutenberg-argonautica-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-gutenberg-waste-land-full": {
+            "tier": "independent_dom_negative",
+            "scope": "negative_fixture_graph"
+        },
+        "html-legacy-named-notes": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "html-legacy-named-notes-negative": {
+            "tier": "synthetic_negative",
+            "scope": "negative_pattern_fixture"
+        },
+        "epub-synthetic-noteref": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "epub-gutenberg-waste-land-negative": {
+            "tier": "independent_archive",
+            "scope": "negative_fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "epub-standardebooks-eliot-poetry": {
+            "tier": "independent_archive",
+            "scope": "fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "epub-standardebooks-eliot-poetry-advanced": {
+            "tier": "independent_archive",
+            "scope": "fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "epub-standardebooks-james-pragmatism": {
+            "tier": "independent_archive",
+            "scope": "fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "epub-standardebooks-james-pragmatism-advanced": {
+            "tier": "independent_archive",
+            "scope": "fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "pdf-law-review-footnotes": {
+            "tier": "synthetic_pattern",
+            "scope": "pattern_fixture"
+        },
+        "pdf-philpapers-lop-aiz-unsupported": {
+            "tier": "unsupported_negative",
+            "scope": "negative_fixture_graph"
+        },
+        "pdf-commons-waste-land-negative": {
+            "tier": "unsupported_negative",
+            "scope": "negative_fixture_graph"
+        },
+        "tei-philpapers-lop-aiz-grobid-0-8-2": {
+            "tier": "sample_hand_gold",
+            "scope": "partial_sample"
+        },
+        "arxiv-2606-source-package": {
+            "tier": "independent_source_package",
+            "scope": "fixture_graph"
+        },
+        "pdf-attention-native-link-graph": {
+            "tier": "independent_pdf_graph",
+            "scope": "fixture_graph"
+        },
+        "html-distill-misread-tsne-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-distill-gp-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-distill-growing-ca-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph",
+            "secondary_tiers": [
+                "current_extractor_gold_snapshot"
+            ]
+        },
+        "html-distill-research-debt-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-wikipedia-waste-land-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-gwern-sidenote-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-tufte-css-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        },
+        "html-numinous-ttft-full": {
+            "tier": "independent_dom",
+            "scope": "fixture_graph"
+        }
+    },
+    "source_fixture_eligibility_schema_version": 1
+}

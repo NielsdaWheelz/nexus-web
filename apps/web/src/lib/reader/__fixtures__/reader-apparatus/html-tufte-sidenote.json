@@ -1,0 +1,99 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "from_stable_key": "web:0:tufte-sidenote-ref:000000:sn-demo",
+        "relation": "points_to_sidenote",
+        "sort_key": "000004.000000.edge",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-demo"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000000:sn-demo->web:0:tufte-sidenote:000000:sn-demo",
+        "to_stable_key": "web:0:tufte-sidenote:000000:sn-demo"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "This is a source-authored Tufte sidenote.",
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote",
+        "label": "1",
+        "locator": {
+          "end_offset": 83,
+          "fragment_id": "29e1723e-3948-5aec-bf36-6ed4f0efb5da",
+          "media_id": "3ba0de6e-7072-52ff-b3b1-fe4247f10a12",
+          "media_kind": "web_article",
+          "start_offset": 42,
+          "text_quote_selector": {
+            "exact": "This is a source-authored Tufte sidenote."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000004.000000.target",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-demo"
+        },
+        "stable_key": "web:0:tufte-sidenote:000000:sn-demo"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 41,
+          "fragment_id": "29e1723e-3948-5aec-bf36-6ed4f0efb5da",
+          "media_id": "3ba0de6e-7072-52ff-b3b1-fe4247f10a12",
+          "media_kind": "web_article",
+          "start_offset": 40,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000004.000000.marker",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-demo"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000000:sn-demo"
+      }
+    ],
+    "media_id": "3ba0de6e-7072-52ff-b3b1-fe4247f10a12",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:b3b225e07368b95a9b90ebdbd4963f7d2a8534230a8720abd7d722ed7e5b57ce",
+    "status": "ready"
+  },
+  "fixture_id": "html-tufte-sidenote",
+  "source_fixture_path": "reader_apparatus/html/tufte-sidenote.html",
+  "source_fixture_sha256": "1518bd5967c5a6808b0fa543e7920dae97e292822e6f4e3b7d1f4b1c258be8e5"
+}

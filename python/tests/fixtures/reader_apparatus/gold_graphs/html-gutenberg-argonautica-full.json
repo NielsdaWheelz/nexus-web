@@ -1,0 +1,2228 @@
+{
+  "schema_version": 1,
+  "fixture_id": "html-gutenberg-argonautica-full",
+  "fixture_path": "reader_apparatus/html/gutenberg-argonautica-full.html",
+  "fixture_sha256": "febac281be426f11651b6c04e502cbcd472686b5b823fb3378fbe81641a260f9",
+  "coverage": "fixture_exhaustive",
+  "audit_basis": "dom_project_gutenberg_linknote_graph",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "web_article",
+    "item_kinds": {
+      "endnote": 39,
+      "endnote_ref": 39
+    },
+    "edge_relations": {
+      "points_to_endnote": 39
+    },
+    "edge_methods": {
+      "html_project_gutenberg_linknote": 39
+    }
+  },
+  "items": [
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-1",
+      "kind": "endnote",
+      "label": "1",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-1",
+        "note_number": 1,
+        "backlink_href": "#linknoteref-1"
+      },
+      "body_sha256": "9c0bb65762140ff1bea43862fac5438d275837cce31ed3a9cefd3ad36873748e",
+      "body_chars": 53,
+      "body_excerpt": "\u201cOr of Naucratis\u201d, according to Aelian and Athenaeus."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-2",
+      "kind": "endnote",
+      "label": "2",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-2",
+        "note_number": 2,
+        "backlink_href": "#linknoteref-2"
+      },
+      "body_sha256": "5e6795872ee88fbdde05dfd3831bf2ed9f9a5ffc37eb431cbe9bcb5b3fe8a384",
+      "body_chars": 19,
+      "body_excerpt": "Anth. Pal. xl. 275."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-3",
+      "kind": "endnote",
+      "label": "3",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-3",
+        "note_number": 3,
+        "backlink_href": "#linknoteref-3"
+      },
+      "body_sha256": "12091cedfad1f8e37ed05e482bc033bd611c175628d7d67e215d4b1c5426a83f",
+      "body_chars": 13,
+      "body_excerpt": "iii. 117-124."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-4",
+      "kind": "endnote",
+      "label": "4",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-4",
+        "note_number": 4,
+        "backlink_href": "#linknoteref-4"
+      },
+      "body_sha256": "ead0cba1019a12287f6f83592fd5576525e1a1dec8b415b40152919bd6b49a92",
+      "body_chars": 150,
+      "body_excerpt": "e.g. compare Aen. iv. 305 foll. with Ap. Rh. iv. 355 foll.; Aen. iv. 327-330 with Ap. Rh. I. 897, 898; Aen. iv. 522 foll., with Ap. Rh. iii."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-5",
+      "kind": "endnote",
+      "label": "5",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-5",
+        "note_number": 5,
+        "backlink_href": "#linknoteref-5"
+      },
+      "body_sha256": "55ebfefa832034ccc6b1ad86470e14787f5f2a609648de2ec380b51d5f1fd7af",
+      "body_chars": 24,
+      "body_excerpt": "i.e. God of embarcation."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-6",
+      "kind": "endnote",
+      "label": "6",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-6",
+        "note_number": 6,
+        "backlink_href": "#linknoteref-6"
+      },
+      "body_sha256": "e937c9a7ca051be728480bc90c9b761261c5031bbfb5378ee67b5d3d870c9424",
+      "body_chars": 227,
+      "body_excerpt": "Or, reading \u1f14\u03ba\u03c4\u03bf\u03b8\u03b5\u03bd, \u201cthey strongly girded the ship outside with a well-twisted rope.\u201d In either case there is probably no allusion to \u1f50\u03c0\u03bf\u03b6\u03ce"
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-7",
+      "kind": "endnote",
+      "label": "7",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-7",
+        "note_number": 7,
+        "backlink_href": "#linknoteref-7"
+      },
+      "body_sha256": "91949f6a44dfd3125ffab0ff2e734131d9e60a5aac8534a9ea8f2c51fa871f41",
+      "body_chars": 22,
+      "body_excerpt": "i.e. God of the shore."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-8",
+      "kind": "endnote",
+      "label": "8",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-8",
+        "note_number": 8,
+        "backlink_href": "#linknoteref-8"
+      },
+      "body_sha256": "f5b9999e53414ccdbfd1bb951c86e6b69d45fd50db1afade9484dbc613e8c8e7",
+      "body_chars": 18,
+      "body_excerpt": "i.e. The Starting."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-9",
+      "kind": "endnote",
+      "label": "9",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-9",
+        "note_number": 9,
+        "backlink_href": "#linknoteref-9"
+      },
+      "body_sha256": "e4fc01bddbc2ffe2ff42d780de132c0d1a1a47a6af073531cfa7fae7d487eeb3",
+      "body_chars": 11,
+      "body_excerpt": "Samothrace."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-10",
+      "kind": "endnote",
+      "label": "10",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-10",
+        "note_number": 10,
+        "backlink_href": "#linknoteref-10"
+      },
+      "body_sha256": "316c34b95093b6a025c2be07b214da5acdf95574655eb4f458ce313f5c7187c5",
+      "body_chars": 27,
+      "body_excerpt": "i.e. god of disembarcation."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-11",
+      "kind": "endnote",
+      "label": "11",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-11",
+        "note_number": 11,
+        "backlink_href": "#linknoteref-11"
+      },
+      "body_sha256": "b9e5982ad3ea1cd0ff6de4af3decb5241abfac2f268b017135160bba8f4c7d03",
+      "body_chars": 25,
+      "body_excerpt": "Cleite means illustrious."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-12",
+      "kind": "endnote",
+      "label": "12",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-12",
+        "note_number": 12,
+        "backlink_href": "#linknoteref-12"
+      },
+      "body_sha256": "5e0d0555be556fac42138919b13601886127fc4e15d19abdda868899e138b711",
+      "body_chars": 34,
+      "body_excerpt": "i.e. to avoid grinding it at home."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-13",
+      "kind": "endnote",
+      "label": "13",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-13",
+        "note_number": 13,
+        "backlink_href": "#linknoteref-13"
+      },
+      "body_sha256": "02a2e83ed9de7536d95f797cff0d54916f8f40aeba276a1e1e82a41f2a497c4d",
+      "body_chars": 5,
+      "body_excerpt": "Rhea."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-14",
+      "kind": "endnote",
+      "label": "14",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-14",
+        "note_number": 14,
+        "backlink_href": "#linknoteref-14"
+      },
+      "body_sha256": "00fd095df1db00fda44fa7c9ebdb8330333fcb7874b218eb04a49e6811f609ec",
+      "body_chars": 16,
+      "body_excerpt": "i.e. Polydeuces."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-15",
+      "kind": "endnote",
+      "label": "15",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-15",
+        "note_number": 15,
+        "backlink_href": "#linknoteref-15"
+      },
+      "body_sha256": "7a42e343a8ca5f0dd9da71801c2aa9c901359b9190e782dde98e95f94f68a6d5",
+      "body_chars": 24,
+      "body_excerpt": "i.e. Saviour of Sailors."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-16",
+      "kind": "endnote",
+      "label": "16",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-16",
+        "note_number": 16,
+        "backlink_href": "#linknoteref-16"
+      },
+      "body_sha256": "ac920f6b3fe52b931a164e3e4a88234def90975ff6bb9cd2add6475158019724",
+      "body_chars": 50,
+      "body_excerpt": "i.e. through the ravine that divides the headland."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-17",
+      "kind": "endnote",
+      "label": "17",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-17",
+        "note_number": 17,
+        "backlink_href": "#linknoteref-17"
+      },
+      "body_sha256": "b5c376231efd6a49a1bd66175edebdcd65e42ab81281a4c3bfe87dfaee37cf5a",
+      "body_chars": 26,
+      "body_excerpt": "i.e. river of fair dances."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-18",
+      "kind": "endnote",
+      "label": "18",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-18",
+        "note_number": 18,
+        "backlink_href": "#linknoteref-18"
+      },
+      "body_sha256": "a330d32a39d433ee0157cf426277fa95d9c42501a213d948cb232e7dadad2593",
+      "body_chars": 20,
+      "body_excerpt": "i.e. the bedchamber."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-19",
+      "kind": "endnote",
+      "label": "19",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-19",
+        "note_number": 19,
+        "backlink_href": "#linknoteref-19"
+      },
+      "body_sha256": "baaebe4e69455102c21869458f353d157d792a0c26f0d96b25fb11569dbbcd0b",
+      "body_chars": 20,
+      "body_excerpt": "The north-west wind."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-20",
+      "kind": "endnote",
+      "label": "20",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-20",
+        "note_number": 20,
+        "backlink_href": "#linknoteref-20"
+      },
+      "body_sha256": "e95ae6450ac1e94d5f75f17ab645da1e49d53075a5fcce9115b4a830492d13d0",
+      "body_chars": 18,
+      "body_excerpt": "Called \u201cMossynes\u201d."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-21",
+      "kind": "endnote",
+      "label": "21",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-21",
+        "note_number": 21,
+        "backlink_href": "#linknoteref-21"
+      },
+      "body_sha256": "4c111769b1c71595906b1607e0e0a0381ce9e428b107661a2b612dbdac7b64fb",
+      "body_chars": 138,
+      "body_excerpt": "i.e. without exacting gifts from the bridegroom. So in the \u201cIliad\u201d ix. 146: Agamemnon offers Achilles any of his three daughters \u1f00\u03bd\u03ac\u03b5\u03b4\u03bd\u03bf\u03c2."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-22",
+      "kind": "endnote",
+      "label": "22",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-22",
+        "note_number": 22,
+        "backlink_href": "#linknoteref-22"
+      },
+      "body_sha256": "05b96202c28f32f982477be253f019f39e50767f93e7c03ea8ff5dd5bbbfd3ab",
+      "body_chars": 47,
+      "body_excerpt": "i.e. the fight between the gods and the giants."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-23",
+      "kind": "endnote",
+      "label": "23",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-23",
+        "note_number": 23,
+        "backlink_href": "#linknoteref-23"
+      },
+      "body_sha256": "d4353fecb73b827250f1a9d9f133319eb392e2a3f903d1dc9f80a03860ed99e8",
+      "body_chars": 21,
+      "body_excerpt": "i.e. the Shining One."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-24",
+      "kind": "endnote",
+      "label": "24",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-24",
+        "note_number": 24,
+        "backlink_href": "#linknoteref-24"
+      },
+      "body_sha256": "8b922f73c9f50f6f5783d2d9b547e63e6f32c12ed1de8267c7d1e3f345b7264e",
+      "body_chars": 15,
+      "body_excerpt": "A name of Ares."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-25",
+      "kind": "endnote",
+      "label": "25",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-25",
+        "note_number": 25,
+        "backlink_href": "#linknoteref-25"
+      },
+      "body_sha256": "6e6f8aff5faa476e79ac51886683e0bf03c402269151b252864f54c6f7204da7",
+      "body_chars": 48,
+      "body_excerpt": "i.e. the liquid that flows in the veins of gods."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-26",
+      "kind": "endnote",
+      "label": "26",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-26",
+        "note_number": 26,
+        "backlink_href": "#linknoteref-26"
+      },
+      "body_sha256": "8fa68b478b2759f767a361063be7e4bfe18c0f1ff802ea2fae19f5f52fc8e25c",
+      "body_chars": 80,
+      "body_excerpt": "Or, reading \u03bc\u03ae\u03bd\u03b9\u03bc\u2019, \u201ctook no heed of the cause of wrath with the stranger-folk.\u201d"
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-27",
+      "kind": "endnote",
+      "label": "27",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-27",
+        "note_number": 27,
+        "backlink_href": "#linknoteref-27"
+      },
+      "body_sha256": "1edc6b7dd6e0d7f407a7db2b154e4ecc68c10c11afb52fb75e59e79a4790fb29",
+      "body_chars": 56,
+      "body_excerpt": "The allusion is to Sesotris. See Herodotus ii. 102 foll."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-28",
+      "kind": "endnote",
+      "label": "28",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-28",
+        "note_number": 28,
+        "backlink_href": "#linknoteref-28"
+      },
+      "body_sha256": "30ce81065e8ea661cc5219c7b40d9fe0f60e4c24a30ad29b8bb76778111ce44a",
+      "body_chars": 109,
+      "body_excerpt": "Or, reading \u1f20\u03bc\u03b5\u03c4\u03ad\u03c1\u03b7\u03bd, \u201cinto our sea\u201d. The Euxine is meant in any case and the word Ionian is therefore wrong."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-29",
+      "kind": "endnote",
+      "label": "29",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-29",
+        "note_number": 29,
+        "backlink_href": "#linknoteref-29"
+      },
+      "body_sha256": "2118ca1329b6bac974a87b6e6344163cedb6876634b4f6ac71de8b5fc5de4a47",
+      "body_chars": 98,
+      "body_excerpt": "Apollonius seems to have thought that the Po, the Rhone, and the Rhine are all connected together."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-30",
+      "kind": "endnote",
+      "label": "30",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-30",
+        "note_number": 30,
+        "backlink_href": "#linknoteref-30"
+      },
+      "body_sha256": "a745e7e84e98b3c5de01964a9d1c09f76f36d24125c80604157eeee6708c12a4",
+      "body_chars": 89,
+      "body_excerpt": "i.e. like the scrapings from skin, \u1f00\u03c0\u03bf\u03c3\u03c4\u03bb\u03b5\u03b3\u03b3\u03af\u03c3\u03bc\u03b1\u03c4\u03b1; see Strabo p. 224 for this adventure."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-31",
+      "kind": "endnote",
+      "label": "31",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-31",
+        "note_number": 31,
+        "backlink_href": "#linknoteref-31"
+      },
+      "body_sha256": "768fc83286061faffdfee783fdf82b53282306e210e119a6dc120e8f32df40ab",
+      "body_chars": 227,
+      "body_excerpt": "The Symplegades are referred to, where help was given by Athena, not by Hera. It is strange that no mention is made of the Planctae, properl"
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-32",
+      "kind": "endnote",
+      "label": "32",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-32",
+        "note_number": 32,
+        "backlink_href": "#linknoteref-32"
+      },
+      "body_sha256": "44dc68ac8f599a7e984262a8d61dbfe05e79be3d8ef23bd2251d43f1a6d15a1c",
+      "body_chars": 20,
+      "body_excerpt": "i.e. the Mighty One."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-33",
+      "kind": "endnote",
+      "label": "33",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-33",
+        "note_number": 33,
+        "backlink_href": "#linknoteref-33"
+      },
+      "body_sha256": "af722a5766b5515fd7691201a163a687e6b8552fbea2f4cbcdd989f65b475ce1",
+      "body_chars": 19,
+      "body_excerpt": "i.e. the Wanderers."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-34",
+      "kind": "endnote",
+      "label": "34",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-34",
+        "note_number": 34,
+        "backlink_href": "#linknoteref-34"
+      },
+      "body_sha256": "54ecb96745c7daa127c1ea33fece45ccbe90a65faaf9ded92d661ad00cd28001",
+      "body_chars": 48,
+      "body_excerpt": "A fabulous metal, resembling gold in appearance."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-35",
+      "kind": "endnote",
+      "label": "35",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-35",
+        "note_number": 35,
+        "backlink_href": "#linknoteref-35"
+      },
+      "body_sha256": "20bee0f94f8e4a57ee72f21565e74feaf9246a43d5322422827db7db88d57fb4",
+      "body_chars": 23,
+      "body_excerpt": "i.e. the Sickle-island."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-36",
+      "kind": "endnote",
+      "label": "36",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-36",
+        "note_number": 36,
+        "backlink_href": "#linknoteref-36"
+      },
+      "body_sha256": "abca4c3a819d18de3d8b1842d253df471d6aa9e8975ba4924450a261b24b2d1e",
+      "body_chars": 24,
+      "body_excerpt": "The old name of Corinth."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-37",
+      "kind": "endnote",
+      "label": "37",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-37",
+        "note_number": 37,
+        "backlink_href": "#linknoteref-37"
+      },
+      "body_sha256": "6a24b43d6db55461ff822db4f1a134da5d8cd7dde5481919e61597341e3cd124",
+      "body_chars": 111,
+      "body_excerpt": "This seems to be the only possible translation, but the optative is quite anomalous. We should expect \u1f10\u03ba\u03cc\u03bc\u03b9\u03b6\u03b5\u03c2."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-38",
+      "kind": "endnote",
+      "label": "38",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-38",
+        "note_number": 38,
+        "backlink_href": "#linknoteref-38"
+      },
+      "body_sha256": "cdc44b8f802258b2faaace93c43ff9b7faa7255d9bca2d75c78cc2e0851b7ef1",
+      "body_chars": 32,
+      "body_excerpt": "An old name of the Peloponnesus."
+    },
+    {
+      "gold_key": "t:gutenberg-argonautica:linknote-39",
+      "kind": "endnote",
+      "label": "39",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "p.footnote",
+        "target_anchor_element": "a#linknote",
+        "target_id": "linknote-39",
+        "note_number": 39,
+        "backlink_href": "#linknoteref-39"
+      },
+      "body_sha256": "5d72e46db77cca157ec4a4ac14794cc34ab2753d22d963fc5e2836e8334083e2",
+      "body_chars": 27,
+      "body_excerpt": "i.e. the isle of Revealing."
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-1",
+      "kind": "endnote_ref",
+      "label": "[1]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-1",
+        "marker_id": "linknoteref-1",
+        "note_number": 1,
+        "marker_href": "#linknote-1"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-2",
+      "kind": "endnote_ref",
+      "label": "[2]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-2",
+        "marker_id": "linknoteref-2",
+        "note_number": 2,
+        "marker_href": "#linknote-2"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-3",
+      "kind": "endnote_ref",
+      "label": "[3]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-3",
+        "marker_id": "linknoteref-3",
+        "note_number": 3,
+        "marker_href": "#linknote-3"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-4",
+      "kind": "endnote_ref",
+      "label": "[4]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-4",
+        "marker_id": "linknoteref-4",
+        "note_number": 4,
+        "marker_href": "#linknote-4"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-5",
+      "kind": "endnote_ref",
+      "label": "[5]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-5",
+        "marker_id": "linknoteref-5",
+        "note_number": 5,
+        "marker_href": "#linknote-5"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-6",
+      "kind": "endnote_ref",
+      "label": "[6]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-6",
+        "marker_id": "linknoteref-6",
+        "note_number": 6,
+        "marker_href": "#linknote-6"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-7",
+      "kind": "endnote_ref",
+      "label": "[7]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-7",
+        "marker_id": "linknoteref-7",
+        "note_number": 7,
+        "marker_href": "#linknote-7"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-8",
+      "kind": "endnote_ref",
+      "label": "[8]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-8",
+        "marker_id": "linknoteref-8",
+        "note_number": 8,
+        "marker_href": "#linknote-8"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-9",
+      "kind": "endnote_ref",
+      "label": "[9]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-9",
+        "marker_id": "linknoteref-9",
+        "note_number": 9,
+        "marker_href": "#linknote-9"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-10",
+      "kind": "endnote_ref",
+      "label": "[10]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-10",
+        "marker_id": "linknoteref-10",
+        "note_number": 10,
+        "marker_href": "#linknote-10"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-11",
+      "kind": "endnote_ref",
+      "label": "[11]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-11",
+        "marker_id": "linknoteref-11",
+        "note_number": 11,
+        "marker_href": "#linknote-11"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-12",
+      "kind": "endnote_ref",
+      "label": "[12]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-12",
+        "marker_id": "linknoteref-12",
+        "note_number": 12,
+        "marker_href": "#linknote-12"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-13",
+      "kind": "endnote_ref",
+      "label": "[13]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-13",
+        "marker_id": "linknoteref-13",
+        "note_number": 13,
+        "marker_href": "#linknote-13"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-14",
+      "kind": "endnote_ref",
+      "label": "[14]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-14",
+        "marker_id": "linknoteref-14",
+        "note_number": 14,
+        "marker_href": "#linknote-14"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-15",
+      "kind": "endnote_ref",
+      "label": "[15]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-15",
+        "marker_id": "linknoteref-15",
+        "note_number": 15,
+        "marker_href": "#linknote-15"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-16",
+      "kind": "endnote_ref",
+      "label": "[16]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-16",
+        "marker_id": "linknoteref-16",
+        "note_number": 16,
+        "marker_href": "#linknote-16"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-17",
+      "kind": "endnote_ref",
+      "label": "[17]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-17",
+        "marker_id": "linknoteref-17",
+        "note_number": 17,
+        "marker_href": "#linknote-17"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-18",
+      "kind": "endnote_ref",
+      "label": "[18]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-18",
+        "marker_id": "linknoteref-18",
+        "note_number": 18,
+        "marker_href": "#linknote-18"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-19",
+      "kind": "endnote_ref",
+      "label": "[19]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-19",
+        "marker_id": "linknoteref-19",
+        "note_number": 19,
+        "marker_href": "#linknote-19"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-20",
+      "kind": "endnote_ref",
+      "label": "[20]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-20",
+        "marker_id": "linknoteref-20",
+        "note_number": 20,
+        "marker_href": "#linknote-20"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-21",
+      "kind": "endnote_ref",
+      "label": "[21]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-21",
+        "marker_id": "linknoteref-21",
+        "note_number": 21,
+        "marker_href": "#linknote-21"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-22",
+      "kind": "endnote_ref",
+      "label": "[22]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-22",
+        "marker_id": "linknoteref-22",
+        "note_number": 22,
+        "marker_href": "#linknote-22"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-23",
+      "kind": "endnote_ref",
+      "label": "[23]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-23",
+        "marker_id": "linknoteref-23",
+        "note_number": 23,
+        "marker_href": "#linknote-23"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-24",
+      "kind": "endnote_ref",
+      "label": "[24]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-24",
+        "marker_id": "linknoteref-24",
+        "note_number": 24,
+        "marker_href": "#linknote-24"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-25",
+      "kind": "endnote_ref",
+      "label": "[25]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-25",
+        "marker_id": "linknoteref-25",
+        "note_number": 25,
+        "marker_href": "#linknote-25"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-26",
+      "kind": "endnote_ref",
+      "label": "[26]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-26",
+        "marker_id": "linknoteref-26",
+        "note_number": 26,
+        "marker_href": "#linknote-26"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-27",
+      "kind": "endnote_ref",
+      "label": "[27]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-27",
+        "marker_id": "linknoteref-27",
+        "note_number": 27,
+        "marker_href": "#linknote-27"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-28",
+      "kind": "endnote_ref",
+      "label": "[28]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-28",
+        "marker_id": "linknoteref-28",
+        "note_number": 28,
+        "marker_href": "#linknote-28"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-29",
+      "kind": "endnote_ref",
+      "label": "[29]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-29",
+        "marker_id": "linknoteref-29",
+        "note_number": 29,
+        "marker_href": "#linknote-29"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-30",
+      "kind": "endnote_ref",
+      "label": "[30]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-30",
+        "marker_id": "linknoteref-30",
+        "note_number": 30,
+        "marker_href": "#linknote-30"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-31",
+      "kind": "endnote_ref",
+      "label": "[31]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-31",
+        "marker_id": "linknoteref-31",
+        "note_number": 31,
+        "marker_href": "#linknote-31"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-32",
+      "kind": "endnote_ref",
+      "label": "[32]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-32",
+        "marker_id": "linknoteref-32",
+        "note_number": 32,
+        "marker_href": "#linknote-32"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-33",
+      "kind": "endnote_ref",
+      "label": "[33]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-33",
+        "marker_id": "linknoteref-33",
+        "note_number": 33,
+        "marker_href": "#linknote-33"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-34",
+      "kind": "endnote_ref",
+      "label": "[34]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-34",
+        "marker_id": "linknoteref-34",
+        "note_number": 34,
+        "marker_href": "#linknote-34"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-35",
+      "kind": "endnote_ref",
+      "label": "[35]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-35",
+        "marker_id": "linknoteref-35",
+        "note_number": 35,
+        "marker_href": "#linknote-35"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-36",
+      "kind": "endnote_ref",
+      "label": "[36]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-36",
+        "marker_id": "linknoteref-36",
+        "note_number": 36,
+        "marker_href": "#linknote-36"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-37",
+      "kind": "endnote_ref",
+      "label": "[37]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-37",
+        "marker_id": "linknoteref-37",
+        "note_number": 37,
+        "marker_href": "#linknote-37"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-38",
+      "kind": "endnote_ref",
+      "label": "[38]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-38",
+        "marker_id": "linknoteref-38",
+        "note_number": 38,
+        "marker_href": "#linknote-38"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-39",
+      "kind": "endnote_ref",
+      "label": "[39]",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-39",
+        "marker_id": "linknoteref-39",
+        "note_number": 39,
+        "marker_href": "#linknote-39"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-1->t:gutenberg-argonautica:linknote-1",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-1",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-1",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-1",
+        "marker_id": "linknoteref-1",
+        "note_number": 1,
+        "marker_href": "#linknote-1"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-2->t:gutenberg-argonautica:linknote-2",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-2",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-2",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-2",
+        "marker_id": "linknoteref-2",
+        "note_number": 2,
+        "marker_href": "#linknote-2"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-3->t:gutenberg-argonautica:linknote-3",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-3",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-3",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-3",
+        "marker_id": "linknoteref-3",
+        "note_number": 3,
+        "marker_href": "#linknote-3"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-4->t:gutenberg-argonautica:linknote-4",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-4",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-4",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-4",
+        "marker_id": "linknoteref-4",
+        "note_number": 4,
+        "marker_href": "#linknote-4"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-5->t:gutenberg-argonautica:linknote-5",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-5",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-5",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-5",
+        "marker_id": "linknoteref-5",
+        "note_number": 5,
+        "marker_href": "#linknote-5"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-6->t:gutenberg-argonautica:linknote-6",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-6",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-6",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-6",
+        "marker_id": "linknoteref-6",
+        "note_number": 6,
+        "marker_href": "#linknote-6"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-7->t:gutenberg-argonautica:linknote-7",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-7",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-7",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-7",
+        "marker_id": "linknoteref-7",
+        "note_number": 7,
+        "marker_href": "#linknote-7"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-8->t:gutenberg-argonautica:linknote-8",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-8",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-8",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-8",
+        "marker_id": "linknoteref-8",
+        "note_number": 8,
+        "marker_href": "#linknote-8"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-9->t:gutenberg-argonautica:linknote-9",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-9",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-9",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-9",
+        "marker_id": "linknoteref-9",
+        "note_number": 9,
+        "marker_href": "#linknote-9"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-10->t:gutenberg-argonautica:linknote-10",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-10",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-10",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-10",
+        "marker_id": "linknoteref-10",
+        "note_number": 10,
+        "marker_href": "#linknote-10"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-11->t:gutenberg-argonautica:linknote-11",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-11",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-11",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-11",
+        "marker_id": "linknoteref-11",
+        "note_number": 11,
+        "marker_href": "#linknote-11"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-12->t:gutenberg-argonautica:linknote-12",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-12",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-12",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-12",
+        "marker_id": "linknoteref-12",
+        "note_number": 12,
+        "marker_href": "#linknote-12"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-13->t:gutenberg-argonautica:linknote-13",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-13",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-13",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-13",
+        "marker_id": "linknoteref-13",
+        "note_number": 13,
+        "marker_href": "#linknote-13"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-14->t:gutenberg-argonautica:linknote-14",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-14",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-14",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-14",
+        "marker_id": "linknoteref-14",
+        "note_number": 14,
+        "marker_href": "#linknote-14"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-15->t:gutenberg-argonautica:linknote-15",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-15",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-15",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-15",
+        "marker_id": "linknoteref-15",
+        "note_number": 15,
+        "marker_href": "#linknote-15"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-16->t:gutenberg-argonautica:linknote-16",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-16",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-16",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-16",
+        "marker_id": "linknoteref-16",
+        "note_number": 16,
+        "marker_href": "#linknote-16"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-17->t:gutenberg-argonautica:linknote-17",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-17",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-17",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-17",
+        "marker_id": "linknoteref-17",
+        "note_number": 17,
+        "marker_href": "#linknote-17"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-18->t:gutenberg-argonautica:linknote-18",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-18",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-18",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-18",
+        "marker_id": "linknoteref-18",
+        "note_number": 18,
+        "marker_href": "#linknote-18"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-19->t:gutenberg-argonautica:linknote-19",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-19",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-19",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-19",
+        "marker_id": "linknoteref-19",
+        "note_number": 19,
+        "marker_href": "#linknote-19"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-20->t:gutenberg-argonautica:linknote-20",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-20",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-20",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-20",
+        "marker_id": "linknoteref-20",
+        "note_number": 20,
+        "marker_href": "#linknote-20"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-21->t:gutenberg-argonautica:linknote-21",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-21",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-21",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-21",
+        "marker_id": "linknoteref-21",
+        "note_number": 21,
+        "marker_href": "#linknote-21"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-22->t:gutenberg-argonautica:linknote-22",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-22",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-22",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-22",
+        "marker_id": "linknoteref-22",
+        "note_number": 22,
+        "marker_href": "#linknote-22"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-23->t:gutenberg-argonautica:linknote-23",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-23",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-23",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-23",
+        "marker_id": "linknoteref-23",
+        "note_number": 23,
+        "marker_href": "#linknote-23"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-24->t:gutenberg-argonautica:linknote-24",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-24",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-24",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-24",
+        "marker_id": "linknoteref-24",
+        "note_number": 24,
+        "marker_href": "#linknote-24"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-25->t:gutenberg-argonautica:linknote-25",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-25",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-25",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-25",
+        "marker_id": "linknoteref-25",
+        "note_number": 25,
+        "marker_href": "#linknote-25"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-26->t:gutenberg-argonautica:linknote-26",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-26",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-26",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-26",
+        "marker_id": "linknoteref-26",
+        "note_number": 26,
+        "marker_href": "#linknote-26"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-27->t:gutenberg-argonautica:linknote-27",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-27",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-27",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-27",
+        "marker_id": "linknoteref-27",
+        "note_number": 27,
+        "marker_href": "#linknote-27"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-28->t:gutenberg-argonautica:linknote-28",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-28",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-28",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-28",
+        "marker_id": "linknoteref-28",
+        "note_number": 28,
+        "marker_href": "#linknote-28"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-29->t:gutenberg-argonautica:linknote-29",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-29",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-29",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-29",
+        "marker_id": "linknoteref-29",
+        "note_number": 29,
+        "marker_href": "#linknote-29"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-30->t:gutenberg-argonautica:linknote-30",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-30",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-30",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-30",
+        "marker_id": "linknoteref-30",
+        "note_number": 30,
+        "marker_href": "#linknote-30"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-31->t:gutenberg-argonautica:linknote-31",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-31",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-31",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-31",
+        "marker_id": "linknoteref-31",
+        "note_number": 31,
+        "marker_href": "#linknote-31"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-32->t:gutenberg-argonautica:linknote-32",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-32",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-32",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-32",
+        "marker_id": "linknoteref-32",
+        "note_number": 32,
+        "marker_href": "#linknote-32"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-33->t:gutenberg-argonautica:linknote-33",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-33",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-33",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-33",
+        "marker_id": "linknoteref-33",
+        "note_number": 33,
+        "marker_href": "#linknote-33"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-34->t:gutenberg-argonautica:linknote-34",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-34",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-34",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-34",
+        "marker_id": "linknoteref-34",
+        "note_number": 34,
+        "marker_href": "#linknote-34"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-35->t:gutenberg-argonautica:linknote-35",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-35",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-35",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-35",
+        "marker_id": "linknoteref-35",
+        "note_number": 35,
+        "marker_href": "#linknote-35"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-36->t:gutenberg-argonautica:linknote-36",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-36",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-36",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-36",
+        "marker_id": "linknoteref-36",
+        "note_number": 36,
+        "marker_href": "#linknote-36"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-37->t:gutenberg-argonautica:linknote-37",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-37",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-37",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-37",
+        "marker_id": "linknoteref-37",
+        "note_number": 37,
+        "marker_href": "#linknote-37"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-38->t:gutenberg-argonautica:linknote-38",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-38",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-38",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-38",
+        "marker_id": "linknoteref-38",
+        "note_number": 38,
+        "marker_href": "#linknote-38"
+      }
+    },
+    {
+      "gold_key": "m:gutenberg-argonautica:linknoteref-39->t:gutenberg-argonautica:linknote-39",
+      "from_gold_key": "m:gutenberg-argonautica:linknoteref-39",
+      "to_gold_key": "t:gutenberg-argonautica:linknote-39",
+      "relation": "points_to_endnote",
+      "confidence": "strong",
+      "extraction_method": "html_project_gutenberg_linknote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "a[href]",
+        "target_id": "linknote-39",
+        "marker_id": "linknoteref-39",
+        "note_number": 39,
+        "marker_href": "#linknote-39"
+      }
+    }
+  ],
+  "expected_absences": [],
+  "diagnostics": {
+    "independent_dom_graph": {
+      "marker_count": 39,
+      "target_count": 39,
+      "backlink_count": 39,
+      "has_project_gutenberg_license": true
+    },
+    "dom_marker_ids": [
+      "linknoteref-1",
+      "linknoteref-2",
+      "linknoteref-3",
+      "linknoteref-4",
+      "linknoteref-5",
+      "linknoteref-6",
+      "linknoteref-7",
+      "linknoteref-8",
+      "linknoteref-9",
+      "linknoteref-10",
+      "linknoteref-11",
+      "linknoteref-12",
+      "linknoteref-13",
+      "linknoteref-14",
+      "linknoteref-15",
+      "linknoteref-16",
+      "linknoteref-17",
+      "linknoteref-18",
+      "linknoteref-19",
+      "linknoteref-20",
+      "linknoteref-21",
+      "linknoteref-22",
+      "linknoteref-23",
+      "linknoteref-24",
+      "linknoteref-25",
+      "linknoteref-26",
+      "linknoteref-27",
+      "linknoteref-28",
+      "linknoteref-29",
+      "linknoteref-30",
+      "linknoteref-31",
+      "linknoteref-32",
+      "linknoteref-33",
+      "linknoteref-34",
+      "linknoteref-35",
+      "linknoteref-36",
+      "linknoteref-37",
+      "linknoteref-38",
+      "linknoteref-39"
+    ],
+    "dom_marker_targets": [
+      "linknote-1",
+      "linknote-2",
+      "linknote-3",
+      "linknote-4",
+      "linknote-5",
+      "linknote-6",
+      "linknote-7",
+      "linknote-8",
+      "linknote-9",
+      "linknote-10",
+      "linknote-11",
+      "linknote-12",
+      "linknote-13",
+      "linknote-14",
+      "linknote-15",
+      "linknote-16",
+      "linknote-17",
+      "linknote-18",
+      "linknote-19",
+      "linknote-20",
+      "linknote-21",
+      "linknote-22",
+      "linknote-23",
+      "linknote-24",
+      "linknote-25",
+      "linknote-26",
+      "linknote-27",
+      "linknote-28",
+      "linknote-29",
+      "linknote-30",
+      "linknote-31",
+      "linknote-32",
+      "linknote-33",
+      "linknote-34",
+      "linknote-35",
+      "linknote-36",
+      "linknote-37",
+      "linknote-38",
+      "linknote-39"
+    ],
+    "dom_target_ids": [
+      "linknote-1",
+      "linknote-2",
+      "linknote-3",
+      "linknote-4",
+      "linknote-5",
+      "linknote-6",
+      "linknote-7",
+      "linknote-8",
+      "linknote-9",
+      "linknote-10",
+      "linknote-11",
+      "linknote-12",
+      "linknote-13",
+      "linknote-14",
+      "linknote-15",
+      "linknote-16",
+      "linknote-17",
+      "linknote-18",
+      "linknote-19",
+      "linknote-20",
+      "linknote-21",
+      "linknote-22",
+      "linknote-23",
+      "linknote-24",
+      "linknote-25",
+      "linknote-26",
+      "linknote-27",
+      "linknote-28",
+      "linknote-29",
+      "linknote-30",
+      "linknote-31",
+      "linknote-32",
+      "linknote-33",
+      "linknote-34",
+      "linknote-35",
+      "linknote-36",
+      "linknote-37",
+      "linknote-38",
+      "linknote-39"
+    ],
+    "dom_note_body_sha256s": [
+      "9c0bb65762140ff1bea43862fac5438d275837cce31ed3a9cefd3ad36873748e",
+      "5e6795872ee88fbdde05dfd3831bf2ed9f9a5ffc37eb431cbe9bcb5b3fe8a384",
+      "12091cedfad1f8e37ed05e482bc033bd611c175628d7d67e215d4b1c5426a83f",
+      "ead0cba1019a12287f6f83592fd5576525e1a1dec8b415b40152919bd6b49a92",
+      "55ebfefa832034ccc6b1ad86470e14787f5f2a609648de2ec380b51d5f1fd7af",
+      "e937c9a7ca051be728480bc90c9b761261c5031bbfb5378ee67b5d3d870c9424",
+      "91949f6a44dfd3125ffab0ff2e734131d9e60a5aac8534a9ea8f2c51fa871f41",
+      "f5b9999e53414ccdbfd1bb951c86e6b69d45fd50db1afade9484dbc613e8c8e7",
+      "e4fc01bddbc2ffe2ff42d780de132c0d1a1a47a6af073531cfa7fae7d487eeb3",
+      "316c34b95093b6a025c2be07b214da5acdf95574655eb4f458ce313f5c7187c5",
+      "b9e5982ad3ea1cd0ff6de4af3decb5241abfac2f268b017135160bba8f4c7d03",
+      "5e0d0555be556fac42138919b13601886127fc4e15d19abdda868899e138b711",
+      "02a2e83ed9de7536d95f797cff0d54916f8f40aeba276a1e1e82a41f2a497c4d",
+      "00fd095df1db00fda44fa7c9ebdb8330333fcb7874b218eb04a49e6811f609ec",
+      "7a42e343a8ca5f0dd9da71801c2aa9c901359b9190e782dde98e95f94f68a6d5",
+      "ac920f6b3fe52b931a164e3e4a88234def90975ff6bb9cd2add6475158019724",
+      "b5c376231efd6a49a1bd66175edebdcd65e42ab81281a4c3bfe87dfaee37cf5a",
+      "a330d32a39d433ee0157cf426277fa95d9c42501a213d948cb232e7dadad2593",
+      "baaebe4e69455102c21869458f353d157d792a0c26f0d96b25fb11569dbbcd0b",
+      "e95ae6450ac1e94d5f75f17ab645da1e49d53075a5fcce9115b4a830492d13d0",
+      "4c111769b1c71595906b1607e0e0a0381ce9e428b107661a2b612dbdac7b64fb",
+      "05b96202c28f32f982477be253f019f39e50767f93e7c03ea8ff5dd5bbbfd3ab",
+      "d4353fecb73b827250f1a9d9f133319eb392e2a3f903d1dc9f80a03860ed99e8",
+      "8b922f73c9f50f6f5783d2d9b547e63e6f32c12ed1de8267c7d1e3f345b7264e",
+      "6e6f8aff5faa476e79ac51886683e0bf03c402269151b252864f54c6f7204da7",
+      "8fa68b478b2759f767a361063be7e4bfe18c0f1ff802ea2fae19f5f52fc8e25c",
+      "1edc6b7dd6e0d7f407a7db2b154e4ecc68c10c11afb52fb75e59e79a4790fb29",
+      "30ce81065e8ea661cc5219c7b40d9fe0f60e4c24a30ad29b8bb76778111ce44a",
+      "2118ca1329b6bac974a87b6e6344163cedb6876634b4f6ac71de8b5fc5de4a47",
+      "a745e7e84e98b3c5de01964a9d1c09f76f36d24125c80604157eeee6708c12a4",
+      "768fc83286061faffdfee783fdf82b53282306e210e119a6dc120e8f32df40ab",
+      "44dc68ac8f599a7e984262a8d61dbfe05e79be3d8ef23bd2251d43f1a6d15a1c",
+      "af722a5766b5515fd7691201a163a687e6b8552fbea2f4cbcdd989f65b475ce1",
+      "54ecb96745c7daa127c1ea33fece45ccbe90a65faaf9ded92d661ad00cd28001",
+      "20bee0f94f8e4a57ee72f21565e74feaf9246a43d5322422827db7db88d57fb4",
+      "abca4c3a819d18de3d8b1842d253df471d6aa9e8975ba4924450a261b24b2d1e",
+      "6a24b43d6db55461ff822db4f1a134da5d8cd7dde5481919e61597341e3cd124",
+      "cdc44b8f802258b2faaace93c43ff9b7faa7255d9bca2d75c78cc2e0851b7ef1",
+      "5d72e46db77cca157ec4a4ac14794cc34ab2753d22d963fc5e2836e8334083e2"
+    ]
+  }
+}

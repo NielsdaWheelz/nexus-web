@@ -1,0 +1,23 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": false,
+      "has_probable_items": false,
+      "has_sidecar_items": false,
+      "supports_hover_preview": false,
+      "supports_jump_to_marker": false,
+      "supports_jump_to_target": false
+    },
+    "diagnostics": {},
+    "edges": [],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [],
+    "media_id": "b0de7e01-5be9-5a5a-a9f5-a4e5071a2593",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:33db4b8af67990be8501fdecfedf630bd1ca8843834037e156ad787929aa287a",
+    "status": "empty"
+  },
+  "fixture_id": "html-gutenberg-notes-chapter-negative",
+  "source_fixture_path": "reader_apparatus/html/gutenberg-notes-chapter-negative.html",
+  "source_fixture_sha256": "3f47a166b7dc3d959733e9beee9b79b541fc04955b44dd7b905de49323f12f46"
+}

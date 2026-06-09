@@ -1,0 +1,623 @@
+{
+  "schema_version": 1,
+  "fixture_id": "epub-standardebooks-james-pragmatism-advanced",
+  "fixture_path": "epub/standardebooks-william-james-pragmatism-advanced.epub",
+  "fixture_sha256": "dde746bac2ee6f99cf386068b951838e5686fa771ba6cf85c9dd092db2568355",
+  "coverage": "adapter_scope_exhaustive",
+  "audit_basis": "epub_archive_xhtml_semantic_noteref",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "epub",
+    "item_kinds": {
+      "endnote": 13,
+      "endnote_ref": 13
+    },
+    "edge_relations": {
+      "points_to_endnote": 13
+    },
+    "edge_methods": {
+      "epub_noteref": 13
+    },
+    "locator_type": "epub_fragment_offsets"
+  },
+  "items": [
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-1",
+      "kind": "endnote_ref",
+      "label": "1",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-1.xhtml",
+        "manifest_id": "chapter-1.xhtml",
+        "spine_index": 5,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-1",
+        "target_id": "note-1",
+        "marker_id": "noteref-1"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-2",
+      "kind": "endnote_ref",
+      "label": "2",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-2.xhtml",
+        "manifest_id": "chapter-2.xhtml",
+        "spine_index": 6,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-2",
+        "target_id": "note-2",
+        "marker_id": "noteref-2"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-3",
+      "kind": "endnote_ref",
+      "label": "3",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-2.xhtml",
+        "manifest_id": "chapter-2.xhtml",
+        "spine_index": 6,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-3",
+        "target_id": "note-3",
+        "marker_id": "noteref-3"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-4",
+      "kind": "endnote_ref",
+      "label": "4",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-3.xhtml",
+        "manifest_id": "chapter-3.xhtml",
+        "spine_index": 7,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-4",
+        "target_id": "note-4",
+        "marker_id": "noteref-4"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-5",
+      "kind": "endnote_ref",
+      "label": "5",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-4.xhtml",
+        "manifest_id": "chapter-4.xhtml",
+        "spine_index": 8,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-5",
+        "target_id": "note-5",
+        "marker_id": "noteref-5"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-6",
+      "kind": "endnote_ref",
+      "label": "6",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-4.xhtml",
+        "manifest_id": "chapter-4.xhtml",
+        "spine_index": 8,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-6",
+        "target_id": "note-6",
+        "marker_id": "noteref-6"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-7",
+      "kind": "endnote_ref",
+      "label": "7",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-4.xhtml",
+        "manifest_id": "chapter-4.xhtml",
+        "spine_index": 8,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-7",
+        "target_id": "note-7",
+        "marker_id": "noteref-7"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-8",
+      "kind": "endnote_ref",
+      "label": "8",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-5.xhtml",
+        "manifest_id": "chapter-5.xhtml",
+        "spine_index": 9,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-8",
+        "target_id": "note-8",
+        "marker_id": "noteref-8"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-9",
+      "kind": "endnote_ref",
+      "label": "9",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-6.xhtml",
+        "manifest_id": "chapter-6.xhtml",
+        "spine_index": 10,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-9",
+        "target_id": "note-9",
+        "marker_id": "noteref-9"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-10",
+      "kind": "endnote_ref",
+      "label": "10",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-6.xhtml",
+        "manifest_id": "chapter-6.xhtml",
+        "spine_index": 10,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-10",
+        "target_id": "note-10",
+        "marker_id": "noteref-10"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-11",
+      "kind": "endnote_ref",
+      "label": "11",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-6.xhtml",
+        "manifest_id": "chapter-6.xhtml",
+        "spine_index": 10,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-11",
+        "target_id": "note-11",
+        "marker_id": "noteref-11"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-12",
+      "kind": "endnote_ref",
+      "label": "12",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-7.xhtml",
+        "manifest_id": "chapter-7.xhtml",
+        "spine_index": 11,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-12",
+        "target_id": "note-12",
+        "marker_id": "noteref-12"
+      }
+    },
+    {
+      "gold_key": "m:pragmatism-advanced:noteref-13",
+      "kind": "endnote_ref",
+      "label": "13",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/chapter-7.xhtml",
+        "manifest_id": "chapter-7.xhtml",
+        "spine_index": 11,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-13",
+        "target_id": "note-13",
+        "marker_id": "noteref-13"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-1",
+      "kind": "endnote",
+      "label": "Morrison",
+      "body_sha256": "4ecdd304e30ca8e74cc0ee1c75611f2c30e26e57c9e8822b04245f37a02a17af",
+      "body_chars": 98,
+      "body_excerpt": "Morrison I. Swift, Human Submission, Part Second, Philadelphia, Liberty Press, 1905, pp. 4⁠–⁠10. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-1"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-2",
+      "kind": "endnote",
+      "label": "Translated",
+      "body_sha256": "c08e6aeac59e4072ee8dd378786d050da68ee6e5e99979031f8c58527f1a6f32",
+      "body_chars": 69,
+      "body_excerpt": "Translated in the Revue Philosophique for January, 1879 (vol. VII). ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-2"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-3",
+      "kind": "endnote",
+      "label": "“Theorie",
+      "body_sha256": "fd838472de3ff3861833d5a3c59ac26784fa247b6dfd75264007bd3f3db99c9b",
+      "body_chars": 539,
+      "body_excerpt": "“Theorie und Praxis,” Zeitsch. des Oesterreichischen Ingenieur u. Architecten-Vereines, 1905, Nr. 4 u. 6. I find a still",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-3"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-4",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "3d09c3e4676570531170c2ba43f2a5a3df0108a52f98677c97481cbf39d8fc74",
+      "body_chars": 35,
+      "body_excerpt": "The Foundations of Belief, p. 30. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-4"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-5",
+      "kind": "endnote",
+      "label": "Compare",
+      "body_sha256": "8869d93aace46bbc31b81a634411520d85e254ec91be738874a5e421969d6b09",
+      "body_chars": 298,
+      "body_excerpt": "Compare A. Bellanger: Les concepts de cause, et l’activité intentionelle de l’esprit. Paris, Alcan, 1905, p. 79 ff. In t",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-5"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-6",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "55d25b61af336ae3cd79b119bbddd83097a3c51f320d4be9b051740c4f9afa0c",
+      "body_chars": 48,
+      "body_excerpt": "The Conception of God, New York, 1897, p. 292. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-6"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-7",
+      "kind": "endnote",
+      "label": "Compare",
+      "body_sha256": "9a042d5ca871b38fa7dfc8aeee60643f20148e2d3695b6688126fdc6bd522e9d",
+      "body_chars": 112,
+      "body_excerpt": "Compare on the Ultimate, Mr. Schiller’s essay “Activity and Substance,” in his book entitled Humanism, p. 204. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-7"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-8",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "36b65b92f05c09f43c1fc6f31696a0cbee5643abd746b54b6b24e1b7d6a38a02",
+      "body_chars": 58,
+      "body_excerpt": "The Life of Reason: Reason in Common Sense, 1905, p. 59. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-8"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-9",
+      "kind": "endnote",
+      "label": "A.",
+      "body_sha256": "2723722599a1285f5747a87ad92bb16a88bb55ecc9f41c8385e935881d28b125",
+      "body_chars": 55,
+      "body_excerpt": "A. E. Taylor, Philosophical Review, vol. XIV, p. 288. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-9"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-10",
+      "kind": "endnote",
+      "label": "H.",
+      "body_sha256": "01983c248eadbbc5293b1a06a35cb4a18012ec80d60754f433e1ea8346e8dd95",
+      "body_chars": 86,
+      "body_excerpt": "H. Rickert, Der Gegenstand der Erkenntniss, chapter on “Die Urtheilsnothwendigkeit.” ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-10"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-11",
+      "kind": "endnote",
+      "label": "I",
+      "body_sha256": "e5fb0d87bf7656728e6b0146343c4b61815e1c74bcb70340691c447e2f69fff5",
+      "body_chars": 692,
+      "body_excerpt": "I am not forgetting that Professor Rickert long ago gave up the whole notion of truth being founded on agreement with re",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-11"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-12",
+      "kind": "endnote",
+      "label": "Personal",
+      "body_sha256": "75c1dd27673cd7440f09088d5db847260da5fc7ac69b4b48964c3a45850af086",
+      "body_chars": 27,
+      "body_excerpt": "Personal Idealism, p. 60. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-12"
+      }
+    },
+    {
+      "gold_key": "t:pragmatism-advanced:note-13",
+      "kind": "endnote",
+      "label": "Mr.",
+      "body_sha256": "7769918eab207fdc99bd5e79bb935de9160074aa77c74f1fb034325dadf693c6",
+      "body_chars": 85,
+      "body_excerpt": "Mr. Taylor in his Elements of Metaphysics uses this excellent pragmatic definition. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 13,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-13"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-1:note-1",
+      "from_gold_key": "m:pragmatism-advanced:noteref-1",
+      "to_gold_key": "t:pragmatism-advanced:note-1",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-2:note-2",
+      "from_gold_key": "m:pragmatism-advanced:noteref-2",
+      "to_gold_key": "t:pragmatism-advanced:note-2",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-3:note-3",
+      "from_gold_key": "m:pragmatism-advanced:noteref-3",
+      "to_gold_key": "t:pragmatism-advanced:note-3",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-4:note-4",
+      "from_gold_key": "m:pragmatism-advanced:noteref-4",
+      "to_gold_key": "t:pragmatism-advanced:note-4",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-5:note-5",
+      "from_gold_key": "m:pragmatism-advanced:noteref-5",
+      "to_gold_key": "t:pragmatism-advanced:note-5",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-6:note-6",
+      "from_gold_key": "m:pragmatism-advanced:noteref-6",
+      "to_gold_key": "t:pragmatism-advanced:note-6",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-7:note-7",
+      "from_gold_key": "m:pragmatism-advanced:noteref-7",
+      "to_gold_key": "t:pragmatism-advanced:note-7",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-8:note-8",
+      "from_gold_key": "m:pragmatism-advanced:noteref-8",
+      "to_gold_key": "t:pragmatism-advanced:note-8",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-9:note-9",
+      "from_gold_key": "m:pragmatism-advanced:noteref-9",
+      "to_gold_key": "t:pragmatism-advanced:note-9",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-10:note-10",
+      "from_gold_key": "m:pragmatism-advanced:noteref-10",
+      "to_gold_key": "t:pragmatism-advanced:note-10",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-11:note-11",
+      "from_gold_key": "m:pragmatism-advanced:noteref-11",
+      "to_gold_key": "t:pragmatism-advanced:note-11",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-12:note-12",
+      "from_gold_key": "m:pragmatism-advanced:noteref-12",
+      "to_gold_key": "t:pragmatism-advanced:note-12",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:pragmatism-advanced:noteref-13:note-13",
+      "from_gold_key": "m:pragmatism-advanced:noteref-13",
+      "to_gold_key": "t:pragmatism-advanced:note-13",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    }
+  ],
+  "expected_absences": [
+    {
+      "kind": "container_only",
+      "source_ref": {
+        "package_href": "epub/text/endnotes.xhtml",
+        "target_id": "endnotes"
+      },
+      "reason": "endnotes section container is not an apparatus row"
+    },
+    {
+      "kind": "backlink_control",
+      "source_ref": {
+        "package_href": "epub/text/endnotes.xhtml"
+      },
+      "expected_count": 13,
+      "reason": "doc-backlink anchors return to markers and are not source-authored apparatus edges"
+    }
+  ],
+  "diagnostics": {
+    "noteref_pair_count": 13,
+    "target_count": 13,
+    "backlink_count": 13
+  }
+}

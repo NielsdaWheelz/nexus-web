@@ -1,0 +1,105 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "html_semantic",
+        "from_stable_key": "epub:0:ref:000000:fn1",
+        "relation": "points_to_note",
+        "sort_key": "000000.edge",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter",
+          "package_href": "OEBPS/chapter.xhtml",
+          "spine_index": 0,
+          "spine_itemref_id": null,
+          "target_id": "fn1"
+        },
+        "stable_key": "epub:0:ref:000000:fn1->epub:0:target:OEBPS-chapter.xhtml-fn1",
+        "to_stable_key": "epub:0:target:OEBPS-chapter.xhtml-fn1"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "1. EPUB note body for reader apparatus.",
+        "confidence": "exact",
+        "extraction_method": "epub_noteref",
+        "kind": "footnote",
+        "label": "1.",
+        "locator": {
+          "end_offset": 67,
+          "fragment_id": "786c8827-2c29-5ec6-ac04-615a68b1181d",
+          "media_id": "95c6443b-c192-559e-a386-5e41300bc88e",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 28,
+          "text_quote_selector": {
+            "exact": "1. EPUB note body for reader apparatus."
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000005.000000.target",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter",
+          "package_href": "OEBPS/chapter.xhtml",
+          "spine_index": 0,
+          "spine_itemref_id": null,
+          "target_href": "OEBPS/chapter.xhtml",
+          "target_id": "fn1"
+        },
+        "stable_key": "epub:0:target:OEBPS-chapter.xhtml-fn1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "html_semantic",
+        "kind": "footnote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 25,
+          "fragment_id": "786c8827-2c29-5ec6-ac04-615a68b1181d",
+          "media_id": "95c6443b-c192-559e-a386-5e41300bc88e",
+          "media_kind": "epub",
+          "section_id": null,
+          "start_offset": 24,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "epub_fragment_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000000.marker",
+        "source_ref": {
+          "format": "xhtml",
+          "manifest_id": "chapter",
+          "package_href": "OEBPS/chapter.xhtml",
+          "spine_index": 0,
+          "spine_itemref_id": null,
+          "target_id": "fn1"
+        },
+        "stable_key": "epub:0:ref:000000:fn1"
+      }
+    ],
+    "media_id": "95c6443b-c192-559e-a386-5e41300bc88e",
+    "media_kind": "epub",
+    "source_fingerprint": "sha256:2bfb1212abadaf1f6ce1658c635dbe63d686442b6991997f434a10d76a10d536",
+    "status": "ready"
+  },
+  "fixture_id": "epub-synthetic-noteref",
+  "source_fixture_path": "epub/reader-apparatus-note.epub",
+  "source_fixture_sha256": "ce63bfa76e30cb056ca5f4e5b2b21f6f7f3cc0bcf19315c5667410d416767b82"
+}

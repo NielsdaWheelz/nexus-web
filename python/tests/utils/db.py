@@ -257,6 +257,18 @@ class DirectSessionManager:
                     )
 
                 if table == "media" and column == "id":
+                    # reader_apparatus_* FK media.id with no ON DELETE CASCADE
+                    # (repo doctrine); delete children-first so the media row can
+                    # be removed. FK chain: edges -> items -> states.
+                    for ra_table in (
+                        "reader_apparatus_edges",
+                        "reader_apparatus_items",
+                        "reader_apparatus_states",
+                    ):
+                        session.execute(
+                            text(f"DELETE FROM {ra_table} WHERE media_id = :value"),
+                            {"value": value},
+                        )
                     session.execute(
                         text(
                             """

@@ -736,6 +736,19 @@ empty `exact` (no text-layer match) — a first-class state the sidecar renders 
 placeholder. The reader's highlights sidecar renders `exact` only (the recent
 exact-only cutover, [`modules/reader-highlight-sidecar-exact-only`](cutovers/reader-highlight-sidecar-exact-only.md)).
 
+**Source-authored apparatus** (`services/reader_apparatus.py`): web article,
+EPUB, and PDF ingest paths persist document-authored notes, endnotes,
+bibliography entries, in-document markers, and marker-to-target edges into
+`reader_apparatus_*` tables. This model is separate from generated chat
+citations, `message_retrievals`, and conversation references. Web/EPUB
+apparatus is extracted before sanitization removes semantic attributes. PDF
+apparatus is capability-gated: native `cite.*` links can be `ready` when
+deterministic reference targets are materialized, marker-only native-link rows
+remain `partial`, synthetic legal-footnote support is narrow, and unsupported
+scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
+from raw layout text. Fixture counts and 20-source support status live in
+`python/tests/fixtures/reader_apparatus/corpus_manifest.json`.
+
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
 `dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Highlights are

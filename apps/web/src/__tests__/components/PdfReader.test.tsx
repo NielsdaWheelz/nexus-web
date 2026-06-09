@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import PdfReader from "@/components/PdfReader";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
@@ -27,9 +33,10 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
 }));
 
 vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/api/client")>(
+      "@/lib/api/client",
+    );
   return {
     ...actual,
     ApiError: class ApiError extends Error {},
@@ -373,11 +380,13 @@ describe("PdfReader selection chat destinations", () => {
 
     await waitFor(() => {
       expect(
-        vi.mocked(apiFetch).mock.calls.some(
-          ([path, init]) =>
-            path === "/api/media/media-1/pdf-highlights" &&
-            init?.method === "POST",
-        ),
+        vi
+          .mocked(apiFetch)
+          .mock.calls.some(
+            ([path, init]) =>
+              path === "/api/media/media-1/pdf-highlights" &&
+              init?.method === "POST",
+          ),
       ).toBe(true);
     });
     const postCall = vi
@@ -536,6 +545,89 @@ describe("PdfReader selection chat destinations", () => {
     const second = screen.getByTestId("pdf-highlight-h2-0");
     expect(
       Array.from(second.classList).some((name) => name.includes("pulsing")),
+    ).toBe(false);
+  });
+
+  it("renders apparatus PDF geometry pulses without pulsing unrelated highlights", async () => {
+    const persistedQuad = {
+      x1: 80,
+      y1: 120,
+      x2: 180,
+      y2: 120,
+      x3: 180,
+      y3: 140,
+      x4: 80,
+      y4: 140,
+    };
+    const apparatusQuad = {
+      x1: 70,
+      y1: 60,
+      x2: 230,
+      y2: 60,
+      x3: 230,
+      y3: 80,
+      x4: 70,
+      y4: 80,
+    };
+    pdfRuntimeState.pageHighlights = [
+      {
+        id: "persisted-highlight",
+        anchor: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads: [persistedQuad],
+        },
+        color: "green",
+        exact: "Persisted quote",
+        prefix: "",
+        suffix: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    ];
+
+    render(<PdfReader mediaId="media-1" />);
+
+    const persisted = await screen.findByTestId(
+      "pdf-highlight-persisted-highlight-0",
+    );
+
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      locator: {
+        type: "pdf_page_geometry",
+        media_id: "media-1",
+        page_number: 1,
+        quads: [apparatusQuad],
+        exact: "[13]",
+      },
+      snippet: "[13]",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
+    });
+
+    const transient = await screen.findByTestId(/^pdf-highlight-reader-pulse-/);
+    await waitFor(() => {
+      expect(
+        Array.from(transient.classList).some((name) =>
+          name.includes("pulsing"),
+        ),
+      ).toBe(true);
+    });
+    expect(
+      Array.from(persisted.classList).some((name) => name.includes("pulsing")),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(apiFetch)
+        .mock.calls.some(
+          ([path, init]) =>
+            path === "/api/media/media-1/pdf-highlights" &&
+            init?.method === "POST",
+        ),
     ).toBe(false);
   });
 });

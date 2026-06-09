@@ -1,5 +1,6 @@
 """Remote PDF/EPUB fetch policy."""
 
+import hashlib
 from dataclasses import dataclass
 from tempfile import TemporaryFile
 from urllib.parse import urljoin
@@ -31,6 +32,7 @@ _USER_AGENT = "Nexus Media Ingestion/1.0"
 class RemoteFileFetchResult:
     content_type: str
     size_bytes: int
+    sha256_hex: str
     final_url: str
 
 
@@ -46,6 +48,27 @@ def fetch_to_storage(
 
     max_bytes = get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
     content_type = REMOTE_FILE_CONTENT_TYPES[kind]
+    return fetch_binary_to_storage(
+        url=url,
+        storage_path=storage_path,
+        storage_client=storage_client,
+        content_type=content_type,
+        max_bytes=max_bytes,
+        accept=f"{content_type},application/octet-stream,*/*;q=0.8",
+        signature_kind=kind,
+    )
+
+
+def fetch_binary_to_storage(
+    *,
+    url: str,
+    storage_path: str,
+    storage_client: StorageClientBase,
+    content_type: str,
+    max_bytes: int,
+    accept: str,
+    signature_kind: str | None = None,
+) -> RemoteFileFetchResult:
     current_url = url
 
     with httpx.Client(timeout=_TIMEOUT, follow_redirects=False, trust_env=False) as client:
@@ -60,7 +83,7 @@ def fetch_to_storage(
                     normalized_url,
                     headers={
                         "User-Agent": _USER_AGENT,
-                        "Accept": f"{content_type},application/octet-stream,*/*;q=0.8",
+                        "Accept": accept,
                     },
                 ) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
@@ -83,17 +106,17 @@ def fetch_to_storage(
                     if content_length and int(content_length) > max_bytes:
                         raise InvalidRequestError(
                             ApiErrorCode.E_FILE_TOO_LARGE,
-                            f"Remote {kind.upper()} exceeds maximum size.",
+                            f"Remote {_fetch_error_label(signature_kind)} exceeds maximum size.",
                         )
 
                     return _write_response_to_storage(
                         response=response,
-                        kind=kind,
                         content_type=content_type,
                         max_bytes=max_bytes,
                         storage_path=storage_path,
                         storage_client=storage_client,
                         final_url=normalized_url,
+                        signature_kind=signature_kind,
                     )
             except ValueError as exc:
                 raise InvalidRequestError(
@@ -115,25 +138,29 @@ def fetch_to_storage(
 def _write_response_to_storage(
     *,
     response: httpx.Response,
-    kind: str,
     content_type: str,
     max_bytes: int,
     storage_path: str,
     storage_client: StorageClientBase,
     final_url: str,
+    signature_kind: str | None,
 ) -> RemoteFileFetchResult:
     size_bytes = 0
     saw_chunk = False
+    hasher = hashlib.sha256()
 
     with TemporaryFile() as payload:
         for chunk in response.iter_bytes(chunk_size=_CHUNK_BYTES):
             if not chunk:
                 continue
             if not saw_chunk:
-                if not has_valid_file_signature(chunk, kind):
+                if signature_kind is not None and not has_valid_file_signature(
+                    chunk,
+                    signature_kind,
+                ):
                     raise InvalidRequestError(
                         ApiErrorCode.E_INVALID_FILE_TYPE,
-                        f"Remote URL did not return a valid {kind.upper()} file.",
+                        f"Remote URL did not return a valid {signature_kind.upper()} file.",
                     )
                 saw_chunk = True
 
@@ -141,14 +168,15 @@ def _write_response_to_storage(
             if size_bytes > max_bytes:
                 raise InvalidRequestError(
                     ApiErrorCode.E_FILE_TOO_LARGE,
-                    f"Remote {kind.upper()} exceeds maximum size.",
+                    f"Remote {_fetch_error_label(signature_kind)} exceeds maximum size.",
                 )
+            hasher.update(chunk)
             payload.write(chunk)
 
         if not saw_chunk:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_FILE_TYPE,
-                f"Remote URL did not return a valid {kind.upper()} file.",
+                "Remote URL did not return a non-empty file.",
             )
 
         payload.seek(0)
@@ -160,5 +188,10 @@ def _write_response_to_storage(
     return RemoteFileFetchResult(
         content_type=content_type,
         size_bytes=size_bytes,
+        sha256_hex=hasher.hexdigest(),
         final_url=final_url,
     )
+
+
+def _fetch_error_label(signature_kind: str | None) -> str:
+    return signature_kind.upper() if signature_kind is not None else "file"

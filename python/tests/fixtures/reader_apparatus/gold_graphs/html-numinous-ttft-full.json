@@ -1,0 +1,710 @@
+{
+  "schema_version": 1,
+  "fixture_id": "html-numinous-ttft-full",
+  "fixture_path": "reader_apparatus/html/numinous-ttft-full.html",
+  "fixture_sha256": "57828945f05e22dffeb378cdd1fd10f6469c6608802debd5237769f5b0290b5a",
+  "coverage": "fixture_exhaustive",
+  "audit_basis": "dom_standalone_margin_note_graph",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "web_article",
+    "item_kinds": {
+      "margin_note": 40
+    },
+    "edge_relations": {},
+    "edge_methods": {}
+  },
+  "items": [
+    {
+      "gold_key": "t:numinous-ttft:margin-note-0",
+      "kind": "margin_note",
+      "label": "Margin note 1",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 0
+      },
+      "body_sha256": "98221c41f43810cd9011ceff2b74d4543def0f397a5303a3dfb46a52a1380876",
+      "body_chars": 83,
+      "body_excerpt": "E.g., Douglas Engelbart, Augmenting Human Intellect: A Conceptual Framework (1962)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-1",
+      "kind": "margin_note",
+      "label": "Margin note 2",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 1
+      },
+      "body_sha256": "e2b4b3ce0f9e356075926ab06aea31e51e750f0e307613a53d0adecc5b3c8956",
+      "body_chars": 49,
+      "body_excerpt": "Alan Kay, User Interface: A Personal View (1989)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-2",
+      "kind": "margin_note",
+      "label": "Margin note 3",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 2
+      },
+      "body_sha256": "2ef3693813f8d34ffa8b513edb0c74b28b1dd7e8a0ee451378392ad9be95390a",
+      "body_chars": 79,
+      "body_excerpt": "Again, in Alan Kay, User Interface: A Personal View (1989), among other places."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-3",
+      "kind": "margin_note",
+      "label": "Margin note 4",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 3
+      },
+      "body_sha256": "f41143e8472467e3dddda5c571cca39c615db6a24e8f6a9c4b61f225a263f17f",
+      "body_chars": 215,
+      "body_excerpt": "An account may be found in Iverson's Turing Award lecture, Notation as a Tool of Thought (1979). Incidentally, even Iverson is really descri"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-4",
+      "kind": "margin_note",
+      "label": "Margin note 5",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 4
+      },
+      "body_sha256": "c89a3379fdab30b21b1d28fa0e31ff67f4db3e5479fb6d8f3e16e0d214fceed4",
+      "body_chars": 75,
+      "body_excerpt": "For more on this argument, see Andy Matuschak, Why books don\u2019t work (2019)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-5",
+      "kind": "margin_note",
+      "label": "Margin note 6",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 5
+      },
+      "body_sha256": "c66632cad7dd63179cf3cacd1b887663c3791c48f133e5253e827fa6b81a1698",
+      "body_chars": 115,
+      "body_excerpt": "The literature on this effect is vast. A useful entr\u00e9e is: Gwern Branwen, Spaced Repetition for Efficient Learning."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-6",
+      "kind": "margin_note",
+      "label": "Margin note 7",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 6
+      },
+      "body_sha256": "3615d1dbfe3c716b4a0118a0392af918f02c479b446f9129ff6bae29586c458b",
+      "body_chars": 358,
+      "body_excerpt": "Particularly careful readers may wonder how this is possible, given that we stated earlier that the first review interval is 5 days. The exp"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-7",
+      "kind": "margin_note",
+      "label": "Margin note 8",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 7
+      },
+      "body_sha256": "a95eacb2ddd12356d1c99b0f2c95404af90269db0aeb46e6cf5c79162b3a3a3c",
+      "body_chars": 231,
+      "body_excerpt": "In the movie The Matrix one of the characters (Neo) uses a computer to very rapidly upload martial arts skills into his mind. As he opens hi"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-8",
+      "kind": "margin_note",
+      "label": "Margin note 9",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 8
+      },
+      "body_sha256": "c5fd58a379aae23398effe874644b4483d41ea14ff2c2f9340ae5ebb9a254e4a",
+      "body_chars": 84,
+      "body_excerpt": "We've made no attempt at all to scale this out. It's interesting to ponder doing so."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-9",
+      "kind": "margin_note",
+      "label": "Margin note 10",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 9
+      },
+      "body_sha256": "fa6dc68cbb2c52a477d9586b87a2a959eeb7f4f62f04ed94233ee47beeb4dbd1",
+      "body_chars": 547,
+      "body_excerpt": "In more detail: there were 16 users in the group that did the reviews, per usual, and 25 users in the group where reviews were delayed. The "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-10",
+      "kind": "margin_note",
+      "label": "Margin note 11",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 10
+      },
+      "body_sha256": "00c00b5c081f14a108dea89dedee776b65cb8e061f762246bdd2fc0d0294f4d2",
+      "body_chars": 191,
+      "body_excerpt": "Strictly speaking, Quizlet's basic product doesn't use spaced repetition. There is, however, a paid version using spaced repetition, and it'"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-11",
+      "kind": "margin_note",
+      "label": "Margin note 12",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 11
+      },
+      "body_sha256": "aa4c18e9fa1406a267ac264094864eecdf426e6076eb35777599fc79965fbbf3",
+      "body_chars": 148,
+      "body_excerpt": "They are, however, widely used within some interesting niche audiences. For instance, there is a thriving population of medical students usi"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-12",
+      "kind": "margin_note",
+      "label": "Margin note 13",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 12
+      },
+      "body_sha256": "d1bf2e7b7b8a4e3508ef32df7f82d6cf6776a795bd33dd23aba6739a37785d78",
+      "body_chars": 214,
+      "body_excerpt": "More generally, Wozniak is, along with Sebastian Leitner, the principal pioneer of spaced-repetition memory systems. Much of Wozniak's think"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-13",
+      "kind": "margin_note",
+      "label": "Margin note 14",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 13
+      },
+      "body_sha256": "d2d6382831829fa23c8500988e3a78840a00447d6c8cacae664734520b54bae9",
+      "body_chars": 151,
+      "body_excerpt": "Michael Nielsen, Augmenting Long-term Memory (2018), and Michael Nielsen, Using spaced repetition systems to see through a piece of mathemat"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-14",
+      "kind": "margin_note",
+      "label": "Margin note 15",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 14
+      },
+      "body_sha256": "a044aab6fdf503a8b1d9723bbe1a3d0b89efbe271de34f44f8c43aebd3abbd1c",
+      "body_chars": 196,
+      "body_excerpt": "Note added December 9, 2019: This claim appears to be based on an error in our data analysis, and is now retracted. We've left the text in f"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-15",
+      "kind": "margin_note",
+      "label": "Margin note 16",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 15
+      },
+      "body_sha256": "170d01f38f9db42ace8cdccc6f0f6203482f873b0d1b9596a01f1604f7d40f1a",
+      "body_chars": 52,
+      "body_excerpt": "Michael Nielsen, Augmenting Long-Term Memory (2018)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-16",
+      "kind": "margin_note",
+      "label": "Margin note 17",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 16
+      },
+      "body_sha256": "ab626e300174b5a7a32d9a33878dd289c5f1cc5c49cfb21e000f9c1c325b85fa",
+      "body_chars": 101,
+      "body_excerpt": "Steven M. Smith, Arthur Glenberg, and Robert A. Bjork, Environmental context and human memory (1978)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-17",
+      "kind": "margin_note",
+      "label": "Margin note 18",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 17
+      },
+      "body_sha256": "6706d1ee2ef3d86c897f5c55a00d09085cf70fba88885ff598d519455cc7d7bb",
+      "body_chars": 124,
+      "body_excerpt": "An enjoyable extended introduction to such techniques may be found in Joshua Foer's book \u201cMoonwalking with Einstein\u201d (2012)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-18",
+      "kind": "margin_note",
+      "label": "Margin note 19",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 18
+      },
+      "body_sha256": "6bccfa2c765a205b1f2d441dfb846d976dd915c4069d95a12f753a685a66e92f",
+      "body_chars": 408,
+      "body_excerpt": "A small minority of the population does not possess a mind's eye, and so cannot mentally visualize. This condition is known as aphantasia. O"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-19",
+      "kind": "margin_note",
+      "label": "Margin note 20",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 19
+      },
+      "body_sha256": "a18fe4784d6af5bfd6024c84a62c150d86b354e1c2db648adf4b6f55f77fc31b",
+      "body_chars": 139,
+      "body_excerpt": "See here and here for more on learning new fields using Anki. The last four paragraphs are adapted from Augmenting Long-term Memory (2018)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-20",
+      "kind": "margin_note",
+      "label": "Margin note 21",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 20
+      },
+      "body_sha256": "13cdaf5fe67212e096717d5f30deb0554e1bbe69820a78d779381d2deb761638",
+      "body_chars": 148,
+      "body_excerpt": "The last two paragraphs are adapted from our forthcoming mnemonic essay: Andy Matuschak and Michael Nielsen, How quantum teleportation works"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-21",
+      "kind": "margin_note",
+      "label": "Margin note 22",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 21
+      },
+      "body_sha256": "518bbf512437315f1bd08c6f00df82ea391970c9999e1f60f0f941d17bc18912",
+      "body_chars": 220,
+      "body_excerpt": "See, e.g., William G. Chase and Herbert A. Simon, Perception in Chess (1973). Some fascinating earlier work in a related vein was done by Ad"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-22",
+      "kind": "margin_note",
+      "label": "Margin note 23",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 22
+      },
+      "body_sha256": "a3a2637e939bb96f5a9548fe929387ebf0e0b962c19b70211de0dc71c3641c8c",
+      "body_chars": 501,
+      "body_excerpt": "We've met many mathematicians and physicists who say that one reason they went into mathematics or physics is because they hated the rote me"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-23",
+      "kind": "margin_note",
+      "label": "Margin note 24",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 23
+      },
+      "body_sha256": "955a6fd9e057e633e4faa9e90d8b5014935f5504db2490525bdf48e62e541320",
+      "body_chars": 250,
+      "body_excerpt": "The same phenomenon occurs in the conventional grade-school algorithms for multiplication and division. One of us has spun a short piece of "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-24",
+      "kind": "margin_note",
+      "label": "Margin note 25",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 24
+      },
+      "body_sha256": "645f4d2cefc90f1758c2d0d0e531d5df6e9129a8ae025bba3be8de550cbd8a07",
+      "body_chars": 267,
+      "body_excerpt": "Of course, a designer who spoke to an expert on, say, Babylonian mathematics, might well have come across some of these ideas. We'll ignore "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-25",
+      "kind": "margin_note",
+      "label": "Margin note 26",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 25
+      },
+      "body_sha256": "42b48ee4aa5cdfce30832e50cbad054874fa1eb5697c0e0837991dbccf47b682",
+      "body_chars": 64,
+      "body_excerpt": "These images excerpted from Astronomy: Exploring Time and Space."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-26",
+      "kind": "margin_note",
+      "label": "Margin note 27",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 26
+      },
+      "body_sha256": "efa07fc52ba2b7a4773069b986dd198e44735dadf68a56fb74076a5f8ae9537c",
+      "body_chars": 78,
+      "body_excerpt": "The narrator's script in this sketch is adapted from Cosmos (1984), episode 4."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-27",
+      "kind": "margin_note",
+      "label": "Margin note 28",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 27
+      },
+      "body_sha256": "1ea3f8bbff784be6bef8b362b94dc185893e2a8f8e6cc5cba0e12d57c1f3281b",
+      "body_chars": 124,
+      "body_excerpt": "Another large company which takes tools for thought extremely seriously is AutoDesk. A similar story could be told about it."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-28",
+      "kind": "margin_note",
+      "label": "Margin note 29",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 28
+      },
+      "body_sha256": "6cf4f596b397dff947be97b0de0691a4fe7575ed032819f125e0bda6c8195e91",
+      "body_chars": 289,
+      "body_excerpt": "The plural of medium is, of course, media. However, in this context media would usually mean many pieces of new content. That's not what we "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-29",
+      "kind": "margin_note",
+      "label": "Margin note 30",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 29
+      },
+      "body_sha256": "53cb526b1436be639ab1b8706b2f14ee40c8aa5e56cc7f8aaf58957bb2ed37d8",
+      "body_chars": 44,
+      "body_excerpt": "In Elad Gil's \u201cHigh Growth Handbook\u201d (2018)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-30",
+      "kind": "margin_note",
+      "label": "Margin note 31",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 30
+      },
+      "body_sha256": "42f19967725638ea5c8062bfe7a0e94267e8210d70e6af2d2080b2e0e75526a7",
+      "body_chars": 224,
+      "body_excerpt": "Of course, it does cost money for companies such as Sketch and Figma to duplicate features originating in Illustrator, and they have introdu"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-31",
+      "kind": "margin_note",
+      "label": "Margin note 32",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 31
+      },
+      "body_sha256": "e86bd29b8bd344901150ad0b0bcefa2b3b406e7b2db2c74654d81f9813000378",
+      "body_chars": 851,
+      "body_excerpt": "In fact, cloning is a real issue in gaming, especially in very technically simple games. An example is the game Threes, which took the devel"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-32",
+      "kind": "margin_note",
+      "label": "Margin note 33",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 32
+      },
+      "body_sha256": "e3a3818670662e4e46d70a0b9f3e6d067bd783c6762a666f3fd4c372ef8feb06",
+      "body_chars": 452,
+      "body_excerpt": "Programmer tools are a case where the insight-through-making loop operates quite well. The avoidance of the public goods problem is enabled "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-33",
+      "kind": "margin_note",
+      "label": "Margin note 34",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 33
+      },
+      "body_sha256": "acfaf460e527f8e14125c1212c990b123638dbd8056cb9c01ddf4d275c0d996d",
+      "body_chars": 100,
+      "body_excerpt": "Shan Carter and Michael Nielsen, Using Artificial Intelligence to Augment Human Intelligence (2017)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-34",
+      "kind": "margin_note",
+      "label": "Margin note 35",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 34
+      },
+      "body_sha256": "8bd482414f6cdf96b5d8e505e78c5250526c255025b8168154947f84d17695d3",
+      "body_chars": 149,
+      "body_excerpt": "Sufficiently motivated reasoners will, of course, ignore any conclusion they don't like. Such people are most likely a lost cause to serious"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-35",
+      "kind": "margin_note",
+      "label": "Margin note 36",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 35
+      },
+      "body_sha256": "e75c6a6495d642e3d3bc377a6e175d70e4eec4259a104cc6db8f4945b444c199",
+      "body_chars": 376,
+      "body_excerpt": "Of course, systems like Jupyter go back decades. There are antecedents in Knuth's notion of literate programming, in Mathematica notebooks, "
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-36",
+      "kind": "margin_note",
+      "label": "Margin note 37",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 36
+      },
+      "body_sha256": "d13fc47859ddc20a6fb2699d514200e34db0b04fbb209cf3137d8dfc1ec864b3",
+      "body_chars": 215,
+      "body_excerpt": "This is, of course, a placeholder term. \u201cExecutable essay\u201d would in many ways be more natural, though unfortunately that term is perhaps eve"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-37",
+      "kind": "margin_note",
+      "label": "Margin note 38",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 37
+      },
+      "body_sha256": "bfb3dec41a0a2817257369ec899c6a042dc2b8789dcd74ad13132025cdd77103",
+      "body_chars": 247,
+      "body_excerpt": "A related argument has been made in Eric von Hippel's book \u201cDemocratizing Innovation\u201d (2005), which identifies many instances where what app"
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-38",
+      "kind": "margin_note",
+      "label": "Margin note 39",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 38
+      },
+      "body_sha256": "c8e056f43bf8d05da0625b700a89f08ce4bdbae1cf128aee2f4324a05f433416",
+      "body_chars": 102,
+      "body_excerpt": "A similar argument has been made by Rachel Thomas, Providing a Good Education in Deep Learning (2016)."
+    },
+    {
+      "gold_key": "t:numinous-ttft:margin-note-39",
+      "kind": "margin_note",
+      "label": "Margin note 40",
+      "confidence": "strong",
+      "extraction_method": "html_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "span.marginnote",
+        "ordinal": 39
+      },
+      "body_sha256": "db919fdc2a4978b94aceb7e8bfba4ee35cb82f1c07f3a94c3dace11c1e77c7da",
+      "body_chars": 205,
+      "body_excerpt": "The masters of this are video game designers. See, for example, Dan Cook, Building a Princess Saving App (2008), and Jonathan Blow and Marc "
+    }
+  ],
+  "edges": [],
+  "expected_absences": [],
+  "diagnostics": {
+    "independent_dom_graph": {
+      "margin_note_count": 40,
+      "edge_count": 0
+    },
+    "dom_margin_note_body_sha256s": [
+      "98221c41f43810cd9011ceff2b74d4543def0f397a5303a3dfb46a52a1380876",
+      "e2b4b3ce0f9e356075926ab06aea31e51e750f0e307613a53d0adecc5b3c8956",
+      "2ef3693813f8d34ffa8b513edb0c74b28b1dd7e8a0ee451378392ad9be95390a",
+      "f41143e8472467e3dddda5c571cca39c615db6a24e8f6a9c4b61f225a263f17f",
+      "c89a3379fdab30b21b1d28fa0e31ff67f4db3e5479fb6d8f3e16e0d214fceed4",
+      "c66632cad7dd63179cf3cacd1b887663c3791c48f133e5253e827fa6b81a1698",
+      "3615d1dbfe3c716b4a0118a0392af918f02c479b446f9129ff6bae29586c458b",
+      "a95eacb2ddd12356d1c99b0f2c95404af90269db0aeb46e6cf5c79162b3a3a3c",
+      "c5fd58a379aae23398effe874644b4483d41ea14ff2c2f9340ae5ebb9a254e4a",
+      "fa6dc68cbb2c52a477d9586b87a2a959eeb7f4f62f04ed94233ee47beeb4dbd1",
+      "00c00b5c081f14a108dea89dedee776b65cb8e061f762246bdd2fc0d0294f4d2",
+      "aa4c18e9fa1406a267ac264094864eecdf426e6076eb35777599fc79965fbbf3",
+      "d1bf2e7b7b8a4e3508ef32df7f82d6cf6776a795bd33dd23aba6739a37785d78",
+      "d2d6382831829fa23c8500988e3a78840a00447d6c8cacae664734520b54bae9",
+      "a044aab6fdf503a8b1d9723bbe1a3d0b89efbe271de34f44f8c43aebd3abbd1c",
+      "170d01f38f9db42ace8cdccc6f0f6203482f873b0d1b9596a01f1604f7d40f1a",
+      "ab626e300174b5a7a32d9a33878dd289c5f1cc5c49cfb21e000f9c1c325b85fa",
+      "6706d1ee2ef3d86c897f5c55a00d09085cf70fba88885ff598d519455cc7d7bb",
+      "6bccfa2c765a205b1f2d441dfb846d976dd915c4069d95a12f753a685a66e92f",
+      "a18fe4784d6af5bfd6024c84a62c150d86b354e1c2db648adf4b6f55f77fc31b",
+      "13cdaf5fe67212e096717d5f30deb0554e1bbe69820a78d779381d2deb761638",
+      "518bbf512437315f1bd08c6f00df82ea391970c9999e1f60f0f941d17bc18912",
+      "a3a2637e939bb96f5a9548fe929387ebf0e0b962c19b70211de0dc71c3641c8c",
+      "955a6fd9e057e633e4faa9e90d8b5014935f5504db2490525bdf48e62e541320",
+      "645f4d2cefc90f1758c2d0d0e531d5df6e9129a8ae025bba3be8de550cbd8a07",
+      "42b48ee4aa5cdfce30832e50cbad054874fa1eb5697c0e0837991dbccf47b682",
+      "efa07fc52ba2b7a4773069b986dd198e44735dadf68a56fb74076a5f8ae9537c",
+      "1ea3f8bbff784be6bef8b362b94dc185893e2a8f8e6cc5cba0e12d57c1f3281b",
+      "6cf4f596b397dff947be97b0de0691a4fe7575ed032819f125e0bda6c8195e91",
+      "53cb526b1436be639ab1b8706b2f14ee40c8aa5e56cc7f8aaf58957bb2ed37d8",
+      "42f19967725638ea5c8062bfe7a0e94267e8210d70e6af2d2080b2e0e75526a7",
+      "e86bd29b8bd344901150ad0b0bcefa2b3b406e7b2db2c74654d81f9813000378",
+      "e3a3818670662e4e46d70a0b9f3e6d067bd783c6762a666f3fd4c372ef8feb06",
+      "acfaf460e527f8e14125c1212c990b123638dbd8056cb9c01ddf4d275c0d996d",
+      "8bd482414f6cdf96b5d8e505e78c5250526c255025b8168154947f84d17695d3",
+      "e75c6a6495d642e3d3bc377a6e175d70e4eec4259a104cc6db8f4945b444c199",
+      "d13fc47859ddc20a6fb2699d514200e34db0b04fbb209cf3137d8dfc1ec864b3",
+      "bfb3dec41a0a2817257369ec899c6a042dc2b8789dcd74ad13132025cdd77103",
+      "c8e056f43bf8d05da0625b700a89f08ce4bdbae1cf128aee2f4324a05f433416",
+      "db919fdc2a4978b94aceb7e8bfba4ee35cb82f1c07f3a94c3dace11c1e77c7da"
+    ]
+  }
+}

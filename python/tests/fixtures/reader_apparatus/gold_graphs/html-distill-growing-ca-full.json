@@ -1,0 +1,2408 @@
+{
+  "schema_version": 1,
+  "fixture_id": "html-distill-growing-ca-full",
+  "fixture_path": "reader_apparatus/html/distill-growing-ca-full.html",
+  "fixture_sha256": "7ca4cb707dcda6bdc1720dd12e174024f82b5447c8dea2bfefb0169453d56a39",
+  "coverage": "adapter_scope_exhaustive",
+  "audit_basis": "dom_distill_rendered_bibliography_and_footnotes",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "web_article",
+    "item_kinds": {
+      "bibliography_ref": 29,
+      "bibliography_entry": 38,
+      "footnote_ref": 5,
+      "footnote": 5
+    },
+    "edge_relations": {
+      "cites_bibliography_entry": 39,
+      "points_to_note": 5
+    },
+    "edge_methods": {
+      "distill_citation": 39,
+      "distill_footnote": 5
+    }
+  },
+  "items": [
+    {
+      "gold_key": "t:distill-growing-ca:footnote-0",
+      "kind": "footnote",
+      "body_sha256": "d9137aba31d440d945a2b9fb800b9a9682683014f66ae7ebea3b875371784ab0",
+      "body_chars": 145,
+      "body_excerpt": "Self-regulatory feedback loops trying maintain the body in a stable state or preserve its correct overall morphology under external perturba",
+      "label": "1",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 0,
+        "source_line": 427
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:footnote-0",
+      "kind": "footnote_ref",
+      "label": "1",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 0,
+        "source_line": 427
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-0",
+      "kind": "bibliography_ref",
+      "label": "[1]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 0,
+        "citation_keys": [
+          "PezzuloGiovanniLevin2016",
+          "C5IB00221D"
+        ],
+        "source_line": 432
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:PezzuloGiovanniLevin2016",
+      "kind": "bibliography_entry",
+      "label": "Top-down",
+      "body_sha256": "91da31ad430e54e5b4329e72f811dd408826d1381257022b055d3764428796f1",
+      "body_chars": 237,
+      "body_excerpt": "Top-down models in biology: explanation and control of complex living systems above the molecular level [link]Pezzulo, G. and Levin, M., 201",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 0,
+        "citation_key": "PezzuloGiovanniLevin2016",
+        "target_id": "PezzuloGiovanniLevin2016",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:C5IB00221D",
+      "kind": "bibliography_entry",
+      "label": "Re-membering",
+      "body_sha256": "ae68b85caaa4c8dde6d025a685ed9f66e1b5a6cdddb4d3a75da611296a6ee86b",
+      "body_chars": 275,
+      "body_excerpt": "Re-membering the body: applications of computational neuroscience to the top-down control of regeneration of limbs and other complex organs ",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 0,
+        "citation_key": "C5IB00221D",
+        "target_id": "C5IB00221D",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-1",
+      "kind": "bibliography_ref",
+      "label": "[2]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 1,
+        "citation_keys": [
+          "Pai313"
+        ],
+        "source_line": 463
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Pai313",
+      "kind": "bibliography_entry",
+      "label": "Transmembrane",
+      "body_sha256": "b24122b499fbbabe3e4295bb07c45cbdb500ed49ab73c7a82c96418d5b1d3915",
+      "body_chars": 249,
+      "body_excerpt": "Transmembrane voltage potential controls embryonic eye patterning in Xenopus laevis [link]Pai, V.P., Aw, S., Shomrat, T., Lemire, J.M. and L",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 1,
+        "citation_key": "Pai313",
+        "target_id": "Pai313",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:footnote-1",
+      "kind": "footnote",
+      "body_sha256": "cc828a1c1d4b91168e98f9ae3faf7c669ee812863a8f4f2c1aed93a855667302",
+      "body_chars": 97,
+      "body_excerpt": "We set RGB channels of the seed to zero because we want it to be visible on the white background.",
+      "label": "2",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 1,
+        "source_line": 705
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:footnote-1",
+      "kind": "footnote_ref",
+      "label": "2",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 1,
+        "source_line": 705
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:footnote-2",
+      "kind": "footnote",
+      "body_sha256": "1fdeb0eaeb3deaf7716d774e78710184b81591b94e579dfc86e70d5a68baefbd",
+      "body_chars": 156,
+      "body_excerpt": "This should be a sufficient number of steps to grow the pattern of the size we work with (40x40), even considering the stochastic nature of ",
+      "label": "3",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 2,
+        "source_line": 709
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:footnote-2",
+      "kind": "footnote_ref",
+      "label": "3",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 2,
+        "source_line": 709
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:footnote-3",
+      "kind": "footnote",
+      "body_sha256": "41d579b26405ba02f20c9725c02dbabe8897dd14f4c8bd0463e936f80b5ab3d1",
+      "body_chars": 369,
+      "body_excerpt": "We observed training instabilities, that were manifesting themselves as sudden jumps of the loss value in the later stages of the training. ",
+      "label": "4",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 3,
+        "source_line": 716
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:footnote-3",
+      "kind": "footnote_ref",
+      "label": "4",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 3,
+        "source_line": 716
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-2",
+      "kind": "bibliography_ref",
+      "label": "[3]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 2,
+        "citation_keys": [
+          "Salimans2016WeightNA"
+        ],
+        "source_line": 721
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Salimans2016WeightNA",
+      "kind": "bibliography_entry",
+      "label": "Weight",
+      "body_sha256": "0176a8ff55b640f816ab84551b4c623dbe1acf009580c3e49bd19f45e83a9130",
+      "body_chars": 144,
+      "body_excerpt": "Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks [PDF]Salimans, T. and Kingma, D.P., 2016. N",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 2,
+        "citation_key": "Salimans2016WeightNA",
+        "target_id": "Salimans2016WeightNA",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-3",
+      "kind": "bibliography_ref",
+      "label": "[4]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 3,
+        "citation_keys": [
+          "turing1990chemical"
+        ],
+        "source_line": 1017
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:turing1990chemical",
+      "kind": "bibliography_entry",
+      "label": "The",
+      "body_sha256": "8ab5a83d7cfafa61143c1c23a95ef785a18013d040b2e61fec0db7a7b3fbdb7b",
+      "body_chars": 156,
+      "body_excerpt": "The chemical basis of morphogenesis [link]Turing, A.M., 1990. Bulletin of mathematical biology, Vol 52(1-2), pp. 153--197. Springer. DOI: 10",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 3,
+        "citation_key": "turing1990chemical",
+        "target_id": "turing1990chemical",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-4",
+      "kind": "bibliography_ref",
+      "label": "[5]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 4,
+        "citation_keys": [
+          "Pearson189"
+        ],
+        "source_line": 1021
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Pearson189",
+      "kind": "bibliography_entry",
+      "label": "Complex",
+      "body_sha256": "06548fbc8353d0b3244a9a21c1a904631e4cc53fb93cffd41d77387870ce64b4",
+      "body_chars": 187,
+      "body_excerpt": "Complex Patterns in a Simple System [link]Pearson, J.E., 1993. Science, Vol 261(5118), pp. 189--192. American Association for the Advancemen",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 4,
+        "citation_key": "Pearson189",
+        "target_id": "Pearson189",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-5",
+      "kind": "bibliography_ref",
+      "label": "[6]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 5,
+        "citation_keys": [
+          "10.5555/1102024"
+        ],
+        "source_line": 1027
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:10.5555/1102024",
+      "kind": "bibliography_entry",
+      "label": "Theory",
+      "body_sha256": "88360cd32306761dd546cb836eba47387e6d1aff419f3f3b80f518eefab7756f",
+      "body_chars": 102,
+      "body_excerpt": "Theory of Self-Reproducing Automata Neumann, J.V. and Burks, A.W., 1966. University of Illinois Press.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 5,
+        "citation_key": "10.5555/1102024",
+        "target_id": "10.5555/1102024",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-6",
+      "kind": "bibliography_ref",
+      "label": "[7]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 6,
+        "citation_keys": [
+          "10.2307/24927642"
+        ],
+        "source_line": 1031
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:10.2307/24927642",
+      "kind": "bibliography_entry",
+      "label": "MATHEMATICAL",
+      "body_sha256": "65c61a6aff25eb04b51bba922fac46c7adf3a03fac71dfb861f23a10cb4aa292",
+      "body_chars": 146,
+      "body_excerpt": "MATHEMATICAL GAMES [link]Gardner, M., 1970. Scientific American, Vol 223(4), pp. 120--123. Scientific American, a division of Nature America",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 6,
+        "citation_key": "10.2307/24927642",
+        "target_id": "10.2307/24927642",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-7",
+      "kind": "bibliography_ref",
+      "label": "[8]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 7,
+        "citation_keys": [
+          "Wolfram2002ANK"
+        ],
+        "source_line": 1034
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Wolfram2002ANK",
+      "kind": "bibliography_entry",
+      "label": "A",
+      "body_sha256": "90db9faaa181bb0cc819697ae68a0c90de2c0b5d1c28ce28a4fc9011df54fd31",
+      "body_chars": 61,
+      "body_excerpt": "A New Kind of Science [link]Wolfram, S., 2002. Wolfram Media.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 7,
+        "citation_key": "Wolfram2002ANK",
+        "target_id": "Wolfram2002ANK",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-8",
+      "kind": "bibliography_ref",
+      "label": "[9]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 8,
+        "citation_keys": [
+          "rafler2011generalization"
+        ],
+        "source_line": 1042
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:rafler2011generalization",
+      "kind": "bibliography_entry",
+      "label": "Generalization",
+      "body_sha256": "a0ec7d227e67e831a9b9dcbf6a465d89549f765a7ea13348633d434ba42efd0a",
+      "body_chars": 95,
+      "body_excerpt": "Generalization of Conway's \"Game of Life\" to a continuous domain - SmoothLife Rafler, S., 2011.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 8,
+        "citation_key": "rafler2011generalization",
+        "target_id": "rafler2011generalization",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-9",
+      "kind": "bibliography_ref",
+      "label": "[10]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 9,
+        "citation_keys": [
+          "Chan_2019",
+          "Reinke2019IntrinsicallyME"
+        ],
+        "source_line": 1043
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Chan_2019",
+      "kind": "bibliography_entry",
+      "label": "Lenia:",
+      "body_sha256": "dbb0af8660fe9d1f44d5387471824a46df2e1deef8bb1428a9ab6f64fe1290a0",
+      "body_chars": 159,
+      "body_excerpt": "Lenia: Biology of Artificial Life [link]Chan, B.W., 2019. Complex Systems, Vol 28(3), pp. 251–286. Wolfram Research, Inc. DOI: 10.25088/comp",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 9,
+        "citation_key": "Chan_2019",
+        "target_id": "Chan_2019",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Reinke2019IntrinsicallyME",
+      "kind": "bibliography_entry",
+      "label": "Intrinsically",
+      "body_sha256": "863b38ccb3ca52e3d5fc01ee7f466b393733cef0d74e62f609af0bd2376d2f33",
+      "body_chars": 173,
+      "body_excerpt": "Intrinsically Motivated Exploration for Automated Discovery of Patterns in Morphogenetic Systems Reinke, C., Etcheverry, M. and Oudeyer, P.,",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 9,
+        "citation_key": "Reinke2019IntrinsicallyME",
+        "target_id": "Reinke2019IntrinsicallyME",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-10",
+      "kind": "bibliography_ref",
+      "label": "[11]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 10,
+        "citation_keys": [
+          "10.1007/978-3-642-19167-1_2",
+          "Nichele2018CANEATEC"
+        ],
+        "source_line": 1050
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:10.1007/978-3-642-19167-1_2",
+      "kind": "bibliography_entry",
+      "label": "Evolving",
+      "body_sha256": "95d4ea3294618e60831dc8af582eca24e18408f5c397bad8aa2470f95c8cfba7",
+      "body_chars": 181,
+      "body_excerpt": "Evolving Self-organizing Cellular Automata Based on Neural Network Genotypes Elmenreich, W. and Fehervari, I., 2011. Self-Organizing Systems",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 10,
+        "citation_key": "10.1007/978-3-642-19167-1_2",
+        "target_id": "10.1007/978-3-642-19167-1_2",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Nichele2018CANEATEC",
+      "kind": "bibliography_entry",
+      "label": "CA-NEAT:",
+      "body_sha256": "6e8c2237a872795604aea8901b592211f5fe3efbbf0ec78005cc245ba343743a",
+      "body_chars": 242,
+      "body_excerpt": "CA-NEAT: Evolved Compositional Pattern Producing Networks for Cellular Automata Morphogenesis and Replication Nichele, S., Ose, M.B., Risi, ",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 10,
+        "citation_key": "Nichele2018CANEATEC",
+        "target_id": "Nichele2018CANEATEC",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-11",
+      "kind": "bibliography_ref",
+      "label": "[12]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 11,
+        "citation_keys": [
+          "Miller2004"
+        ],
+        "source_line": 1051
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Miller2004",
+      "kind": "bibliography_entry",
+      "label": "Evolving",
+      "body_sha256": "4500b1a00a9df41f6f9462ab7dbe5b818fe7bc537509477c4c4330cb35f39b87",
+      "body_chars": 141,
+      "body_excerpt": "Evolving a Self-Repairing, Self-Regulating, French Flag Organism Miller, J., 2004. , Vol 3102, pp. 129-139. DOI: 10.1007/978-3-540-24854-5_1",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 11,
+        "citation_key": "Miller2004",
+        "target_id": "Miller2004",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-12",
+      "kind": "bibliography_ref",
+      "label": "[13]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 12,
+        "citation_keys": [
+          "wulff1993learning",
+          "Gilpin2018CellularAA"
+        ],
+        "source_line": 1060
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:wulff1993learning",
+      "kind": "bibliography_entry",
+      "label": "Learning",
+      "body_sha256": "9c6d7fc0aa890654c43f7099543b2fe6378d92b6cf4ab9f6c2600aaa4784e141",
+      "body_chars": 261,
+      "body_excerpt": "Learning Cellular Automaton Dynamics with Neural Networks [PDF]Wulff, N.H. and Hertz, J.A., 1992. Proceedings of the 5th International Confe",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 12,
+        "citation_key": "wulff1993learning",
+        "target_id": "wulff1993learning",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Gilpin2018CellularAA",
+      "kind": "bibliography_entry",
+      "label": "Cellular",
+      "body_sha256": "1295c867fcfb74e5bec0b1435cd9074a5687722e6ce1d8ae443e36378931314d",
+      "body_chars": 118,
+      "body_excerpt": "Cellular automata as convolutional neural networks [PDF]Gilpin, W., 2018. Physical review. E, Vol 100 3-1, pp. 032402.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 12,
+        "citation_key": "Gilpin2018CellularAA",
+        "target_id": "Gilpin2018CellularAA",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-13",
+      "kind": "bibliography_ref",
+      "label": "[14]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 13,
+        "citation_keys": [
+          "Kaiser2015NeuralGPU",
+          "Freivalds2017ImprovingTN"
+        ],
+        "source_line": 1069
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Kaiser2015NeuralGPU",
+      "kind": "bibliography_entry",
+      "label": "Neural",
+      "body_sha256": "3eb55b6bb3ebee312c0557dbd769aa988003c580601e5ff9b88cf5f46834fffc",
+      "body_chars": 90,
+      "body_excerpt": "Neural GPUs Learn Algorithms Kaiser, L. and Sutskever, I., 2015. CoRR, Vol abs/1511.08228.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 13,
+        "citation_key": "Kaiser2015NeuralGPU",
+        "target_id": "Kaiser2015NeuralGPU",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Freivalds2017ImprovingTN",
+      "kind": "bibliography_entry",
+      "label": "Improving",
+      "body_sha256": "f3777744f9501a19b98b2b315c368320310610e3fe266f2a45090eef6bf564e7",
+      "body_chars": 124,
+      "body_excerpt": "Improving the Neural GPU Architecture for Algorithm Learning Freivalds, K. and Liepins, R., 2017. ArXiv, Vol abs/1702.08727.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 13,
+        "citation_key": "Freivalds2017ImprovingTN",
+        "target_id": "Freivalds2017ImprovingTN",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-14",
+      "kind": "bibliography_ref",
+      "label": "[15]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 14,
+        "citation_keys": [
+          "wu2019comprehensive"
+        ],
+        "source_line": 1077
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:wu2019comprehensive",
+      "kind": "bibliography_entry",
+      "label": "A",
+      "body_sha256": "cff7d1e46077aae8e1aa1e7c5c3acea8c36773b0dfc3e96ae45ef659ebcaab10",
+      "body_chars": 114,
+      "body_excerpt": "A Comprehensive Survey on Graph Neural Networks Wu, Z., Pan, S., Chen, F., Long, G., Zhang, C. and Yu, P.S., 2019.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 14,
+        "citation_key": "wu2019comprehensive",
+        "target_id": "wu2019comprehensive",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-15",
+      "kind": "bibliography_ref",
+      "label": "[16]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 15,
+        "citation_keys": [
+          "NIPS2015_5954"
+        ],
+        "source_line": 1083
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:NIPS2015_5954",
+      "kind": "bibliography_entry",
+      "label": "Convolutional",
+      "body_sha256": "32f355231e8b541be5a27b9dfd6d393e87be8822481eb46e025a917c5b73c5b0",
+      "body_chars": 364,
+      "body_excerpt": "Convolutional Networks on Graphs for Learning Molecular Fingerprints [PDF]Duvenaud, D., Maclaurin, D., Aguilera-Iparraguirre, J., G\\'{o}mez-",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 15,
+        "citation_key": "NIPS2015_5954",
+        "target_id": "NIPS2015_5954",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-16",
+      "kind": "bibliography_ref",
+      "label": "[17]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 16,
+        "citation_keys": [
+          "Wang_2019"
+        ],
+        "source_line": 1085
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Wang_2019",
+      "kind": "bibliography_entry",
+      "label": "Dynamic",
+      "body_sha256": "42001d2701283d6597e332bd52ae9785d7de2f09cfc3ed75d3aeaa8bc6fdb302",
+      "body_chars": 249,
+      "body_excerpt": "Dynamic Graph CNN for Learning on Point Clouds [link]Wang, Y., Sun, Y., Liu, Z., Sarma, S.E., Bronstein, M.M. and Solomon, J.M., 2019. ACM T",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 16,
+        "citation_key": "Wang_2019",
+        "target_id": "Wang_2019",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-17",
+      "kind": "bibliography_ref",
+      "label": "[18]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 17,
+        "citation_keys": [
+          "pathak19assemblies"
+        ],
+        "source_line": 1091
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:pathak19assemblies",
+      "kind": "bibliography_entry",
+      "label": "Learning",
+      "body_sha256": "4347660058f8c5997ba0f9c61c9eb390ec161bed0ffc79373ce960d53872a22c",
+      "body_chars": 172,
+      "body_excerpt": "Learning to Control Self- Assembling Morphologies: A Study of Generalization via Modularity [link]Pathak, D., Lu, C., Darrell, T., Isola, P.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 17,
+        "citation_key": "pathak19assemblies",
+        "target_id": "pathak19assemblies",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-18",
+      "kind": "bibliography_ref",
+      "label": "[19]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 18,
+        "citation_keys": [
+          "boids"
+        ],
+        "source_line": 1097
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:boids",
+      "kind": "bibliography_entry",
+      "label": "Flocks,",
+      "body_sha256": "81ab92071d0ab22cdaab51e42cb97bc38300e8b47dc6c93bcbe6fd36bcbc8ad5",
+      "body_chars": 194,
+      "body_excerpt": "Flocks, Herds and Schools: A Distributed Behavioral Model [link]Reynolds, C.W., 1987. SIGGRAPH Comput. Graph., Vol 21(4), pp. 25–34. Associa",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 18,
+        "citation_key": "boids",
+        "target_id": "boids",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-19",
+      "kind": "bibliography_ref",
+      "label": "[20]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 19,
+        "citation_keys": [
+          "mathews2017mergeable"
+        ],
+        "source_line": 1101
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:mathews2017mergeable",
+      "kind": "bibliography_entry",
+      "label": "Mergeable",
+      "body_sha256": "59b73d8685803c11f7d123832f2b49e16898fde68dac7fad456e2a3f237d2cd1",
+      "body_chars": 215,
+      "body_excerpt": "Mergeable nervous systems for robots Mathews, N., Christensen, A.L., O’Grady, R., Mondada, F. and Dorigo, M., 2017. Nature communications, V",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 19,
+        "citation_key": "mathews2017mergeable",
+        "target_id": "mathews2017mergeable",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-20",
+      "kind": "bibliography_ref",
+      "label": "[21]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 20,
+        "citation_keys": [
+          "kilobots"
+        ],
+        "source_line": 1102
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:kilobots",
+      "kind": "bibliography_entry",
+      "label": "Kilobot:",
+      "body_sha256": "4e2dfd6b29789110796982b744d6c91219acd9b342435df46887c26b96d291e4",
+      "body_chars": 237,
+      "body_excerpt": "Kilobot: A low cost scalable robot system for collective behaviors {Rubenstein}, M., {Ahler}, C. and {Nagpal}, R., 2012. 2012 IEEE Internati",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 20,
+        "citation_key": "kilobots",
+        "target_id": "kilobots",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-21",
+      "kind": "bibliography_ref",
+      "label": "[22]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 21,
+        "citation_keys": [
+          "WhatBodiesThink"
+        ],
+        "source_line": 1118
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:WhatBodiesThink",
+      "kind": "bibliography_entry",
+      "label": "What",
+      "body_sha256": "e447c395b2e8a079e521fdfa06855da3c37b7791d794dbcbf09d0656c055e23b",
+      "body_chars": 98,
+      "body_excerpt": "What Bodies Think About: Bioelectric Computation Outside the Nervous System [link]Levin, M., 2018.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 21,
+        "citation_key": "WhatBodiesThink",
+        "target_id": "WhatBodiesThink",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-22",
+      "kind": "bibliography_ref",
+      "label": "[23]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 22,
+        "citation_keys": [
+          "Kriegman1853",
+          "Kamm2018"
+        ],
+        "source_line": 1131
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Kriegman1853",
+      "kind": "bibliography_entry",
+      "label": "A",
+      "body_sha256": "db323d62dfd377ca12fb8ad2c2c3b607588ce9bedccf97c7e8e510f8d1141a0a",
+      "body_chars": 263,
+      "body_excerpt": "A scalable pipeline for designing reconfigurable organisms [link]Kriegman, S., Blackiston, D., Levin, M. and Bongard, J., 2020. Proceedings ",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 22,
+        "citation_key": "Kriegman1853",
+        "target_id": "Kriegman1853",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:Kamm2018",
+      "kind": "bibliography_entry",
+      "label": "Perspective:",
+      "body_sha256": "741da5930f5452c5ce5bce631635e117d7d7b581e6cbd49d729d7455a59ab976",
+      "body_chars": 416,
+      "body_excerpt": "Perspective: The promise of multi-cellular engineered living systems [link]Kamm, R.D., Bashir, R., Arora, N., Dar, R.D., Gillette, M.U., Gri",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 22,
+        "citation_key": "Kamm2018",
+        "target_id": "Kamm2018",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-23",
+      "kind": "bibliography_ref",
+      "label": "[24]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 23,
+        "citation_keys": [
+          "doi:10.1080/19420889.2016.1192733"
+        ],
+        "source_line": 1138
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:doi:10.1080/19420889.2016.1192733",
+      "kind": "bibliography_entry",
+      "label": "Physiological",
+      "body_sha256": "f023aa0656f512695a0e02378c3fdf1852481f8299cebc1390bd25d7e361a56d",
+      "body_chars": 266,
+      "body_excerpt": "Physiological inputs regulate species-specific anatomy during embryogenesis and regeneration [link]Sullivan, K.G., Emmons-Bell, M. and Levin",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 23,
+        "citation_key": "doi:10.1080/19420889.2016.1192733",
+        "target_id": "doi:10.1080/19420889.2016.1192733",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-24",
+      "kind": "bibliography_ref",
+      "label": "[25]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 24,
+        "citation_keys": [
+          "OVIEDO2010188",
+          "DURANT20172231"
+        ],
+        "source_line": 1140
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:OVIEDO2010188",
+      "kind": "bibliography_entry",
+      "label": "Long-range",
+      "body_sha256": "9ecc469cdc4e74d9aee199929b184e440b1dbedf6f54c2044f44f167df9d8f5c",
+      "body_chars": 328,
+      "body_excerpt": "Long-range neural and gap junction protein-mediated cues control polarity during planarian regeneration [link]Oviedo, N.J., Morokuma, J., Wa",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 24,
+        "citation_key": "OVIEDO2010188",
+        "target_id": "OVIEDO2010188",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:DURANT20172231",
+      "kind": "bibliography_entry",
+      "label": "Long-Term,",
+      "body_sha256": "4028e85feb555fc14b1d9ee991126d75e1077d16add8611e9776dc70c5df776d",
+      "body_chars": 289,
+      "body_excerpt": "Long-Term, Stochastic Editing of Regenerative Anatomy via Targeting Endogenous Bioelectric Gradients [link]Durant, F., Morokuma, J., Fields,",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 24,
+        "citation_key": "DURANT20172231",
+        "target_id": "DURANT20172231",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-25",
+      "kind": "bibliography_ref",
+      "label": "[26]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_keys": [
+          "doi:10.1162/isal_a_00043",
+          "PIETAK201852",
+          "doi:10.1162/isal_a_00041",
+          "doi:10.1162/isal_a_029"
+        ],
+        "source_line": 1145
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_00043",
+      "kind": "bibliography_entry",
+      "label": "Pattern",
+      "body_sha256": "afa1692197b103b7b8b2e7c821f5993b13f2dddf5149a1ec2acb5bc7607853e4",
+      "body_chars": 184,
+      "body_excerpt": "Pattern Regeneration in Coupled Networks [link]Moore, D.G., Walker, S.I. and Levin, M., 2018. Artificial Life Conference Proceedings, Vol (3",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_00043",
+        "target_id": "doi:10.1162/isal_a_00043",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:PIETAK201852",
+      "kind": "bibliography_entry",
+      "label": "Bioelectrical",
+      "body_sha256": "2ffde600132cfeac303158fdc783dec0ca6c746fbb3b4407da847425824cc2cf",
+      "body_chars": 290,
+      "body_excerpt": "Bioelectrical control of positional information in development and regeneration: A review of conceptual and computational advances [link]Pie",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "PIETAK201852",
+        "target_id": "PIETAK201852",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_00041",
+      "kind": "bibliography_entry",
+      "label": "Modeling",
+      "body_sha256": "e47e1a40d9d5fa7c0d39fe0c060324d8f43d366979d3045bb82fb99541e56d1d",
+      "body_chars": 246,
+      "body_excerpt": "Modeling Cell Migration in a Simulated Bioelectrical Signaling Network for Anatomical Regeneration [link]Ferreira, G.B.S., Scheutz, M. and L",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_00041",
+        "target_id": "doi:10.1162/isal_a_00041",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_029",
+      "kind": "bibliography_entry",
+      "label": "Investigating",
+      "body_sha256": "4e0dd528d0285bfaae706d65779ae11a2acfae822b58017cb9a6c5c1a4b32098",
+      "body_chars": 249,
+      "body_excerpt": "Investigating the effects of noise on a cell-to-cell communication mechanism for structure regeneration [link]Ferreira, G.B.S., Scheutz, M. ",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_029",
+        "target_id": "doi:10.1162/isal_a_029",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-26",
+      "kind": "bibliography_ref",
+      "label": "[27]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 26,
+        "citation_keys": [
+          "SocialIntelligence"
+        ],
+        "source_line": 1195
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:SocialIntelligence",
+      "kind": "bibliography_entry",
+      "label": "Social",
+      "body_sha256": "12c31babe59e25c121e8f8fb77b6b56c9a734859a4184ba5a7cf3d53ebb88503",
+      "body_chars": 46,
+      "body_excerpt": "Social Intelligence [link]Arcas, B.A.y., 2019.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 26,
+        "citation_key": "SocialIntelligence",
+        "target_id": "SocialIntelligence",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-27",
+      "kind": "bibliography_ref",
+      "label": "[28]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 27,
+        "citation_keys": [
+          "mordvintsev2015inceptionism"
+        ],
+        "source_line": 1220
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:bibliography:mordvintsev2015inceptionism",
+      "kind": "bibliography_entry",
+      "label": "Inceptionism:",
+      "body_sha256": "bd782150331d74ae78b25f01a0038472b2a005fef4b549f564e353a7fb9eea55",
+      "body_chars": 121,
+      "body_excerpt": "Inceptionism: Going deeper into neural networks [HTML]Mordvintsev, A., Olah, C. and Tyka, M., 2015. Google Research Blog.",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 27,
+        "citation_key": "mordvintsev2015inceptionism",
+        "target_id": "mordvintsev2015inceptionism",
+        "source_line": 1311
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:cite-28",
+      "kind": "bibliography_ref",
+      "label": "[29]",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 28,
+        "citation_keys": [
+          "WhatBodiesThink"
+        ],
+        "source_line": 1222
+      }
+    },
+    {
+      "gold_key": "t:distill-growing-ca:footnote-4",
+      "kind": "footnote",
+      "body_sha256": "de21205d493e31325d54ff670af3f2e0497cd96c3c36f7af6470915845e24306",
+      "body_chars": 302,
+      "body_excerpt": "We noticed that our models are more sensitive to the accuracy of small magnitude activation values, rather than the large ones. That’s why w",
+      "label": "5",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 4,
+        "source_line": 1257
+      }
+    },
+    {
+      "gold_key": "m:distill-growing-ca:footnote-4",
+      "kind": "footnote_ref",
+      "label": "5",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 4,
+        "source_line": 1257
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "e:distill-growing-ca:footnote-0",
+      "from_gold_key": "m:distill-growing-ca:footnote-0",
+      "to_gold_key": "t:distill-growing-ca:footnote-0",
+      "relation": "points_to_note",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 0,
+        "source_line": 427
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-0:PezzuloGiovanniLevin2016",
+      "from_gold_key": "m:distill-growing-ca:cite-0",
+      "to_gold_key": "t:distill-growing-ca:bibliography:PezzuloGiovanniLevin2016",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 0,
+        "citation_key": "PezzuloGiovanniLevin2016",
+        "target_id": "PezzuloGiovanniLevin2016"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-0:C5IB00221D",
+      "from_gold_key": "m:distill-growing-ca:cite-0",
+      "to_gold_key": "t:distill-growing-ca:bibliography:C5IB00221D",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 0,
+        "citation_key": "C5IB00221D",
+        "target_id": "C5IB00221D"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-1:Pai313",
+      "from_gold_key": "m:distill-growing-ca:cite-1",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Pai313",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 1,
+        "citation_key": "Pai313",
+        "target_id": "Pai313"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:footnote-1",
+      "from_gold_key": "m:distill-growing-ca:footnote-1",
+      "to_gold_key": "t:distill-growing-ca:footnote-1",
+      "relation": "points_to_note",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 1,
+        "source_line": 705
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:footnote-2",
+      "from_gold_key": "m:distill-growing-ca:footnote-2",
+      "to_gold_key": "t:distill-growing-ca:footnote-2",
+      "relation": "points_to_note",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 2,
+        "source_line": 709
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:footnote-3",
+      "from_gold_key": "m:distill-growing-ca:footnote-3",
+      "to_gold_key": "t:distill-growing-ca:footnote-3",
+      "relation": "points_to_note",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 3,
+        "source_line": 716
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-2:Salimans2016WeightNA",
+      "from_gold_key": "m:distill-growing-ca:cite-2",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Salimans2016WeightNA",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 2,
+        "citation_key": "Salimans2016WeightNA",
+        "target_id": "Salimans2016WeightNA"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-3:turing1990chemical",
+      "from_gold_key": "m:distill-growing-ca:cite-3",
+      "to_gold_key": "t:distill-growing-ca:bibliography:turing1990chemical",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 3,
+        "citation_key": "turing1990chemical",
+        "target_id": "turing1990chemical"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-4:Pearson189",
+      "from_gold_key": "m:distill-growing-ca:cite-4",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Pearson189",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 4,
+        "citation_key": "Pearson189",
+        "target_id": "Pearson189"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-5:10.5555/1102024",
+      "from_gold_key": "m:distill-growing-ca:cite-5",
+      "to_gold_key": "t:distill-growing-ca:bibliography:10.5555/1102024",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 5,
+        "citation_key": "10.5555/1102024",
+        "target_id": "10.5555/1102024"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-6:10.2307/24927642",
+      "from_gold_key": "m:distill-growing-ca:cite-6",
+      "to_gold_key": "t:distill-growing-ca:bibliography:10.2307/24927642",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 6,
+        "citation_key": "10.2307/24927642",
+        "target_id": "10.2307/24927642"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-7:Wolfram2002ANK",
+      "from_gold_key": "m:distill-growing-ca:cite-7",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Wolfram2002ANK",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 7,
+        "citation_key": "Wolfram2002ANK",
+        "target_id": "Wolfram2002ANK"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-8:rafler2011generalization",
+      "from_gold_key": "m:distill-growing-ca:cite-8",
+      "to_gold_key": "t:distill-growing-ca:bibliography:rafler2011generalization",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 8,
+        "citation_key": "rafler2011generalization",
+        "target_id": "rafler2011generalization"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-9:Chan_2019",
+      "from_gold_key": "m:distill-growing-ca:cite-9",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Chan_2019",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 9,
+        "citation_key": "Chan_2019",
+        "target_id": "Chan_2019"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-9:Reinke2019IntrinsicallyME",
+      "from_gold_key": "m:distill-growing-ca:cite-9",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Reinke2019IntrinsicallyME",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 9,
+        "citation_key": "Reinke2019IntrinsicallyME",
+        "target_id": "Reinke2019IntrinsicallyME"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-10:10.1007/978-3-642-19167-1_2",
+      "from_gold_key": "m:distill-growing-ca:cite-10",
+      "to_gold_key": "t:distill-growing-ca:bibliography:10.1007/978-3-642-19167-1_2",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 10,
+        "citation_key": "10.1007/978-3-642-19167-1_2",
+        "target_id": "10.1007/978-3-642-19167-1_2"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-10:Nichele2018CANEATEC",
+      "from_gold_key": "m:distill-growing-ca:cite-10",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Nichele2018CANEATEC",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 10,
+        "citation_key": "Nichele2018CANEATEC",
+        "target_id": "Nichele2018CANEATEC"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-11:Miller2004",
+      "from_gold_key": "m:distill-growing-ca:cite-11",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Miller2004",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 11,
+        "citation_key": "Miller2004",
+        "target_id": "Miller2004"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-12:wulff1993learning",
+      "from_gold_key": "m:distill-growing-ca:cite-12",
+      "to_gold_key": "t:distill-growing-ca:bibliography:wulff1993learning",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 12,
+        "citation_key": "wulff1993learning",
+        "target_id": "wulff1993learning"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-12:Gilpin2018CellularAA",
+      "from_gold_key": "m:distill-growing-ca:cite-12",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Gilpin2018CellularAA",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 12,
+        "citation_key": "Gilpin2018CellularAA",
+        "target_id": "Gilpin2018CellularAA"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-13:Kaiser2015NeuralGPU",
+      "from_gold_key": "m:distill-growing-ca:cite-13",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Kaiser2015NeuralGPU",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 13,
+        "citation_key": "Kaiser2015NeuralGPU",
+        "target_id": "Kaiser2015NeuralGPU"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-13:Freivalds2017ImprovingTN",
+      "from_gold_key": "m:distill-growing-ca:cite-13",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Freivalds2017ImprovingTN",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 13,
+        "citation_key": "Freivalds2017ImprovingTN",
+        "target_id": "Freivalds2017ImprovingTN"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-14:wu2019comprehensive",
+      "from_gold_key": "m:distill-growing-ca:cite-14",
+      "to_gold_key": "t:distill-growing-ca:bibliography:wu2019comprehensive",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 14,
+        "citation_key": "wu2019comprehensive",
+        "target_id": "wu2019comprehensive"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-15:NIPS2015_5954",
+      "from_gold_key": "m:distill-growing-ca:cite-15",
+      "to_gold_key": "t:distill-growing-ca:bibliography:NIPS2015_5954",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 15,
+        "citation_key": "NIPS2015_5954",
+        "target_id": "NIPS2015_5954"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-16:Wang_2019",
+      "from_gold_key": "m:distill-growing-ca:cite-16",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Wang_2019",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 16,
+        "citation_key": "Wang_2019",
+        "target_id": "Wang_2019"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-17:pathak19assemblies",
+      "from_gold_key": "m:distill-growing-ca:cite-17",
+      "to_gold_key": "t:distill-growing-ca:bibliography:pathak19assemblies",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 17,
+        "citation_key": "pathak19assemblies",
+        "target_id": "pathak19assemblies"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-18:boids",
+      "from_gold_key": "m:distill-growing-ca:cite-18",
+      "to_gold_key": "t:distill-growing-ca:bibliography:boids",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 18,
+        "citation_key": "boids",
+        "target_id": "boids"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-19:mathews2017mergeable",
+      "from_gold_key": "m:distill-growing-ca:cite-19",
+      "to_gold_key": "t:distill-growing-ca:bibliography:mathews2017mergeable",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 19,
+        "citation_key": "mathews2017mergeable",
+        "target_id": "mathews2017mergeable"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-20:kilobots",
+      "from_gold_key": "m:distill-growing-ca:cite-20",
+      "to_gold_key": "t:distill-growing-ca:bibliography:kilobots",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 20,
+        "citation_key": "kilobots",
+        "target_id": "kilobots"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-21:WhatBodiesThink",
+      "from_gold_key": "m:distill-growing-ca:cite-21",
+      "to_gold_key": "t:distill-growing-ca:bibliography:WhatBodiesThink",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 21,
+        "citation_key": "WhatBodiesThink",
+        "target_id": "WhatBodiesThink"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-22:Kriegman1853",
+      "from_gold_key": "m:distill-growing-ca:cite-22",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Kriegman1853",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 22,
+        "citation_key": "Kriegman1853",
+        "target_id": "Kriegman1853"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-22:Kamm2018",
+      "from_gold_key": "m:distill-growing-ca:cite-22",
+      "to_gold_key": "t:distill-growing-ca:bibliography:Kamm2018",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 22,
+        "citation_key": "Kamm2018",
+        "target_id": "Kamm2018"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-23:doi:10.1080/19420889.2016.1192733",
+      "from_gold_key": "m:distill-growing-ca:cite-23",
+      "to_gold_key": "t:distill-growing-ca:bibliography:doi:10.1080/19420889.2016.1192733",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 23,
+        "citation_key": "doi:10.1080/19420889.2016.1192733",
+        "target_id": "doi:10.1080/19420889.2016.1192733"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-24:OVIEDO2010188",
+      "from_gold_key": "m:distill-growing-ca:cite-24",
+      "to_gold_key": "t:distill-growing-ca:bibliography:OVIEDO2010188",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 24,
+        "citation_key": "OVIEDO2010188",
+        "target_id": "OVIEDO2010188"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-24:DURANT20172231",
+      "from_gold_key": "m:distill-growing-ca:cite-24",
+      "to_gold_key": "t:distill-growing-ca:bibliography:DURANT20172231",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 24,
+        "citation_key": "DURANT20172231",
+        "target_id": "DURANT20172231"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-25:doi:10.1162/isal_a_00043",
+      "from_gold_key": "m:distill-growing-ca:cite-25",
+      "to_gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_00043",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_00043",
+        "target_id": "doi:10.1162/isal_a_00043"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-25:PIETAK201852",
+      "from_gold_key": "m:distill-growing-ca:cite-25",
+      "to_gold_key": "t:distill-growing-ca:bibliography:PIETAK201852",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "PIETAK201852",
+        "target_id": "PIETAK201852"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-25:doi:10.1162/isal_a_00041",
+      "from_gold_key": "m:distill-growing-ca:cite-25",
+      "to_gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_00041",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_00041",
+        "target_id": "doi:10.1162/isal_a_00041"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-25:doi:10.1162/isal_a_029",
+      "from_gold_key": "m:distill-growing-ca:cite-25",
+      "to_gold_key": "t:distill-growing-ca:bibliography:doi:10.1162/isal_a_029",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 25,
+        "citation_key": "doi:10.1162/isal_a_029",
+        "target_id": "doi:10.1162/isal_a_029"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-26:SocialIntelligence",
+      "from_gold_key": "m:distill-growing-ca:cite-26",
+      "to_gold_key": "t:distill-growing-ca:bibliography:SocialIntelligence",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 26,
+        "citation_key": "SocialIntelligence",
+        "target_id": "SocialIntelligence"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-27:mordvintsev2015inceptionism",
+      "from_gold_key": "m:distill-growing-ca:cite-27",
+      "to_gold_key": "t:distill-growing-ca:bibliography:mordvintsev2015inceptionism",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 27,
+        "citation_key": "mordvintsev2015inceptionism",
+        "target_id": "mordvintsev2015inceptionism"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:cite-28:WhatBodiesThink",
+      "from_gold_key": "m:distill-growing-ca:cite-28",
+      "to_gold_key": "t:distill-growing-ca:bibliography:WhatBodiesThink",
+      "relation": "cites_bibliography_entry",
+      "confidence": "exact",
+      "extraction_method": "distill_citation",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-cite",
+        "citation_ordinal": 28,
+        "citation_key": "WhatBodiesThink",
+        "target_id": "WhatBodiesThink"
+      }
+    },
+    {
+      "gold_key": "e:distill-growing-ca:footnote-4",
+      "from_gold_key": "m:distill-growing-ca:footnote-4",
+      "to_gold_key": "t:distill-growing-ca:footnote-4",
+      "relation": "points_to_note",
+      "confidence": "exact",
+      "extraction_method": "distill_footnote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "d-footnote",
+        "ordinal": 4,
+        "source_line": 1257
+      }
+    }
+  ],
+  "expected_absences": [
+    {
+      "kind": "d-footnote-list",
+      "expected_count": 1,
+      "source_lines": [
+        1298
+      ],
+      "reason": "footnote render container, not a source footnote body"
+    },
+    {
+      "kind": "d-citation-list",
+      "expected_count": 1,
+      "source_lines": [
+        1299
+      ],
+      "reason": "citation render container, not a bibliography item"
+    },
+    {
+      "kind": "references-list",
+      "expected_count": 1,
+      "source_lines": [
+        1311
+      ],
+      "reason": "bibliography list container, not an apparatus row"
+    },
+    {
+      "kind": "pre.citation.short",
+      "expected_count": 1,
+      "source_lines": [
+        1348
+      ],
+      "reason": "cite-this-article metadata export, not an in-document citation"
+    },
+    {
+      "kind": "pre.citation.long",
+      "expected_count": 1,
+      "source_lines": [
+        1350
+      ],
+      "reason": "BibTeX export block, not an in-document citation"
+    },
+    {
+      "kind": "d-bibliography-script",
+      "expected_count": 1,
+      "source_lines": [
+        1361
+      ],
+      "reason": "bibliography data source, not marker or rendered target row"
+    },
+    {
+      "kind": "distill_uncited_bibliography_keys",
+      "expected_count": 4,
+      "keys": [
+        "CANEAT2018",
+        "Elmenreich2011EvolvingSC",
+        "Morphogenesis1993",
+        "NeuralODE"
+      ],
+      "reason": "script-only uncited bibliography records have no in-document marker and are not emitted as standalone reader apparatus rows"
+    }
+  ],
+  "diagnostics": {
+    "citation_marker_count": 29,
+    "citation_edge_count": 39,
+    "cited_target_count": 38,
+    "rendered_bibliography_entry_count": 38,
+    "script_bibliography_entry_count": 42,
+    "uncited_bibliography_entry_count": 4,
+    "uncited_bibliography_keys": [
+      "CANEAT2018",
+      "Elmenreich2011EvolvingSC",
+      "Morphogenesis1993",
+      "NeuralODE"
+    ],
+    "footnote_count": 5,
+    "citation_markers": [
+      {
+        "ordinal": 0,
+        "source_line": 432,
+        "keys": [
+          "PezzuloGiovanniLevin2016",
+          "C5IB00221D"
+        ]
+      },
+      {
+        "ordinal": 1,
+        "source_line": 463,
+        "keys": [
+          "Pai313"
+        ]
+      },
+      {
+        "ordinal": 2,
+        "source_line": 721,
+        "keys": [
+          "Salimans2016WeightNA"
+        ]
+      },
+      {
+        "ordinal": 3,
+        "source_line": 1017,
+        "keys": [
+          "turing1990chemical"
+        ]
+      },
+      {
+        "ordinal": 4,
+        "source_line": 1021,
+        "keys": [
+          "Pearson189"
+        ]
+      },
+      {
+        "ordinal": 5,
+        "source_line": 1027,
+        "keys": [
+          "10.5555/1102024"
+        ]
+      },
+      {
+        "ordinal": 6,
+        "source_line": 1031,
+        "keys": [
+          "10.2307/24927642"
+        ]
+      },
+      {
+        "ordinal": 7,
+        "source_line": 1034,
+        "keys": [
+          "Wolfram2002ANK"
+        ]
+      },
+      {
+        "ordinal": 8,
+        "source_line": 1042,
+        "keys": [
+          "rafler2011generalization"
+        ]
+      },
+      {
+        "ordinal": 9,
+        "source_line": 1043,
+        "keys": [
+          "Chan_2019",
+          "Reinke2019IntrinsicallyME"
+        ]
+      },
+      {
+        "ordinal": 10,
+        "source_line": 1050,
+        "keys": [
+          "10.1007/978-3-642-19167-1_2",
+          "Nichele2018CANEATEC"
+        ]
+      },
+      {
+        "ordinal": 11,
+        "source_line": 1051,
+        "keys": [
+          "Miller2004"
+        ]
+      },
+      {
+        "ordinal": 12,
+        "source_line": 1060,
+        "keys": [
+          "wulff1993learning",
+          "Gilpin2018CellularAA"
+        ]
+      },
+      {
+        "ordinal": 13,
+        "source_line": 1069,
+        "keys": [
+          "Kaiser2015NeuralGPU",
+          "Freivalds2017ImprovingTN"
+        ]
+      },
+      {
+        "ordinal": 14,
+        "source_line": 1077,
+        "keys": [
+          "wu2019comprehensive"
+        ]
+      },
+      {
+        "ordinal": 15,
+        "source_line": 1083,
+        "keys": [
+          "NIPS2015_5954"
+        ]
+      },
+      {
+        "ordinal": 16,
+        "source_line": 1085,
+        "keys": [
+          "Wang_2019"
+        ]
+      },
+      {
+        "ordinal": 17,
+        "source_line": 1091,
+        "keys": [
+          "pathak19assemblies"
+        ]
+      },
+      {
+        "ordinal": 18,
+        "source_line": 1097,
+        "keys": [
+          "boids"
+        ]
+      },
+      {
+        "ordinal": 19,
+        "source_line": 1101,
+        "keys": [
+          "mathews2017mergeable"
+        ]
+      },
+      {
+        "ordinal": 20,
+        "source_line": 1102,
+        "keys": [
+          "kilobots"
+        ]
+      },
+      {
+        "ordinal": 21,
+        "source_line": 1118,
+        "keys": [
+          "WhatBodiesThink"
+        ]
+      },
+      {
+        "ordinal": 22,
+        "source_line": 1131,
+        "keys": [
+          "Kriegman1853",
+          "Kamm2018"
+        ]
+      },
+      {
+        "ordinal": 23,
+        "source_line": 1138,
+        "keys": [
+          "doi:10.1080/19420889.2016.1192733"
+        ]
+      },
+      {
+        "ordinal": 24,
+        "source_line": 1140,
+        "keys": [
+          "OVIEDO2010188",
+          "DURANT20172231"
+        ]
+      },
+      {
+        "ordinal": 25,
+        "source_line": 1145,
+        "keys": [
+          "doi:10.1162/isal_a_00043",
+          "PIETAK201852",
+          "doi:10.1162/isal_a_00041",
+          "doi:10.1162/isal_a_029"
+        ]
+      },
+      {
+        "ordinal": 26,
+        "source_line": 1195,
+        "keys": [
+          "SocialIntelligence"
+        ]
+      },
+      {
+        "ordinal": 27,
+        "source_line": 1220,
+        "keys": [
+          "mordvintsev2015inceptionism"
+        ]
+      },
+      {
+        "ordinal": 28,
+        "source_line": 1222,
+        "keys": [
+          "WhatBodiesThink"
+        ]
+      }
+    ],
+    "footnote_hashes": [
+      "d9137aba31d440d945a2b9fb800b9a9682683014f66ae7ebea3b875371784ab0",
+      "cc828a1c1d4b91168e98f9ae3faf7c669ee812863a8f4f2c1aed93a855667302",
+      "1fdeb0eaeb3deaf7716d774e78710184b81591b94e579dfc86e70d5a68baefbd",
+      "41d579b26405ba02f20c9725c02dbabe8897dd14f4c8bd0463e936f80b5ab3d1",
+      "de21205d493e31325d54ff670af3f2e0497cd96c3c36f7af6470915845e24306"
+    ]
+  }
+}

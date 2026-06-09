@@ -11,6 +11,7 @@ from lxml.html import HtmlElement, fragment_fromstring, tostring
 
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.fragment_blocks import FragmentBlockSpec
+from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
@@ -38,6 +39,8 @@ class WebArticlePreparedFragment:
     canonical_text: str
     fragment_blocks: list[FragmentBlockSpec]
     index_blocks: list[WebArticleIndexBlockSpec]
+    apparatus_items: list[dict[str, object]]
+    apparatus_edges: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -57,8 +60,13 @@ def prepare_web_article_fragment(
     fragment_idx: int,
     media_title: str | None = None,
 ) -> WebArticlePreparedFragment:
+    html, apparatus_items, apparatus_edges = extract_html_apparatus(
+        html,
+        source_kind=f"web:{fragment_idx}",
+        source_ref={"format": "html", "fragment_idx": fragment_idx},
+    )
     html_sanitized = add_heading_anchors(
-        sanitize_html(html, base_url),
+        sanitize_html(html, base_url, allow_reader_apparatus_attrs=True),
         fragment_idx=fragment_idx,
     )
     canonical_text = generate_canonical_text(html_sanitized)
@@ -68,6 +76,8 @@ def prepare_web_article_fragment(
             canonical_text=canonical_text,
             fragment_blocks=[FragmentBlockSpec(0, 0, 0, True)],
             index_blocks=[],
+            apparatus_items=[],
+            apparatus_edges=[],
         )
     index_blocks = build_web_article_index_blocks(
         html_sanitized=html_sanitized,
@@ -80,6 +90,8 @@ def prepare_web_article_fragment(
         canonical_text=canonical_text,
         fragment_blocks=_fragment_blocks(canonical_text, index_blocks),
         index_blocks=index_blocks,
+        apparatus_items=apparatus_items,
+        apparatus_edges=apparatus_edges,
     )
 
 

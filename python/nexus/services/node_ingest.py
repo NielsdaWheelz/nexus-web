@@ -49,6 +49,7 @@ class IngestResult:
     base_url: str
     title: str
     content_html: str
+    source_html: str
     byline: str = ""
     excerpt: str = ""
     site_name: str = ""
@@ -142,6 +143,7 @@ def run_node_ingest(
                     base_url=result_data["base_url"],
                     title=result_data.get("title", ""),
                     content_html=result_data["content_html"],
+                    source_html=result_data.get("source_html") or result_data["content_html"],
                     byline=result_data.get("byline") or "",
                     excerpt=result_data.get("excerpt") or "",
                     site_name=result_data.get("site_name") or "",
@@ -257,6 +259,7 @@ def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestR
         base_url="https://science.nasa.gov/",
         title="There's Water on the Moon?",
         content_html=content_html,
+        source_html=content_html,
         byline="Molly Wasser",
         excerpt="NASA Science captured article fixture.",
         site_name="NASA Science",

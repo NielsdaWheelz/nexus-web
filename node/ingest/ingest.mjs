@@ -271,7 +271,7 @@ async function ingest(url, timeoutMs) {
 
     // Extract article with jsdom + Readability
     const dom = new JSDOM(fullHtml, { url: finalUrl });
-    const reader = new Readability(dom.window.document, { keepClasses: false });
+    const reader = new Readability(dom.window.document, { keepClasses: true });
     const article = reader.parse();
 
     if (!article || !article.content) {
@@ -283,6 +283,7 @@ async function ingest(url, timeoutMs) {
         base_url: finalUrl,
         title: article.title || '',
         content_html: article.content,
+        source_html: fullHtml,
         byline: article.byline || '',
         excerpt: article.excerpt || '',
         site_name: article.siteName || '',

@@ -12,6 +12,7 @@ import {
 describe("paneSecondaryModel", () => {
   it("maps secondary surfaces to their owning groups", () => {
     expect(getSecondaryGroupForSurface("reader-highlights")).toBe("reader-tools");
+    expect(getSecondaryGroupForSurface("reader-apparatus")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-doc-chat")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("conversation-references")).toBe(
@@ -29,6 +30,11 @@ describe("paneSecondaryModel", () => {
       title: "Contents",
       iconId: "list-tree",
     });
+    expect(getSecondarySurfaceDefinition("reader-apparatus")).toMatchObject({
+      groupId: "reader-tools",
+      title: "Citations",
+      iconId: "quote",
+    });
     expect(getSecondarySurfaceDefinition("conversation-forks")).toMatchObject({
       groupId: "conversation-context",
       title: "Forks",
@@ -36,9 +42,10 @@ describe("paneSecondaryModel", () => {
     });
     expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
       "reader-highlights",
-      "reader-doc-chat",
       "reader-contents",
       "connections",
+      "reader-apparatus",
+      "reader-doc-chat",
     ]);
     expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
       "conversation-references",

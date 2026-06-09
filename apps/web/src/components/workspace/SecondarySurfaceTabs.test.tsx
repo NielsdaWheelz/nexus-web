@@ -7,8 +7,9 @@ import SecondarySurfaceTabs, {
 
 const surfaces = [
   { id: "reader-highlights" as const, body: <div /> },
-  { id: "reader-doc-chat" as const, body: <div /> },
   { id: "reader-contents" as const, body: <div /> },
+  { id: "reader-apparatus" as const, body: <div /> },
+  { id: "reader-doc-chat" as const, body: <div /> },
 ];
 
 describe("SecondarySurfaceTabs", () => {
@@ -46,7 +47,7 @@ describe("SecondarySurfaceTabs", () => {
 
     const docChat = screen.getByRole("tab", { name: "Document chat" });
     fireEvent.keyDown(docChat, { key: "End" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-contents");
+    expect(onSelect).toHaveBeenLastCalledWith("reader-doc-chat");
     fireEvent.keyDown(docChat, { key: "Home" });
     expect(onSelect).toHaveBeenLastCalledWith("reader-highlights");
   });
@@ -65,6 +66,6 @@ describe("SecondarySurfaceTabs", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "Highlights" }), {
       key: "ArrowLeft",
     });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-contents");
+    expect(onSelect).toHaveBeenLastCalledWith("reader-doc-chat");
   });
 });

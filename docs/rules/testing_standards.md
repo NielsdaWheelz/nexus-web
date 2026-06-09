@@ -128,6 +128,29 @@ Rules:
 - Prefer Testing Library queries (`getByRole`, `findByRole`, `getByText`) and user-level interactions
 - No global `next/navigation` mock in shared setup
 
+### Repo Contract / Static Fixture Tests
+
+These tests validate committed repository artifacts rather than runtime behavior:
+fixture manifests, provenance ledgers, generated-gold files, docs/rules
+contracts, and source-controlled fixture payloads.
+
+What belongs here:
+
+- Manifest schema and hash checks
+- Fixture corpus/provenance guardrails
+- Static docs/rules consistency checks
+- Golden-file shape checks that do not need a database or running service
+
+Rules:
+
+- File I/O against committed repo artifacts is allowed and expected.
+- No network access, database access, or hidden service startup.
+- Assertions should defend durable contracts, not incidental file formatting.
+- Use this category when a test is not a pure unit test but also is not an
+  API/DB integration test. Until a dedicated marker exists, colocate with the
+  closest owning backend test module and document the contract in the fixture
+  README or manifest.
+
 ### Tier 3: Integration Tests (Backend Only)
 
 - Tool: `pytest` tests marked `@pytest.mark.integration`

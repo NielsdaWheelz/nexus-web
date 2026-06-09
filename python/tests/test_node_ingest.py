@@ -293,6 +293,43 @@ class TestNodeIngestReadability:
             f"got (first 300 chars): {result.content_html[:300]}"
         )
 
+    def test_readability_preserves_semantic_classes_for_reader_apparatus(self, httpserver):
+        html = """\
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><title>Classed Article</title></head>
+        <body>
+          <article>
+            <h1>Classed Article</h1>
+            <p>Primary paragraph with enough words for Readability extraction
+            and a source-authored side note marker in the same paragraph.
+            <span class="marginnote">A source-authored margin note survives.</span>
+            </p>
+            <p>Second paragraph provides additional article text so the
+            extraction heuristics treat this as a substantive page.</p>
+            <p>Third paragraph gives the fixture stable body length for
+            Mozilla Readability in this deterministic subprocess test.</p>
+            <p>Fourth paragraph keeps the fixture above minimum extraction
+            thresholds and prevents accidental empty article output.</p>
+          </article>
+        </body>
+        </html>
+        """
+        httpserver.expect_request("/classed").respond_with_data(
+            html,
+            content_type="text/html; charset=utf-8",
+        )
+        url = httpserver.url_for("/classed")
+
+        result = run_node_ingest(url)
+
+        assert isinstance(result, IngestResult), (
+            f"Expected IngestResult, got {type(result).__name__}: "
+            f"{result.message if isinstance(result, IngestError) else result}"
+        )
+        assert 'class="marginnote"' in result.content_html
+        assert 'class="marginnote"' in result.source_html
+
     def test_readability_extracts_metadata(self, httpserver):
         httpserver.expect_request("/meta").respond_with_data(
             METADATA_HTML,

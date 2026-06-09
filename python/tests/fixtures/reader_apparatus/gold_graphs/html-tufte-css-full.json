@@ -1,0 +1,463 @@
+{
+  "schema_version": 1,
+  "fixture_id": "html-tufte-css-full",
+  "fixture_path": "reader_apparatus/html/tufte-css-full.html",
+  "fixture_sha256": "c9945c114aae2f6997bba51294202fc0fc43e4f4acc4cfd692ef76fb61b4f981",
+  "coverage": "fixture_exhaustive",
+  "audit_basis": "dom_tufte_margin_toggle_graph",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "web_article",
+    "item_kinds": {
+      "sidenote": 3,
+      "sidenote_ref": 3,
+      "margin_note": 4,
+      "margin_note_ref": 4
+    },
+    "edge_relations": {
+      "points_to_sidenote": 3,
+      "points_to_margin_note": 4
+    },
+    "edge_methods": {
+      "tufte_sidenote": 3,
+      "tufte_margin_note": 4
+    }
+  },
+  "items": [
+    {
+      "gold_key": "t:tufte-css:000000:sn-in-his-later-books",
+      "kind": "sidenote",
+      "label": "1",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-in-his-later-books",
+        "ordinal": 0
+      },
+      "body_sha256": "86c58ed03ecd7384dc5a20d3b3d6f1ca47be3dfba6e0fd6c7b4381de384ead6b",
+      "body_chars": 18,
+      "body_excerpt": "Beautiful Evidence"
+    },
+    {
+      "gold_key": "m:tufte-css:000000:sn-in-his-later-books",
+      "kind": "sidenote_ref",
+      "label": "1",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-in-his-later-books",
+        "ordinal": 0
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000001:sn-proprietary-monotype-bembo",
+      "kind": "sidenote",
+      "label": "2",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-proprietary-monotype-bembo",
+        "ordinal": 1
+      },
+      "body_sha256": "f895860b38da253a38dcbae617a5ec208c0077fc550a79f802e38375f4c25af9",
+      "body_chars": 51,
+      "body_excerpt": "See Tufte\u2019s comment in the Tufte book fonts thread."
+    },
+    {
+      "gold_key": "m:tufte-css:000001:sn-proprietary-monotype-bembo",
+      "kind": "sidenote_ref",
+      "label": "2",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-proprietary-monotype-bembo",
+        "ordinal": 1
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000002:mn-blue-links",
+      "kind": "margin_note",
+      "label": "Margin note 3",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-blue-links",
+        "ordinal": 2
+      },
+      "body_sha256": "d7bcffef2ebd7ac0bcbf5f545d2195105f540689a073ca1f5f89f7e0510d6ca5",
+      "body_chars": 163,
+      "body_excerpt": "Blue text, while also a widely recognizable clickable-text indicator, is crass and distracting. Luckily, it is also rendered unnecessary by "
+    },
+    {
+      "gold_key": "m:tufte-css:000002:mn-blue-links",
+      "kind": "margin_note_ref",
+      "label": "\u2295",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-blue-links",
+        "ordinal": 2
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000003:sn-extensive-use-of-sidenotes",
+      "kind": "sidenote",
+      "label": "4",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-extensive-use-of-sidenotes",
+        "ordinal": 3
+      },
+      "body_sha256": "895be45f1c350d3bf53afeb89429c6b8e82af61901e2829cb9840a0236748cd8",
+      "body_chars": 19,
+      "body_excerpt": "This is a sidenote."
+    },
+    {
+      "gold_key": "m:tufte-css:000003:sn-extensive-use-of-sidenotes",
+      "kind": "sidenote_ref",
+      "label": "4",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-extensive-use-of-sidenotes",
+        "ordinal": 3
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000004:mn-demo",
+      "kind": "margin_note",
+      "label": "Margin note 5",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-demo",
+        "ordinal": 4
+      },
+      "body_sha256": "4e411686ebccc08c5e4f9aa8a2c431ae4a1c7070665dc32043e6caba3bef021c",
+      "body_chars": 70,
+      "body_excerpt": "This is a margin note. Notice there isn\u2019t a number preceding the note."
+    },
+    {
+      "gold_key": "m:tufte-css:000004:mn-demo",
+      "kind": "margin_note_ref",
+      "label": "\u2295",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-demo",
+        "ordinal": 4
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000005:mn-exports-imports",
+      "kind": "margin_note",
+      "label": "Margin note 6",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-exports-imports",
+        "ordinal": 5
+      },
+      "body_sha256": "8daefb619914233c2b97a4d98fd08a5b6a0573692c676b553748398307baf60c",
+      "body_chars": 71,
+      "body_excerpt": "From Edward Tufte, Visual Display of Quantitative Information, page 92."
+    },
+    {
+      "gold_key": "m:tufte-css:000005:mn-exports-imports",
+      "kind": "margin_note_ref",
+      "label": "\u2295",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-exports-imports",
+        "ordinal": 5
+      }
+    },
+    {
+      "gold_key": "t:tufte-css:000006:mn-figure-1",
+      "kind": "margin_note",
+      "label": "Margin note 7",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-figure-1",
+        "ordinal": 6
+      },
+      "body_sha256": "ba05ff71267b8d74b0b218ce9512fff922d3a5e134090905068325be83681fed",
+      "body_chars": 202,
+      "body_excerpt": "Science, Medicine, and History: Essays on the Evolution of Scientific Thought and Medical Practice (London, 1953), ed. E. Ashworth Underwood"
+    },
+    {
+      "gold_key": "m:tufte-css:000006:mn-figure-1",
+      "kind": "margin_note_ref",
+      "label": "\u2295",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-figure-1",
+        "ordinal": 6
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "m:tufte-css:000000:sn-in-his-later-books->t:tufte-css:000000:sn-in-his-later-books",
+      "from_gold_key": "m:tufte-css:000000:sn-in-his-later-books",
+      "to_gold_key": "t:tufte-css:000000:sn-in-his-later-books",
+      "relation": "points_to_sidenote",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-in-his-later-books",
+        "ordinal": 0
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000001:sn-proprietary-monotype-bembo->t:tufte-css:000001:sn-proprietary-monotype-bembo",
+      "from_gold_key": "m:tufte-css:000001:sn-proprietary-monotype-bembo",
+      "to_gold_key": "t:tufte-css:000001:sn-proprietary-monotype-bembo",
+      "relation": "points_to_sidenote",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-proprietary-monotype-bembo",
+        "ordinal": 1
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000002:mn-blue-links->t:tufte-css:000002:mn-blue-links",
+      "from_gold_key": "m:tufte-css:000002:mn-blue-links",
+      "to_gold_key": "t:tufte-css:000002:mn-blue-links",
+      "relation": "points_to_margin_note",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-blue-links",
+        "ordinal": 2
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000003:sn-extensive-use-of-sidenotes->t:tufte-css:000003:sn-extensive-use-of-sidenotes",
+      "from_gold_key": "m:tufte-css:000003:sn-extensive-use-of-sidenotes",
+      "to_gold_key": "t:tufte-css:000003:sn-extensive-use-of-sidenotes",
+      "relation": "points_to_sidenote",
+      "confidence": "strong",
+      "extraction_method": "tufte_sidenote",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-sidenote",
+        "toggle_id": "sn-extensive-use-of-sidenotes",
+        "ordinal": 3
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000004:mn-demo->t:tufte-css:000004:mn-demo",
+      "from_gold_key": "m:tufte-css:000004:mn-demo",
+      "to_gold_key": "t:tufte-css:000004:mn-demo",
+      "relation": "points_to_margin_note",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-demo",
+        "ordinal": 4
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000005:mn-exports-imports->t:tufte-css:000005:mn-exports-imports",
+      "from_gold_key": "m:tufte-css:000005:mn-exports-imports",
+      "to_gold_key": "t:tufte-css:000005:mn-exports-imports",
+      "relation": "points_to_margin_note",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-exports-imports",
+        "ordinal": 5
+      }
+    },
+    {
+      "gold_key": "m:tufte-css:000006:mn-figure-1->t:tufte-css:000006:mn-figure-1",
+      "from_gold_key": "m:tufte-css:000006:mn-figure-1",
+      "to_gold_key": "t:tufte-css:000006:mn-figure-1",
+      "relation": "points_to_margin_note",
+      "confidence": "strong",
+      "extraction_method": "tufte_margin_note",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "element": "tufte-margin-note",
+        "toggle_id": "mn-figure-1",
+        "ordinal": 6
+      }
+    }
+  ],
+  "expected_absences": [],
+  "diagnostics": {
+    "independent_dom_graph": {
+      "sidenote_count": 3,
+      "margin_note_count": 4,
+      "marker_count": 7
+    },
+    "dom_toggle_rows": [
+      {
+        "ordinal": 0,
+        "toggle_id": "sn-in-his-later-books",
+        "target_kind": "sidenote",
+        "marker_kind": "sidenote_ref",
+        "relation": "points_to_sidenote",
+        "method": "tufte_sidenote",
+        "source_element": "tufte-sidenote",
+        "target_label": "1",
+        "marker_label": "1",
+        "body_text": "Beautiful Evidence",
+        "body_sha256": "86c58ed03ecd7384dc5a20d3b3d6f1ca47be3dfba6e0fd6c7b4381de384ead6b"
+      },
+      {
+        "ordinal": 1,
+        "toggle_id": "sn-proprietary-monotype-bembo",
+        "target_kind": "sidenote",
+        "marker_kind": "sidenote_ref",
+        "relation": "points_to_sidenote",
+        "method": "tufte_sidenote",
+        "source_element": "tufte-sidenote",
+        "target_label": "2",
+        "marker_label": "2",
+        "body_text": "See Tufte\u2019s comment in the Tufte book fonts thread.",
+        "body_sha256": "f895860b38da253a38dcbae617a5ec208c0077fc550a79f802e38375f4c25af9"
+      },
+      {
+        "ordinal": 2,
+        "toggle_id": "mn-blue-links",
+        "target_kind": "margin_note",
+        "marker_kind": "margin_note_ref",
+        "relation": "points_to_margin_note",
+        "method": "tufte_margin_note",
+        "source_element": "tufte-margin-note",
+        "target_label": "Margin note 3",
+        "marker_label": "\u2295",
+        "body_text": "Blue text, while also a widely recognizable clickable-text indicator, is crass and distracting. Luckily, it is also rendered unnecessary by the use of underlining.",
+        "body_sha256": "d7bcffef2ebd7ac0bcbf5f545d2195105f540689a073ca1f5f89f7e0510d6ca5"
+      },
+      {
+        "ordinal": 3,
+        "toggle_id": "sn-extensive-use-of-sidenotes",
+        "target_kind": "sidenote",
+        "marker_kind": "sidenote_ref",
+        "relation": "points_to_sidenote",
+        "method": "tufte_sidenote",
+        "source_element": "tufte-sidenote",
+        "target_label": "4",
+        "marker_label": "4",
+        "body_text": "This is a sidenote.",
+        "body_sha256": "895be45f1c350d3bf53afeb89429c6b8e82af61901e2829cb9840a0236748cd8"
+      },
+      {
+        "ordinal": 4,
+        "toggle_id": "mn-demo",
+        "target_kind": "margin_note",
+        "marker_kind": "margin_note_ref",
+        "relation": "points_to_margin_note",
+        "method": "tufte_margin_note",
+        "source_element": "tufte-margin-note",
+        "target_label": "Margin note 5",
+        "marker_label": "\u2295",
+        "body_text": "This is a margin note. Notice there isn\u2019t a number preceding the note.",
+        "body_sha256": "4e411686ebccc08c5e4f9aa8a2c431ae4a1c7070665dc32043e6caba3bef021c"
+      },
+      {
+        "ordinal": 5,
+        "toggle_id": "mn-exports-imports",
+        "target_kind": "margin_note",
+        "marker_kind": "margin_note_ref",
+        "relation": "points_to_margin_note",
+        "method": "tufte_margin_note",
+        "source_element": "tufte-margin-note",
+        "target_label": "Margin note 6",
+        "marker_label": "\u2295",
+        "body_text": "From Edward Tufte, Visual Display of Quantitative Information, page 92.",
+        "body_sha256": "8daefb619914233c2b97a4d98fd08a5b6a0573692c676b553748398307baf60c"
+      },
+      {
+        "ordinal": 6,
+        "toggle_id": "mn-figure-1",
+        "target_kind": "margin_note",
+        "marker_kind": "margin_note_ref",
+        "relation": "points_to_margin_note",
+        "method": "tufte_margin_note",
+        "source_element": "tufte-margin-note",
+        "target_label": "Margin note 7",
+        "marker_label": "\u2295",
+        "body_text": "Science, Medicine, and History: Essays on the Evolution of Scientific Thought and Medical Practice (London, 1953), ed. E. Ashworth Underwood, 337-356. From page 71 of Edward Tufte\u2019s Visual Explanations.",
+        "body_sha256": "ba05ff71267b8d74b0b218ce9512fff922d3a5e134090905068325be83681fed"
+      }
+    ],
+    "dom_note_body_sha256s": [
+      "86c58ed03ecd7384dc5a20d3b3d6f1ca47be3dfba6e0fd6c7b4381de384ead6b",
+      "f895860b38da253a38dcbae617a5ec208c0077fc550a79f802e38375f4c25af9",
+      "d7bcffef2ebd7ac0bcbf5f545d2195105f540689a073ca1f5f89f7e0510d6ca5",
+      "895be45f1c350d3bf53afeb89429c6b8e82af61901e2829cb9840a0236748cd8",
+      "4e411686ebccc08c5e4f9aa8a2c431ae4a1c7070665dc32043e6caba3bef021c",
+      "8daefb619914233c2b97a4d98fd08a5b6a0573692c676b553748398307baf60c",
+      "ba05ff71267b8d74b0b218ce9512fff922d3a5e134090905068325be83681fed"
+    ]
+  }
+}

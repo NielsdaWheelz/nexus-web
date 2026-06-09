@@ -9,6 +9,7 @@ Reuses existing sanitization/canonicalization/fragment-block primitives.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import posixpath
@@ -43,6 +44,13 @@ from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.html_tree import remove_element, unwrap_element
+from nexus.services.reader_apparatus import (
+    attach_fragment_locators,
+    collect_html_apparatus_targets,
+    extract_html_apparatus,
+    replace_media_apparatus,
+    source_fingerprint,
+)
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_asset_storage_path
 
@@ -147,6 +155,7 @@ _EPUB_ALLOWED_HTML_TAGS = frozenset(
         "td",
         "sup",
         "sub",
+        "xref",
         "div",
         "span",
         "section",
@@ -185,7 +194,18 @@ _EPUB_ALLOWED_SVG_TAGS = frozenset(
     }
 )
 
-_EPUB_GLOBAL_ATTRS = frozenset({"id", "title", "lang", "dir", "xml:lang"})
+_EPUB_GLOBAL_ATTRS = frozenset(
+    {
+        "id",
+        "title",
+        "lang",
+        "dir",
+        "xml:lang",
+        "data-reader-apparatus-item-id",
+        "data-reader-apparatus-kind",
+        "data-reader-apparatus-confidence",
+    }
+)
 _EPUB_ALLOWED_ATTRS = {
     "a": {"href", "title", "name"},
     "img": {"src", "srcset", "alt", "title", "width", "height"},
@@ -517,15 +537,36 @@ def extract_epub_artifacts(
                 asset_key_map,
                 readable_paths,
             )
+        external_apparatus_targets = _collect_epub_apparatus_targets(chapter_specs)
 
         # ---- sanitize + canonicalize + fragment creation --------------------
-        fragment_specs: list[tuple[Fragment, _ChapterSpec]] = []
+        fragment_specs: list[
+            tuple[
+                Fragment,
+                _ChapterSpec,
+                list[dict[str, object]],
+                list[dict[str, object]],
+            ]
+        ] = []
         all_block_specs: list[list] = []
         retained_hrefs: list[str] = []
 
         for ch in chapter_specs:
+            html_with_apparatus, apparatus_items, apparatus_edges = extract_html_apparatus(
+                ch.raw_html,
+                source_kind=f"epub:{ch.spine_idx}",
+                document_href=ch.href,
+                external_targets=external_apparatus_targets,
+                source_ref={
+                    "format": "xhtml",
+                    "package_href": ch.href,
+                    "manifest_id": ch.manifest_id,
+                    "spine_index": ch.spine_idx,
+                    "spine_itemref_id": ch.itemref_id,
+                },
+            )
             try:
-                html_sanitized = _epub_sanitize(ch.raw_html)
+                html_sanitized = _epub_sanitize(html_with_apparatus)
             except (ValueError, LxmlError) as exc:
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
@@ -550,7 +591,7 @@ def extract_epub_artifacts(
                 canonical_text=canonical_text,
                 created_at=now,
             )
-            fragment_specs.append((frag, ch))
+            fragment_specs.append((frag, ch, apparatus_items, apparatus_edges))
             all_block_specs.append(parse_fragment_blocks(canonical_text))
             retained_hrefs.append(ch.href)
 
@@ -565,7 +606,7 @@ def extract_epub_artifacts(
 
         # ---- TOC materialization -------------------------------------------
         toc_nodes = _materialize_toc(zf, opf_tree, manifest, href_to_frag_idx)
-        fragments = [frag for frag, _ch in fragment_specs]
+        fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
         nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
 
         # ---- check parse-time budget ---------------------------------------
@@ -610,7 +651,7 @@ def extract_epub_artifacts(
             if 0 <= frag.idx < len(all_block_specs):
                 insert_fragment_blocks(db, frag.id, all_block_specs[frag.idx])
 
-        for frag, ch in fragment_specs:
+        for frag, ch, _apparatus_items, _apparatus_edges in fragment_specs:
             db.add(
                 EpubFragmentSource(
                     media_id=media_id,
@@ -685,6 +726,47 @@ def extract_epub_artifacts(
             fragments=fragments,
             reason="epub_ingest",
             language=media.language,
+        )
+        apparatus_items: list[dict[str, object]] = []
+        apparatus_edges: list[dict[str, object]] = []
+        for frag, _ch, fragment_items, fragment_edges in fragment_specs:
+            apparatus_items.extend(
+                attach_fragment_locators(
+                    media_id=media_id,
+                    fragment_id=frag.id,
+                    media_kind="epub",
+                    canonical_text=frag.canonical_text,
+                    items=fragment_items,
+                    html_sanitized=frag.html_sanitized,
+                )
+            )
+            apparatus_edges.extend(fragment_edges)
+
+        replace_media_apparatus(
+            db,
+            media_id=media_id,
+            media_kind="epub",
+            source_fingerprint_value=source_fingerprint(
+                "epub",
+                media_file.storage_path,
+                media_file.size_bytes,
+                [
+                    {
+                        "package_href": ch.href,
+                        "manifest_id": ch.manifest_id,
+                        "spine_index": ch.spine_idx,
+                        "spine_itemref_id": ch.itemref_id,
+                        "xhtml_sha256": hashlib.sha256(ch.raw_html.encode("utf-8")).hexdigest(),
+                    }
+                    for _frag, ch, _items, _edges in fragment_specs
+                ],
+                len(fragments),
+                len(toc_nodes),
+                "\n".join(frag.canonical_text for frag in fragments),
+            ),
+            items=apparatus_items,
+            edges=apparatus_edges,
+            status="ready" if apparatus_items else "empty",
         )
 
     except (_EpubExtractionFailure, ApiError) as exc:
@@ -1062,6 +1144,29 @@ def _decode_epub_text(raw: bytes) -> str:
         except UnicodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _collect_epub_apparatus_targets(
+    chapter_specs: list[_ChapterSpec],
+) -> dict[str, dict[str, object]]:
+    targets: dict[str, dict[str, object]] = {}
+    for ch in chapter_specs:
+        targets.update(
+            collect_html_apparatus_targets(
+                ch.raw_html,
+                document_href=ch.href,
+                source_kind=f"epub:{ch.spine_idx}",
+                source_ref={
+                    "format": "xhtml",
+                    "package_href": ch.href,
+                    "manifest_id": ch.manifest_id,
+                    "spine_index": ch.spine_idx,
+                    "spine_itemref_id": ch.itemref_id,
+                },
+                extraction_method="epub_noteref",
+            )
+        )
+    return targets
 
 
 # ---------------------------------------------------------------------------

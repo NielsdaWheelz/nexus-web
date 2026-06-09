@@ -17,9 +17,13 @@ Contract:
 - canonical_source_url is normalized
 """
 
+import hashlib
 import io
 import socket
+import tarfile
 import zipfile
+from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from typing import BinaryIO
 from uuid import UUID, uuid4
@@ -32,7 +36,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from nexus.errors import ApiErrorCode
 from nexus.storage.client import StorageError
-from nexus.storage.paths import build_storage_path
+from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
@@ -40,6 +44,27 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 PDF_CONTENT = b"%PDF-1.4\nremote pdf bytes"
+
+
+def _valid_pdf_content(text_content: str = "Remote PDF") -> bytes:
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 72), text_content, fontsize=12)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def _tar_bytes(entries: list[tuple[str, bytes]]) -> bytes:
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w") as archive:
+        for name, content in entries:
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return data.getvalue()
 
 
 def _epub_content() -> bytes:
@@ -110,7 +135,11 @@ def remote_http(monkeypatch):
 
 
 def _patch_remote_file_limits(monkeypatch, *, limit_bytes: int = REMOTE_FILE_LIMIT_BYTES) -> None:
-    settings = SimpleNamespace(max_pdf_bytes=limit_bytes, max_epub_bytes=limit_bytes)
+    settings = SimpleNamespace(
+        max_pdf_bytes=limit_bytes,
+        max_epub_bytes=limit_bytes,
+        max_arxiv_source_bytes=limit_bytes,
+    )
     monkeypatch.setattr("nexus.services.remote_file_client.get_settings", lambda: settings)
     monkeypatch.setattr("nexus.services.upload.get_settings", lambda: settings)
 
@@ -119,6 +148,8 @@ def _patch_remote_storage(monkeypatch, storage_client) -> None:
     monkeypatch.setattr(
         "nexus.services.media_source_ingest.get_storage_client", lambda: storage_client
     )
+    monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: storage_client)
+    monkeypatch.setattr("nexus.services.epub_lifecycle.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.tasks.ingest_epub.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.tasks.ingest_pdf.get_storage_client", lambda: storage_client)
@@ -336,6 +367,9 @@ def _register_source_media_cleanup(
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("reader_apparatus_states", "media_id", media_id)
+    direct_db.register_cleanup("reader_apparatus_items", "media_id", media_id)
+    direct_db.register_cleanup("reader_apparatus_edges", "media_id", media_id)
     _register_background_jobs_for_media(direct_db, media_id)
 
 
@@ -348,6 +382,7 @@ def _patch_file_extractors_success(
         *,
         media_id: UUID,
         request_id: str | None = None,
+        **_kwargs,
     ) -> dict[str, object]:
         return {"status": "success", "media_id": str(media_id)}
 
@@ -2500,6 +2535,450 @@ class TestFromUrlRemoteFiles:
         assert row[6] == len(PDF_CONTENT)
         assert row[7] == "succeeded"
         assert storage.get_object(build_storage_path(media_id, "pdf")) == PDF_CONTENT
+
+    def test_arxiv_pdf_endpoint_is_remote_pdf_not_generic_web_article(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        url = "https://arxiv.org/pdf/1706.03762"
+        source_url = "https://arxiv.org/e-print/1706.03762"
+        source_bytes = (
+            Path(__file__).parent / "fixtures/reader_apparatus/arxiv/2606.01109-source.tar"
+        ).read_bytes()
+        _patch_remote_file_limits(
+            monkeypatch, limit_bytes=max(len(source_bytes), len(PDF_CONTENT)) + 1024
+        )
+        _patch_file_extractors_success(monkeypatch, direct_db)
+
+        _expect_remote_file(remote_http, url, PDF_CONTENT, content_type="application/pdf")
+        _expect_remote_file(
+            remote_http,
+            source_url,
+            source_bytes,
+            content_type="application/e-print",
+        )
+
+        _, media_id = _accept_source_url(
+            auth_client,
+            direct_db,
+            user_id,
+            url,
+            expected_source_type="remote_pdf_url",
+        )
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "success"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.kind, m.requested_url, m.canonical_source_url,
+                           m.processing_status, mf.content_type, msa.id, msa.source_payload
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    JOIN media_source_attempts msa ON msa.media_id = m.id
+                    WHERE m.id = :media_id
+                    ORDER BY msa.attempt_no DESC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "pdf"
+        assert row[1] == url
+        assert row[2] == url
+        assert row[3] == "ready_for_reading"
+        assert row[4] == "application/pdf"
+        source_payload = row[6]
+        source_package = source_payload["arxiv_source_package"]
+        assert source_package["status"] == "fetched"
+        assert source_package["arxiv_id"] == "1706.03762"
+        assert source_package["source_url"] == source_url
+        assert source_package["storage_path"] == build_source_artifact_storage_path(
+            media_id,
+            row[5],
+            "tar",
+        )
+        assert source_package["content_type"] == "application/x-tar"
+        assert source_package["size_bytes"] == len(source_bytes)
+        assert source_package["sha256_hex"] == hashlib.sha256(source_bytes).hexdigest()
+        assert storage.get_object(build_storage_path(media_id, "pdf")) == PDF_CONTENT
+        assert storage.get_object(source_package["storage_path"]) == source_bytes
+
+    def test_arxiv_pdf_hard_delete_removes_pdf_and_source_package_storage(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+        url = "https://arxiv.org/pdf/1706.03762"
+        source_url = "https://arxiv.org/e-print/1706.03762"
+        source_bytes = (
+            Path(__file__).parent / "fixtures/reader_apparatus/arxiv/2606.01109-source.tar"
+        ).read_bytes()
+        _patch_remote_file_limits(
+            monkeypatch, limit_bytes=max(len(source_bytes), len(PDF_CONTENT)) + 1024
+        )
+        _patch_file_extractors_success(monkeypatch, direct_db)
+
+        _expect_remote_file(remote_http, url, PDF_CONTENT, content_type="application/pdf")
+        _expect_remote_file(
+            remote_http,
+            source_url,
+            source_bytes,
+            content_type="application/e-print",
+        )
+
+        _, media_id = _accept_source_url(
+            auth_client,
+            direct_db,
+            user_id,
+            url,
+            expected_source_type="remote_pdf_url",
+        )
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "success"
+
+        with direct_db.session() as session:
+            source_package_path = session.execute(
+                text("""
+                    SELECT source_payload->'arxiv_source_package'->>'storage_path'
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id
+                    ORDER BY attempt_no DESC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+
+        assert delete_response.status_code == 200, delete_response.text
+        assert delete_response.json()["data"] == {
+            "status": "deleted",
+            "hard_deleted": True,
+            "removed_from_library_ids": [default_id],
+            "hidden_for_viewer": False,
+            "remaining_reference_count": 0,
+        }
+        assert storage.get_object(build_storage_path(media_id, "pdf")) is None
+        assert storage.get_object(source_package_path) is None
+        assert set(storage.deleted_paths) == {
+            build_storage_path(media_id, "pdf"),
+            source_package_path,
+        }
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM media WHERE id = :media_id),
+                        (SELECT count(*) FROM media_file WHERE media_id = :media_id),
+                        (SELECT count(*) FROM media_source_attempts WHERE media_id = :media_id),
+                        (SELECT count(*) FROM reader_apparatus_items WHERE media_id = :media_id),
+                        (SELECT count(*) FROM reader_apparatus_edges WHERE media_id = :media_id)
+                """),
+                {"media_id": media_id},
+            ).one()
+        assert counts == (0, 0, 0, 0, 0)
+
+    def test_arxiv_pdf_retry_does_not_clone_previous_source_package_artifact(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        url = "https://arxiv.org/pdf/1706.03762"
+        source_url = "https://arxiv.org/e-print/1706.03762"
+        source_bytes = (
+            Path(__file__).parent / "fixtures/reader_apparatus/arxiv/2606.01109-source.tar"
+        ).read_bytes()
+        _patch_remote_file_limits(
+            monkeypatch, limit_bytes=max(len(source_bytes), len(PDF_CONTENT)) + 1024
+        )
+        _patch_file_extractors_success(monkeypatch, direct_db)
+
+        _expect_remote_file(remote_http, url, PDF_CONTENT, content_type="application/pdf")
+        _expect_remote_file(
+            remote_http,
+            source_url,
+            source_bytes,
+            content_type="application/e-print",
+        )
+
+        _, media_id = _accept_source_url(
+            auth_client,
+            direct_db,
+            user_id,
+            url,
+            expected_source_type="remote_pdf_url",
+        )
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "success"
+
+        with direct_db.session() as session:
+            previous_attempt = session.execute(
+                text("""
+                    SELECT id, source_payload
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id
+                    ORDER BY attempt_no DESC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).one()
+            assert "arxiv_source_package" in previous_attempt.source_payload
+            session.execute(
+                text("""
+                    UPDATE media
+                    SET processing_status = 'failed',
+                        failure_stage = 'extract',
+                        last_error_code = 'E_INGEST_FAILED',
+                        last_error_message = 'retry test'
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    UPDATE media_source_attempts
+                    SET status = 'failed',
+                        error_code = 'E_INGEST_FAILED',
+                        error_message = 'retry test'
+                    WHERE id = :attempt_id
+                """),
+                {"attempt_id": previous_attempt.id},
+            )
+            session.commit()
+
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            json={"from_stage": "source"},
+            headers=auth_headers(user_id),
+        )
+        assert retry_response.status_code == 202, retry_response.text
+        retry_attempt_id = UUID(retry_response.json()["data"]["source_attempt_id"])
+        direct_db.register_cleanup("media_source_attempts", "id", retry_attempt_id)
+        _register_background_jobs_for_media(direct_db, media_id)
+
+        with direct_db.session() as session:
+            retry_payload = session.execute(
+                text("""
+                    SELECT source_payload
+                    FROM media_source_attempts
+                    WHERE id = :attempt_id
+                """),
+                {"attempt_id": retry_attempt_id},
+            ).scalar_one()
+
+        assert retry_payload["remote_kind"] == "pdf"
+        assert retry_payload["kind"] == "pdf"
+        assert retry_payload["url"] == url
+        assert "arxiv_source_package" not in retry_payload
+
+    def test_arxiv_pdf_from_url_persists_source_package_apparatus_api(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        url = "https://arxiv.org/pdf/2606.01109"
+        source_url = "https://arxiv.org/e-print/2606.01109"
+        pdf_bytes = _valid_pdf_content("arXiv source-package apparatus API smoke")
+        source_bytes = (
+            Path(__file__).parent / "fixtures/reader_apparatus/arxiv/2606.01109-source.tar"
+        ).read_bytes()
+        _patch_remote_file_limits(
+            monkeypatch,
+            limit_bytes=max(len(source_bytes), len(pdf_bytes)) + 1024,
+        )
+
+        _expect_remote_file(remote_http, url, pdf_bytes, content_type="application/pdf")
+        _expect_remote_file(
+            remote_http,
+            source_url,
+            source_bytes,
+            content_type="application/e-print",
+        )
+
+        _, media_id = _accept_source_url(
+            auth_client,
+            direct_db,
+            user_id,
+            url,
+            expected_source_type="remote_pdf_url",
+        )
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "success"
+
+        response = auth_client.get(
+            f"/media/{media_id}/apparatus",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["media_kind"] == "pdf"
+        assert data["status"] == "ready"
+        assert data["capabilities"]["has_sidecar_items"] is True
+        assert data["capabilities"]["has_inline_markers"] is False
+        assert data["capabilities"]["supports_jump_to_marker"] is False
+        assert data["capabilities"]["supports_jump_to_target"] is False
+        assert Counter(item["kind"] for item in data["items"]) == {
+            "bibliography_entry": 17,
+            "bibliography_ref": 15,
+            "footnote": 1,
+        }
+        assert Counter(item["extraction_method"] for item in data["items"]) == {
+            "latex_biblatex_bibliography": 17,
+            "latex_biblatex_citation": 15,
+            "latex_footnote": 1,
+        }
+        assert len(data["items"]) == 33
+        assert len(data["edges"]) == 20
+        assert {item["locator_status"] for item in data["items"]} == {"missing"}
+        assert {item["locator"] for item in data["items"]} == {None}
+        assert {item["source_ref"]["format"] for item in data["items"]} == {"arxiv_source"}
+        assert {item["source_ref"]["arxiv_id"] for item in data["items"]} == {"2606.01109"}
+        assert {item["source_ref"]["sha256_hex"] for item in data["items"]} == {
+            hashlib.sha256(source_bytes).hexdigest()
+        }
+        assert {edge["relation"] for edge in data["edges"]} == {"cites_bibliography_entry"}
+        assert data["diagnostics"]["arxiv_source_package"]["status"] == "fetched"
+        assert data["diagnostics"]["arxiv_source_package"]["source_url"] == source_url
+        assert (
+            data["diagnostics"]["arxiv_source_package"]["sha256_hex"]
+            == hashlib.sha256(source_bytes).hexdigest()
+        )
+        assert data["diagnostics"]["latex_biblatex"] == {
+            "status": "ready",
+            "citation_marker_count": 15,
+            "citation_edge_count": 20,
+            "cited_bibliography_entry_count": 17,
+            "bib_entry_count": 22,
+            "uncited_bib_entry_count": 5,
+            "footnote_count": 1,
+            "missing_citation_keys": [],
+        }
+        assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
+
+    def test_arxiv_pdf_from_url_rejects_unsafe_source_package_but_completes_pdf_ingest(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        url = "https://arxiv.org/pdf/2606.01109"
+        source_url = "https://arxiv.org/e-print/2606.01109"
+        pdf_bytes = _valid_pdf_content("Unsafe arXiv source-package apparatus API smoke")
+        source_bytes = _tar_bytes([("../main.tex", b"\\begin{document}\\cite{a}\\end{document}")])
+        _patch_remote_file_limits(
+            monkeypatch,
+            limit_bytes=max(len(source_bytes), len(pdf_bytes)) + 1024,
+        )
+
+        _expect_remote_file(remote_http, url, pdf_bytes, content_type="application/pdf")
+        _expect_remote_file(
+            remote_http,
+            source_url,
+            source_bytes,
+            content_type="application/e-print",
+        )
+
+        _, media_id = _accept_source_url(
+            auth_client,
+            direct_db,
+            user_id,
+            url,
+            expected_source_type="remote_pdf_url",
+        )
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["status"] == "success"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.processing_status, msa.status, msa.id
+                    FROM media m
+                    JOIN media_source_attempts msa ON msa.media_id = m.id
+                    WHERE m.id = :media_id
+                    ORDER BY msa.attempt_no DESC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+        assert row is not None
+        assert row[0:2] == ("ready_for_reading", "succeeded")
+        assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
+
+        response = auth_client.get(
+            f"/media/{media_id}/apparatus",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["media_kind"] == "pdf"
+        assert data["status"] == "empty"
+        assert data["items"] == []
+        assert data["edges"] == []
+        assert data["capabilities"] == {
+            "has_inline_markers": False,
+            "has_sidecar_items": False,
+            "supports_hover_preview": False,
+            "supports_jump_to_marker": False,
+            "supports_jump_to_target": False,
+            "has_probable_items": False,
+        }
+        assert data["diagnostics"]["arxiv_source_package"] == {
+            "status": "unsafe_archive",
+            "storage_path": build_source_artifact_storage_path(
+                media_id,
+                row[2],
+                "tar",
+            ),
+            "source_url": source_url,
+            "reason": "path_traversal",
+        }
 
     def test_create_remote_epub_url_success_via_http_fetch(
         self,

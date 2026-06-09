@@ -1,0 +1,1944 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">A#ective injustice</title>
+				<funder ref="#_zHgcjdM">
+					<orgName type="full">Horizon Europe</orgName>
+				</funder>
+				<funder ref="#_CHZurmw">
+					<orgName type="full">EU Horizon Europe</orgName>
+				</funder>
+				<funder>
+					<orgName type="full">European Union</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability status="unknown"><licence/></availability>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author role="corresp">
+							<persName><forename type="first">Pilar</forename><surname>Lopez-Cantero</surname></persName>
+							<email>pilar.lopezcantero@uantwerpen.be</email>
+							<affiliation key="aff0">
+								<orgName type="department">Department of Philosophy</orgName>
+								<orgName type="institution">University of Antwerp</orgName>
+								<address>
+									<settlement>Antwerp</settlement>
+									<country key="BE">Belgium</country>
+								</address>
+							</affiliation>
+						</author>
+						<title level="a" type="main">A#ective injustice</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date/>
+						</imprint>
+					</monogr>
+					<idno type="MD5">00E47074FCC2B241528106A410193C33</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2" ident="GROBID" when="2026-06-09T05:52+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<label type="revision">a91ee48</label>
+					<label type="parameters">startPage=-1, endPage=-1, consolidateCitations=1, consolidateHeader=1, consolidateFunders=0, includeRawAffiliations=false, includeRawCitations=true, includeRawCopyrights=false, generateTeiIds=false, generateTeiCoordinates=[ref, biblStruct, note], sentenceSegmentation=false, flavor=null</label>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<textClass>
+				<keywords>
+					<term>aDective justice</term>
+					<term>emotion</term>
+					<term>well-being</term>
+					<term>equality</term>
+					<term>aptness</term>
+				</keywords>
+			</textClass>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Oppression, marginalization, and other forms of disadvantage often come with emotional burdens, such as feelings of insecurity or stress. At the same time, some features of oppression are emotional in nature-for example, the dismissal of anger coming from victims of racial or gender injustice. The concept of aDective injustice aims to capture the distinctively emotional wrongs that contribute to, or themselves constitute, unfair disadvantage. This article oDers a critical overview of the existing literature on aDective injustice, understood as the unjust interference with people's aDective lives.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<facsimile>
+		<surface n="1" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="2" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="3" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="4" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="5" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="6" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="7" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="8" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="9" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="10" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="11" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="12" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="13" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="14" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="15" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="16" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="17" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="18" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="19" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="20" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="21" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="22" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+	</facsimile>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1.">Introduction</head><p>Emotions, or more generally, people's aDective lives, have long been important matters in the study of social, moral, and political normativity. For example, care ethicists and capability theorists give a central role to love and personal relationships, while philosophers of race and gender have reclaimed the epistemic and political power of disruptive emotions. The emergent debate on a"ective injustice allows for a systematised and focused analysis of forms of injustice that are distinctively emotional in nature, while cutting across existing discussions on emotion and normativity. In the same way epistemic injustice highlights wrongs related to doxastic attitudes and experience, aDective injustice highlights wrongs related to emotional attitudes and experience. 1 It seems wrong, for example, to demand a Black man that he calms down when he is addressed with a racial slur. Policies that induce fear on women or migrants also seem wrongful, and so does the social imposition of hegemonic mourning practices on religious minorities. Individuals and groups in those circumstances may be, of course, victims of several harms, wrongs and injustices, and the situations themselves may be unjust for diDerent reasons. The concept of aDective injustice captures the distinctively emotional wrongs that are involved in these contexts, as well as explaining how these wrongs are not merely psychological, but social and structural wrongs-which ought to be avoided or corrected in the pursuit of a just society.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.">A/ective injustice: an overview of the debate</head><p>The concept of aDective injustice was first postulated by Amia <ref type="bibr" coords="2,394.29,373.15,87.36,10.37" target="#b66">Srinivasan (2018)</ref> and Shiloh <ref type="bibr" coords="2,72.00,393.31,74.60,10.37" target="#b81">Whitney (2018)</ref>, who independently identified two sets of (related, but distinct) wrongs with regards to emotional expression, often suDered by people who are already victims of injustice.</p><p>Srinivasan argued that when victims of injustice experience anger about their subordination, they face a normative conflict between prudence and aptness. While expressing their anger can be prudentially counterproductive for them-since people in positions of power might be less keen to listen, for example-their anger is fitting or apt, meaning that it accurately represents features of the world-such as the oppression they experience as members of a subordinated group. 2 Having to choose between representing the world correctly and following prudential reasons constitutes an internal normative conflict for these people. For <ref type="bibr" coords="2,429.50,562.27,110.51,10.37">Srinivasan (2018, 127;</ref><ref type="bibr" coords="2,72.00,582.43,19.59,10.37">133)</ref>, this double-bind is an "insidious choice" between "two competing and significant goods that often feel incomparable", and is thus an unrecognised from of injustice-aDective injustice.</p><p>Whitney expanded the understanding of emotional function, arguing that emotions are not merely a way to apprehend the world, but a means to move others-where being moved is a way of making one's aDective investments sensible to an interlocutor. 3 Inspired by Iris Marion <ref type="bibr" coords="2,72.00,691.15,72.84,10.37" target="#b84">Young's (1990)</ref> faces of oppression, Whitney identified three forms of aDective injustice. For Whitney, not giving uptake to someone's emotions-refusing to being moved by themconstitutes aDective marginalisation, since it makes that person's aDective experience not count-it does not make a diDerence socially. At the same time, oppressed people are forced to process the emotions of dominant groups, thus becoming aDectively exploited. Focusing on the phenomenological dimension of these two forms of aDective injustice, <ref type="bibr" coords="3,437.50,155.71,102.50,10.37">Whitney (2018, 497)</ref> claimed that these often coalesce into aDective violence. This third form of injustice results from being forced to process one's own aDect that is not given uptake, as well as the imposed aDects of others-these become "toxic" in one's body, impairing one's aDective capacities.</p><p>Two further forms of aDective injustice were then proposed by Alfred <ref type="bibr" coords="3,432.11,244.27,107.92,10.37;3,72.00,264.43,83.72,10.37">Archer and Benjamin Matheson (2023)</ref>, concentrating on how groups can inflict aDective injustice. First, they introduced the notion of aDective rights or 'rights to feel', which may be minimally understood as an entitlement to aDective autonomy: the capacity to determine one's emotional responses without undue pressure from others to feel or express certain emotions. ADective rights can violated by a society's imposition of admiration of the military, colonial history, or the monarchy, for example. 4 Second, they coined the term 'emotional imperialism' to refer to a form of group domination that involves the imposition of (elements of) a dominator's emotional regime on the dominated-where emotional regimes are defined as the set of norms that shapes the emotional lives of the members of that society and grounds political stability. These norms do not only determine what emotions are fitting or apt, but also "how to prioritize fitting emotions when they conflict, how to interpret our and others' emotions, how we should regulate our emotions, and what practices express particular emotions" <ref type="bibr" coords="3,294.31,485.95,149.94,10.37">(Archer and Matheson 2023, 9)</ref>. 5</p><p>Moving beyond the identification of specific forms of aDective injustice, Francisco Gallegos (2022) put forward an overarching account that defined the conditions for something to count as an aDective injustice. For Gallegos, aDective injustice is the morally objectionable deprivation of aDective goods that individuals or groups are entitled to. Specifically, people are entitled to two fundamental aDective goods that are non-instrumental for the attainment of other goods and non-reducible (to other goods or to each other). The first fundamental aDective good is subjective well-being, understood as emotional health. The second is emotional aptness, which is the practice of apprehending the world through fitting emotions. Gallegos acknowledges that these fundamental goods cannot be allocated directly, and claims that they can be attained instead through the provision of subsidiary aDective goods: aDective resources (such as sleep and self-care), opportunities (such as education to hone one's emotional responses), freedoms (such as freedom from poverty-induced stress) and recognition (like one's emotions receiving uptake by others).</p><p>These four accounts, which we can call the core views of aDective injustice, have since been refined by the authors themselves <ref type="bibr" coords="4,260.36,163.63,150.09,10.37" target="#b6">(Archer and Matheson 2023;</ref><ref type="bibr" coords="4,416.59,163.63,75.20,10.37" target="#b80">Whitney 2023)</ref>  and <ref type="table" coords="4,522.74,163.63,17.28,10.37">(re-</ref>)developed by others <ref type="bibr" coords="4,181.35,183.79,73.84,10.37" target="#b41">(Krueger 2023;</ref><ref type="bibr" coords="4,259.08,183.79,108.99,10.37" target="#b57">Pismenny et al. 2024;</ref><ref type="bibr" coords="4,371.95,183.79,58.23,10.37" target="#b65">Slaby 2023;</ref><ref type="bibr" coords="4,434.08,183.79,78.18,10.37" target="#b67">Stockdale 2023)</ref>. The debate has steadily grown through research with narrower aims, such as discussing specific forms of aDective injustice, identifying aDective injustice in a variety of practical domains, and exploring the concept from continental and non-Western traditions. Thus, on forms of aDective injustice there have been contributions on emotional regulation <ref type="bibr" coords="4,396.38,264.43,117.69,10.37" target="#b7">(Archer and Mills 2019;</ref><ref type="bibr" coords="4,517.64,264.43,22.38,10.37;4,72.00,284.59,25.42,10.37" target="#b74">Villa 2024)</ref>, aDective dismissal <ref type="bibr" coords="4,210.35,284.59,53.92,10.37" target="#b8">(Bell 2023)</ref>, aDective stereotyping <ref type="bibr" coords="4,391.64,284.59,69.53,10.37" target="#b15">(Cherry 2023)</ref>, tone policing (MacLachlan 2023), double binds <ref type="bibr" coords="4,242.96,304.51,86.90,10.37" target="#b64">(Silva et. Al 2026)</ref>, and aDective gaslighting <ref type="bibr" coords="4,464.05,304.51,70.52,10.37" target="#b80">(Whitney 2023</ref><ref type="bibr" coords="4,534.56,304.51,5.45,10.37;4,72.00,324.67,67.17,10.37" target="#b79">, Whitney 2025</ref>; also discussed in Cherry 2023 and Zembylas 2024a). On particular emotional phenomena, philosophers have looked at the connection between aDective injustice and fear <ref type="bibr" coords="4,72.00,364.99,60.33,10.37" target="#b4">(Archer and</ref><ref type="bibr" coords="4,136.79,364.99,138.35,10.37">Mills 2025, Puddifoot 2025)</ref>, shame <ref type="bibr" coords="4,322.12,364.99,75.63,10.37" target="#b28">(Gallegos 2023)</ref>, self-respect (Edlich 2026), anger <ref type="bibr" coords="4,105.01,385.15,159.21,10.37" target="#b36">(Hildebrand and Jackson 2025)</ref>, hope <ref type="bibr" coords="4,304.30,385.15,43.19,10.37" target="#b43">(Li 2023)</ref>, fatigue <ref type="bibr" coords="4,396.54,385.15,62.80,10.37" target="#b60">(Rathe 2025)</ref>, love and care <ref type="bibr" coords="4,72.00,405.31,77.92,10.37" target="#b68">(Tessman 2023)</ref>, the 'unfelt' <ref type="bibr" coords="4,221.26,405.31,57.41,10.37" target="#b65">(Slaby 2023</ref><ref type="bibr" coords="4,278.67,405.31,94.90,10.37">, Zembylas 2026a)</ref>, and existential or background feelings <ref type="bibr" coords="4,114.85,425.47,173.94,10.37">(Vespermann and Tirkonnen 2024)</ref>. In applied settings, aDective injustice has been explored with regards to racist statues <ref type="bibr" coords="4,273.20,445.63,66.56,10.37">(Archer 2024)</ref>, healthcare <ref type="bibr" coords="4,405.68,445.63,67.19,10.37" target="#b9">(Bogaert 2025</ref><ref type="bibr" coords="4,472.87,445.63,67.17,10.37;4,72.00,465.79,21.80,10.37" target="#b23">, Floris et al. 2026</ref><ref type="bibr" coords="4,93.80,465.79,87.54,10.37" target="#b56">, Pismenny 2025)</ref>, artificial intelligence <ref type="bibr" coords="4,297.21,465.79,116.52,10.37" target="#b19">(Dale and Gubka 2025;</ref><ref type="bibr" coords="4,417.81,465.79,122.20,10.37" target="#b34">Gokn and Archer 2025;</ref><ref type="bibr" coords="4,72.00,485.95,55.66,10.37" target="#b83">Wong 2025)</ref>, disabled and trans identities <ref type="bibr" coords="4,276.87,485.95,67.88,10.37" target="#b21">(Eickers 2024)</ref>, mental health (Isern-Mas and Almagro 2025; Lavallee and Gagné-Julien 2024), parasocial relationships <ref type="bibr" coords="4,390.47,506.11,108.18,10.37">(Isern-Mas et al. 2025)</ref>, hostile architecture <ref type="bibr" coords="4,136.50,526.27,71.82,10.37" target="#b41">(Krueger 2023)</ref>, autism <ref type="bibr" coords="4,254.88,526.27,68.18,10.37" target="#b41">(Krueger 2023</ref><ref type="bibr" coords="4,323.06,526.27,68.39,10.37" target="#b33">, Gokn 2026)</ref>, gentrification and migration (Lopez-Cantero 2025), family abuse <ref type="bibr" coords="4,256.22,546.43,56.69,10.37" target="#b52">(Mills 2019)</ref>, design <ref type="bibr" coords="4,358.84,546.43,89.58,10.37" target="#b55">(Osler et al. 2025)</ref>, meritocracy and income inequality <ref type="bibr" coords="4,165.64,566.35,101.63,10.37" target="#b69">(Thomas et al. 2025)</ref>, asexuality (Walter and aus dem Bruch 2026), online contexts <ref type="bibr" coords="4,121.41,586.51,116.43,10.37" target="#b82">(Wildman et al. 2022)</ref>, climate vulnerability <ref type="bibr" coords="4,363.13,586.51,89.61,10.37" target="#b91">(Zembylas 2026b)</ref>, and education <ref type="bibr" coords="4,72.00,606.67,90.30,10.37">(Zembylas 2024a;</ref><ref type="bibr" coords="4,168.47,606.67,33.63,10.37" target="#b87">2024b;</ref><ref type="bibr" coords="4,208.27,606.67,32.85,10.37" target="#b88">2024c;</ref><ref type="bibr" coords="4,247.28,606.67,31.62,10.37">2025b)</ref>. Finally, the concept has been explored from a Schelerian approach (Ambrosino 2025) and from the perspective of African moral theory <ref type="bibr" coords="4,72.00,646.99,72.78,10.37" target="#b13">(Carman 2023;</ref><ref type="bibr" coords="4,147.25,646.99,25.43,10.37">2024)</ref>.</p><p>These contributions have progressively built on the core views. They have also drawn connections with relevant philosophical debates, such as epistemic injustice, phenomenology, and cognition, although some important links are yet to be developed.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.">Definition and categories of a/ective injustice</head><p>The first overarching definition of aDective injustice was put forward by Alfred <ref type="bibr" coords="5,483.11,171.55,57.06,10.37;5,72.00,191.71,105.80,10.37">Archer and Georgina Mills (2019)</ref>. Drawing a parallel with the definition of epistemic injustice (injustice faced by people in their capacity as knowers), they defined aDective injustice as injustice faced by people in their capacity as aDective beings <ref type="bibr" coords="5,300.72,232.03,132.18,10.37">(Archer and Mills 2019, 75)</ref>. Most participants in the debate use this definition as a starting point. 6 A more informative definition has been advanced by Joel <ref type="bibr" coords="5,159.34,272.35,89.04,10.37">Krueger (2023, 85)</ref>, who states that aDective injustice "involves limitations on our ability to experience, express, regulate, interpret, and share our emotions and other feelings". However, it should be noted that not all limitations to this ability are unjust and there might be other relevant aDective practices not mentioned in the definition. It is then best to use a more generic term than 'deprivation' or 'limitation', such as 'interference'. Also, some aDective injustices do not involve one's own emotions, but those of others-for example, being the object of racist fear <ref type="bibr" coords="5,144.14,393.31,60.78,10.37" target="#b4">(Archer and</ref><ref type="bibr" coords="5,209.79,393.31,170.96,10.37">Mills 2025, Pismenny et al. 2024)</ref>. The strengths of the existing definitions can be incorporated into a definition that is sukciently general and informative in order to avoid those issues (where the parenthesis may be included or omitted for a complete or short-handed definition):</p><p>ADective injustice is the unjust interference with people's aDective lives, with regard to their own aDective practices or through those of others (such as the experience, expression, regulation, interpretation, and sharing of emotions and other aDective phenomena).</p><p>Two ways of categorizing aDective injustice emerge from the current literature. The first one is according to the specific aDective phenomenon that is at stake. Daniel <ref type="bibr" coords="5,422.33,590.35,117.62,10.37;5,72.00,610.51,86.51,10.37">Vespermann and Sanna Tirkonnen (2024)</ref> propose the term '(aDective) existential injustice' to refer to wrongs with regards to existential or background feelings. These are understood as non-intentional felt orientations towards reality, such as anxiety, guilt or feelings of not belonging. 7 Krueger's (2023)   'ecological injustice' picks up on an aDective phenomenon that is not psychological or interpersonal, but environmental: aDordances. Krueger argues that aDective injustice can be built into the environment through the presence or absence of aDordances-possibilities for action and (emotional) experience as enabled by things, spaces, and other people. 8</p><p>A second route in the existing discussions categorises instances of aDective injustice according to the nature of the aDective wrong at hand. Emotional imperialism, for example, is a form of aDective domination <ref type="bibr" coords="6,178.13,163.63,141.21,10.37" target="#b6">(Archer and Matheson 2023)</ref>. We can also talk of 'uptake injustice' as a specific type of wrong that defines a specific kind of aDective injustice-the discrediting of a person's emotion due to a prejudiced uptake economy <ref type="bibr" coords="6,366.59,203.95,70.89,10.37" target="#b80">(Whitney 2023</ref>). 9 Other taxonomy proposals have diDerentiated between having one's emotions dismissed, the weaponization of emotions to unfairly disadvantage others, and being the target of inapt emotions <ref type="bibr" coords="6,480.66,244.27,59.35,10.37;6,72.00,264.43,53.21,10.37" target="#b3">(Archer and Mills 2025)</ref>. Arina <ref type="bibr" coords="6,165.31,264.43,112.52,10.37" target="#b57">Pismenny et al. (2024)</ref> further narrow down these three kinds of aDective injustice to seven more specific ones, each of them with several sub-categories.</p><p>As the debate currently stands, however, it makes sense to classify all instances of aDective injustice according to the two broad and overarching categories postulated by Gallegos: interferences with emotional aptness and interferences with subjective well-being. Given that the existing categorisations (existential injustice, ecological injustice, emotional imperialism, uptake injustice, and others) are not mutually exclusive, concrete actions and situations can be further labelled depending on how much specification is needed about the aDective phenomenon or the aDective wrong at hand. Discussions surrounding aDective injustice-its usefulness, criticisms, and potential responses-have mostly focused on emotional aptness, while subjective well-being has been a more secondary concern. This makes sense, given that emotional aptness is more distinctively aDective, while subjective well-being is a more general consideration that encompasses non-aDective components as well. For that reason, the next two sections draw primarily from existing discussions regarding emotional aptness-subjective well-being is one of the main lines of future research in aDective injustice, which are discussed in the last section.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.">Purpose and criticisms</head><p>As mentioned earlier, the notion of aDective injustice is a direct inheritor of earlier feminist and decolonial views on the epistemic and political role of anger and disruptive emotions <ref type="bibr" coords="6,506.24,658.99,33.74,10.37;6,72.00,679.15,21.94,10.37">(Fanon 1963</ref><ref type="bibr" coords="6,99.42,679.15,27.42,10.37">(Fanon /2004;;</ref><ref type="bibr" coords="6,129.27,679.15,51.24,10.37" target="#b24">Frye 1983;</ref><ref type="bibr" coords="6,182.94,679.15,61.92,10.37" target="#b40">Jaggar 1989;</ref><ref type="bibr" coords="6,247.29,679.15,58.53,10.37" target="#b46">Lorde 1984;</ref><ref type="bibr" coords="6,308.25,679.15,71.46,10.37" target="#b47">Lugones 2003;</ref><ref type="bibr" coords="6,382.13,679.15,69.76,10.37" target="#b53">Narayan 1988)</ref>. This is explicitly acknowledged by most contributors to the debate, who also recognise and draw from Iris Marion injustice. In light of this existing literature, what is then the purpose of the notion of aDective injustice?</p><p>First, the notion of aDective injustice lends itself to a greater variety of emotional experiences: while much of the earlier literature on political emotions was centred around disruptive ones with a particular emphasis on anger (Cherry 2021), we have seen in section 1 that discussants of aDective injustice are looking into many other dimensions of aDective lives, including-but not limited to-a wider range of emotions.</p><p>Second, by cutting across debates on justice, emotion, race, and gender, the notion of aDective injustice aDords a specific focus on emotional phenomena, while remaining sukciently general to apply to a range of lived experiences (which may be marked by injustice due to belonging to a marginalised group, injustice on grounds other than group belonging, or, according to some authors, even independently of personal experiences of injustice).</p><p>Third, the debate has expanded the shared grounds between views of justice and novel frameworks in phenomenology, philosophy of cognition, and philosophy of mind, such as situated aDectivity and environmental scaDolding. 10 In turn, this can act as support for the consolidation of 'political philosophy of mind' <ref type="bibr" coords="7,305.55,421.39,110.79,10.37" target="#b50">(Maiese &amp; Hanna 2019</ref><ref type="bibr" coords="7,416.34,421.39,104.26,10.37" target="#b72">, Tzima &amp; Slaby 2024</ref>), a subfield that examines how mental states, capacities, and aDective experiences intersect with social and political structures, and how power, norms, and institutions shape, recognise, or harm minds. Now, even if it is a useful concept, the notion of aDective injustice faces important criticisms.</p><p>One commonly raised objection is that the appeal to 'injustice' may be setting the bar too high when discussing aDective lives <ref type="bibr" coords="7,227.59,550.27,46.76,10.37" target="#b8">(Bell 2023</ref><ref type="bibr" coords="7,274.36,550.27,72.71,10.37" target="#b58">, Plunkett 2021</ref>). This first line of criticism focuses on the grounds of aDective injustice, and already available responses are explained next. Another source of scepticism is that people do not plausibly have a universal entitlement to have all their emotional responses recognised as apt, or are owed a life that is completely free of negative emotions. This second objection is focused on the nature and conditions for aDective justice, which is among the main questions for future research that are presented in the last section.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">The grounds of a/ective injustice</head><p>The question of the grounds of aDective injustice is the question of what makes an interference with someone's aDective lives unjust. Some interferences with aDective lives, both in terms of emotional aptness and subjective well-being, are justified, or benign, even when they deprive the person of fundamental aDective goods-in which case they seem to be prima facie not unjust. For example, a child might rightfully be deprived of joy when banned from eating sweets before dinner. Concealing hurtful information from a friend can be better for them than revealing it so that they can have emotionally apt responses. Uncontroversially, it seems that a misogynist's anger due to 'reverse discrimination' should not be given any uptake.</p><p>To understand why some interferences with aDective lives are unjust and others are not, first it should be noted that discussants of aDective injustice do not universally endorse a clear and explicit distinction between aDective harms, aDective wrongs, and aDective injustices. 11 For that reason, criticisms of specific views and of the notion of aDective injustice as a whole sometimes arise on the basis of unacknowledged meta-ethical and normative disagreements. This is compounded by the fact that discussions on aDective injustice can have three distinct loci (firstpersonal, second-personal, and structural) and authors sometimes highlight one or the otherparticularly when discussing emotional aptness.</p><p>Interferences with emotional aptness (let it be through deprivation, imposition, manipulation, or other forms) can entail a first-personal wrong because aDective processes and experiencesspecially emotions-are a crucial component people's ability to value. As Macalester <ref type="bibr" coords="8,488.09,453.55,51.88,10.37" target="#b8">Bell (2023)</ref> explains, to value something is to become vulnerable to emotions regarding that thing and to experience emotions as fitting responses to what is valued. 12 Emotions are then crucial for people's understanding the world, for their moral agency, and for their sense of self. Crucially, aDective experiences reveal what matters subjectively to someone, so they express what is personally important to them <ref type="bibr" coords="8,234.74,554.35,126.23,10.37" target="#b3">(Archer and Mills 2025;</ref><ref type="bibr" coords="8,367.40,554.35,73.58,10.37" target="#b80">Whitney 2023)</ref>; through aDective experiences people identify themselves with what they value <ref type="bibr" coords="8,410.57,574.51,54.68,10.37" target="#b8">(Bell 2023)</ref>. Further, the interference with emotional aptness disrupts people's ability to participate in the creation of socially shared meanings about shared aDective practices. The nature of these first-personal wrongs has been explained in terms of disrespect <ref type="bibr" coords="8,338.24,634.99,78.87,10.37">(Bell 2023, 245)</ref>, disruption of aDective autonomy <ref type="bibr" coords="8,125.45,655.15,142.62,10.37" target="#b6">(Archer and Matheson 2023;</ref><ref type="bibr" coords="8,271.70,655.15,48.11,10.37" target="#b8">Bell 2023)</ref>, or disruption of moral agency <ref type="bibr" coords="8,482.22,655.15,57.79,10.37;8,72.00,675.07,27.25,10.37" target="#b2">(Ambrosino 2025;</ref><ref type="bibr" coords="8,101.73,675.07,69.60,10.37" target="#b80">Whitney 2023)</ref>.</p><p>From a second-personal perspective, authors have discussed how wrongdoers can directly inflict the aforementioned first-personal wrongs by refusing to give uptake to their emotions <ref type="bibr" coords="9,72.00,115.39,70.78,10.37" target="#b81">(Whitney 2018</ref><ref type="bibr" coords="9,152.22,115.39,25.44,10.37" target="#b80">(Whitney , 2023))</ref>, dismissing them <ref type="bibr" coords="9,273.45,115.39,51.75,10.37" target="#b8">(Bell 2023)</ref>, pathologizing them (Lavallee and Gagné-Julien 2024; <ref type="bibr" coords="9,134.00,135.55,104.15,10.37" target="#b57">Pismenny et al. 2024;</ref><ref type="bibr" coords="9,240.43,135.55,71.31,10.37" target="#b80">Whitney 2023)</ref> or policing them (MacLachlan 2023; <ref type="bibr" coords="9,491.54,135.55,48.53,10.37;9,72.00,155.71,58.53,10.37" target="#b57">Pismenny et al. 2024)</ref>. The second-personal perspective shows why people who deprive others of emotional aptness may be considered wrongdoers: because they fail to respect the person <ref type="bibr" coords="9,517.70,175.87,22.31,10.37;9,72.00,196.03,27.33,10.37" target="#b8">(Bell 2023)</ref> or to take them seriously as someone whose aDective concerns matter, and who themselves matter <ref type="bibr" coords="9,166.00,215.95,114.37,10.37" target="#b3">(Archer and Mills 2025;</ref><ref type="bibr" coords="9,282.85,215.95,69.61,10.37" target="#b80">Whitney 2023)</ref>.</p><p>When putting the focus on specific and delimited interactions between individuals, however, it should be taken into account that these interactions, and the motivations of the people involved, are shaped by aDective practices, norms, and relationships at the structural level. Sometimes, discussions on structural wrongs refer to identifiable wrongdoers with the intent to deprive people of emotional aptness and the institutional power to do so, like in the cases of design of hostile architecture <ref type="bibr" coords="9,178.14,344.83,75.90,10.37" target="#b41">(Krueger 2023)</ref> or the direct exercise of imperial ruling <ref type="bibr" coords="9,478.31,344.83,61.69,10.37;9,72.00,364.99,76.44,10.37" target="#b6">(Archer and Matheson 2023)</ref>. But often, the deprivation of emotional aptness happens without such specific intent, or without identifiable wrongdoers, through the habitual enactment of shared aDective practices, norms, and relationships that themselves (re)produce existing injustice <ref type="bibr" coords="9,481.28,405.31,58.73,10.37;9,72.00,425.47,78.36,10.37" target="#b6">(Archer and Matheson 2023;</ref><ref type="bibr" coords="9,152.84,425.47,78.59,10.37" target="#b67">Stockdale 2023;</ref><ref type="bibr" coords="9,233.90,425.47,65.98,10.37" target="#b80">Whitney 2023</ref><ref type="bibr" coords="9,299.88,425.47,62.92,10.37" target="#b65">, Slaby 2023)</ref>.</p><p>Acknowledging the existence of meta-ethical and normative disagreements, and diDerentiating between the three loci of injustice, are crucial steps to understand two diDerent positions with regard to the grounds of aDective injustice. First, discussants such as <ref type="bibr" coords="9,425.05,493.87,77.54,10.37">Bell (2023, 256)</ref> look at aDective injustice (in her case, the specific form of aDective dismissal) mostly in terms of a second-personal wrong, and understand wrongdoing in terms of a right violation. Because it seems dubious that people have a right to have their emotions always recognised or a life free of negative emotions, and because the locus of aDective injustice is second-personal according to her, Bell is sceptical of the use of the term 'injustice', which she argues should be reserved to wrongs that hurt society as a whole. Bell's view can then accommodate interferences with aDective lives are not unjust, like the examples at the beginning of this section, but because of her meta-ethical and normative commitments and her focus on the second-personal level, the view triggers scepticism about the very notion of aDective injustice.</p><p>The second approach sees aDective injustice as grounded on general structural injustice. This is the approach adopted by the core views, according to which aDective injustice is a constitutive element of other social injustices such as racism, sexism, or imperialism. From this approach, interference with aDective lives is unjust when it (re)produces existing forms of injustice <ref type="bibr" coords="10,117.69,155.71,75.17,10.37" target="#b80">(Whitney 2023;</ref><ref type="bibr" coords="10,195.82,155.71,55.48,10.37" target="#b65">Slaby 2023)</ref>, where injustice has been generally understood as unfair disadvantage or unjust treatment (i.e. domination or exploitation) brought about at the structural level. This approach preserves the notion of aDective injustice while in principle allowing to diDerentiate between unjust and not unjust interferences with aDective lives: these are only unjust if they constitute or reinforce other forms of injustice, so depriving the child of joy, or ignoring the anger of a misogynist, are not instances of aDective injustice.</p><p>When it comes to identify determining who 13 can be a victim of aDective injustice, the structural approach can be interpreted in two further ways. Most authors endorse-explicitly or implicitly-the view that victims of aDective injustice are already victims of other injustices: they are poor, racialised, disabled, or colonised, for example, and the unjust interference with their aDective lives compounds on and partially constitutes those existing injustices. In other words, aDective injustice is "parasitic" on other forms of injustice, to use <ref type="bibr" coords="10,418.56,385.15,121.45,10.37">Srinivasan's (2018, 135)</ref> phrase. However, Katie <ref type="bibr" coords="10,187.32,405.31,81.56,10.37" target="#b67">Stockdale (2023)</ref> believes that since aDective injustice is grounded at the structural level, individuals from dominant groups can also suDer from aDective injustice. In fact, some second-personal wrongdoing committed by individuals from dominant groups can be explained by structurally unjust aDective practices, norms and relationships (even if it does not morally justify it). For example, the socialisation of men to be overconfident, which akrms their dominant position in social hierarchy, may explain their dismissal of women's emotions <ref type="bibr" coords="10,72.00,526.27,128.04,10.37">(Pismenny et al. 2024, 155)</ref>. This not only wrongs women, who are directly deprived of emotional aptness in this sort of interaction: it also wrongs men, since their own ability to experience, understand and give uptake to emotions is skewed by unjust shared aDective practices, relationships, and norms.</p><p>Here, it may be useful to articulate a normative distinction more explicitly than has been done in the debate so far. Namely, it is possible to acknowledge that the (re)production of injustice in the aDective domain will sometimes be detrimental (i.e., harmful or even wrongful) to members of dominant groups, without this entailing that these individuals are themselves victims of aDective injustice. These individuals might suDer harms and/or wrongs that are aDective in nature, but these are not enabled by social conditions that make them victims of injustice. This understanding also allows for the accommodation of intersectional concerns, so that when aDective injustice is instantiated in interactions between people who are both disadvantaged, they can both be considered victims of aDective injustice, but on diDerent grounds. 14</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.">Future directions</head><p>There are three important matters that have come up in the debate, but that need further research in order to appropriately ground the notion of aDective injustice: the internal contradiction between apt and emotions, the role of subjective well-being, and the conditions for aDective justice.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.1.">The role of inapt emotions</head><p>Lisa <ref type="bibr" coords="11,95.26,308.59,77.18,10.37" target="#b68">Tessman (2023)</ref> argues that the excessive focus on emotional aptness overlooks that inapt emotions also have a role in aDective lives. Specifically, she argues that the uptake of inapt emotions is a requirement of unconditional love, given that despite not being appropriately grounded in reality, these emotions do reveal what matters to the loved person. This worry may be addressed by adopting a pluralist stance: diDerent situations can admit for diDerent standards of aptness <ref type="bibr" coords="11,176.01,409.15,125.37,10.37">(Gallegos 2022, 198, n. 14)</ref>. Still, inapt emotions do give rise to an important tension for proponents of aDective injustice, as highlighted by <ref type="bibr" coords="11,380.99,429.31,113.61,10.37" target="#b3">Archer and Mills (2025)</ref>. It could be argued in order to take people seriously, their inapt emotions should also be given uptake.</p><p>Further, only by receiving uptake to their inapt emotions from others can people eventually learn to have more apt emotional responses. However, recall that being the target of inapt emotions can also constitute an aDective injustice. If this is the case, how should unjust inapt emotions be assessed in terms of justice? The question is more pressing when intersectional concerns come into discussion-for example, when racialised people are prejudiced about people belonging to other racial groups, or when religious minorities advocate for the criminalisation of queerness. This tension, which is yet to be resolved, is not merely a matter of setting thresholds, since putting into question the role of emotional aptness could have significant consequences for the current understanding of grounds of aDective injustice-which as it has been discussed, is primarily analysed in terms of interferences with emotional aptness. 15</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.2.">Subjective well-being</head><p>Besides Gallegos, only a handful of contributors have discussed injustices related to interferences with subjective well-being. This is perhaps because emotional aptness is a distinctively aDective good that had not been systematised as a matter of justice, while there are already well-established discussions that capture the importance of subjective well-being for justice-as <ref type="bibr" coords="12,128.93,155.71,99.08,10.37">Gallegos (2022, 194)</ref> himself acknowledges. Care ethics <ref type="bibr" coords="12,403.84,155.71,70.92,10.37" target="#b32">(Gilligan 1982;</ref><ref type="bibr" coords="12,477.16,155.71,62.85,10.37" target="#b71">Tronto 1993)</ref> and the capability approach <ref type="bibr" coords="12,216.62,175.87,88.07,10.37" target="#b54">(Nussbaum 2011;</ref><ref type="bibr" coords="12,308.21,175.87,44.05,10.37" target="#b63">Sen 1999</ref>) are the most notable examples, but others have also highlighted the importance of aDective lives for justice (e.g. <ref type="bibr" coords="12,465.79,196.03,74.23,10.37" target="#b37">Honneth 2004;</ref><ref type="bibr" coords="12,72.00,215.95,62.51,10.37" target="#b77">Walzer 1983)</ref>.</p><p>There is also a substantial body of work on 'personal relationship goods' (Gheaus 2022) among political philosophers and theorists. Personal relationship goods are non-material goods-such as love, aDection, attachment, or loyalty-accrued in relationships with others-including friends, lovers, family, or neighbours <ref type="bibr" coords="12,260.04,304.51,69.86,10.37" target="#b31">(Gheaus 2022)</ref>. These debates are still to be explored in connection with aDective injustice, but there is an important matter to discern here: whether the deprivation of aDective goods can be reduced to the deprivation of personal relationship goods. Tentatively, the notion of aDective goods seems to cast a wider net than personal relationship goods. Personal relationships and social interaction do not account for all components of a person's aDective life that contribute to or disrupt subjective well-being, and are then relevant for justice (such as fear of unemployment, or lack of sleep due to unreliable public transport and long commutes). In turn, the debate of aDective injustice has all but abandoned the possibility of there being aDective rights (see n. 4), while there is a rich discussion on entitlements to personal relationship goods <ref type="bibr" coords="12,356.49,485.95,79.61,10.37" target="#b10">(Brownlee 2020;</ref><ref type="bibr" coords="12,438.04,485.95,101.93,10.37" target="#b11">Brownlee at al. 2022;</ref><ref type="bibr" coords="12,72.00,506.11,136.14,10.37" target="#b16">Collins and Shields 2025)</ref>. Hence, it initially seems that the debates could potentially complement each other-not only with regards to injustices connected with subjective wellbeing, but also on what exactly would be the conditions of aDective justice in general. 16</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.3.">A"ective justice</head><p>As it has been explained, numerous contributors have addressed what makes interferences with aDective lives unjust. However, there are counted mentions of a"ective justice or the paths to achieve it. This is an important question, in order to avoid the criticism that aDective justice would require that all emotional responses of victims of injustice are recognised as apt, or that they (or even everyone) are owed a life that is completely free of negative emotions.</p><p>The most substantial discussion on aDective justice is by <ref type="bibr" coords="13,367.74,75.07,142.00,10.37" target="#b6">Archer and Matheson (2023)</ref>, who reject the view that the provision of emotional aptness and subjective well-being are enough to achieve aDective justice. These aDective goods, they argue, may be provided within structurally unjust societies-such as the imposition of emotional regimes characteristic of colonialism.</p><p>Since aDective justice should pre-empt dominating social hierarchies, it should take the form of relational equality: "One community of people should not be in a hierarchically superior position to impose their norms for emotional fittingness, prioritization, regulation, or practices on others in a way that advances the interests of the dominant" <ref type="bibr" coords="13,381.13,215.95,154.33,10.37">(Archer and Matheson 2023, 22)</ref>.</p><p>They then situate their view in opposition to Gallegos's distributive approach, according to which aDective justice demands a fair distribution of aDective goods. 17 <ref type="bibr" coords="13,72.00,284.59,100.28,10.37">Gallegos (2022, 196)</ref> says that aDective justice is not an entitlement to happiness or emotional aptness, but to its pursuit-a matter of positive entitlements to the conditions required for either. However, the possibility of distributing aDective goods themselves has received backing from <ref type="bibr" coords="13,97.78,344.83,100.87,10.37" target="#b57">Pismenny et al. (2024</ref><ref type="bibr" coords="13,198.65,344.83,173.19,10.37">), while Pilar Lopez-Cantero (2025)</ref> argues that some policy decisions may have aDective by-products in the shape of aDective burdens, which can be distributed unequally-and thus unjustly-in an indirect manner.</p><p>Again, political philosophers and theorists have already made important contributions with regard to both the direct and the indirect (re-)distribution of goods that may be considered aDective, such as friendship or care <ref type="bibr" coords="13,258.44,453.55,74.18,10.37">(Cordelli 2015a</ref><ref type="bibr" coords="13,341.86,453.55,33.63,10.37" target="#b18">(Cordelli , 2015b;;</ref><ref type="bibr" coords="13,379.23,453.55,63.41,10.37" target="#b29">Gheaus 2009</ref><ref type="bibr" coords="13,451.82,453.55,25.42,10.37" target="#b30">Gheaus , 2018))</ref>. Interacting with these debates will be crucial to determine the viability of distributive aDective justice. From there on, it may be argued that aDective justice is either a matter of equal relations or equal distribution, or it might be possible to put forward a pluralist view that prioritises both. 18</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.">Conclusion</head><p>The debate on aDective injustice is grounded on the view that emotions and other aDective phenomena are not merely private states, and instead play a substantial role in social and political life. The views discussed in this article do not aim at labelling any instance of emotional discomfort or disagreement as unjust, but at revealing how aDective norms, practices and relationships can sustain or challenge structures of injustice, and how unjust interference with people's aDective lives constitutes a distinct form of wronging that is worth studying. At the same time, there are important conceptual questions to address, and new contexts of application to explore. It is important that future discussions do not subsume the latter to the former aim, and focus on strengthening the conceptual foundations of the notion of aDective injustice. This will be crucial to establish the framework not only within academic settings, but also as a useful tool to identify, denounce, and resist instances of injustice that happen both at the institutional level and in everyday interactions.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Disclosure statement</head><p>The author reports no conflict of interest.</p><p>Gallegos, who gives a teleological explanation for the value of emotional aptness stemming from his wider philosophy of emotion <ref type="bibr" coords="14,176.00,618.34,67.41,9.47" target="#b26">(Gallegos 2019)</ref>. His view, however, need not be endorsed to understand the role of emotions in valuing and their relevance for justice.</p><p>3 <ref type="bibr" coords="14,78.62,666.82,91.54,9.47">Whitney (2018, 493)</ref> initially emphasized the notion of 'aFective force', which has been criticized for assuming a mechanistic view of (aFective) agency <ref type="bibr" coords="14,306.79,685.30,70.36,9.47">(Bell 2023, 259)</ref>. Subsequently, <ref type="bibr" coords="14,452.98,685.30,87.00,9.47">Whitney (2023, 38)</ref> clarified what 'being moved' means, mitigating the physicality of the metaphor-this is the definition I use. discussion on aFective rights. <ref type="bibr" coords="15,207.80,106.42,156.51,9.47">Archer and Matheson (2023, 21-23)</ref> later proposed that aFective autonomy should be considered a fundamental aFective good within a deprivation-based approach of aFective injustice, leaving aside the notion of aFective rights. In any case, they did not endorse such approach, favouring a relational egalitarian view of aFective injustice instead of the distributive view they attribute to Gallegos.</p><p>5 Their initial definition of emotional imperialism referred to the imposition of "emotional norms and standards" <ref type="bibr" coords="15,125.07,228.34,152.11,9.47">(Archer and Matheson 2022, 771)</ref>, adapting Iris Marion <ref type="bibr" coords="15,382.62,228.34,66.32,9.47" target="#b84">Young's (1990)</ref> concept of cultural imperialism to the aFective domain. They later completed it by including William <ref type="bibr" coords="15,442.02,246.58,66.28,9.47" target="#b61">Reddy's (2001)</ref> notion of emotional regime-this is the definition I use. See also <ref type="bibr" coords="15,344.15,265.06,76.78,9.47" target="#b80">Whitney's (2023)</ref> discussion of the related concept of aFective economies, which she adapts from Sara <ref type="bibr" coords="15,343.35,283.30,60.49,9.47" target="#b0">Ahmed (2004)</ref>.</p><p>6 See <ref type="bibr" coords="15,96.18,313.54,96.05,9.47">Stockdale (2023, 115)</ref> and <ref type="bibr" coords="15,213.70,313.54,119.83,9.47">Pismenny et al. (2024, 154)</ref> for exceptions.</p><p>7 See also Rathe (2025) on fatigue.</p><p>8 Another possible category is 'emotional injustice'. <ref type="bibr" coords="15,308.58,374.26,122.56,9.47">Pismenny et al. (2024, 152)</ref> propose a re-naming of aFective injustice as 'emotional injustice' because they take 'aFect' to refer only to valence of experience.</p><p>Although this meaning does prevail in some academic circles, 'aFect' is often used as a wider crosscategory term in philosophy and other disciplines. Importantly, given that emotion is just one of the many constituents of aFective lives, their attempt does not capture the explanandum. Being a victim of sexism, for example, may not only make a person angry at a given time (an emotion), but also depressed (a mood or a background feeling) and distrustful (a disposition). For that reason, 'emotional injustice' should be reserved for aFective injustice with regard to episodic emotions, provided that such categorization is shown to have explanatory value. 9 Whitney proposes uptake injustice as the aFective counterpart of testimonial injustice. She does not propose a parallel to hermeneutical injustice, but <ref type="bibr" coords="15,314.73,569.38,130.69,9.47">Pismenny et al. (2024, 159)</ref> propose 'emotional inarticulation' as an aFective unjust hermeneutical gap. <ref type="bibr" coords="15,327.63,587.62,91.33,9.47">Gallegos (2022, 195)</ref> points at specific forms of aFect-related testimonial injustice and aFect-related hermeneutical injustice, considering the interconnection and overlap between impairment to belief-formation and the deprivation of emotional aptness. This link has also been highlighted in the debate of epistemic injustice (e.g. <ref type="bibr" coords="15,450.00,642.58,58.60,9.47" target="#b51">Medina 2013)</ref>; it has even been suggested that the wrong of epistemic injustice is aFective in nature (García Álvarez 2021; see also <ref type="bibr" coords="15,92.87,679.06,68.80,9.47" target="#b85">Zembylas 2022)</ref>. <ref type="bibr" coords="16,72.00,106.42,66.48,9.47" target="#b44">Brinner (2026)</ref> for the related discussion of critical 4E cognitive science. The link between aFective injustice and situated aFectivity is made explicitly, for example, by <ref type="bibr" coords="16,373.10,124.90,59.46,9.47">Archer (2024)</ref>, <ref type="bibr" coords="16,439.21,124.90,100.84,9.47" target="#b55">Osler et al. (2025), and</ref><ref type="bibr" coords="16,72.00,143.14,53.20,9.47" target="#b65">Slaby (2023)</ref>.</p><p>11 For example, while harms are almost always understood as acts or situations that result in a moral subject being worse-oF, wrongs may be understood as (serious and/or systematic) harms, right violations, violations of normative expectations, or instances of relational inequality. For a promising distinction between aFective harms and aFective wrongs, see <ref type="bibr" coords="16,350.72,228.34,148.37,9.47" target="#b75">Walter and aus dem Bruch (2026)</ref>. It could also be useful here to borrow insights from similar discussions with regard to epistemic injustice (e.g.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Dunne &amp; Kotsonis 2025).</head><p>12 See Helm, 2017; Schemer 2010; Tiberius 2018.   13 The debate on aFective injustice has so far been formulated in mostly anthropocentric terms. However, in the same way other theories of justice have evolved to include non-human animals and other entities, there is no reason why these cannot also be incorporated into the debate of aFective injustice, particularly given the growing philosophical literature on animal emotions (see e.g. Millar 2024).</p><p>14 See <ref type="bibr" coords="16,101.81,410.74,89.47,9.47">Whitney (2018, 498;</ref><ref type="bibr" coords="16,193.51,410.74,19.39,9.47">501)</ref> on aFective injustice and intersectionality.</p><p>15 A related worry is that uptake of disruptive emotions may itself be problematic within some ethical frameworks-for example, African relational moral theory, where harmony is at the centre of morality <ref type="bibr" coords="16,72.00,477.70,64.51,9.47" target="#b12">(Carman 2024)</ref>. 16 The discussion of personal relationship goods can also help the lacuna on the conditions for aFective justice (see section 6.3). For example, See also <ref type="bibr" coords="16,286.52,526.42,58.27,9.47" target="#b48">Lynch (2020)</ref> for a pluralist account of aFective equality with regards to care, love, and solidarity. 17 Other critics within the debate have raised concerns about the plausibility of distributing aFective goods <ref type="bibr" coords="16,72.00,593.38,47.31,9.47" target="#b8">(Bell 2023;</ref><ref type="bibr" coords="16,121.54,593.38,65.15,9.47" target="#b67">Stockdale 2023</ref>).</p><p>18 AFective justice has also been briefly discussed by <ref type="bibr" coords="16,310.30,623.62,66.25,9.47" target="#b12">Carman (2024)</ref> and <ref type="bibr" coords="16,398.02,623.62,72.02,9.47" target="#b85">Zembylas (2022)</ref>.</p></div>			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0" coords="14,77.56,514.66,462.58,9.47;14,72.00,533.14,468.04,9.47;14,72.00,551.38,318.07,9.47"><p>In this paper I use the adjectives 'aFective' and 'emotional' interchangeably. However, people's aFective lives are constituted by a variety of aFective phenomena, not limited to emotions-such as bodily feelings, moods, dispositions, and existential or background feelings (e.g. Fuchs</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" xml:id="foot_1" coords="14,392.29,551.38,27.76,9.47;14,72.00,580.70,3.28,5.63;14,78.98,581.62,461.08,9.47"><p>2013).2 This understanding of aptness is almost universally endorsed among discussants. One exception is</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>Acknowledgements</head><p>I am grateful to <rs type="person">Alfred Archer</rs> for ongoing conversations on the topic of aDective injustice over the past few years, as well as for comments on a previous version of this manuscript. Thanks also to a very helpful anonymous reviewer, to <rs type="person">Francisco Gallegos</rs> for an insightful discussion on distributive aDective justice, to <rs type="person">Kris Gokn</rs> and <rs type="person">Carme Isern-Mas</rs> for comments on a previous version, and to the students in the graduate seminar on aDective injustice that I currently run at the <rs type="institution">University of Antwerp</rs> as part of the <rs type="institution">InterUniversity Research Master</rs>'s in Philosophy.</p></div>
+<div><head>Endnotes</head></div>
+			</div>
+			<div type="funding">
+<div><p>This work was funded by the <rs type="funder">European Union</rs> under <rs type="funder">Horizon Europe</rs> Grant <rs type="grantNumber">101081327</rs>.</p><p>In accordance with <rs type="institution">Horizon Europe</rs> requirements, this manuscript is made openly available under</p></div>
+			</div>
+			<div type="funding">
+<div><head>Funding</head><p>This research and author were supported by <rs type="funder">EU Horizon Europe</rs> under the <rs type="grantName">Marie Skłodowska-Curie COFUND</rs> grant No <rs type="grantNumber">101081327 YUFE4Postdocs</rs>.</p></div>
+			</div>
+			<listOrg type="funding">
+				<org type="funding" xml:id="_zHgcjdM">
+					<idno type="grant-number">101081327</idno>
+				</org>
+				<org type="funding" xml:id="_CHZurmw">
+					<idno type="grant-number">101081327 YUFE4Postdocs</idno>
+					<orgName type="grant-name">Marie Skłodowska-Curie COFUND</orgName>
+				</org>
+			</listOrg>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct coords="16,72.00,712.75,327.26,10.37" xml:id="b0">
+	<analytic>
+		<title level="a" type="main">Affective Economies</title>
+		<author>
+			<persName><forename type="first">Sara</forename><surname>Ahmed</surname></persName>
+		</author>
+		<idno type="DOI">10.1215/01642472-22-2_79-117</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Social Text</title>
+		<idno type="ISSN">0164-2472</idno>
+		<idno type="ISSNe">1527-1951</idno>
+		<imprint>
+			<biblScope unit="volume">22</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="117" to="139" />
+			<date type="published" when="2004">2004</date>
+			<publisher>Duke University Press</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Ahmed, S. (2004). ADective Economies. Social Text 22 (2): 117-139.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,88.51,468.02,10.37;17,72.00,103.87,468.05,10.37;17,72.00,119.47,116.89,10.37" xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Redefining the Wrong of Epistemic Injustice: The Knower as a Concrete Other and the ADective Dimension of Cognition</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>García Álvarez</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">International Journal of Philosophical Studies</title>
+		<imprint>
+			<biblScope unit="volume">29</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="497" to="518" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">García Álvarez, A. (2021). Redefining the Wrong of Epistemic Injustice: The Knower as a Concrete Other and the ADective Dimension of Cognition. International Journal of Philosophical Studies, 29(4), 497-518.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,142.75,467.88,10.37;17,72.00,158.35,366.26,10.37" xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Affective Agency and Axiological Harm: A Schelerian Approach to Affective Injustice</title>
+		<author>
+			<persName><forename type="first">Miriam</forename><surname>Ambrosino</surname></persName>
+		</author>
+		<idno type="DOI">10.5325/jspecphil.39.3.0310</idno>
+	</analytic>
+	<monogr>
+		<title level="j">The Journal of Speculative Philosophy</title>
+		<idno type="ISSN">0891-625X</idno>
+		<idno type="ISSNe">1527-9383</idno>
+		<imprint>
+			<biblScope unit="volume">39</biblScope>
+			<biblScope unit="issue">3</biblScope>
+			<biblScope unit="page" from="310" to="322" />
+			<date type="published" when="2025-07">2025. 2025</date>
+			<publisher>The Pennsylvania State University Press</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Ambrosino, M. (2025). ADective Agency and Axiological Harm: A Schelerian Approach to ADective Injustice. Journal of Speculative Philosophy 39 (3):310-322 (2025)</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,181.63,468.01,10.37;17,72.00,197.23,157.44,10.37" xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Fear and ADective Injustice</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Mills</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Moral Psychology of Fear</title>
+		<editor>
+			<persName><forename type="first">A</forename><surname>Harbin</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Bloomsbury</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Archer, A., &amp; Mills, G. (2025). Fear and ADective Injustice. In Harbin, A. (ed.) The Moral Psychology of Fear. Bloomsbury</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,220.51,49.40,10.37;17,161.10,220.51,378.91,10.37;17,72.00,236.11,60.85,10.37" xml:id="b4">
+	<analytic>
+		<title level="a" type="main">How Public Statues Wrong: ADective Artifacts and ADective Injustice</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Topoi</title>
+		<imprint>
+			<biblScope unit="volume">43</biblScope>
+			<biblScope unit="page" from="809" to="819" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Archer, A. How Public Statues Wrong: ADective Artifacts and ADective Injustice. Topoi, 43: 809-819.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,259.39,468.03,10.37;17,72.00,274.99,172.74,10.37" xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Commemoration and Emotional Imperialism</title>
+		<author>
+			<persName><forename type="first">Alfred</forename><surname>Archer</surname></persName>
+			<idno type="ORCID">0000-0001-9398-6427</idno>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><surname>Matheson</surname></persName>
+			<idno type="ORCID">0000-0001-5047-5803</idno>
+		</author>
+		<idno type="DOI">10.1111/japp.12428</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Applied Philosophy</title>
+		<title level="j" type="abbrev">J Applied Philosophy</title>
+		<idno type="ISSN">0264-3758</idno>
+		<idno type="ISSNe">1468-5930</idno>
+		<imprint>
+			<biblScope unit="volume">39</biblScope>
+			<biblScope unit="issue">5</biblScope>
+			<biblScope unit="page" from="761" to="777" />
+			<date type="published" when="2022">2022</date>
+			<publisher>Wiley</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Archer, A., &amp; Matheson, B. (2022). Commemoration and Emotional imperialism. Journal of Applied Philosophy, 39(5), 761-777.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,298.27,449.09,10.37" xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Emotional Imperialism</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Matheson</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="7" to="25" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Archer, A., &amp; Matheson, B. (2023). Emotional Imperialism. Philosophical Topics, 51 (1): 7-25</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,321.79,468.01,10.37;17,72.00,337.15,96.15,10.37" xml:id="b7">
+	<analytic>
+		<title level="a" type="main">Anger, aDective injustice, and emotion regulation</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Mills</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">47</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="75" to="94" />
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Archer, A., &amp; Mills, G. (2019). Anger, aDective injustice, and emotion regulation. Philosophical Topics, 47(2): 75-94</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,360.67,468.17,10.37;17,72.00,376.03,229.88,10.37" xml:id="b8">
+	<analytic>
+		<title level="a" type="main">The Wrong of ADective Dismissal and Its Place in an Account of ADective Injustice</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Bell</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="239" to="264" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Bell, M. (2023). The Wrong of ADective Dismissal and Its Place in an Account of ADective Injustice. Philosophical Topics, 51(1): 239-264.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,399.55,301.92,10.37" xml:id="b9">
+	<monogr>
+		<title level="m" type="main">A&quot;ective Injustice in Healthcare</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Bogaert</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+			<publisher>Springer</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Bogaert, B. (2025). A&quot;ective Injustice in Healthcare. Springer.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,423.07,390.80,10.37" xml:id="b10">
+	<monogr>
+		<author>
+			<persName><forename type="first">L</forename><surname>Brownlee</surname></persName>
+		</author>
+		<title level="m">Being Sure of Each Other</title>
+		<meeting><address><addrLine>Oxford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Brownlee, L. (2020). Being Sure of Each Other. Oxford: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,446.35,468.11,10.37;17,72.00,461.95,197.57,10.37" xml:id="b11">
+	<monogr>
+		<author>
+			<persName><forename type="first">K</forename><surname>Brownlee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">D</forename><surname>Jenkins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Neal</surname></persName>
+		</author>
+		<title level="m">Being Social: The Philosophy of Social Human Rights</title>
+		<meeting><address><addrLine>Oxford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Brownlee, K., Jenkins, D., &amp; Neal, A. (2022). Being Social: The Philosophy of Social Human Rights. Oxford: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,485.23,468.03,10.37;17,72.00,500.83,405.52,10.37" xml:id="b12">
+	<analytic>
+		<title level="a" type="main">Disruptive Emotions and ADective Injustice Within an African-Inspired Relational Ethics</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Carman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Theoria: A Journal of Social and Political Theory</title>
+		<imprint>
+			<biblScope unit="volume">71</biblScope>
+			<biblScope unit="issue">179</biblScope>
+			<biblScope unit="page" from="28" to="52" />
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Carman, M. (2024). Disruptive Emotions and ADective Injustice Within an African-Inspired Relational Ethics. Theoria: A Journal of Social and Political Theory 71 (179): 28-52.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,524.11,468.08,10.37;17,72.00,539.71,331.10,10.37" xml:id="b13">
+	<analytic>
+		<title level="a" type="main">Harmony, Disruption, and ADective Injustice: Metz and the Capacity for Harmonious Relationship</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Carman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Ethical Theory and Moral Practice</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="16" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Carman, M. (2023). Harmony, Disruption, and ADective Injustice: Metz and the Capacity for Harmonious Relationship. Ethical Theory and Moral Practice: 1-16.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,562.99,36.97,10.37;17,127.12,562.99,12.18,10.37;17,157.46,562.99,33.76,10.37;17,209.37,562.99,40.12,10.37;17,267.63,562.99,30.18,10.37;17,315.94,562.99,53.95,10.37;17,388.03,562.99,48.97,10.37;17,455.14,562.99,27.75,10.37;17,501.03,562.99,38.98,10.37;17,72.00,578.59,175.12,10.37" xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Political anger</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Cherry</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/phc3.12811</idno>
+		<ptr target="https://doi.org/10.1111/phc3.12811" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophy Compass</title>
+		<imprint>
+			<biblScope unit="volume">17</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page">12811</biblScope>
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Cherry, M. (2021). Political anger. Philosophy Compass, 17(2), e12811. https://doi.org/10.1111/phc3.12811</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,601.87,468.01,10.37;17,72.00,617.47,42.40,10.37" xml:id="b15">
+	<analytic>
+		<title level="a" type="main">ADective Stereotype Threat as ADective Injustice</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Cherry</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="135" to="148" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Cherry, M. (2023). ADective Stereotype Threat as ADective Injustice. Philosophical Topics, 51 (1), 135-148.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,640.99,468.02,10.37;17,72.00,656.35,139.71,10.37" xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Justice and Security-based Attachment</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Collins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Shields</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Moral Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">22</biblScope>
+			<biblScope unit="issue">3-4</biblScope>
+			<biblScope unit="page" from="392" to="426" />
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Collins, S., &amp; Shields, L. (2025). Justice and Security-based Attachment. Journal of Moral Philosophy 22 (3-4):392-426.</note>
+</biblStruct>
+
+<biblStruct coords="17,72.00,679.87,468.03,10.37;17,72.00,695.23,246.93,10.37" xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Justice as Fairness and Relational Resources</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Cordelli</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/jopp.12036</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Political Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">23</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="86" to="110" />
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Cordelli, C. (2015a). Justice as Fairness and Relational Resources. Journal of Political Philosophy, 23(1): 86-110. doi:10.1111/jopp.12036</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,88.51,468.01,10.37;18,72.00,103.87,193.64,10.37" xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Distributive Justice and the Problem of Friendship</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Cordelli</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/1467-9248.12115</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Political Studies</title>
+		<imprint>
+			<biblScope unit="volume">63</biblScope>
+			<biblScope unit="issue">3</biblScope>
+			<biblScope unit="page" from="679" to="695" />
+			<date type="published" when="2015">2015b</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Cordelli, C. (2015b). Distributive Justice and the Problem of Friendship, Political Studies, 63(3): 679-695. doi:10.1111/1467-9248.12115</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,127.39,468.01,10.37;18,72.00,142.75,221.31,10.37" xml:id="b19">
+	<analytic>
+		<title level="a" type="main">AI Emotion Recognition and ADective Injustice</title>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">T</forename><surname>Dale</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><surname>Gubka</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s10670-025-01049-w</idno>
+		<ptr target="https://doi.org/10.1007/s10670-025-01049-w" />
+	</analytic>
+	<monogr>
+		<title level="j">Erkennis</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Dale, M. T., &amp; Gubka, S. (2025). AI Emotion Recognition and ADective Injustice. Erkennis. https://doi.org/10.1007/s10670-025-01049-w</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,166.27,468.07,10.37;18,72.00,181.63,373.18,10.37" xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Carving at the Joints: Distinguishing Epistemic Wrongs from Epistemic Harms in Epistemic Injustice Contexts</title>
+		<author>
+			<persName><forename type="first">G</forename><surname>Dunne</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Kotsonis</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Episteme</title>
+		<imprint>
+			<biblScope unit="volume">22</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="425" to="438" />
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Dunne, G., &amp; Kotsonis, A. (2025). Carving at the Joints: Distinguishing Epistemic Wrongs from Epistemic Harms in Epistemic Injustice Contexts. Episteme, 22(2), 425-438.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,205.15,468.12,10.37;18,72.00,220.51,468.00,10.37;18,72.00,236.11,179.23,10.37" xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Pathologizing Disabled and Trans Identities: How Emotions Become Marginalized</title>
+		<author>
+			<persName><forename type="first">G</forename><surname>Eickers</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Bloomsbury Guide to Philosophy of Disability</title>
+		<editor>
+			<persName><forename type="first">S</forename><surname>Tremain</surname></persName>
+		</editor>
+		<meeting><address><addrLine>London</addrLine></address></meeting>
+		<imprint>
+			<publisher>Bloomsbury Academic</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="360" to="379" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Eickers, G. (2024). Pathologizing Disabled and Trans Identities: How Emotions Become Marginalized. In S. Tremain (ed.), The Bloomsbury Guide to Philosophy of Disability. London: Bloomsbury Academic, pp. 360-379.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,259.39,468.00,10.37;18,72.00,274.99,30.70,10.37" xml:id="b22">
+	<monogr>
+		<author>
+			<persName><forename type="first">F</forename><surname>Fanon</surname></persName>
+		</author>
+		<title level="m">The Wretched of the Earth</title>
+		<meeting><address><addrLine>New York</addrLine></address></meeting>
+		<imprint>
+			<publisher>Grove Press</publisher>
+			<date type="published" when="1963">1963/2004</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Fanon, F. (1963/2004). The Wretched of the Earth. Trans. Richard Philcox. New York: Grove Press.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,298.27,468.04,10.37;18,72.00,313.87,449.10,10.37" xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Epistemic and aDective harms in Endometriosis diagnosis</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Floris</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Ganz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Grisorio</surname></persName>
+		</author>
+		<idno type="DOI">10.1080/09515089.2026.2632370</idno>
+		<ptr target="https://doi.org/10.1080/09515089.2026.2632370" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Psychology</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="24" />
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Floris, M., Ganz, C., &amp; Grisorio, A. (2026). Epistemic and aDective harms in Endometriosis diagnosis. Philosophical Psychology, 1-24. https://doi.org/10.1080/09515089.2026.2632370</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,337.15,448.75,10.37" xml:id="b24">
+	<monogr>
+		<title level="m" type="main">The Politics of Reality: Essays in Feminist Theory</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Frye</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="1983">1983</date>
+			<publisher>Crossing Press</publisher>
+			<pubPlace>Berkeley</pubPlace>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Frye, M. (1983). The Politics of Reality: Essays in Feminist Theory. Berkeley: Crossing Press.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,360.67,468.03,10.37;18,72.00,376.03,393.47,10.37" xml:id="b25">
+	<analytic>
+		<title level="a" type="main">The phenomenology of aDectivity</title>
+		<author>
+			<persName><forename type="first">T</forename><surname>Fuchs</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Oxford Handbook of the Philosophy of Psychiatry</title>
+		<editor>
+			<persName><forename type="first">K</forename><forename type="middle">W M</forename><surname>Fulford</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2013">2013</date>
+			<biblScope unit="page" from="612" to="631" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Fuchs, T. (2013). The phenomenology of aDectivity. In K.W.M. Fulford et al. (Eds.), The Oxford Handbook of the Philosophy of Psychiatry, pp. 612-631. Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,399.55,468.01,10.37;18,72.00,414.91,259.86,10.37" xml:id="b26">
+	<analytic>
+		<title level="a" type="main">What are Emotions For? From ADective Epistemology to ADective Ethics</title>
+		<author>
+			<persName><forename type="first">F</forename><surname>Gallegos</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Philosophy of Emotion</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="123" to="134" />
+			<date type="published" when="2019">2019. 2019</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gallegos, F. (2019). What are Emotions For? From ADective Epistemology to ADective Ethics. Journal of Philosophy of Emotion 1 (1):123-134 (2019)</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,438.43,468.01,10.37;18,72.00,453.79,133.00,10.37" xml:id="b27">
+	<analytic>
+		<title level="a" type="main">ADective injustice and fundamental aDective goods</title>
+		<author>
+			<persName><forename type="first">F</forename><surname>Gallegos</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Social Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">53</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="185" to="201" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gallegos, F. (2022). ADective injustice and fundamental aDective goods. Journal of Social Philosophy, 53(2), 185-201.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,477.31,468.01,10.37;18,72.00,492.67,21.24,10.37" xml:id="b28">
+	<analytic>
+		<title level="a" type="main">The ADective Injustice of Linguistic Shame</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Gallegos</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="149" to="162" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gallegos, L. (2023). The ADective Injustice of Linguistic Shame. Philosophical Topics. 51(1): 149- 162.</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,516.19,468.01,10.37;18,72.00,531.55,299.42,10.37" xml:id="b29">
+	<analytic>
+		<title level="a" type="main">How Much of What Matters Can We Redistribute? Love, Justice, and Luck</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gheaus</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/j.1527-2001.2009.01058.x</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Hypatia</title>
+		<imprint>
+			<biblScope unit="volume">24</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="68" to="90" />
+			<date type="published" when="2009">2009</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gheaus, A. (2009). How Much of What Matters Can We Redistribute? Love, Justice, and Luck. Hypatia, 24(4): 68-90. doi:10.1111/j.1527-2001.2009.01058.x</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,555.07,468.00,10.37;18,72.00,570.43,95.71,10.37;18,189.22,570.43,78.74,10.37;18,289.47,570.43,9.30,10.37;18,320.29,570.43,38.02,10.37;18,379.81,570.43,57.10,10.37;18,458.43,570.43,27.75,10.37;18,507.70,570.43,32.31,10.37;18,72.00,586.03,116.83,10.37" xml:id="b30">
+	<analytic>
+		<title level="a" type="main">Hikers in Flip-Flops: Luck Egalitarianism, Democratic Equality and the Distribuenda of Justice</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gheaus</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/japp.12198</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Applied Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">35</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="54" to="69" />
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gheaus, A. (2018). Hikers in Flip-Flops: Luck Egalitarianism, Democratic Equality and the Distribuenda of Justice. Journal of Applied Philosophy, 35(1): 54-69. doi:10.1111/japp.12198</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,609.31,468.01,10.37;18,72.00,624.91,94.14,10.37;18,190.75,624.91,41.89,10.37;18,257.22,624.91,9.79,10.37;18,291.61,624.91,11.31,10.37;18,327.51,624.91,24.97,10.37;18,377.07,624.91,18.69,10.37;18,420.33,624.91,10.94,10.37;18,455.87,624.91,84.14,10.37;18,72.00,640.27,405.43,10.37" xml:id="b31">
+	<monogr>
+		<title level="m" type="main">Personal Relationship Goods. The Stanford Encyclopedia of Philosophy</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Gheaus</surname></persName>
+		</author>
+		<ptr target="https://plato.stanford.edu/archives/win2022/entries/personal-relationship-goods/" />
+		<editor>E. N. Zalta and U. Nodelman</editor>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note>Winter Edition</note>
+	<note type="raw_reference">Gheaus, A. (2022). Personal Relationship Goods. The Stanford Encyclopedia of Philosophy (Winter Edition), E. N. Zalta and U. Nodelman (eds.). https://plato.stanford.edu/archives/win2022/entries/personal-relationship-goods/</note>
+</biblStruct>
+
+<biblStruct coords="18,72.00,663.79,468.08,10.37;18,72.00,679.15,255.08,10.37" xml:id="b32">
+	<monogr>
+		<author>
+			<persName><forename type="first">C</forename><surname>Gilligan</surname></persName>
+		</author>
+		<title level="m">a Di&quot;erent Voice: Psychological Theory and Women&apos;s Development</title>
+		<meeting><address><addrLine>Cambridge</addrLine></address></meeting>
+		<imprint>
+			<publisher>Harvard University Press</publisher>
+			<date type="published" when="1982">1982</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gilligan, C. (1982). In a Di&quot;erent Voice: Psychological Theory and Women&apos;s Development. Cambridge: Harvard University Press</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,88.51,468.00,10.37;19,72.00,103.87,28.41,10.37;19,180.97,103.87,115.03,10.37;19,376.55,103.87,57.66,10.37;19,514.77,103.87,25.24,10.37;19,72.00,119.47,237.94,10.37" xml:id="b33">
+	<analytic>
+		<title level="a" type="main">Autistic injustice as aDective injustice: the double empathy problem is not about empathy</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Gokn</surname></persName>
+		</author>
+		<idno type="DOI">10.1080/09515089.2026.2651512</idno>
+		<ptr target="https://doi.org/10.1080/09515089.2026.2651512" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Psychology</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="19" />
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gokn, K. (2026). Autistic injustice as aDective injustice: the double empathy problem is not about empathy. Philosophical Psychology, 1-19. https://doi.org/10.1080/09515089.2026.2651512</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,142.75,467.93,10.37;19,72.00,158.35,166.58,10.37" xml:id="b34">
+	<monogr>
+		<title level="m" type="main">Don&apos;t go reading my emotions: aDective, harm, aDective injustice and aDective artificial intelligence</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Gokn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Gokn, K. &amp; Archer, A. (2025). Don&apos;t go reading my emotions: aDective, harm, aDective injustice and aDective artificial intelligence</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,181.63,468.02,10.37;19,72.00,197.23,161.08,10.37" xml:id="b35">
+	<monogr>
+		<author>
+			<persName><forename type="first">B</forename><surname>Helm</surname></persName>
+		</author>
+		<title level="m">Communities of Respect: Grounding Responsibility, Authority, and Dignity</title>
+		<meeting><address><addrLine>Oxford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Helm, B. (2017). Communities of Respect: Grounding Responsibility, Authority, and Dignity. Oxford: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,220.51,468.07,10.37;19,72.00,236.11,454.79,10.37" xml:id="b36">
+	<analytic>
+		<title level="a" type="main">Reframing ADective Injustice: On the Right to Anger and the Priority of Moral Reasons</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Hildebrand</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">L</forename><surname>Jackson</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s11158-025-09754-7</idno>
+		<ptr target="https://doi.org/10.1007/s11158-025-09754-7" />
+	</analytic>
+	<monogr>
+		<title level="j">Res Publica</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="18" />
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Hildebrand, C., &amp; Jackson, L. (2025). Reframing ADective Injustice: On the Right to Anger and the Priority of Moral Reasons. Res Publica:1-18. https://doi.org/10.1007/s11158-025-09754-7</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,259.39,467.94,10.37;19,72.00,274.99,427.59,10.37" xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Between justice and aDection: The family as a field of moral disputes</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Honneth</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Privacies: Philosophical Evaluations</title>
+		<editor>
+			<persName><forename type="first">B</forename><surname>Rossler</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Stanford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Stanford University Press</publisher>
+			<date type="published" when="2004">2004</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Honneth, A. 2004. Between justice and aDection: The family as a field of moral disputes. In B. Rossler (ed.) Privacies: Philosophical Evaluations. Stanford: Stanford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,298.27,468.01,10.37;19,72.00,313.87,218.37,10.37" xml:id="b38">
+	<analytic>
+		<title level="a" type="main">Unmasking therapy-speak</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Isern-Mas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">M</forename><surname>Almagro</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s11017-025-09730-5</idno>
+		<ptr target="https://doi.org/10.1007/s11017-025-09730-5" />
+	</analytic>
+	<monogr>
+		<title level="j">Theor Med Bioeth</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Isern-Mas, C., &amp; Almagro, M. (2025). Unmasking therapy-speak. Theor Med Bioeth. https://doi.org/10.1007/s11017-025-09730-5</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,337.15,468.01,10.37;19,72.00,352.75,47.73,10.37;19,143.59,352.75,37.32,10.37;19,204.76,352.75,35.43,10.37;19,264.05,352.75,97.47,10.37;19,385.39,352.75,9.30,10.37;19,418.55,352.75,30.38,10.37;19,472.80,352.75,67.21,10.37;19,72.00,368.11,186.39,10.37" xml:id="b39">
+	<analytic>
+		<title level="a" type="main">No One Mourns the Wicked: The Ethics of Mourning Morally Flawed Celebrities</title>
+		<author>
+			<persName><forename type="first">C</forename><surname>Isern-Mas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Schaubroeck</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/josp.70015</idno>
+		<ptr target="https://doi.org/10.1111/josp.70015" />
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Social Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="issue">9</biblScope>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Isern-Mas, C., Schaubroeck, K. &amp; Archer, A. (2025). No One Mourns the Wicked: The Ethics of Mourning Morally Flawed Celebrities. Journal of Social Philosophy 1- 9. https://doi.org/10.1111/josp.70015.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,391.63,468.02,10.37;19,72.00,406.99,15.22,10.37" xml:id="b40">
+	<analytic>
+		<title level="a" type="main">Love and Knowledge: Emotion in Feminist Epistemology</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Jaggar</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Inquiry</title>
+		<imprint>
+			<biblScope unit="volume">32</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="151" to="176" />
+			<date type="published" when="1989">1989</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Jaggar, A. (1989). Love and Knowledge: Emotion in Feminist Epistemology. Inquiry 32 (2): 151- 76.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,430.51,468.02,10.37;19,72.00,445.87,215.11,10.37" xml:id="b41">
+	<analytic>
+		<title level="a" type="main">An Ecological Approach to ADective Injustice</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Krueger</surname></persName>
+		</author>
+		<ptr target="https://www.jstor.org/stable/48776805" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="85" to="112" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Krueger, J. (2023). An Ecological Approach to ADective Injustice. Philosophical Topics, 51(1), 85- 112. https://www.jstor.org/stable/48776805</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,469.39,43.78,10.37;19,131.18,469.39,12.83,10.37;19,159.41,469.39,7.86,10.37;19,182.66,469.39,68.48,10.37;19,266.54,469.39,22.43,10.37;19,304.37,469.39,30.59,10.37;19,350.37,469.39,43.13,10.37;19,408.89,469.39,45.94,10.37;19,470.23,469.39,35.74,10.37;19,521.34,469.39,18.68,10.37;19,72.00,484.75,363.45,10.37" xml:id="b42">
+	<analytic>
+		<title level="a" type="main">ADective injustice, sanism and psychiatry</title>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Lavellee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">M</forename><surname>Gagné-Julien</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s11229-024-04731-8</idno>
+		<ptr target="https://doi.org/10.1007/s11229-024-04731-8" />
+	</analytic>
+	<monogr>
+		<title level="j">Synthese</title>
+		<imprint>
+			<biblScope unit="volume">204</biblScope>
+			<biblScope unit="page">94</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Lavellee, Z., &amp; Gagné-Julien, A.M. (2024) ADective injustice, sanism and psychiatry. Synthese 204, 94. https://doi.org/10.1007/s11229-024-04731-8</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,508.27,468.01,10.37" xml:id="b43">
+	<analytic>
+		<title level="a" type="main">A Kantian Account of Political Hopes as Fundamental Hopes</title>
+		<author>
+			<persName><forename type="first">Q</forename><surname>Li</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Kantian Review</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="14" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Li, Q (2023). A Kantian Account of Political Hopes as Fundamental Hopes. Kantian Review, 1-14.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,531.55,468.02,10.37;19,72.00,547.15,178.25,10.37" xml:id="b44">
+	<analytic>
+		<title level="a" type="main">Critical 4E Cognitive Science</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Liao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Z</forename><surname>Brinner</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/phc3.70075</idno>
+		<ptr target="https://doi.org/10.1111/phc3.70075" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophy Compass</title>
+		<imprint>
+			<biblScope unit="page">70075</biblScope>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Liao, S., &amp; Brinner, Z. (2026). Critical 4E Cognitive Science. Philosophy Compass: e70075. https://doi.org/10.1111/phc3.70075.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,570.43,468.04,10.37;19,72.00,586.03,9.30,10.37;19,130.59,586.03,65.13,10.37;19,245.02,586.03,30.39,10.37;19,324.70,586.03,18.96,10.37;19,392.94,586.03,40.65,10.37;19,482.88,586.03,57.13,10.37;19,72.00,601.39,237.94,10.37" xml:id="b45">
+	<analytic>
+		<title level="a" type="main">Gentrification, migration, and non-material injustice</title>
+		<author>
+			<persName><forename type="first">P</forename><surname>Lopez-Cantero</surname></persName>
+		</author>
+		<idno type="DOI">10.1080/13698230.2025.2548027</idno>
+		<ptr target="https://doi.org/10.1080/13698230.2025.2548027" />
+	</analytic>
+	<monogr>
+		<title level="j">Critical Review of International Social and Political Philosophy</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Lopez-Cantero, P. (2025). Gentrification, migration, and non-material injustice. Critical Review of International Social and Political Philosophy. https://doi.org/10.1080/13698230.2025.2548027</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,624.91,289.56,10.37" xml:id="b46">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Lorde</surname></persName>
+		</author>
+		<title level="m">Sister Outsider</title>
+		<meeting><address><addrLine>Berkeley</addrLine></address></meeting>
+		<imprint>
+			<publisher>Crossing Press</publisher>
+			<date type="published" when="1984">1984</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Lorde, A. (1984). Sister Outsider. Berkeley: Crossing Press.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,648.43,467.99,10.37;19,72.00,663.79,238.90,10.37" xml:id="b47">
+	<monogr>
+		<author>
+			<persName><forename type="first">M</forename><surname>Lugones</surname></persName>
+		</author>
+		<title level="m">Pilgrimages/Peregrinajes: Theorizing Coalition against Multiple Oppressions</title>
+		<meeting><address><addrLine>New York</addrLine></address></meeting>
+		<imprint>
+			<publisher>Rowman and Littlefield</publisher>
+			<date type="published" when="2003">2003</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Lugones, M. (2003). Pilgrimages/Peregrinajes: Theorizing Coalition against Multiple Oppressions. New York: Rowman and Littlefield.</note>
+</biblStruct>
+
+<biblStruct coords="19,72.00,687.31,468.06,10.37;19,72.00,702.67,468.00,10.37;19,72.00,718.03,53.09,10.37" xml:id="b48">
+	<analytic>
+		<title level="a" type="main">ADective Equality and Social Justice</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Lynch</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Denise Celentano and Luigi Caranti (Eds) Paradigms of Justice: Redistribution, Recognition, and Beyond</title>
+		<meeting><address><addrLine>New York and London</addrLine></address></meeting>
+		<imprint>
+			<publisher>Routledge</publisher>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Lynch, K. (2020) &apos;ADective Equality and Social Justice&apos; In Denise Celentano and Luigi Caranti (Eds) Paradigms of Justice: Redistribution, Recognition, and Beyond. New York and London: Routledge.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,88.51,468.01,10.37;20,72.00,103.87,42.86,10.37" xml:id="b49">
+	<analytic>
+		<title level="a" type="main">Dikcult Conversations with Adam Smith</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Maclachlan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="221" to="238" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">MacLachlan, A. (2023). Dikcult Conversations with Adam Smith. Philosophical Topics, 51(1): 221-238.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,127.39,362.76,10.37" xml:id="b50">
+	<monogr>
+		<title level="m" type="main">The Mind-Body Politic</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Maiese</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Hanna</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2019">2019</date>
+			<publisher>Palgrave Macmillan</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Maiese, M. &amp; Hanna, R. (2019). The Mind-Body Politic. Palgrave Macmillan</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,150.91,467.96,10.37;20,72.00,166.27,363.03,10.37" xml:id="b51">
+	<monogr>
+		<author>
+			<persName><forename type="first">J</forename><surname>Medina</surname></persName>
+		</author>
+		<title level="m">The Epistemology of Resistance: Gender and Racial Oppression, Epistemic Injustice, and Resistant Imaginations</title>
+		<meeting><address><addrLine>New York</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2013">2013</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Medina, J. (2013). The Epistemology of Resistance: Gender and Racial Oppression, Epistemic Injustice, and Resistant Imaginations. New York: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,189.79,468.02,10.37;20,72.00,205.15,120.96,10.37" xml:id="b52">
+	<analytic>
+		<title level="a" type="main">Swallowing Traumatic Anger: Family Abuse and the Pressure to Forgive</title>
+		<author>
+			<persName><forename type="first">G</forename><surname>Mills</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Public Philosophy Journal</title>
+		<imprint>
+			<biblScope unit="volume">2</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<date type="published" when="2019">2019</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Mills, G. (2019). Swallowing Traumatic Anger: Family Abuse and the Pressure to Forgive. Public Philosophy Journal 2 (2).</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,228.67,467.95,10.37;20,72.00,244.03,177.48,10.37" xml:id="b53">
+	<analytic>
+		<title level="a" type="main">Working together across diDerences: some considerations on emotions and political practice</title>
+		<author>
+			<persName><forename type="first">U</forename><surname>Narayan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Hypatia</title>
+		<imprint>
+			<biblScope unit="volume">3</biblScope>
+			<biblScope unit="page" from="31" to="47" />
+			<date type="published" when="1988">1988</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Narayan, U. (1988). Working together across diDerences: some considerations on emotions and political practice. Hypatia, 3, 31-47.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,267.55,468.01,10.37;20,72.00,282.91,149.38,10.37" xml:id="b54">
+	<monogr>
+		<author>
+			<persName><forename type="first">M</forename><forename type="middle">C</forename><surname>Nussbaum</surname></persName>
+		</author>
+		<title level="m">Creating capabilities: The human development approach</title>
+		<meeting><address><addrLine>Cambridge, MA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Harvard University Press</publisher>
+			<date type="published" when="2011">2011</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Nussbaum, M. C. (2011). Creating capabilities: The human development approach. Cambridge, MA: Harvard University Press.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,306.43,468.01,10.37;20,72.00,321.79,468.03,10.37;20,72.00,337.15,134.19,10.37" xml:id="b55">
+	<analytic>
+		<title level="a" type="main">The ethics and politics of nudges and niches</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Osler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Engelen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Crime Prevention by Exclusion: Ethical Considerations</title>
+		<editor>
+			<persName><forename type="first">T</forename><forename type="middle">S</forename><surname>Petersen</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">S</forename><forename type="middle">B</forename><surname>Holmen</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">J</forename><surname>Ryberg</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Routledge</publisher>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Osler, L., Engelen, B., &amp; Archer, A. (2025). The ethics and politics of nudges and niches. In T.S. Petersen, S.B. Holmen, &amp; J. Ryberg (eds.), Crime Prevention by Exclusion: Ethical Considerations. Routledge.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,360.67,468.02,10.37;20,72.00,376.03,6.04,10.37" xml:id="b56">
+	<analytic>
+		<title level="a" type="main">Pain, Power, and Policing: Emotional Injustice in Healthcare</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pismenny</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Bioethics</title>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="issue">8</biblScope>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Pismenny, A. (2025). Pain, Power, and Policing: Emotional Injustice in Healthcare. Bioethics, 1- 8</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,399.55,468.02,10.37;20,72.00,414.91,68.91,10.37" xml:id="b57">
+	<monogr>
+		<title level="m" type="main">Emotional Injustice. Ergo: An Open Access Journal of Philosophy</title>
+		<author>
+			<persName><forename type="first">A</forename><surname>Pismenny</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><surname>Eickers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Prinz</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Pismenny, A., G. Eickers, and J. Prinz (2024). Emotional Injustice. Ergo: An Open Access Journal of Philosophy.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,438.43,468.18,10.37;20,72.00,453.79,274.37,10.37" xml:id="b58">
+	<analytic>
+		<title level="a" type="main">Debate: Anger, Fitting Attitudes, and Srinivasan&apos;s Category of &quot;ADective Injustice</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Plunkett</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Political Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">29</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="117" to="131" />
+			<date type="published" when="2021">2021</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Plunkett, D. (2021). Debate: Anger, Fitting Attitudes, and Srinivasan&apos;s Category of &quot;ADective Injustice&quot; Journal of Political Philosophy 29 (1):117-131.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,477.31,467.94,10.37;20,72.00,492.67,155.78,10.37" xml:id="b59">
+	<analytic>
+		<title level="a" type="main">ADect, attention, and injustice: The injustice of neglected aDect</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Puddifoot</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Psychology</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="32" />
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Puddifoot, K. (2025). ADect, attention, and injustice: The injustice of neglected aDect. Philosophical Psychology, 1-32.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,516.19,468.01,10.37;20,72.00,532.22,302.91,10.65" xml:id="b60">
+	<analytic>
+		<title level="a" type="main">Tired of trying to belong: On aDective justice and fatigue</title>
+		<author>
+			<persName><forename type="first">K</forename><forename type="middle">J</forename><surname>Rathe</surname></persName>
+		</author>
+		<idno type="DOI">10.1177/01914537251334948</idno>
+		<ptr target="https://doi.org/10.1177/01914537251334948" />
+	</analytic>
+	<monogr>
+		<title level="j">Philosophy and Social Criticism</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Rathe, K.J. (2025). Tired of trying to belong: On aDective justice and fatigue. Philosophy and Social Criticism. https://doi.org/10.1177/01914537251334948</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,556.03,468.03,10.37;20,72.00,571.63,201.21,10.37" xml:id="b61">
+	<monogr>
+		<author>
+			<persName><forename type="first">W</forename><forename type="middle">M</forename><surname>Reddy</surname></persName>
+		</author>
+		<title level="m">The Navigation of Feeling: A Framework for the History of Emotions</title>
+		<meeting><address><addrLine>Cambridge</addrLine></address></meeting>
+		<imprint>
+			<publisher>Cambridge University Press</publisher>
+			<date type="published" when="2001">2001</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Reddy, W. M. (2001). The Navigation of Feeling: A Framework for the History of Emotions. Cambridge: Cambridge University Press.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,594.91,387.35,10.37" xml:id="b62">
+	<monogr>
+		<title level="m" type="main">Equality and Tradition</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Schexer</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2010">2010</date>
+			<publisher>Oxford University Press</publisher>
+			<pubPlace>New York</pubPlace>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Schexer, S. (2010). Equality and Tradition. New York: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,617.47,362.60,10.37" xml:id="b63">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Sen</surname></persName>
+		</author>
+		<title level="m">Development as freedom</title>
+		<meeting><address><addrLine>Oxford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="1999">1999</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Sen, A. (1999). Development as freedom. Oxford: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,640.99,468.13,10.37;20,72.00,656.35,308.82,10.37" xml:id="b64">
+	<analytic>
+		<title level="a" type="main">Coping in an Unjust World: ADective Injustice and Liberatory Coping</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Silva</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Liebow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><surname>Berdini</surname></persName>
+		</author>
+		<idno type="DOI">10.1017/hyp.2026.10067</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Hypatia</title>
+		<imprint>
+			<biblScope unit="page" from="1" to="22" />
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Silva, L., Liebow, N., &amp; Berdini, F. (2026). Coping in an Unjust World: ADective Injustice and Liberatory Coping. Hypatia, 1-22. doi:10.1017/hyp.2026.10067</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,679.87,468.01,10.37;20,72.00,695.23,111.44,10.37" xml:id="b65">
+	<analytic>
+		<title level="a" type="main">Structural Apathy, ADective Injustice, and the Ecological Crisis</title>
+		<author>
+			<persName><forename type="first">J</forename><surname>Slaby</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="63" to="84" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Slaby, J. (2023). Structural Apathy, ADective Injustice, and the Ecological Crisis. Philosophical Topics, 51:1, pp. 63-84</note>
+</biblStruct>
+
+<biblStruct coords="20,72.00,718.75,442.48,10.37" xml:id="b66">
+	<analytic>
+		<title level="a" type="main">The Aptness of Anger</title>
+		<author>
+			<persName><forename type="first">Amia</forename><surname>Srinivasan</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/jopp.12130</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Political Philosophy</title>
+		<title level="j" type="abbrev">J Political Philosophy</title>
+		<idno type="ISSN">0963-8016</idno>
+		<idno type="ISSNe">1467-9760</idno>
+		<imprint>
+			<biblScope unit="volume">26</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="123" to="144" />
+			<date type="published" when="2018">2018</date>
+			<publisher>Wiley</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Srinivasan, A. (2018). The Aptness of Anger. Journal of Political Philosophy 26 (2): 123-44.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,88.51,468.01,10.37;21,72.00,103.87,70.15,10.37" xml:id="b67">
+	<analytic>
+		<title level="a" type="main">Why) Do We Need a Theory of ADective Injustice?</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Stockdale</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="113" to="134" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Stockdale, K. (2023). (Why) Do We Need a Theory of ADective Injustice?. Philosophical Topics. 51(1):113-134.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,127.39,435.06,10.37" xml:id="b68">
+	<analytic>
+		<title level="a" type="main">An Apology for Inapt Emotions</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Tessman</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="189" to="220" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Tessman, L. (2023). An Apology for Inapt Emotions. Philosophical Topics, 51(1), 189-220.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,150.91,468.13,10.37;21,72.00,166.27,248.36,10.37" xml:id="b69">
+	<monogr>
+		<author>
+			<persName><forename type="first">A</forename><surname>Thomas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">B</forename><surname>Engelen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+		<title level="m">Extravagance and Misery: The Emotional Regime of Market Societies</title>
+		<meeting><address><addrLine>Oxford</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Thomas, A., Engelen, B., &amp; Archer, A. (2025). Extravagance and Misery: The Emotional Regime of Market Societies. Oxford: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,189.79,468.05,10.37;21,72.00,205.15,173.94,10.37" xml:id="b70">
+	<monogr>
+		<author>
+			<persName><forename type="first">V</forename><surname>Tiberius</surname></persName>
+		</author>
+		<title level="m">Well-Being as Value Fulfillment: How We Can Help Each Other to Live Well</title>
+		<meeting><address><addrLine>New York</addrLine></address></meeting>
+		<imprint>
+			<publisher>Oxford University Press</publisher>
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Tiberius, V. (2018). Well-Being as Value Fulfillment: How We Can Help Each Other to Live Well. New York: Oxford University Press.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,228.67,447.78,10.37;21,72.00,251.95,468.23,10.37;21,72.00,267.55,35.86,10.37;21,129.63,267.55,31.61,10.37;21,182.98,267.55,48.27,10.37;21,252.99,267.55,37.82,10.37;21,312.57,267.55,9.29,10.37;21,343.62,267.55,56.47,10.37;21,421.85,267.55,57.68,10.37;21,501.29,267.55,38.73,10.37;21,72.00,282.91,171.55,10.37" xml:id="b71">
+	<analytic>
+		<title level="a" type="main">Border harm and aDective injustice: The politics of anger at the Melilla border, Spain</title>
+		<author>
+			<persName><forename type="first">J</forename><forename type="middle">C</forename><surname>Tronto</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Routledge Tulbure</surname></persName>
+		</author>
+		<idno type="DOI">10.1002/ajcp.70070</idno>
+		<ptr target="https://doi.org/10.1002/ajcp.70070" />
+	</analytic>
+	<monogr>
+		<title level="j">American Journal of Community Psychology</title>
+		<imprint>
+			<date type="published" when="1993">1993. 2026</date>
+		</imprint>
+	</monogr>
+	<note>Moral Boundaries: A Political Argument for an Ethic of Care</note>
+	<note type="raw_reference">Tronto, J. C. (1993). Moral Boundaries: A Political Argument for an Ethic of Care. Routledge Tulbure, C. (2026). Border harm and aDective injustice: The politics of anger at the Melilla border, Spain. American Journal of Community Psychology. Portico. https://doi.org/10.1002/ajcp.70070</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,306.43,468.06,10.37;21,72.00,321.79,467.98,10.37" xml:id="b72">
+	<analytic>
+		<title level="a" type="main">Political philosophy of mind: inverting the concepts, expanding the niche</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Tzima</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Slaby</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s11097-024-10051-6</idno>
+		<ptr target="https://doi.org/10.1007/s11097-024-10051-6" />
+	</analytic>
+	<monogr>
+		<title level="j">Phenomenology and the Cognitive Sciences</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Tzima, S., &amp; Slaby, J. (2024). Political philosophy of mind: inverting the concepts, expanding the niche. Phenomenology and the Cognitive Sciences. https://doi.org/10.1007/s11097-024-10051-6</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,345.31,468.03,10.37;21,72.00,360.67,293.56,10.37" xml:id="b73">
+	<analytic>
+		<title level="a" type="main">Existential injustice in phenomenological psychopathology</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Vespermann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">S</forename><forename type="middle">K</forename><surname>Tirkkonen</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Psychology</title>
+		<imprint>
+			<biblScope unit="volume">38</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="209" to="245" />
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Vespermann, D., &amp; Tirkkonen, S. K. (2024). Existential injustice in phenomenological psychopathology. Philosophical Psychology, 38(1), 209-245.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,384.19,468.03,10.37;21,72.00,399.55,147.34,10.37" xml:id="b74">
+	<analytic>
+		<title level="a" type="main">ADective Injustice and Responsibility for Emotion Regulation</title>
+		<author>
+			<persName><forename type="first">K</forename><surname>Villa</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Feminist Philosophy Quarterly</title>
+		<imprint>
+			<biblScope unit="volume">10</biblScope>
+			<biblScope unit="issue">1/2</biblScope>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Villa, K. (2024). ADective Injustice and Responsibility for Emotion Regulation. Feminist Philosophy Quarterly, 10(1/2).</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,423.07,468.07,10.37;21,72.00,438.43,258.83,10.37" xml:id="b75">
+	<monogr>
+		<title level="m" type="main">The Weight of Feeling &quot;Otherized&quot;: Asexuality, Allonormativity, and ADective Injustice</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Walter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">K</forename><surname>Bruch</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+			<publisher>Philosophia</publisher>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Walter, S., &amp; aus dem Bruch, K. (2026) The Weight of Feeling &quot;Otherized&quot;: Asexuality, Allonormativity, and ADective Injustice. Philosophia.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,461.95,468.04,10.37;21,72.00,477.31,199.17,10.37" xml:id="b76">
+	<analytic>
+		<title level="a" type="main">Situated a&quot;ectivity and mind shaping: Lessons from social psychology</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Walter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Stephan</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Emotion Review</title>
+		<imprint>
+			<biblScope unit="volume">15</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="3" to="16" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Walter, S. &amp; Stephan, A. (2023). Situated a&quot;ectivity and mind shaping: Lessons from social psychology. Emotion Review, 15(1), 3-16.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,500.83,428.00,10.37;21,72.00,524.11,379.43,10.37" xml:id="b77">
+	<analytic>
+		<title level="a" type="main">Spheres of Justice: A Defence of Pluralism and Equality. Basic Books Wenar, L</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Walzer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Analysis</title>
+		<imprint>
+			<biblScope unit="volume">63</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="142" to="146" />
+			<date type="published" when="1983">1983. 2003</date>
+		</imprint>
+	</monogr>
+	<note>Epistemic Rights and Legal Rights</note>
+	<note type="raw_reference">Walzer, M. (1983). Spheres of Justice: A Defence of Pluralism and Equality. Basic Books Wenar, L. (2003). Epistemic Rights and Legal Rights. Analysis, 63(2), 142-146.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,547.63,468.01,10.37;21,72.00,562.99,290.63,10.37" xml:id="b78">
+	<analytic>
+		<title level="a" type="main">Rights</title>
+		<author>
+			<persName><forename type="first">L</forename><surname>Wenar</surname></persName>
+		</author>
+		<ptr target="https://plato.stanford.edu/archives/fall2015/entries/rights/" />
+	</analytic>
+	<monogr>
+		<title level="m">The Stanford Encyclopedia of Philosophy</title>
+		<editor>
+			<persName><forename type="first">E</forename><forename type="middle">N</forename><surname>Zalta</surname></persName>
+		</editor>
+		<imprint>
+			<date type="published" when="2015">2015</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Wenar, L. 2015.&quot;Rights.&quot; In The Stanford Encyclopedia of Philosophy, edited by E. N. Zalta. https://plato.stanford.edu/archives/fall2015/entries/rights/</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,586.51,468.01,10.37;21,72.00,601.87,468.01,10.37" xml:id="b79">
+	<analytic>
+		<title level="a" type="main">Anger Gaslighting as ADective Injustice</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Whitney</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Gaslighting: Philosophical Approaches</title>
+		<editor>
+			<persName><forename type="first">K</forename><surname>Oliver</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">H</forename><forename type="middle">K</forename><surname>Gunn</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">H</forename><surname>Longair</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>State University of New York Press</publisher>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="147" to="174" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Whitney, S. (2025). Anger Gaslighting as ADective Injustice. In K. Oliver, H.K. Gunn, &amp; H. Longair (eds.). Gaslighting: Philosophical Approaches. State University of New York Press, pp. 147-174.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,625.39,468.01,10.37" xml:id="b80">
+	<analytic>
+		<title level="a" type="main">Anger Gaslighting and ADective Injustice</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Whitney</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Philosophical Topics</title>
+		<imprint>
+			<biblScope unit="volume">51</biblScope>
+			<biblScope unit="issue">1</biblScope>
+			<biblScope unit="page" from="27" to="62" />
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Whitney, S. (2023). Anger Gaslighting and ADective Injustice. Philosophical Topics, 51 (1): 27-62.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,648.91,468.00,10.37;21,72.00,664.27,427.68,10.37" xml:id="b81">
+	<analytic>
+		<title level="a" type="main">ADective Intentionality and ADective Injustice: Merleau-Ponty and Fanon on the Body Schema as a Theory of ADect</title>
+		<author>
+			<persName><forename type="first">S</forename><surname>Whitney</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Southern Journal of Philosophy</title>
+		<imprint>
+			<biblScope unit="volume">56</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="488" to="515" />
+			<date type="published" when="2018">2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Whitney, S. (2018). ADective Intentionality and ADective Injustice: Merleau-Ponty and Fanon on the Body Schema as a Theory of ADect. Southern Journal of Philosophy 56 (4): 488-515.</note>
+</biblStruct>
+
+<biblStruct coords="21,72.00,687.79,468.17,10.37;21,72.00,703.15,391.23,10.37" xml:id="b82">
+	<analytic>
+		<title level="a" type="main">Online aDective manipulation</title>
+		<author>
+			<persName><forename type="first">N</forename><surname>Wildman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">N</forename><surname>Rietdijk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Archer</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Philosophy of Online Manipulation</title>
+		<editor>
+			<persName><forename type="first">F</forename><surname>Jongepier</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">M</forename><surname>Klenk</surname></persName>
+		</editor>
+		<imprint>
+			<publisher>Routledge</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="311" to="326" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Wildman, N., Rietdijk, N., &amp; Archer, A. (2022). Online aDective manipulation. In F. Jongepier &amp; M. Klenk (eds.), The Philosophy of Online Manipulation. Routledge. pp. 311-326.</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,88.51,468.07,10.37;22,72.00,103.87,379.02,10.37" xml:id="b83">
+	<analytic>
+		<title level="a" type="main">Who Controls Our Emotional Lives?-Rethinking ADective Injustice in the Era of Emotional AI with the Case of Moxie</title>
+		<author>
+			<persName><forename type="first">P.-H</forename><surname>Wong</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Science•Economy•Society</title>
+		<imprint>
+			<biblScope unit="volume">43</biblScope>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Wong, P.-H. (2025) Who Controls Our Emotional Lives?-Rethinking ADective Injustice in the Era of Emotional AI with the Case of Moxie. Science•Economy•Society Vol. 43.</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,127.39,467.97,10.37" xml:id="b84">
+	<monogr>
+		<author>
+			<persName><forename type="first">I</forename><forename type="middle">M</forename><surname>Young</surname></persName>
+		</author>
+		<title level="m">Justice and the Politics of Di&quot;erence</title>
+		<meeting><address><addrLine>Princeton</addrLine></address></meeting>
+		<imprint>
+			<publisher>Princeton University Press</publisher>
+			<date type="published" when="1990">1990</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Young, I. M. (1990). Justice and the Politics of Di&quot;erence. Princeton: Princeton University Press.</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,150.91,468.01,10.37;22,72.00,166.27,196.47,10.37" xml:id="b85">
+	<analytic>
+		<title level="a" type="main">The ADective Dimension Of Epistemic Injustice</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/edth.12554</idno>
+		<ptr target="https://doi.org/10.1111/edth.12554" />
+	</analytic>
+	<monogr>
+		<title level="j">Educ Theory</title>
+		<imprint>
+			<biblScope unit="volume">72</biblScope>
+			<biblScope unit="page" from="703" to="725" />
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2022). The ADective Dimension Of Epistemic Injustice. Educ Theory, 72: 703- 725. https://doi.org/10.1111/edth.12554</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,189.79,467.95,10.37;22,72.00,205.15,281.96,10.37" xml:id="b86">
+	<analytic>
+		<title level="a" type="main">Racial Gaslighting as ADective Injustice: A Conceptual Framework for Education</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Race Ethnicity and Education</title>
+		<imprint>
+			<biblScope unit="volume">27</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="417" to="431" />
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2024a). Racial Gaslighting as ADective Injustice: A Conceptual Framework for Education. Race Ethnicity and Education, 27 (4): 417-431.</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,228.67,468.03,10.37;22,72.00,244.03,202.23,10.37" xml:id="b87">
+	<analytic>
+		<title level="a" type="main">Political anger, aDective injustice, and civic education</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Journal of Philosophy of Education</title>
+		<imprint>
+			<biblScope unit="volume">57</biblScope>
+			<biblScope unit="issue">6</biblScope>
+			<biblScope unit="page" from="1176" to="1192" />
+			<date type="published" when="2024">2024b</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2024b). Political anger, aDective injustice, and civic education. Journal of Philosophy of Education 57 (6):1176-1192</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,267.55,468.02,10.37;22,72.00,282.91,468.02,10.37;22,72.00,298.27,261.65,10.37" xml:id="b88">
+	<analytic>
+		<title level="a" type="main">Unlearning emotional imperialism in education: political, theoretical and pedagogical implications</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+		<idno type="DOI">10.1080/01596306.2024.2360091</idno>
+		<ptr target="https://doi.org/10.1080/01596306.2024.2360091" />
+	</analytic>
+	<monogr>
+		<title level="j">Discourse: Studies in the Cultural Politics of Education</title>
+		<imprint>
+			<biblScope unit="volume">45</biblScope>
+			<biblScope unit="issue">4</biblScope>
+			<biblScope unit="page" from="569" to="582" />
+			<date type="published" when="2024">2024c</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2024c). Unlearning emotional imperialism in education: political, theoretical and pedagogical implications. Discourse: Studies in the Cultural Politics of Education, 45(4), 569- 582. https://doi.org/10.1080/01596306.2024.2360091</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,321.79,467.91,10.37;22,72.00,337.15,468.01,10.37;22,72.00,352.75,39.93,10.37" xml:id="b89">
+	<analytic>
+		<title level="a" type="main">On the entanglement of epistemic violence and aDective injustice in higher education: a conceptual analysis</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/s10734-024-01247-5</idno>
+		<ptr target="https://doi.org/10.1007/s10734-024-01247-5" />
+	</analytic>
+	<monogr>
+		<title level="j">High Educ</title>
+		<imprint>
+			<biblScope unit="volume">89</biblScope>
+			<biblScope unit="page" from="791" to="805" />
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2025). On the entanglement of epistemic violence and aDective injustice in higher education: a conceptual analysis. High Educ 89, 791-805. https://doi.org/10.1007/s10734-024- 01247-5</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,376.03,468.03,10.37;22,72.00,391.63,55.54,10.37;22,153.94,391.63,9.65,10.37;22,190.00,391.63,86.31,10.37;22,302.73,391.63,37.34,10.37;22,366.46,391.63,7.49,10.37;22,400.34,391.63,68.92,10.37;22,495.68,391.63,44.34,10.37;22,72.00,406.99,237.94,10.37" xml:id="b90">
+	<analytic>
+		<title level="a" type="main">DisaDection as refusal: aDective injustice and the politics of unfeeling in pedagogies of nation</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+		<idno type="DOI">10.1080/14681366.2025.2524506</idno>
+		<ptr target="https://doi.org/10.1080/14681366.2025.2524506" />
+	</analytic>
+	<monogr>
+		<title level="j">Pedagogy, Culture &amp; Society</title>
+		<imprint>
+			<biblScope unit="volume">34</biblScope>
+			<biblScope unit="issue">2</biblScope>
+			<biblScope unit="page" from="579" to="596" />
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2026a). DisaDection as refusal: aDective injustice and the politics of unfeeling in pedagogies of nation. Pedagogy, Culture &amp; Society, 34(2), 579-596. https://doi.org/10.1080/14681366.2025.2524506</note>
+</biblStruct>
+
+<biblStruct coords="22,72.00,430.51,467.98,10.37;22,72.00,445.87,55.54,10.37;22,147.05,445.87,14.26,10.37;22,180.83,445.87,36.61,10.37;22,236.96,445.87,62.81,10.37;22,319.29,445.87,43.67,10.37;22,382.49,445.87,30.23,10.37;22,432.24,445.87,18.97,10.37;22,470.72,445.87,37.75,10.37;22,527.97,445.87,12.05,10.37;22,72.00,461.23,232.21,10.37" xml:id="b91">
+	<analytic>
+		<title level="a" type="main">ADective climate injustice and infrastructural Apathy: Rethinking public pedagogies for climate engagement</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Zembylas</surname></persName>
+		</author>
+		<idno type="DOI">10.1016/j.emospa.2026.101173</idno>
+		<ptr target="https://doi.org/10.1016/j.emospa.2026.101173" />
+	</analytic>
+	<monogr>
+		<title level="j">Emotion, Space and Society</title>
+		<imprint>
+			<biblScope unit="volume">59</biblScope>
+			<date type="published" when="2026">2026b</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Zembylas, M. (2026b). ADective climate injustice and infrastructural Apathy: Rethinking public pedagogies for climate engagement. Emotion, Space and Society, 59 https://doi.org/10.1016/j.emospa.2026.101173.</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

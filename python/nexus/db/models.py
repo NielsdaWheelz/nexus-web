@@ -2736,6 +2736,205 @@ class ContentIndexState(Base):
     )
 
 
+class ReaderApparatusState(Base):
+    """Extraction state for source-authored reader apparatus."""
+
+    __tablename__ = "reader_apparatus_states"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    media_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    edge_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    diagnostics: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ready', 'empty', 'partial', 'unsupported', 'failed')",
+            name="ck_reader_apparatus_states_status",
+        ),
+        CheckConstraint("item_count >= 0", name="ck_reader_apparatus_states_item_count"),
+        CheckConstraint("edge_count >= 0", name="ck_reader_apparatus_states_edge_count"),
+        CheckConstraint(
+            "(status IN ('ready', 'partial') AND item_count > 0) "
+            "OR (status IN ('empty', 'unsupported', 'failed') "
+            "AND item_count = 0 AND edge_count = 0)",
+            name="ck_reader_apparatus_states_status_counts",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(diagnostics) = 'object'",
+            name="ck_reader_apparatus_states_diagnostics",
+        ),
+        UniqueConstraint("media_id", name="uq_reader_apparatus_states_media"),
+        UniqueConstraint("media_id", "id", name="uq_reader_apparatus_states_media_id"),
+    )
+
+
+class ReaderApparatusItem(Base):
+    """Source-authored apparatus marker or target."""
+
+    __tablename__ = "reader_apparatus_items"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    state_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    stable_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_html_sanitized: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locator: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    locator_status: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+    extraction_method: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    sort_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('footnote_ref', 'endnote_ref', 'bibliography_ref', "
+            "'sidenote_ref', 'margin_note_ref', 'footnote', 'endnote', "
+            "'bibliography_entry', 'sidenote', 'margin_note', 'reference_section')",
+            name="ck_reader_apparatus_items_kind",
+        ),
+        CheckConstraint(
+            "locator_status IN ('exact', 'container', 'missing')",
+            name="ck_reader_apparatus_items_locator_status",
+        ),
+        CheckConstraint(
+            "confidence IN ('exact', 'strong', 'probable')",
+            name="ck_reader_apparatus_items_confidence",
+        ),
+        CheckConstraint(
+            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
+            name="ck_reader_apparatus_items_locator",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_ref) = 'object'",
+            name="ck_reader_apparatus_items_source_ref",
+        ),
+        CheckConstraint(
+            "body_html_sanitized IS NULL OR kind IN ('footnote', 'endnote', "
+            "'bibliography_entry', 'sidenote', 'margin_note', 'reference_section')",
+            name="ck_reader_apparatus_items_body_html_target",
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "state_id"],
+            ["reader_apparatus_states.media_id", "reader_apparatus_states.id"],
+        ),
+        UniqueConstraint("media_id", "stable_key", name="uq_reader_apparatus_items_key"),
+        UniqueConstraint(
+            "media_id",
+            "state_id",
+            "id",
+            name="uq_reader_apparatus_items_media_state_id",
+        ),
+    )
+
+
+class ReaderApparatusEdge(Base):
+    """Source-authored relationship between reader apparatus items."""
+
+    __tablename__ = "reader_apparatus_edges"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    state_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    stable_key: Mapped[str] = mapped_column(Text, nullable=False)
+    from_item_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+    )
+    to_item_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+    )
+    relation: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+    extraction_method: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    sort_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "relation IN ('points_to_note', 'points_to_endnote', "
+            "'points_to_sidenote', 'points_to_margin_note', "
+            "'cites_bibliography_entry', 'backlink_to_marker', 'contains_reference')",
+            name="ck_reader_apparatus_edges_relation",
+        ),
+        CheckConstraint(
+            "confidence IN ('exact', 'strong', 'probable')",
+            name="ck_reader_apparatus_edges_confidence",
+        ),
+        CheckConstraint("from_item_id <> to_item_id", name="ck_reader_apparatus_edges_not_self"),
+        CheckConstraint(
+            "jsonb_typeof(source_ref) = 'object'",
+            name="ck_reader_apparatus_edges_source_ref",
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "state_id"],
+            ["reader_apparatus_states.media_id", "reader_apparatus_states.id"],
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "state_id", "from_item_id"],
+            [
+                "reader_apparatus_items.media_id",
+                "reader_apparatus_items.state_id",
+                "reader_apparatus_items.id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "state_id", "to_item_id"],
+            [
+                "reader_apparatus_items.media_id",
+                "reader_apparatus_items.state_id",
+                "reader_apparatus_items.id",
+            ],
+        ),
+        UniqueConstraint("media_id", "stable_key", name="uq_reader_apparatus_edges_key"),
+    )
+
+
 class MediaSummary(Base):
     """Per-media unit head: one current summary + claim set per media (1:1)."""
 

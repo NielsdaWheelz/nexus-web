@@ -9,6 +9,7 @@ import {
   Highlighter,
   Link2,
   ListTree,
+  Quote,
 } from "lucide-react";
 import type { PaneSecondarySurfacePublication } from "@/components/workspace/PaneSecondary";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
@@ -28,6 +29,7 @@ const SECONDARY_ICONS: Record<
   highlighter: Highlighter,
   "link-2": Link2,
   "list-tree": ListTree,
+  quote: Quote,
 };
 
 export function secondarySurfaceTabId(

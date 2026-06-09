@@ -215,6 +215,37 @@ class TestAnchorTargetPreservation:
         assert "class=" not in result
 
 
+class TestReaderApparatusAttrs:
+    """Tests opt-in behavior for server-authored reader apparatus attributes."""
+
+    def test_reader_apparatus_attrs_are_stripped_by_default(self):
+        html = (
+            '<p data-reader-apparatus-item-id="fake" '
+            'data-reader-apparatus-kind="footnote_ref" '
+            'data-reader-apparatus-confidence="exact">1</p>'
+        )
+        result = sanitize_html(html, "https://example.com")
+
+        assert "data-reader-apparatus" not in result
+
+    def test_reader_apparatus_attrs_are_preserved_when_opted_in(self):
+        html = (
+            '<p data-reader-apparatus-item-id="trusted" '
+            'data-reader-apparatus-kind="footnote_ref" '
+            'data-reader-apparatus-confidence="exact" onclick="evil()">1</p>'
+        )
+        result = sanitize_html(
+            html,
+            "https://example.com",
+            allow_reader_apparatus_attrs=True,
+        )
+
+        assert 'data-reader-apparatus-item-id="trusted"' in result
+        assert 'data-reader-apparatus-kind="footnote_ref"' in result
+        assert 'data-reader-apparatus-confidence="exact"' in result
+        assert "onclick" not in result
+
+
 class TestEmptyAndMalformed:
     """Tests for edge cases."""
 

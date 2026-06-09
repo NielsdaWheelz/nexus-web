@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 133;
+const API_ROUTE_COUNT = 134;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
@@ -42,8 +42,15 @@ describe("BFF API route shape", () => {
         continue;
       }
 
-      expect(usesAppProxy || usesExtensionProxy || usesPublicProxy, relativePath).toBe(true);
-      expect([usesAppProxy, usesExtensionProxy, usesPublicProxy].filter(Boolean).length, relativePath).toBe(1);
+      expect(
+        usesAppProxy || usesExtensionProxy || usesPublicProxy,
+        relativePath,
+      ).toBe(true);
+      expect(
+        [usesAppProxy, usesExtensionProxy, usesPublicProxy].filter(Boolean)
+          .length,
+        relativePath,
+      ).toBe(1);
       expect(usesExtensionProxy, relativePath).toBe(
         EXTENSION_PROXY_ROUTES.has(relativePath),
       );

@@ -1,5 +1,6 @@
 import type {
   CSSProperties,
+  FocusEvent,
   MouseEvent,
   PointerEvent,
   RefObject,
@@ -45,6 +46,8 @@ export default function TextDocumentReader({
   onContentClick,
   onContentPointerOver,
   onContentPointerOut,
+  onContentFocus,
+  onContentBlur,
   onInternalLinkClick,
 }: {
   mediaId: string;
@@ -59,6 +62,8 @@ export default function TextDocumentReader({
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
+  onContentFocus: (event: FocusEvent<HTMLDivElement>) => void;
+  onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -84,9 +89,19 @@ export default function TextDocumentReader({
   }, []);
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
-    if (onInternalLinkClick) {
-      const target = event.target;
-      if (target instanceof Element) {
+    const target = event.target;
+    let delegatedToContentClick = false;
+    if (target instanceof Element) {
+      const apparatusEl = target.closest("[data-reader-apparatus-item-id]");
+      if (apparatusEl) {
+        onContentClick(event);
+        delegatedToContentClick = true;
+        if (event.defaultPrevented) {
+          return;
+        }
+      }
+
+      if (onInternalLinkClick) {
         const anchorEl = target.closest("a[href]");
         if (
           anchorEl instanceof HTMLAnchorElement &&
@@ -98,7 +113,9 @@ export default function TextDocumentReader({
       }
     }
 
-    onContentClick(event);
+    if (!delegatedToContentClick) {
+      onContentClick(event);
+    }
   }
 
   return (
@@ -132,6 +149,8 @@ export default function TextDocumentReader({
                 onClick={handleRenderedContentClick}
                 onPointerOver={onContentPointerOver}
                 onPointerOut={onContentPointerOut}
+                onFocus={onContentFocus}
+                onBlur={onContentBlur}
               >
                 <HtmlRenderer
                   htmlSanitized={contentState.renderedHtml}

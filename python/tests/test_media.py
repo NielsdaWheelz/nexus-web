@@ -4845,6 +4845,19 @@ class TestPdfRetry:
             """),
             {"id": media_id, "uid": user_id},
         )
+        db_session.execute(
+            text("""
+                INSERT INTO reader_apparatus_states (
+                    media_id, media_kind, source_fingerprint, extractor_version,
+                    status, item_count, edge_count, diagnostics
+                )
+                VALUES (
+                    :id, 'pdf', 'sha256:test', 'reader_apparatus_v1',
+                    'empty', 0, 0, '{}'::jsonb
+                )
+            """),
+            {"id": media_id},
+        )
         db_session.flush()
 
         count = invalidate_pdf_quote_match_metadata(db_session, media_id)
@@ -4858,6 +4871,13 @@ class TestPdfRetry:
         ).fetchone()
         assert refreshed[0] is None
         assert refreshed[1] is None
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM reader_apparatus_states WHERE media_id = :id"),
+                {"id": media_id},
+            ).scalar_one()
+            == 0
+        )
 
     def test_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(
         self, db_session: Session

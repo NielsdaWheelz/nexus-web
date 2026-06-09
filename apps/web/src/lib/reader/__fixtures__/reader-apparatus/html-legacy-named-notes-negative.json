@@ -1,0 +1,23 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": false,
+      "has_probable_items": false,
+      "has_sidecar_items": false,
+      "supports_hover_preview": false,
+      "supports_jump_to_marker": false,
+      "supports_jump_to_target": false
+    },
+    "diagnostics": {},
+    "edges": [],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [],
+    "media_id": "ed005dcc-9c09-5c39-9d04-caac6967dffc",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:ec94eefcda549ddeb4f4755f77c13f9fae29f36b51e8e12942e7ba4f1abfedac",
+    "status": "empty"
+  },
+  "fixture_id": "html-legacy-named-notes-negative",
+  "source_fixture_path": "reader_apparatus/html/legacy-named-notes-negative.html",
+  "source_fixture_sha256": "158a471d9b0534565454737dc73b3fe3ba5336c711084cf727fc46c492dc1495"
+}

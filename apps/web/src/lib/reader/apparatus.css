@@ -1,0 +1,39 @@
+/* Source-authored apparatus markers produced by backend extraction. */
+
+[data-reader-apparatus-item-id] {
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
+    outline var(--duration-fast) var(--ease-glide);
+}
+
+[data-reader-apparatus-item-id]:hover,
+.reader-apparatus-hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.reader-apparatus-focused {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.reader-apparatus-pulse {
+  animation: reader-apparatus-pulse 1200ms var(--ease-glide);
+}
+
+@keyframes reader-apparatus-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  45% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+}

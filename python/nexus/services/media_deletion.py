@@ -23,8 +23,10 @@ from nexus.services.default_library_closure import (
     remove_media_from_default_intrinsic,
     remove_media_from_non_default_closure,
 )
+from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -304,18 +306,24 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
             SELECT storage_path
             FROM epub_resources
             WHERE media_id = :media_id
-            UNION
-            SELECT source_payload->>'storage_path' AS storage_path
-            FROM media_source_attempts
-            WHERE media_id = :media_id
-              AND source_payload ? 'storage_path'
-              AND source_payload->>'storage_path' IS NOT NULL
             ORDER BY storage_path
         """),
         {"media_id": media_id},
     ).fetchall():
         if storage_path not in storage_paths:
             storage_paths.append(storage_path)
+    for (source_payload,) in db.execute(
+        text("""
+            SELECT source_payload
+            FROM media_source_attempts
+            WHERE media_id = :media_id
+            ORDER BY attempt_no, created_at, id
+        """),
+        {"media_id": media_id},
+    ).fetchall():
+        for storage_path in source_attempt_storage_paths(source_payload):
+            if storage_path not in storage_paths:
+                storage_paths.append(storage_path)
 
     # Graph cleanup, one call per resource ref this deletion destroys (§9.6,
     # AC12): the media row, its highlights, and its fragments. The media's
@@ -368,6 +376,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # content index removes this media's evidence_spans (media_claims FK them) and
     # before the media row goes (both unit tables FK media, non-cascading).
     media_intelligence.delete_media_unit(db, media_id=media_id)
+    delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
     db.execute(
         text("""

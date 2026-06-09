@@ -107,6 +107,12 @@ export interface PdfTemporaryHighlight {
   color: HighlightColor;
 }
 
+interface PdfTransientPulseHighlight {
+  id: string;
+  pageNumber: number;
+  quads: PdfHighlightQuad[];
+}
+
 export interface PdfReaderControlsState {
   pageNumber: number;
   numPages: number;
@@ -529,6 +535,8 @@ export default function PdfReader({
   const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
     null,
   );
+  const [transientPulseHighlight, setTransientPulseHighlight] =
+    useState<PdfTransientPulseHighlight | null>(null);
 
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const internalContentRef = useRef<HTMLDivElement>(null);
@@ -561,6 +569,7 @@ export default function PdfReader({
   const selectionVisibleRef = useRef(false);
   const mobileSelectionTimerRef = useRef<number | null>(null);
   const pulseTimerRef = useRef<number | null>(null);
+  const pulseSequenceRef = useRef(0);
   const textLayerRefreshFrameRef = useRef<{
     pageNumber: number;
     runId: number;
@@ -783,8 +792,7 @@ export default function PdfReader({
       metrics.pageHeight - container.clientHeight,
     );
     container.scrollTop =
-      metrics.pageTop +
-      maxLocalScroll * clamp(targetProgression, 0, 1);
+      metrics.pageTop + maxLocalScroll * clamp(targetProgression, 0, 1);
     pendingStartPageProgressionRef.current = null;
   }, [readPageMetrics]);
 
@@ -1855,10 +1863,10 @@ export default function PdfReader({
         const highlightId =
           typeof target.highlightId === "string" ? target.highlightId : null;
         const pulseOverlaysOnPage = () => {
+          if (pulseTimerRef.current != null) {
+            window.clearTimeout(pulseTimerRef.current);
+          }
           if (highlightId) {
-            if (pulseTimerRef.current != null) {
-              window.clearTimeout(pulseTimerRef.current);
-            }
             setPulsingHighlightId(highlightId);
             pulseTimerRef.current = window.setTimeout(() => {
               pulseTimerRef.current = null;
@@ -1869,16 +1877,19 @@ export default function PdfReader({
             return;
           }
 
-          const pageEl = getPageElement(pageNumber);
-          if (!pageEl) return;
-          for (const overlay of pageEl.querySelectorAll<HTMLElement>(
-            "[data-highlight-anchor]",
-          )) {
-            overlay.classList.add(styles.pulsing);
-            window.setTimeout(() => {
-              overlay.classList.remove(styles.pulsing);
-            }, PDF_PULSE_DURATION_MS);
-          }
+          pulseSequenceRef.current += 1;
+          const pulseId = `reader-pulse-${pulseSequenceRef.current}`;
+          setTransientPulseHighlight({ id: pulseId, pageNumber, quads });
+          setPulsingHighlightId(pulseId);
+          pulseTimerRef.current = window.setTimeout(() => {
+            pulseTimerRef.current = null;
+            setPulsingHighlightId((current) =>
+              current === pulseId ? null : current,
+            );
+            setTransientPulseHighlight((current) =>
+              current?.id === pulseId ? null : current,
+            );
+          }, PDF_PULSE_DURATION_MS);
         };
         const navigate = async () => {
           if (pageNumber !== pageNumberRef.current) {
@@ -1891,7 +1902,7 @@ export default function PdfReader({
         };
         void navigate();
       },
-      [getPageElement, goToPage, mediaId, scrollToProjectedHighlight],
+      [goToPage, mediaId, scrollToProjectedHighlight],
     ),
   );
 
@@ -1978,11 +1989,7 @@ export default function PdfReader({
       void destroyPdfDocument(existingDoc);
       destroyPdfLoadingTask(existingTask);
     };
-  }, [
-    clearSelection,
-    mediaId,
-    teardownViewer,
-  ]);
+  }, [clearSelection, mediaId, teardownViewer]);
 
   useEffect(() => {
     if (
@@ -2057,7 +2064,10 @@ export default function PdfReader({
       return;
     }
     setPageHighlights(pageHighlightsResource.data);
-    onPageHighlightsChangeRef.current?.(pageNumber, pageHighlightsResource.data);
+    onPageHighlightsChangeRef.current?.(
+      pageNumber,
+      pageHighlightsResource.data,
+    );
   }, [pageHighlightsResource, pageNumber]);
 
   useEffect(() => {
@@ -2126,6 +2136,17 @@ export default function PdfReader({
         });
       });
     }
+    if (transientPulseHighlight?.pageNumber === pageNumber) {
+      transientPulseHighlight.quads.forEach((quad, index) => {
+        projected.push({
+          highlightId: transientPulseHighlight.id,
+          color: "yellow",
+          index,
+          isTemporary: true,
+          ...projectPdfQuadToViewportRect(quad, viewportTransform),
+        });
+      });
+    }
     return projected;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: pageRenderEpoch is an intentional invalidation trigger
   }, [
@@ -2134,6 +2155,7 @@ export default function PdfReader({
     pageRenderEpoch,
     pageScale,
     temporaryHighlight,
+    transientPulseHighlight,
   ]);
 
   useEffect(() => {
@@ -2256,13 +2278,7 @@ export default function PdfReader({
     return () => {
       onControlsReady(null);
     };
-  }, [
-    goToNextPage,
-    goToPreviousPage,
-    onControlsReady,
-    zoomIn,
-    zoomOut,
-  ]);
+  }, [goToNextPage, goToPreviousPage, onControlsReady, zoomIn, zoomOut]);
 
   useEffect(() => {
     if (!onControlsStateChange) {

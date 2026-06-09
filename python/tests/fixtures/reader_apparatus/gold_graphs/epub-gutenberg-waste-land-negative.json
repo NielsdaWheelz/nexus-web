@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "fixture_id": "epub-gutenberg-waste-land-negative",
+  "fixture_path": "epub/waste-land-epub3.epub",
+  "fixture_sha256": "de1125e11abf9ede2417527a2a9043f8186464833f303e17297fbb2e18272c04",
+  "coverage": "negative_exhaustive",
+  "audit_basis": "epub_archive_negative_candidate_census",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "empty",
+    "media_kind": "epub",
+    "items": 0,
+    "edges": 0
+  },
+  "items": [],
+  "edges": [],
+  "expected_absences": [
+    {
+      "kind": "semantic_noteref_links",
+      "expected_count": 0,
+      "reason": "no encoded noteref markers in archive"
+    },
+    {
+      "kind": "semantic_note_targets",
+      "expected_count": 0,
+      "reason": "no encoded note target graph in archive"
+    },
+    {
+      "kind": "plain_text_note_without_encoded_marker_target_graph",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-7.htm.xhtml",
+        "spine_index": 8
+      },
+      "expected_count": 51,
+      "reason": "plain notes chapter is not a machine-addressable marker-target apparatus graph"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-2.htm.xhtml#chap01"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-3.htm.xhtml#chap02"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-4.htm.xhtml#chap03"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-5.htm.xhtml#chap04"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-6.htm.xhtml#chap05"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    },
+    {
+      "kind": "toc_navigation_link",
+      "source_ref": {
+        "package_href": "OEBPS/9215277161240730854_1321-h-0.htm.xhtml",
+        "href": "9215277161240730854_1321-h-7.htm.xhtml#chap06"
+      },
+      "reason": "toc_navigation_not_apparatus"
+    }
+  ],
+  "diagnostics": {
+    "spine_documents": 10,
+    "semantic_noteref_links": 0,
+    "semantic_note_targets": 0,
+    "internal_toc_links": 6,
+    "plain_notes_chapter": {
+      "package_href": "OEBPS/9215277161240730854_1321-h-7.htm.xhtml",
+      "spine_index": 8,
+      "numbered_or_line_note_paragraphs": 51
+    }
+  }
+}

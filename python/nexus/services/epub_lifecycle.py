@@ -25,6 +25,7 @@ from nexus.services.epub_ingest import (
     extract_epub_artifacts,
 )
 from nexus.services.epub_metadata import persist_epub_metadata
+from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.storage.client import get_storage_client
 
 _MAX_ERROR_MSG_LEN = 1000
@@ -107,6 +108,7 @@ def materialize_epub_source(
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     """Delete all EPUB extraction and chunk/embedding artifacts for a media row."""
+    delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))

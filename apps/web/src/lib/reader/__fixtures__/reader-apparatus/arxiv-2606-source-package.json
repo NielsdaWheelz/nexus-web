@@ -1,0 +1,1359 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": false,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": false,
+      "supports_jump_to_target": false
+    },
+    "diagnostics": {
+      "latex_biblatex": {
+        "bib_entry_count": 22,
+        "citation_edge_count": 20,
+        "citation_marker_count": 15,
+        "cited_bibliography_entry_count": 17,
+        "footnote_count": 1,
+        "missing_citation_keys": [],
+        "status": "ready",
+        "uncited_bib_entry_count": 5
+      }
+    },
+    "edges": [
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000000909.000000.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "colavizza2017annotated",
+          "citation_keys": [
+            "colavizza2017annotated",
+            "colavizza2019citation",
+            "cioffi2022structured",
+            "backes2024comparing"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2017annotated:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2017annotated"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000000909.000000.edge.001",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "colavizza2019citation",
+          "citation_keys": [
+            "colavizza2017annotated",
+            "colavizza2019citation",
+            "cioffi2022structured",
+            "backes2024comparing"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2019citation:001",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2019citation"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000000909.000000.edge.002",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "cioffi2022structured",
+          "citation_keys": [
+            "colavizza2017annotated",
+            "colavizza2019citation",
+            "cioffi2022structured",
+            "backes2024comparing"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022structured:002",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022structured"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000000909.000000.edge.003",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "backes2024comparing",
+          "citation_keys": [
+            "colavizza2017annotated",
+            "colavizza2019citation",
+            "cioffi2022structured",
+            "backes2024comparing"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:backes2024comparing:003",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:backes2024comparing"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000001:boulanger2022extracting",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000001415.000001.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2022extracting",
+          "citation_keys": [
+            "boulanger2022extracting"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000001:boulanger2022extracting->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2022extracting:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2022extracting"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000002:simons2026large-sarin2025citation",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000001516.000002.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "simons2026large",
+          "citation_keys": [
+            "simons2026large",
+            "sarin2025citation"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000002:simons2026large-sarin2025citation->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:simons2026large:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:simons2026large"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000002:simons2026large-sarin2025citation",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000001516.000002.edge.001",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "sarin2025citation",
+          "citation_keys": [
+            "simons2026large",
+            "sarin2025citation"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000002:simons2026large-sarin2025citation->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:sarin2025citation:001",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:sarin2025citation"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000003:textDavinci20222",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000001648.000003.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "textDavinci20222",
+          "citation_keys": [
+            "textDavinci20222"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000003:textDavinci20222->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:textDavinci20222:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:textDavinci20222"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000004:karkee2025comprehensive",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000001822.000004.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "karkee2025comprehensive",
+          "citation_keys": [
+            "karkee2025comprehensive"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000004:karkee2025comprehensive->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:karkee2025comprehensive:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:karkee2025comprehensive"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000005:grobid",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000002504.000005.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "grobid",
+          "citation_keys": [
+            "grobid"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000005:grobid->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:grobid:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:grobid"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000006:cioffi2022data-pagnotta2024cex",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000003005.000006.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "cioffi2022data",
+          "citation_keys": [
+            "cioffi2022data",
+            "pagnotta2024cex"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000006:cioffi2022data-pagnotta2024cex->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022data:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022data"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000006:cioffi2022data-pagnotta2024cex",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000003005.000006.edge.001",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "pagnotta2024cex",
+          "citation_keys": [
+            "cioffi2022data",
+            "pagnotta2024cex"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000006:cioffi2022data-pagnotta2024cex->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:pagnotta2024cex:001",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:pagnotta2024cex"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000007:hosseini2019excite",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000003147.000007.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "hosseini2019excite",
+          "citation_keys": [
+            "hosseini2019excite"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000007:hosseini2019excite->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:hosseini2019excite:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:hosseini2019excite"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000008:colavizza2017annotated",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000003244.000008.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "colavizza2017annotated",
+          "citation_keys": [
+            "colavizza2017annotated"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000008:colavizza2017annotated->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2017annotated:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2017annotated"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000009:zhu2026benchmarking",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000003393.000009.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "zhu2026benchmarking",
+          "citation_keys": [
+            "zhu2026benchmarking"
+          ],
+          "command": "textcite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000009:zhu2026benchmarking->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:zhu2026benchmarking:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:zhu2026benchmarking"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000010:boulanger2024pdftei",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000005322.000010.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2024pdftei",
+          "citation_keys": [
+            "boulanger2024pdftei"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000010:boulanger2024pdftei->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2024pdftei:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2024pdftei"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000011:llamore",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000005578.000011.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "llamore",
+          "citation_keys": [
+            "llamore"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000011:llamore->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:llamore:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:llamore"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000012:boulanger2026potential",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000008927.000012.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2026potential",
+          "citation_keys": [
+            "boulanger2026potential"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000012:boulanger2026potential->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2026potential:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2026potential"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000013:llamore",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000009261.000013.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "llamore",
+          "citation_keys": [
+            "llamore"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000013:llamore->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:llamore:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:llamore"
+      },
+      {
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "from_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000014:zhu2026benchmarking",
+        "relation": "cites_bibliography_entry",
+        "sort_key": "citation.000012563.000014.edge.000",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "zhu2026benchmarking",
+          "citation_keys": [
+            "zhu2026benchmarking"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000014:zhu2026benchmarking->fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:zhu2026benchmarking:000",
+        "to_stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:zhu2026benchmarking"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "Annotated References in the Historiography on Venice: 19th\u201321st centuries. Colavizza, Giovanni and Romanello, Matteo. Journal of Open Humanities Data. 2017. 10.5334/johd.9",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "colavizza2017annotated",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000000.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "colavizza2017annotated",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2017annotated"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Citation Mining of Humanities Journals: The Progress to Date and the Challenges Ahead. Colavizza, Giovanni and Romanello, Matteo. Journal of European Periodical Studies. ESPRit (European Society for Periodical Research). 2019. 10.21825/jeps.v4i1.10120. https://openjournals.ugent.be/jeps/article/id/71493/",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "colavizza2019citation",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000001.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "colavizza2019citation",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:colavizza2019citation"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Structured references from PDF articles: assessing the tools for bibliographic reference extraction and parsing. Cioffi, Alessia and Peroni, Silvio. ArXiv. 2022. 10.48550/arXiv.2205.14677. http://arxiv.org/abs/2205.14677",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "cioffi2022structured",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000002.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "cioffi2022structured",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022structured"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Comparing free reference extraction pipelines. Backes, Tobias and Iurshina, Anastasiia and Shahid, Muhammad Ahsan and Mayr, Philipp. International Journal on Digital Libraries. 2024. 10.1007/s00799-024-00404-6",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "backes2024comparing",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000003.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "backes2024comparing",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:backes2024comparing"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Extracting Bibliographic References from Footnotes with Excite-Docker. Boulanger, Christian and Iurshina, Anastasiia. Proceedings of the Workshop on Understanding Literature References in Academic Full Text. CEUR. 2022. http://ceur-ws.org/Vol-3220/#paper3",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "boulanger2022extracting",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000004.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2022extracting",
+          "entry_type": "inproceedings",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2022extracting"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Large language models for history, philosophy, and sociology of science: Interpretive uses, methodological challenges, and critical perspectives. Simons, Arno and Zichert, Michael and Wuthrich, Adrian. Studies in History and Philosophy of Science. 2026. 10.1016/j.shpsa.2026.102151",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "simons2026large",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000005.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "simons2026large",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:simons2026large"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Citation Parsing and Analysis with Language Models. Sarin, Parth and Alperin, Juan Pablo. ArXiv. arXiv. 2025. 10.48550/arXiv.2505.15948. http://arxiv.org/abs/2505.15948",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "sarin2025citation",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000006.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "sarin2025citation",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:sarin2025citation"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "OpenAI (text-davinci-003) reference extraction via API: Code/Result. 2022. https://pad.gwdg.de/s/LWUjPOi1F#",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "textDavinci20222",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000007.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "textDavinci20222",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:textDavinci20222"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Comprehensive Analysis of Transparency and Accessibility of ChatGPT, DeepSeek, And other SoTA Large Language Models. Karkee, Manoj and Raza, Shaina and Karkee, Manoj. Preprints. 2025. 10.20944/preprints202502.1608.v1. https://www.preprints.org/manuscript/202502.1608",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "karkee2025comprehensive",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000008.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "karkee2025comprehensive",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:karkee2025comprehensive"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "GROBID. GitHub. 2008/. https://github.com/grobidOrg/grobid",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "grobid",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000009.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "grobid",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:grobid"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Data for Testing and Evaluating References Extraction and Parsing Tools. Cioffi, Alessia. Zenodo. 2022. 10.5281/zenodo.6182066. https://zenodo.org/record/6182066",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "cioffi2022data",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000010.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "cioffi2022data",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:cioffi2022data"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "CEX Project - Dataset and Gold Standard. Pagnotta, O.. Zenodo. 2024. 10.5281/zenodo.10535653",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "pagnotta2024cex",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000011.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "pagnotta2024cex",
+          "entry_type": "article",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:pagnotta2024cex"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "EXCITE \u2013 A Toolchain to Extract, Match and Publish Open Literature References. Hosseini, Azam and Ghavimi, Behnam and Boukhers, Zeyd and Mayr, Philipp. 2019 ACM/IEEE Joint Conference on Digital Libraries (JCDL). IEEE. 2019. 10.1109/JCDL.2019.00105. https://ieeexplore.ieee.org/document/8791194/",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "hosseini2019excite",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000012.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "hosseini2019excite",
+          "entry_type": "inproceedings",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:hosseini2019excite"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Benchmarking Large Language Models on Reference Extraction and Parsing in the Social Sciences and Humanities. Zhu, Yurui and Colavizza, Giovanni and Romanello, Matteo. arXiv. 2026. 10.48550/arXiv.2603.13651. http://arxiv.org/abs/2603.13651",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "zhu2026benchmarking",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000013.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "zhu2026benchmarking",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:zhu2026benchmarking"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "PDF-TEI Editor. Christian Boulanger. GitHub. 2024/. https://github.com/mpilhlt/pdf-tei-editor/",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "boulanger2024pdftei",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000014.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2024pdftei",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2024pdftei"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "LLaMore. Max Planck Institute for Legal History and Legal Theory. 2025/. https://github.com/mpilhlt/llamore",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "llamore",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000015.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "llamore",
+          "entry_type": "misc",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:llamore"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "The potential of LLMs for constructing a socio-legal knowledge graph. Boulanger, Christian. Understanding Science with Large Language Models? Potentials for the History, Philosophy, and Sociology of Science. transcript. 2026",
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_bibliography",
+        "kind": "bibliography_entry",
+        "label": "boulanger2026potential",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "bibliography.000016.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_key": "boulanger2026potential",
+          "entry_type": "incollection",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-target:boulanger2026potential"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "colavizza2017annotated, colavizza2019citation, cioffi2022structured, backes2024comparing",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000000909.000000.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "colavizza2017annotated",
+            "colavizza2019citation",
+            "cioffi2022structured",
+            "backes2024comparing"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000000:colavizza2017annotated-colavizza2019citation-cioffi2022structured-backes2024comparing"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "boulanger2022extracting",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000001415.000001.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "boulanger2022extracting"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000001:boulanger2022extracting"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "simons2026large, sarin2025citation",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000001516.000002.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "simons2026large",
+            "sarin2025citation"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000002:simons2026large-sarin2025citation"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "textDavinci20222",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000001648.000003.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "textDavinci20222"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000003:textDavinci20222"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "karkee2025comprehensive",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000001822.000004.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "karkee2025comprehensive"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000004:karkee2025comprehensive"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "grobid",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000002504.000005.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "grobid"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000005:grobid"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "cioffi2022data, pagnotta2024cex",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000003005.000006.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "cioffi2022data",
+            "pagnotta2024cex"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000006:cioffi2022data-pagnotta2024cex"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "hosseini2019excite",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000003147.000007.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "hosseini2019excite"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000007:hosseini2019excite"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "colavizza2017annotated",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000003244.000008.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "colavizza2017annotated"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000008:colavizza2017annotated"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "zhu2026benchmarking",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000003393.000009.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "zhu2026benchmarking"
+          ],
+          "command": "textcite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000009:zhu2026benchmarking"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "boulanger2024pdftei",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000005322.000010.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "boulanger2024pdftei"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000010:boulanger2024pdftei"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "llamore",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000005578.000011.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "llamore"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000011:llamore"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "boulanger2026potential",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000008927.000012.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "boulanger2026potential"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000012:boulanger2026potential"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "llamore",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000009261.000013.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "llamore"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000013:llamore"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "exact",
+        "extraction_method": "latex_biblatex_citation",
+        "kind": "bibliography_ref",
+        "label": "zhu2026benchmarking",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "citation.000012563.000014.marker",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "citation_keys": [
+            "zhu2026benchmarking"
+          ],
+          "command": "parencite",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-bibliography-ref:000014:zhu2026benchmarking"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "These authors contributed equally to this work.",
+        "confidence": "exact",
+        "extraction_method": "latex_footnote",
+        "kind": "footnote",
+        "label": "1",
+        "locator": null,
+        "locator_status": "missing",
+        "sort_key": "footnote.000000744.000000.target",
+        "source_ref": {
+          "bib_paths": [
+            "refs.bib"
+          ],
+          "command": "footnotetext",
+          "format": "arxiv_source",
+          "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+          "ordinal": 0,
+          "sha256_hex": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c",
+          "source_url": "https://arxiv.org/e-print/2606.01109",
+          "tex_path": "extended_abstract.tex"
+        },
+        "stable_key": "fixture:arxiv-2606-source-package:source-package:latex-footnote:000000"
+      }
+    ],
+    "media_id": "a7608efe-7141-5b08-85af-38c0bd649e04",
+    "media_kind": "pdf",
+    "source_fingerprint": "sha256:0bbfaaf834188211824d80a139044816b836dfb6858493e5c94b1839ca9765d1",
+    "status": "ready"
+  },
+  "fixture_id": "arxiv-2606-source-package",
+  "source_fixture_path": "reader_apparatus/arxiv/2606.01109-source.tar",
+  "source_fixture_sha256": "137015562637c4fb63e1c4220320b474ed9ba1596ea29ae151fdfeb22c92d37c"
+}

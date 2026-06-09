@@ -1,0 +1,2383 @@
+{
+  "schema_version": 1,
+  "fixture_id": "epub-standardebooks-eliot-poetry",
+  "fixture_path": "epub/standardebooks-t-s-eliot-poetry.epub",
+  "fixture_sha256": "7fc1c684ff08b36b4ac9a3900fafd4b5b4d6c2ba31662a05b9dc5a97368baaa2",
+  "coverage": "adapter_scope_exhaustive",
+  "audit_basis": "epub_archive_xhtml_semantic_noteref",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "epub",
+    "item_kinds": {
+      "endnote": 53,
+      "endnote_ref": 53
+    },
+    "edge_relations": {
+      "points_to_endnote": 53
+    },
+    "edge_methods": {
+      "epub_noteref": 53
+    },
+    "locator_type": "epub_fragment_offsets"
+  },
+  "items": [
+    {
+      "gold_key": "m:eliot-poetry:noteref-1",
+      "kind": "endnote_ref",
+      "label": "1",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-1",
+        "target_id": "note-1",
+        "marker_id": "noteref-1"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-2",
+      "kind": "endnote_ref",
+      "label": "2",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-2",
+        "target_id": "note-2",
+        "marker_id": "noteref-2"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-3",
+      "kind": "endnote_ref",
+      "label": "3",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-3",
+        "target_id": "note-3",
+        "marker_id": "noteref-3"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-4",
+      "kind": "endnote_ref",
+      "label": "4",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-4",
+        "target_id": "note-4",
+        "marker_id": "noteref-4"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-5",
+      "kind": "endnote_ref",
+      "label": "5",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-5",
+        "target_id": "note-5",
+        "marker_id": "noteref-5"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-6",
+      "kind": "endnote_ref",
+      "label": "6",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-6",
+        "target_id": "note-6",
+        "marker_id": "noteref-6"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-7",
+      "kind": "endnote_ref",
+      "label": "7",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-7",
+        "target_id": "note-7",
+        "marker_id": "noteref-7"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-8",
+      "kind": "endnote_ref",
+      "label": "8",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-8",
+        "target_id": "note-8",
+        "marker_id": "noteref-8"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-9",
+      "kind": "endnote_ref",
+      "label": "9",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-9",
+        "target_id": "note-9",
+        "marker_id": "noteref-9"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-10",
+      "kind": "endnote_ref",
+      "label": "10",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-10",
+        "target_id": "note-10",
+        "marker_id": "noteref-10"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-11",
+      "kind": "endnote_ref",
+      "label": "11",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-11",
+        "target_id": "note-11",
+        "marker_id": "noteref-11"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-12",
+      "kind": "endnote_ref",
+      "label": "12",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-12",
+        "target_id": "note-12",
+        "marker_id": "noteref-12"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-13",
+      "kind": "endnote_ref",
+      "label": "13",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-13",
+        "target_id": "note-13",
+        "marker_id": "noteref-13"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-14",
+      "kind": "endnote_ref",
+      "label": "14",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-14",
+        "target_id": "note-14",
+        "marker_id": "noteref-14"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-15",
+      "kind": "endnote_ref",
+      "label": "15",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-15",
+        "target_id": "note-15",
+        "marker_id": "noteref-15"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-16",
+      "kind": "endnote_ref",
+      "label": "16",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-16",
+        "target_id": "note-16",
+        "marker_id": "noteref-16"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-17",
+      "kind": "endnote_ref",
+      "label": "17",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-17",
+        "target_id": "note-17",
+        "marker_id": "noteref-17"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-18",
+      "kind": "endnote_ref",
+      "label": "18",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-18",
+        "target_id": "note-18",
+        "marker_id": "noteref-18"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-19",
+      "kind": "endnote_ref",
+      "label": "19",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-19",
+        "target_id": "note-19",
+        "marker_id": "noteref-19"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-20",
+      "kind": "endnote_ref",
+      "label": "20",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-20",
+        "target_id": "note-20",
+        "marker_id": "noteref-20"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-21",
+      "kind": "endnote_ref",
+      "label": "21",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-21",
+        "target_id": "note-21",
+        "marker_id": "noteref-21"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-22",
+      "kind": "endnote_ref",
+      "label": "22",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-22",
+        "target_id": "note-22",
+        "marker_id": "noteref-22"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-23",
+      "kind": "endnote_ref",
+      "label": "23",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-23",
+        "target_id": "note-23",
+        "marker_id": "noteref-23"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-24",
+      "kind": "endnote_ref",
+      "label": "24",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-24",
+        "target_id": "note-24",
+        "marker_id": "noteref-24"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-25",
+      "kind": "endnote_ref",
+      "label": "25",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-25",
+        "target_id": "note-25",
+        "marker_id": "noteref-25"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-26",
+      "kind": "endnote_ref",
+      "label": "26",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-26",
+        "target_id": "note-26",
+        "marker_id": "noteref-26"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-27",
+      "kind": "endnote_ref",
+      "label": "27",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-27",
+        "target_id": "note-27",
+        "marker_id": "noteref-27"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-28",
+      "kind": "endnote_ref",
+      "label": "28",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-28",
+        "target_id": "note-28",
+        "marker_id": "noteref-28"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-29",
+      "kind": "endnote_ref",
+      "label": "29",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-29",
+        "target_id": "note-29",
+        "marker_id": "noteref-29"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-30",
+      "kind": "endnote_ref",
+      "label": "30",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-30",
+        "target_id": "note-30",
+        "marker_id": "noteref-30"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-31",
+      "kind": "endnote_ref",
+      "label": "31",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-31",
+        "target_id": "note-31",
+        "marker_id": "noteref-31"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-32",
+      "kind": "endnote_ref",
+      "label": "32",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-32",
+        "target_id": "note-32",
+        "marker_id": "noteref-32"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-33",
+      "kind": "endnote_ref",
+      "label": "33",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-33",
+        "target_id": "note-33",
+        "marker_id": "noteref-33"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-34",
+      "kind": "endnote_ref",
+      "label": "34",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-34",
+        "target_id": "note-34",
+        "marker_id": "noteref-34"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-35",
+      "kind": "endnote_ref",
+      "label": "35",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-35",
+        "target_id": "note-35",
+        "marker_id": "noteref-35"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-36",
+      "kind": "endnote_ref",
+      "label": "36",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-36",
+        "target_id": "note-36",
+        "marker_id": "noteref-36"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-37",
+      "kind": "endnote_ref",
+      "label": "37",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-37",
+        "target_id": "note-37",
+        "marker_id": "noteref-37"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-38",
+      "kind": "endnote_ref",
+      "label": "38",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-38",
+        "target_id": "note-38",
+        "marker_id": "noteref-38"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-39",
+      "kind": "endnote_ref",
+      "label": "39",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-39",
+        "target_id": "note-39",
+        "marker_id": "noteref-39"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-40",
+      "kind": "endnote_ref",
+      "label": "40",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-40",
+        "target_id": "note-40",
+        "marker_id": "noteref-40"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-41",
+      "kind": "endnote_ref",
+      "label": "41",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-41",
+        "target_id": "note-41",
+        "marker_id": "noteref-41"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-42",
+      "kind": "endnote_ref",
+      "label": "42",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-42",
+        "target_id": "note-42",
+        "marker_id": "noteref-42"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-43",
+      "kind": "endnote_ref",
+      "label": "43",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-43",
+        "target_id": "note-43",
+        "marker_id": "noteref-43"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-44",
+      "kind": "endnote_ref",
+      "label": "44",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-44",
+        "target_id": "note-44",
+        "marker_id": "noteref-44"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-45",
+      "kind": "endnote_ref",
+      "label": "45",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-45",
+        "target_id": "note-45",
+        "marker_id": "noteref-45"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-46",
+      "kind": "endnote_ref",
+      "label": "46",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-46",
+        "target_id": "note-46",
+        "marker_id": "noteref-46"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-47",
+      "kind": "endnote_ref",
+      "label": "47",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-47",
+        "target_id": "note-47",
+        "marker_id": "noteref-47"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-48",
+      "kind": "endnote_ref",
+      "label": "48",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-48",
+        "target_id": "note-48",
+        "marker_id": "noteref-48"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-49",
+      "kind": "endnote_ref",
+      "label": "49",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-49",
+        "target_id": "note-49",
+        "marker_id": "noteref-49"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-50",
+      "kind": "endnote_ref",
+      "label": "50",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-50",
+        "target_id": "note-50",
+        "marker_id": "noteref-50"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-51",
+      "kind": "endnote_ref",
+      "label": "51",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-51",
+        "target_id": "note-51",
+        "marker_id": "noteref-51"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-52",
+      "kind": "endnote_ref",
+      "label": "52",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-52",
+        "target_id": "note-52",
+        "marker_id": "noteref-52"
+      }
+    },
+    {
+      "gold_key": "m:eliot-poetry:noteref-53",
+      "kind": "endnote_ref",
+      "label": "53",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/poetry.xhtml",
+        "manifest_id": "poetry.xhtml",
+        "spine_index": 2,
+        "spine_itemref_id": null,
+        "target_ref": "epub/text/endnotes.xhtml#note-53",
+        "target_id": "note-53",
+        "marker_id": "noteref-53"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-1",
+      "kind": "endnote",
+      "label": "“A.B.C.’s”",
+      "body_sha256": "c44a3984e15d2a7660df9e2083af1fbe052960dbd032259acb6f3425e0d5fd23",
+      "body_chars": 125,
+      "body_excerpt": "“A.B.C.’s” signifes endemic teashops, found in all parts of London. The initials signify “Aerated Bread Company, Limited",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-1"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-2",
+      "kind": "endnote",
+      "label": "Not",
+      "body_sha256": "23c1e66b8725258b37e71bbbcaece6da02a8db50204cda7b1706a7b5d04feff2",
+      "body_chars": 793,
+      "body_excerpt": "Not only the title, but the plan and a good deal of the incidental symbolism of the poem were suggested by Miss Jessie L",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-2"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-3",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "0bbfe27bd169cb18d479eab0633696c3aa240662442e6617e7b8abbc5f8c4263",
+      "body_chars": 19,
+      "body_excerpt": "Cf. Ezekiel 2:1. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-3"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-4",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "1e6c84aa246131bef879e1e0c90b4f127a48a7189c1ffe93319a668fb9bb0eba",
+      "body_chars": 25,
+      "body_excerpt": "Cf. Ecclesiastes 12:5. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-4"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-5",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "8fab9e3a85f2b416615793e90f11628dc2ddbc71073e76cfbf106e2b30d8f598",
+      "body_chars": 42,
+      "body_excerpt": "V. Tristan und Isolde, I, verses 5﻿–﻿8. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-5"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-6",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "5a0c8cf2d4c59cf5a121ee6e8080c22ba360c318c08ef8f2dea67ca862b28a5c",
+      "body_chars": 40,
+      "body_excerpt": "V. Tristan und Isolde, III, verse 24. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-6"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-7",
+      "kind": "endnote",
+      "label": "I",
+      "body_sha256": "869ffd163d57f33d5a42e3a1eb737b46baa0e546b136554fc30f7f2661c338eb",
+      "body_chars": 644,
+      "body_excerpt": "I am not familiar with the exact constitution of the Tarot pack of cards, from which I have obviously departed to suit m",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-7"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-8",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "5895e951a9ce22baee5ba68913d7019f766517fb8484b958f639854f3362a5f9",
+      "body_chars": 112,
+      "body_excerpt": "Cf. Baudelaire: “Fourmillante cité, cité; pleine de rêves, Où le spectre en plein jour raccroche le passant.” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-8"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-9",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "856702df06eab05b25d301f769ab80e6793bc179ae4a94c9808c43dd7feb853a",
+      "body_chars": 119,
+      "body_excerpt": "Cf. Inferno, iii. 55﻿–﻿7. “si lunga tratta di gente, ch’io non avrei mai creduto che morte tanta n’avesse disfatta.” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-9"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-10",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "0ec2c586d1c961f811a697ad592b06ff48d912d58819eb10feb0d634a9ad4b74",
+      "body_chars": 135,
+      "body_excerpt": "Cf. Inferno, iv. 25﻿–﻿7: “Quivi, secondo che per ascoltare, non avea pianto, ma’ che di sospiri, che l’aura eterna facev",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-10"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-11",
+      "kind": "endnote",
+      "label": "A",
+      "body_sha256": "9f243f4b269ba3697b500a00981cd59000d8e55094d1344bbdeb5f2546600f51",
+      "body_chars": 43,
+      "body_excerpt": "A phenomenon which I have often noticed. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-11"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-12",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "e3d1bcd8f062abc7359b91587c5277ceeed65fad7ae2fac35bb0827aa16ea21d",
+      "body_chars": 42,
+      "body_excerpt": "Cf. the Dirge in Webster’s White Devil. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-12"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-13",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "525289651cb5b533b7e72bf98311784631142a7f57884c5f51751695a212bef9",
+      "body_chars": 43,
+      "body_excerpt": "V. Baudelaire, Preface to Fleurs du Mal. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-13"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-14",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "b31234386206c2db09fc4068be429ccc1471449bb7fbc6130e58f452c98b4a98",
+      "body_chars": 45,
+      "body_excerpt": "Cf. Antony and Cleopatra, II. ii., l. 190. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-14"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-15",
+      "kind": "endnote",
+      "label": "Laquearia.",
+      "body_sha256": "46c4e975381e5f43b95a89d7f0c6aa7d7dbda94d6601197937859530387dde06",
+      "body_chars": 112,
+      "body_excerpt": "Laquearia. V. Aeneid, I. 726: dependent lychni laquearibus aureis incensi, et noctem flammis funalia vincunt. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-15"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-16",
+      "kind": "endnote",
+      "label": "Sylvan",
+      "body_sha256": "b5531aec12a85b815d31d38652173c43747505f2bf8df09eaf510276ecfe0e0c",
+      "body_chars": 51,
+      "body_excerpt": "Sylvan scene. V. Milton, Paradise Lost, iv. 140. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-16"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-17",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "e98aea0c2255f1ed01a24b71d39679896e6adea568142185e970f96bca8a5d83",
+      "body_chars": 41,
+      "body_excerpt": "V. Ovid, Metamorphoses, vi, Philomela. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-17"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-18",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "0aa1975016935817d554a7c19195e2c5cd821c41a7a0933be889f4280f718d20",
+      "body_chars": 24,
+      "body_excerpt": "Cf. Part III, l. 204. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-18"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-19",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "ea79aac910635654092f132ef774f96863f159304d3c327faa05d21971bddf7e",
+      "body_chars": 24,
+      "body_excerpt": "Cf. Part III, l. 195. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-19"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-20",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "1bf19fd589219fdb7eb2cb17d13ce84423eb8c9b28ffe9e38092211ee5daba5f",
+      "body_chars": 49,
+      "body_excerpt": "Cf. Webster: “Is the wind in that door still?” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-20"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-21",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "d03a6b37e10ffdf7e1b8d2261d28f6ca2414e5b2c34689ab0395b47ab7e262d6",
+      "body_chars": 25,
+      "body_excerpt": "Cf. Part I, l. 37, 48. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-21"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-22",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "2f20a99d211bddffffa457bf3be9584938746cf277d1c978a05b09c09ad4535c",
+      "body_chars": 59,
+      "body_excerpt": "Cf. the game of chess in Middleton’s Women Beware Women. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-22"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-23",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "5a3eef148c41b92db85c75dde354e88fb898fd1d08a316bcc20db126a969588c",
+      "body_chars": 28,
+      "body_excerpt": "V. Spenser, Prothalamion. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-23"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-24",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "d1dad913aca53a840fbf4d873d9f3990abaa5601ebebdd117455ecf4e1adee70",
+      "body_chars": 26,
+      "body_excerpt": "Cf. The Tempest, I. ii. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-24"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-25",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "95f2a8bf2530c0eafc516df8f0254c827dc353b1370bf00fe355452c3e043281",
+      "body_chars": 38,
+      "body_excerpt": "Cf. Marvell, “To His Coy Mistress.” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-25"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-26",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "e798da14ab881241892ece1684775763b7c42e56121fcd860705b97c8d7f5470",
+      "body_chars": 199,
+      "body_excerpt": "Cf. Day, Parliament of Bees: “When of the sudden, listening, you shall hear, A noise of horns and hunting, which shall b",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-26"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-27",
+      "kind": "endnote",
+      "label": "I",
+      "body_sha256": "e93dab8fcf127041e3365d3a440e5e1ffeac80089d500b61f51e421190819c44",
+      "body_chars": 121,
+      "body_excerpt": "I do not know the origin of the ballad from which these lines are taken: it was reported to me from Sydney, Australia. ↩",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-27"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-28",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "1174127950407144a83b029d2b7d860396771822bfe36cbbaf571b39350f1af8",
+      "body_chars": 25,
+      "body_excerpt": "V. Verlaine, Parsifal. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-28"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-29",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "d92de6a2e740586e232b6efb64f84d32954effa88b611cf632898e97c747a656",
+      "body_chars": 171,
+      "body_excerpt": "The currants were quoted at a price “carriage and insurance free to London”; and the Bill of Lading etc. were to be hand",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-29"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-30",
+      "kind": "endnote",
+      "label": "Tiresias,",
+      "body_sha256": "088063cd0ce869fdeb9acef2edf27e36cf9ecb9aac5e370a3ca4a41a508ef907",
+      "body_chars": 1337,
+      "body_excerpt": "Tiresias, although a mere spectator and not indeed a “character,” is yet the most important personage in the poem, uniti",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-30"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-31",
+      "kind": "endnote",
+      "label": "This",
+      "body_sha256": "b576e43f0fc0b6fce08b9a448a1ef98295ee813a4b2e1461450ab8bc2517a314",
+      "body_chars": 131,
+      "body_excerpt": "This may not appear as exact as Sappho’s lines, but I had in mind the “longshore” or “dory” fisherman, who returns at ni",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-31"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-32",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "e1fcd73d2b543c08a0cc540980e9331bd05f70d378d8740d91dbf37eda68759b",
+      "body_chars": 52,
+      "body_excerpt": "V. Goldsmith, the song in The Vicar of Wakefield. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-32"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-33",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "a7cfbe19c07028f7fb3693b0ada7db828ef43add6c51f4902d3f5a899fe494dc",
+      "body_chars": 25,
+      "body_excerpt": "V. The Tempest, I. ii. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-33"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-34",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "6eab532e782baf966650c25a0dea700bd9bfb8ae5d3a52c9dc01763a3b87ca8b",
+      "body_chars": 172,
+      "body_excerpt": "The interior of St. Magnus Martyr is to my mind one of the finest among Wren’s interiors. See The Proposed Demolition of",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-34"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-35",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "53e2b8a4c4c22a755a030da4e1318680f65624b20b183220be48afbbf6f62c62",
+      "body_chars": 156,
+      "body_excerpt": "The Song of the (three) Thames-daughters begins here. From line 292 to 306 inclusive they speak in turn. V. Götterdämmer",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-35"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-36",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "809bc08440f20eb9791ebe2bc77a2478d90fd2bdba4c4ffa098042bcfbbe39f8",
+      "body_chars": 390,
+      "body_excerpt": "V. Froude, Elizabeth, Vol. I, ch. iv, letter of De Quadra to Philip of Spain: “In the afternoon we were in a barge, watc",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-36"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-37",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "7ee7fe74b994d2821cf4b42dde1135a379b5e25f8bd35114657e0dd458f7d122",
+      "body_chars": 94,
+      "body_excerpt": "Cf. Purgatorio, v. 133: “Ricorditi di me, che son la Pia; Siena mi fe’, disfecemi Maremma.” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-37"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-38",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "7891505d44f07f452b26f4bfe94881aa67a74c3fda33eccde01a64a799616dcb",
+      "body_chars": 120,
+      "body_excerpt": "V. St. Augustine’s Confessions: “to Carthage then I came, where a cauldron of unholy loves sang all about mine ears.” ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-38"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-39",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "fa625efd2ed3a0f134cb319710ce3c7d996779078eeb5dba958f16757523cd76",
+      "body_chars": 331,
+      "body_excerpt": "The complete text of the Buddha’s Fire Sermon (which corresponds in importance to the Sermon on the Mount) from which th",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-39"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-40",
+      "kind": "endnote",
+      "label": "From",
+      "body_sha256": "cd2966e313d8738ed6edbce59e54a49135510c0da412845c305afe1281f62ee8",
+      "body_chars": 187,
+      "body_excerpt": "From St. Augustine’s Confessions again. The collocation of these two representatives of eastern and western asceticism, ",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-40"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-41",
+      "kind": "endnote",
+      "label": "In",
+      "body_sha256": "ed9bec5b60fc4f818fc23c22434c8269d47c79d3dacbe62f960bd41450a2f17b",
+      "body_chars": 182,
+      "body_excerpt": "In the first part of Part V three themes are employed: the journey to Emmaus, the approach to the Chapel Perilous (see M",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-41"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-42",
+      "kind": "endnote",
+      "label": "This",
+      "body_sha256": "71cfffd6412621192afdd018bed1aa589a111db211c724dea54e676e20ea7058",
+      "body_chars": 405,
+      "body_excerpt": "This is Turdus aonalaschkae pallasii, the hermit thrush, which I have heard in Quebec County. Chapman says (Handbook of ",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-42"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-43",
+      "kind": "endnote",
+      "label": "The",
+      "body_sha256": "7870100aed406f3043342307a3886ff9b8231be218134a0c362b12b02bc67de3",
+      "body_chars": 309,
+      "body_excerpt": "The following lines were stimulated by the account of one of the Antarctic expeditions (I forget which, but I think one ",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-43"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-44",
+      "kind": "endnote",
+      "label": "Through",
+      "body_sha256": "aaeb5937fc174f89cbb40bdb081c1705bedbd61d81c83e312bb031f19b67dcc0",
+      "body_chars": 364,
+      "body_excerpt": "Through line 376. Cf. Hermann Hesse, Blick ins Chaos: “Schon ist halb Europa, schon ist zumindest der halbe Osten Europa",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-44"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-45",
+      "kind": "endnote",
+      "label": "“Datta,",
+      "body_sha256": "deede3ade6e8778f78c00165b5446dd7d969cfbb531c770ead1b52fc4ff7cb8d",
+      "body_chars": 221,
+      "body_excerpt": "“Datta, dayadhvam, damyata” (Give, sympathize, control). The fable of the meaning of the Thunder is found in the Brihada",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-45"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-46",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "cc54e2ca37ea18db50b84deeb2bbf07a2f9f66ee3fef8f7f90c74a6ce4f881a5",
+      "body_chars": 153,
+      "body_excerpt": "Cf. Webster, The White Devil, v. vi: “… they’ll remarry Ere the worm pierce your winding-sheet, ere the spider Make a th",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-46"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-47",
+      "kind": "endnote",
+      "label": "Cf.",
+      "body_sha256": "84a5db8a309bbb13295deb390663ad6df3ac2caad3d13356be3a0f84320df714",
+      "body_chars": 537,
+      "body_excerpt": "Cf. Inferno, xxxiii. 46: “ed io sentii chiavar l’uscio di sotto all’orribile torre.” Also F. H. Bradley, Appearance and ",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-47"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-48",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "1e1e6e6dec30b3e658e361d43a0cfd34e4b8f8bddc83cfbfe434321befe5fe7b",
+      "body_chars": 65,
+      "body_excerpt": "V. Weston, From Ritual to Romance; chapter on the Fisher King. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-48"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-49",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "93a7258771e80fee67a6cc5b95c33f85028e8cb0b3cdc197926e36932f4d783b",
+      "body_chars": 173,
+      "body_excerpt": "V. Purgatorio, xxvi. 148. “ ‘Ara vos prec per aquella valor ‘que vos guida al som de l’escalina, ‘sovegna vos a temps de",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-49"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-50",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "4c836b90f12b6a297aabd6f45b24e827cdd06dd9663ade90592e94e1f241c26f",
+      "body_chars": 61,
+      "body_excerpt": "V. Pervigilium Veneris. Cf. Philomela in Parts II and III. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-50"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-51",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "67acd992c67b06103e455e840d2a35affbb2b7cd88e590088f266f2ff950f44a",
+      "body_chars": 45,
+      "body_excerpt": "V. Gérard de Nerval, Sonnet El Desdichado. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-51"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-52",
+      "kind": "endnote",
+      "label": "V.",
+      "body_sha256": "936f09f81758be67e93689291170047db915f85b405f88679b33ee8c1496a562",
+      "body_chars": 28,
+      "body_excerpt": "V. Kyd’s Spanish Tragedy. ↩︎",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-52"
+      }
+    },
+    {
+      "gold_key": "t:eliot-poetry:note-53",
+      "kind": "endnote",
+      "label": "Shantih.",
+      "body_sha256": "2639c951443d159e6ed878a11d450fd3cb957e9273b137ece8c012974591098c",
+      "body_chars": 155,
+      "body_excerpt": "Shantih. Repeated as here, a formal ending to an Upanishad. “The Peace which passeth understanding” is a feeble translat",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref",
+      "source_ref": {
+        "format": "xhtml",
+        "package_href": "epub/text/endnotes.xhtml",
+        "manifest_id": "endnotes.xhtml",
+        "spine_index": 3,
+        "spine_itemref_id": null,
+        "target_href": "epub/text/endnotes.xhtml",
+        "target_id": "note-53"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "e:eliot-poetry:noteref-1:note-1",
+      "from_gold_key": "m:eliot-poetry:noteref-1",
+      "to_gold_key": "t:eliot-poetry:note-1",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-2:note-2",
+      "from_gold_key": "m:eliot-poetry:noteref-2",
+      "to_gold_key": "t:eliot-poetry:note-2",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-3:note-3",
+      "from_gold_key": "m:eliot-poetry:noteref-3",
+      "to_gold_key": "t:eliot-poetry:note-3",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-4:note-4",
+      "from_gold_key": "m:eliot-poetry:noteref-4",
+      "to_gold_key": "t:eliot-poetry:note-4",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-5:note-5",
+      "from_gold_key": "m:eliot-poetry:noteref-5",
+      "to_gold_key": "t:eliot-poetry:note-5",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-6:note-6",
+      "from_gold_key": "m:eliot-poetry:noteref-6",
+      "to_gold_key": "t:eliot-poetry:note-6",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-7:note-7",
+      "from_gold_key": "m:eliot-poetry:noteref-7",
+      "to_gold_key": "t:eliot-poetry:note-7",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-8:note-8",
+      "from_gold_key": "m:eliot-poetry:noteref-8",
+      "to_gold_key": "t:eliot-poetry:note-8",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-9:note-9",
+      "from_gold_key": "m:eliot-poetry:noteref-9",
+      "to_gold_key": "t:eliot-poetry:note-9",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-10:note-10",
+      "from_gold_key": "m:eliot-poetry:noteref-10",
+      "to_gold_key": "t:eliot-poetry:note-10",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-11:note-11",
+      "from_gold_key": "m:eliot-poetry:noteref-11",
+      "to_gold_key": "t:eliot-poetry:note-11",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-12:note-12",
+      "from_gold_key": "m:eliot-poetry:noteref-12",
+      "to_gold_key": "t:eliot-poetry:note-12",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-13:note-13",
+      "from_gold_key": "m:eliot-poetry:noteref-13",
+      "to_gold_key": "t:eliot-poetry:note-13",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-14:note-14",
+      "from_gold_key": "m:eliot-poetry:noteref-14",
+      "to_gold_key": "t:eliot-poetry:note-14",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-15:note-15",
+      "from_gold_key": "m:eliot-poetry:noteref-15",
+      "to_gold_key": "t:eliot-poetry:note-15",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-16:note-16",
+      "from_gold_key": "m:eliot-poetry:noteref-16",
+      "to_gold_key": "t:eliot-poetry:note-16",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-17:note-17",
+      "from_gold_key": "m:eliot-poetry:noteref-17",
+      "to_gold_key": "t:eliot-poetry:note-17",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-18:note-18",
+      "from_gold_key": "m:eliot-poetry:noteref-18",
+      "to_gold_key": "t:eliot-poetry:note-18",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-19:note-19",
+      "from_gold_key": "m:eliot-poetry:noteref-19",
+      "to_gold_key": "t:eliot-poetry:note-19",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-20:note-20",
+      "from_gold_key": "m:eliot-poetry:noteref-20",
+      "to_gold_key": "t:eliot-poetry:note-20",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-21:note-21",
+      "from_gold_key": "m:eliot-poetry:noteref-21",
+      "to_gold_key": "t:eliot-poetry:note-21",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-22:note-22",
+      "from_gold_key": "m:eliot-poetry:noteref-22",
+      "to_gold_key": "t:eliot-poetry:note-22",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-23:note-23",
+      "from_gold_key": "m:eliot-poetry:noteref-23",
+      "to_gold_key": "t:eliot-poetry:note-23",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-24:note-24",
+      "from_gold_key": "m:eliot-poetry:noteref-24",
+      "to_gold_key": "t:eliot-poetry:note-24",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-25:note-25",
+      "from_gold_key": "m:eliot-poetry:noteref-25",
+      "to_gold_key": "t:eliot-poetry:note-25",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-26:note-26",
+      "from_gold_key": "m:eliot-poetry:noteref-26",
+      "to_gold_key": "t:eliot-poetry:note-26",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-27:note-27",
+      "from_gold_key": "m:eliot-poetry:noteref-27",
+      "to_gold_key": "t:eliot-poetry:note-27",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-28:note-28",
+      "from_gold_key": "m:eliot-poetry:noteref-28",
+      "to_gold_key": "t:eliot-poetry:note-28",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-29:note-29",
+      "from_gold_key": "m:eliot-poetry:noteref-29",
+      "to_gold_key": "t:eliot-poetry:note-29",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-30:note-30",
+      "from_gold_key": "m:eliot-poetry:noteref-30",
+      "to_gold_key": "t:eliot-poetry:note-30",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-31:note-31",
+      "from_gold_key": "m:eliot-poetry:noteref-31",
+      "to_gold_key": "t:eliot-poetry:note-31",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-32:note-32",
+      "from_gold_key": "m:eliot-poetry:noteref-32",
+      "to_gold_key": "t:eliot-poetry:note-32",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-33:note-33",
+      "from_gold_key": "m:eliot-poetry:noteref-33",
+      "to_gold_key": "t:eliot-poetry:note-33",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-34:note-34",
+      "from_gold_key": "m:eliot-poetry:noteref-34",
+      "to_gold_key": "t:eliot-poetry:note-34",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-35:note-35",
+      "from_gold_key": "m:eliot-poetry:noteref-35",
+      "to_gold_key": "t:eliot-poetry:note-35",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-36:note-36",
+      "from_gold_key": "m:eliot-poetry:noteref-36",
+      "to_gold_key": "t:eliot-poetry:note-36",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-37:note-37",
+      "from_gold_key": "m:eliot-poetry:noteref-37",
+      "to_gold_key": "t:eliot-poetry:note-37",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-38:note-38",
+      "from_gold_key": "m:eliot-poetry:noteref-38",
+      "to_gold_key": "t:eliot-poetry:note-38",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-39:note-39",
+      "from_gold_key": "m:eliot-poetry:noteref-39",
+      "to_gold_key": "t:eliot-poetry:note-39",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-40:note-40",
+      "from_gold_key": "m:eliot-poetry:noteref-40",
+      "to_gold_key": "t:eliot-poetry:note-40",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-41:note-41",
+      "from_gold_key": "m:eliot-poetry:noteref-41",
+      "to_gold_key": "t:eliot-poetry:note-41",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-42:note-42",
+      "from_gold_key": "m:eliot-poetry:noteref-42",
+      "to_gold_key": "t:eliot-poetry:note-42",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-43:note-43",
+      "from_gold_key": "m:eliot-poetry:noteref-43",
+      "to_gold_key": "t:eliot-poetry:note-43",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-44:note-44",
+      "from_gold_key": "m:eliot-poetry:noteref-44",
+      "to_gold_key": "t:eliot-poetry:note-44",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-45:note-45",
+      "from_gold_key": "m:eliot-poetry:noteref-45",
+      "to_gold_key": "t:eliot-poetry:note-45",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-46:note-46",
+      "from_gold_key": "m:eliot-poetry:noteref-46",
+      "to_gold_key": "t:eliot-poetry:note-46",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-47:note-47",
+      "from_gold_key": "m:eliot-poetry:noteref-47",
+      "to_gold_key": "t:eliot-poetry:note-47",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-48:note-48",
+      "from_gold_key": "m:eliot-poetry:noteref-48",
+      "to_gold_key": "t:eliot-poetry:note-48",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-49:note-49",
+      "from_gold_key": "m:eliot-poetry:noteref-49",
+      "to_gold_key": "t:eliot-poetry:note-49",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-50:note-50",
+      "from_gold_key": "m:eliot-poetry:noteref-50",
+      "to_gold_key": "t:eliot-poetry:note-50",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-51:note-51",
+      "from_gold_key": "m:eliot-poetry:noteref-51",
+      "to_gold_key": "t:eliot-poetry:note-51",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-52:note-52",
+      "from_gold_key": "m:eliot-poetry:noteref-52",
+      "to_gold_key": "t:eliot-poetry:note-52",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    },
+    {
+      "gold_key": "e:eliot-poetry:noteref-53:note-53",
+      "from_gold_key": "m:eliot-poetry:noteref-53",
+      "to_gold_key": "t:eliot-poetry:note-53",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "epub_noteref"
+    }
+  ],
+  "expected_absences": [
+    {
+      "kind": "container_only",
+      "source_ref": {
+        "package_href": "epub/text/endnotes.xhtml",
+        "target_id": "endnotes"
+      },
+      "reason": "endnotes section container is not an apparatus row"
+    },
+    {
+      "kind": "backlink_control",
+      "source_ref": {
+        "package_href": "epub/text/endnotes.xhtml"
+      },
+      "expected_count": 53,
+      "reason": "doc-backlink anchors return to markers and are not source-authored apparatus edges"
+    }
+  ],
+  "diagnostics": {
+    "noteref_pair_count": 53,
+    "target_count": 53,
+    "backlink_count": 53
+  }
+}

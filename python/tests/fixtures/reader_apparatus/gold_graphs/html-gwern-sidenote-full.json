@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "fixture_id": "html-gwern-sidenote-full",
+  "fixture_path": "reader_apparatus/html/gwern-sidenote-full.html",
+  "fixture_sha256": "f355e71a755d053c2d858586574a00d9b47c6d344365b1c9512308204a0fd85a",
+  "coverage": "fixture_exhaustive",
+  "audit_basis": "dom_gwern_endnote_graph",
+  "normalization": "collapse_whitespace_then_sha256_utf8",
+  "expected_response": {
+    "status": "ready",
+    "media_kind": "web_article",
+    "item_kinds": {
+      "endnote": 6,
+      "endnote_ref": 6
+    },
+    "edge_relations": {
+      "points_to_endnote": 6
+    },
+    "edge_methods": {
+      "html_semantic": 6
+    }
+  },
+  "items": [
+    {
+      "gold_key": "t:gwern-sidenote:fn1",
+      "kind": "endnote",
+      "label": "You",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn1"
+      },
+      "body_sha256": "31a99c4845c1f6cbffa085b5ba0033ad42c868a7e19dcbc30b17cb49a53f9daa",
+      "body_chars": 891,
+      "body_excerpt": "You can imagine web pages with true footnotes: where a sticky bottom margin is created, reserved for footnotes, and JS inserts the relevant "
+    },
+    {
+      "gold_key": "t:gwern-sidenote:fn2",
+      "kind": "endnote",
+      "label": "You",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn2"
+      },
+      "body_sha256": "4020c2bc8a53b777cb09d8f93ec7bec152c990a11baa3749be6082a0f830cec0",
+      "body_chars": 183,
+      "body_excerpt": "You can use the sidenotes/sidenotesplus/snotez packages, or the somewhat different [marginnote](https://ctan.org/pkg/marginnote \u201cThis packag"
+    },
+    {
+      "gold_key": "t:gwern-sidenote:fn3",
+      "kind": "endnote",
+      "label": "Tufte-CSS",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn3"
+      },
+      "body_sha256": "4d47ae75230524df24694eca7bec7680f1f957532e014c7453f65288d460596d",
+      "body_chars": 163,
+      "body_excerpt": "Tufte-CSS sidenotes do not correctly support block elements like lists or paragraphs, because spans are inline and those are block elements;"
+    },
+    {
+      "gold_key": "t:gwern-sidenote:fn4",
+      "kind": "endnote",
+      "label": "A",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn4"
+      },
+      "body_sha256": "a678e230a1210551f03fbbfee093cb73d11f31af13586642fba18714100e3b1e",
+      "body_chars": 744,
+      "body_excerpt": "A simple way to provide \u2018on hover\u2019 annotations is to use HTML title tooltips, which was my first popup system attempt; Tyler Vigen attempts "
+    },
+    {
+      "gold_key": "t:gwern-sidenote:fn5",
+      "kind": "endnote",
+      "label": "Some",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn5"
+      },
+      "body_sha256": "90e4d4c34b6f74caf8b5b2c9072e44c4651938c51d714d968bcba7e31127d33e",
+      "body_chars": 634,
+      "body_excerpt": "Some websites, like Grantland or Stratechery, support floating footnotes\u2026 but only when the user clicks! (Better is Grantland\u2019s history of t"
+    },
+    {
+      "gold_key": "t:gwern-sidenote:fn6",
+      "kind": "endnote",
+      "label": "Although",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn6"
+      },
+      "body_sha256": "e42fec7bb21b724469423e78f0566f4f356ba927dfb5089a4a272669403dc95a",
+      "body_chars": 433,
+      "body_excerpt": "Although arguably one should not (and I avoid doing so). If a footnote needs to be linked, it should be given a <span> anchor with a name. P"
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref1",
+      "kind": "endnote_ref",
+      "label": "1",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn1",
+        "marker_id": "fnref1"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref2",
+      "kind": "endnote_ref",
+      "label": "2",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn2",
+        "marker_id": "fnref2"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref3",
+      "kind": "endnote_ref",
+      "label": "3",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn3",
+        "marker_id": "fnref3"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref4",
+      "kind": "endnote_ref",
+      "label": "4",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn4",
+        "marker_id": "fnref4"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref5",
+      "kind": "endnote_ref",
+      "label": "5",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn5",
+        "marker_id": "fnref5"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref6",
+      "kind": "endnote_ref",
+      "label": "6",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn6",
+        "marker_id": "fnref6"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "gold_key": "m:gwern-sidenote:fnref1->t:gwern-sidenote:fn1",
+      "from_gold_key": "m:gwern-sidenote:fnref1",
+      "to_gold_key": "t:gwern-sidenote:fn1",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn1",
+        "marker_id": "fnref1"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref2->t:gwern-sidenote:fn2",
+      "from_gold_key": "m:gwern-sidenote:fnref2",
+      "to_gold_key": "t:gwern-sidenote:fn2",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn2",
+        "marker_id": "fnref2"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref3->t:gwern-sidenote:fn3",
+      "from_gold_key": "m:gwern-sidenote:fnref3",
+      "to_gold_key": "t:gwern-sidenote:fn3",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn3",
+        "marker_id": "fnref3"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref4->t:gwern-sidenote:fn4",
+      "from_gold_key": "m:gwern-sidenote:fnref4",
+      "to_gold_key": "t:gwern-sidenote:fn4",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn4",
+        "marker_id": "fnref4"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref5->t:gwern-sidenote:fn5",
+      "from_gold_key": "m:gwern-sidenote:fnref5",
+      "to_gold_key": "t:gwern-sidenote:fn5",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn5",
+        "marker_id": "fnref5"
+      }
+    },
+    {
+      "gold_key": "m:gwern-sidenote:fnref6->t:gwern-sidenote:fn6",
+      "from_gold_key": "m:gwern-sidenote:fnref6",
+      "to_gold_key": "t:gwern-sidenote:fn6",
+      "relation": "points_to_endnote",
+      "confidence": "exact",
+      "extraction_method": "html_semantic",
+      "source_ref": {
+        "format": "html",
+        "fragment_idx": 0,
+        "target_id": "fn6",
+        "marker_id": "fnref6"
+      }
+    }
+  ],
+  "expected_absences": [],
+  "diagnostics": {
+    "independent_dom_graph": {
+      "marker_count": 6,
+      "target_count": 6,
+      "backlink_count": 6
+    },
+    "dom_marker_ids": [
+      "fnref1",
+      "fnref2",
+      "fnref3",
+      "fnref4",
+      "fnref5",
+      "fnref6"
+    ],
+    "dom_marker_targets": [
+      "fn1",
+      "fn2",
+      "fn3",
+      "fn4",
+      "fn5",
+      "fn6"
+    ],
+    "dom_target_ids": [
+      "fn1",
+      "fn2",
+      "fn3",
+      "fn4",
+      "fn5",
+      "fn6"
+    ],
+    "dom_target_body_sha256s": [
+      "31a99c4845c1f6cbffa085b5ba0033ad42c868a7e19dcbc30b17cb49a53f9daa",
+      "4020c2bc8a53b777cb09d8f93ec7bec152c990a11baa3749be6082a0f830cec0",
+      "4d47ae75230524df24694eca7bec7680f1f957532e014c7453f65288d460596d",
+      "a678e230a1210551f03fbbfee093cb73d11f31af13586642fba18714100e3b1e",
+      "90e4d4c34b6f74caf8b5b2c9072e44c4651938c51d714d968bcba7e31127d33e",
+      "e42fec7bb21b724469423e78f0566f4f356ba927dfb5089a4a272669403dc95a"
+    ]
+  }
+}

@@ -11272,7 +11272,10 @@ class TestMigration0149SynapseResonance:
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
-            assert run_alembic_command("upgrade head").returncode == 0
+            # Upgrade to 0149 specifically, not head: a later hard-cutover
+            # migration (0150 reader-apparatus) is irreversible, so downgrading
+            # *through* it would fail; this isolates 0149's own downgrade.
+            assert run_alembic_command("upgrade 0149").returncode == 0
             # 0149's down_revision is 0148 (the notes/pages cutover); 0148 is a
             # hard cutover with no downgrade, so 0149 reverses exactly one step
             # back to 0148's pre-synapse origin/owner vocabulary.

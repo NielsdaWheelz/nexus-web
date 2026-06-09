@@ -151,10 +151,14 @@ export function useAnchoredHighlightProjection({
   contentRef,
   highlights,
   measureKey = 0,
+  targetSelector,
+  missingTargetLogName = "highlight_target_missing",
 }: {
   contentRef: RefObject<HTMLElement | null>;
   highlights: AnchoredHighlightRow[];
   measureKey?: string | number;
+  targetSelector?: (escapedId: string) => string;
+  missingTargetLogName?: string;
 }) {
   const measureTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -286,7 +290,9 @@ export function useAnchoredHighlightProjection({
       } else {
         const escapedId = escapeAttrValue(highlight.id);
         const segments = contentRef.current.querySelectorAll<HTMLElement>(
-          `[data-active-highlight-ids~="${escapedId}"]`,
+          targetSelector
+            ? targetSelector(escapedId)
+            : `[data-active-highlight-ids~="${escapedId}"]`,
         );
 
         for (const segment of segments) {
@@ -320,7 +326,7 @@ export function useAnchoredHighlightProjection({
 
     setTargetRects(nextTargetRects);
     setMissingTargets(nextMissingTargets);
-  }, [contentRef, orderedHighlights, syncViewportState]);
+  }, [contentRef, orderedHighlights, syncViewportState, targetSelector]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -438,8 +444,8 @@ export function useAnchoredHighlightProjection({
     if (missingTargets.length === 0) {
       return;
     }
-    console.warn("highlight_target_missing", { highlightIds: missingTargets });
-  }, [missingTargets]);
+    console.warn(missingTargetLogName, { targetIds: missingTargets });
+  }, [missingTargetLogName, missingTargets]);
 
   const projections = useMemo<AnchoredHighlightProjection[]>(() => {
     const viewportTop = viewportState.scrollTop;

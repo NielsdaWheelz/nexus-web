@@ -1,0 +1,543 @@
+{
+  "apparatus": {
+    "capabilities": {
+      "has_inline_markers": true,
+      "has_probable_items": false,
+      "has_sidecar_items": true,
+      "supports_hover_preview": true,
+      "supports_jump_to_marker": true,
+      "supports_jump_to_target": true
+    },
+    "diagnostics": {},
+    "edges": [
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "from_stable_key": "web:0:tufte-sidenote-ref:000000:sn-in-his-later-books",
+        "relation": "points_to_sidenote",
+        "sort_key": "000017.000000.edge",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-in-his-later-books"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000000:sn-in-his-later-books->web:0:tufte-sidenote:000000:sn-in-his-later-books",
+        "to_stable_key": "web:0:tufte-sidenote:000000:sn-in-his-later-books"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "from_stable_key": "web:0:tufte-sidenote-ref:000001:sn-proprietary-monotype-bembo",
+        "relation": "points_to_sidenote",
+        "sort_key": "000019.000001.edge",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1,
+          "toggle_id": "sn-proprietary-monotype-bembo"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000001:sn-proprietary-monotype-bembo->web:0:tufte-sidenote:000001:sn-proprietary-monotype-bembo",
+        "to_stable_key": "web:0:tufte-sidenote:000001:sn-proprietary-monotype-bembo"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "from_stable_key": "web:0:tufte-margin-note-ref:000002:mn-blue-links",
+        "relation": "points_to_margin_note",
+        "sort_key": "000023.000002.edge",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2,
+          "toggle_id": "mn-blue-links"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000002:mn-blue-links->web:0:tufte-margin-note:000002:mn-blue-links",
+        "to_stable_key": "web:0:tufte-margin-note:000002:mn-blue-links"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "from_stable_key": "web:0:tufte-sidenote-ref:000003:sn-extensive-use-of-sidenotes",
+        "relation": "points_to_sidenote",
+        "sort_key": "000013.000003.edge",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3,
+          "toggle_id": "sn-extensive-use-of-sidenotes"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000003:sn-extensive-use-of-sidenotes->web:0:tufte-sidenote:000003:sn-extensive-use-of-sidenotes",
+        "to_stable_key": "web:0:tufte-sidenote:000003:sn-extensive-use-of-sidenotes"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "from_stable_key": "web:0:tufte-margin-note-ref:000004:mn-demo",
+        "relation": "points_to_margin_note",
+        "sort_key": "000020.000004.edge",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4,
+          "toggle_id": "mn-demo"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000004:mn-demo->web:0:tufte-margin-note:000004:mn-demo",
+        "to_stable_key": "web:0:tufte-margin-note:000004:mn-demo"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "from_stable_key": "web:0:tufte-margin-note-ref:000005:mn-exports-imports",
+        "relation": "points_to_margin_note",
+        "sort_key": "000016.000005.edge",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5,
+          "toggle_id": "mn-exports-imports"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000005:mn-exports-imports->web:0:tufte-margin-note:000005:mn-exports-imports",
+        "to_stable_key": "web:0:tufte-margin-note:000005:mn-exports-imports"
+      },
+      {
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "from_stable_key": "web:0:tufte-margin-note-ref:000006:mn-figure-1",
+        "relation": "points_to_margin_note",
+        "sort_key": "000017.000006.edge",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6,
+          "toggle_id": "mn-figure-1"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000006:mn-figure-1->web:0:tufte-margin-note:000006:mn-figure-1",
+        "to_stable_key": "web:0:tufte-margin-note:000006:mn-figure-1"
+      }
+    ],
+    "extractor_version": "reader_apparatus_v1",
+    "items": [
+      {
+        "body_html_sanitized": null,
+        "body_text": "Beautiful Evidence",
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote",
+        "label": "1",
+        "locator": {
+          "end_offset": 3009,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 2991,
+          "text_quote_selector": {
+            "exact": "Beautiful Evidence"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000000.target",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-in-his-later-books"
+        },
+        "stable_key": "web:0:tufte-sidenote:000000:sn-in-his-later-books"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote_ref",
+        "label": "1",
+        "locator": {
+          "end_offset": 2991,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 2990,
+          "text_quote_selector": {
+            "exact": "1"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000000.marker",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 0,
+          "toggle_id": "sn-in-his-later-books"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000000:sn-in-his-later-books"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "See Tufte\u2019s comment in the Tufte book fonts thread.",
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote",
+        "label": "2",
+        "locator": {
+          "end_offset": 4008,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 3957,
+          "text_quote_selector": {
+            "exact": "See Tufte\u2019s comment in the Tufte book fonts thread."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000001.target",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1,
+          "toggle_id": "sn-proprietary-monotype-bembo"
+        },
+        "stable_key": "web:0:tufte-sidenote:000001:sn-proprietary-monotype-bembo"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote_ref",
+        "label": "2",
+        "locator": {
+          "end_offset": 3957,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 3956,
+          "text_quote_selector": {
+            "exact": "2"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000019.000001.marker",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 1,
+          "toggle_id": "sn-proprietary-monotype-bembo"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000001:sn-proprietary-monotype-bembo"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Blue text, while also a widely recognizable clickable-text indicator, is crass and distracting. Luckily, it is also rendered unnecessary by the use of underlining.",
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note",
+        "label": "Margin note 3",
+        "locator": {
+          "end_offset": 4989,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 4826,
+          "text_quote_selector": {
+            "exact": "Blue text, while also a widely recognizable clickable-text indicator, is crass and distracting. Luckily, it is also rendered unnecessary by the use of underlining."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000023.000002.target",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2,
+          "toggle_id": "mn-blue-links"
+        },
+        "stable_key": "web:0:tufte-margin-note:000002:mn-blue-links"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note_ref",
+        "label": "\u2295",
+        "locator": {
+          "end_offset": 4826,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 4825,
+          "text_quote_selector": {
+            "exact": "\u2295"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000023.000002.marker",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 2,
+          "toggle_id": "mn-blue-links"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000002:mn-blue-links"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "This is a sidenote.",
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote",
+        "label": "4",
+        "locator": {
+          "end_offset": 6553,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 6534,
+          "text_quote_selector": {
+            "exact": "This is a sidenote."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000013.000003.target",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3,
+          "toggle_id": "sn-extensive-use-of-sidenotes"
+        },
+        "stable_key": "web:0:tufte-sidenote:000003:sn-extensive-use-of-sidenotes"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_sidenote",
+        "kind": "sidenote_ref",
+        "label": "4",
+        "locator": {
+          "end_offset": 6534,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 6533,
+          "text_quote_selector": {
+            "exact": "4"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000013.000003.marker",
+        "source_ref": {
+          "element": "tufte-sidenote",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 3,
+          "toggle_id": "sn-extensive-use-of-sidenotes"
+        },
+        "stable_key": "web:0:tufte-sidenote-ref:000003:sn-extensive-use-of-sidenotes"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "This is a margin note. Notice there isn\u2019t a number preceding the note.",
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note",
+        "label": "Margin note 5",
+        "locator": {
+          "end_offset": 8594,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 8522,
+          "text_quote_selector": {
+            "exact": " This is a margin note. Notice there isn\u2019t a number preceding the note. "
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000020.000004.target",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4,
+          "toggle_id": "mn-demo"
+        },
+        "stable_key": "web:0:tufte-margin-note:000004:mn-demo"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note_ref",
+        "label": "\u2295",
+        "locator": {
+          "end_offset": 8521,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 8520,
+          "text_quote_selector": {
+            "exact": "\u2295"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000020.000004.marker",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 4,
+          "toggle_id": "mn-demo"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000004:mn-demo"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "From Edward Tufte, Visual Display of Quantitative Information, page 92.",
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note",
+        "label": "Margin note 6",
+        "locator": {
+          "end_offset": 10328,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 10257,
+          "text_quote_selector": {
+            "exact": "From Edward Tufte, Visual Display of Quantitative Information, page 92."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000016.000005.target",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5,
+          "toggle_id": "mn-exports-imports"
+        },
+        "stable_key": "web:0:tufte-margin-note:000005:mn-exports-imports"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note_ref",
+        "label": "\u2295",
+        "locator": {
+          "end_offset": 10257,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 10256,
+          "text_quote_selector": {
+            "exact": "\u2295"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000016.000005.marker",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 5,
+          "toggle_id": "mn-exports-imports"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000005:mn-exports-imports"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": "Science, Medicine, and History: Essays on the Evolution of Scientific Thought and Medical Practice (London, 1953), ed. E. Ashworth Underwood, 337-356. From page 71 of Edward Tufte\u2019s Visual Explanations.",
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note",
+        "label": "Margin note 7",
+        "locator": {
+          "end_offset": 10533,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 10331,
+          "text_quote_selector": {
+            "exact": "Science, Medicine, and History: Essays on the Evolution of Scientific Thought and Medical Practice (London, 1953), ed. E. Ashworth Underwood, 337-356. From page 71 of Edward Tufte\u2019s Visual Explanations."
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000006.target",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6,
+          "toggle_id": "mn-figure-1"
+        },
+        "stable_key": "web:0:tufte-margin-note:000006:mn-figure-1"
+      },
+      {
+        "body_html_sanitized": null,
+        "body_text": null,
+        "confidence": "strong",
+        "extraction_method": "tufte_margin_note",
+        "kind": "margin_note_ref",
+        "label": "\u2295",
+        "locator": {
+          "end_offset": 10331,
+          "fragment_id": "ac1a5bef-fc32-549d-9380-b9728cfe4bc8",
+          "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+          "media_kind": "web_article",
+          "start_offset": 10330,
+          "text_quote_selector": {
+            "exact": "\u2295"
+          },
+          "type": "web_text_offsets"
+        },
+        "locator_status": "exact",
+        "sort_key": "000017.000006.marker",
+        "source_ref": {
+          "element": "tufte-margin-note",
+          "format": "html",
+          "fragment_idx": 0,
+          "ordinal": 6,
+          "toggle_id": "mn-figure-1"
+        },
+        "stable_key": "web:0:tufte-margin-note-ref:000006:mn-figure-1"
+      }
+    ],
+    "media_id": "29b04aad-242c-5812-8913-77d2566de1a1",
+    "media_kind": "web_article",
+    "source_fingerprint": "sha256:f45bbf124abb8edccdd2a5fb965a55a1edd20b3da53e139ebf3d6a4748d4c671",
+    "status": "ready"
+  },
+  "fixture_id": "html-tufte-css-full",
+  "source_fixture_path": "reader_apparatus/html/tufte-css-full.html",
+  "source_fixture_sha256": "c9945c114aae2f6997bba51294202fc0fc43e4f4acc4cfd692ef76fb61b4f981"
+}

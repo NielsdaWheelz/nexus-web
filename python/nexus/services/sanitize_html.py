@@ -31,6 +31,7 @@ ALLOWED_TAGS = frozenset(
         "i",
         "u",
         "s",
+        "cite",
         "blockquote",
         "pre",
         "code",
@@ -54,6 +55,7 @@ ALLOWED_TAGS = frozenset(
         "td",
         "sup",
         "sub",
+        "xref",
         # Container elements (allowed but stripped of attributes)
         "div",
         "span",
@@ -75,6 +77,13 @@ ALLOWED_ATTRS = {
     "th": {"colspan", "rowspan"},
     "td": {"colspan", "rowspan"},
 }
+READER_APPARATUS_ATTRS = frozenset(
+    {
+        "data-reader-apparatus-item-id",
+        "data-reader-apparatus-kind",
+        "data-reader-apparatus-confidence",
+    }
+)
 
 # Forbidden URL schemes
 FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
@@ -88,6 +97,7 @@ def sanitize_html(
     base_url: str,
     *,
     preserve_anchor_targets: bool = False,
+    allow_reader_apparatus_attrs: bool = False,
 ) -> str:
     """Sanitize HTML content from web article extraction.
 
@@ -105,6 +115,9 @@ def sanitize_html(
         base_url: The base URL for resolving relative URLs.
         preserve_anchor_targets: Keep anchor target attributes for
             in-document navigation (`id` and `a[name]`).
+        allow_reader_apparatus_attrs: Keep server-authored reader apparatus
+            attributes after the reader apparatus extractor has stripped
+            untrusted source attributes and re-applied trusted annotations.
 
     Returns:
         Sanitized HTML string.
@@ -133,6 +146,7 @@ def sanitize_html(
                 child,
                 base_url,
                 preserve_anchor_targets=preserve_anchor_targets,
+                allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
             )
 
     # Serialize back to string
@@ -151,6 +165,7 @@ def _sanitize_element(
     base_url: str,
     *,
     preserve_anchor_targets: bool,
+    allow_reader_apparatus_attrs: bool,
 ) -> None:
     """Recursively sanitize an element and its children.
 
@@ -163,6 +178,7 @@ def _sanitize_element(
                 child,
                 base_url,
                 preserve_anchor_targets=preserve_anchor_targets,
+                allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
             )
 
     # Check if this element's tag is allowed
@@ -196,6 +212,7 @@ def _sanitize_element(
         tag,
         base_url,
         preserve_anchor_targets=preserve_anchor_targets,
+        allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
     )
 
 
@@ -205,6 +222,7 @@ def _sanitize_attributes(
     base_url: str,
     *,
     preserve_anchor_targets: bool,
+    allow_reader_apparatus_attrs: bool,
 ) -> None:
     """Sanitize attributes on an element."""
     allowed = ALLOWED_ATTRS.get(tag, set())
@@ -238,6 +256,12 @@ def _sanitize_attributes(
             continue
 
         # Remove disallowed attributes
+        if attr_lower in READER_APPARATUS_ATTRS:
+            if allow_reader_apparatus_attrs:
+                continue
+            attrs_to_remove.append(attr)
+            continue
+
         if attr_lower not in allowed:
             attrs_to_remove.append(attr)
             continue
