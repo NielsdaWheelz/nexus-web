@@ -1,0 +1,89 @@
+/* All mobile bottom-sheet geometry lives here and only here
+   (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md). */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.backdrop[data-layer="overlay"] {
+  z-index: var(--z-overlay);
+}
+
+.backdrop[data-layer="modal"] {
+  z-index: var(--z-modal);
+}
+
+.backdrop[data-layer="palette"] {
+  z-index: var(--z-palette);
+}
+
+.backdrop[data-scrim="default"] {
+  background: var(--overlay-scrim);
+}
+
+.backdrop[data-scrim="soft"] {
+  background: var(--overlay-scrim-soft);
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  /* Lift above the keyboard (iOS shim; ~0 where the platform resized the layout). */
+  bottom: var(--keyboard-inset, 0px);
+  /* Height budget: caller-tunable dvh/px caps, ALWAYS clamped by the visible
+     viewport minus the keyboard so the top edge never overflows. dvh does not
+     react to the keyboard on iOS — the calc() term is what carries it there.
+     No transition on bottom/max-height: visualViewport resize fires after the
+     keyboard animation settles; animating the catch-up fights later geometry
+     events. */
+  max-height: min(
+    var(--mobile-sheet-max-size, 85dvh),
+    var(--mobile-sheet-max-size-cap, 720px),
+    calc(100dvh - var(--keyboard-inset, 0px) - var(--space-6))
+  );
+  border-top: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-4);
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  overflow: hidden;
+  animation: sheetIn var(--duration-base) var(--ease-bloom);
+}
+
+.grabber {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--space-2) 0;
+  border-radius: var(--radius-full);
+  background: var(--edge-strong);
+  touch-action: none;
+}
+
+.content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@keyframes sheetIn {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}

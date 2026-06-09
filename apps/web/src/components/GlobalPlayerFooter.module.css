@@ -468,50 +468,16 @@
   white-space: nowrap;
 }
 
-/* ---- Expanded sheet (mobile) ---- */
+/* ---- Expanded sheet content (geometry lives in MobileSheet.module.css) ---- */
 
-.expandedBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  background: var(--overlay-scrim);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: flex-end;
-}
-
-.expandedSheet {
-  width: 100%;
-  max-height: min(86dvh, 720px);
+.expandedBody {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-height: 0;
   overflow-y: auto;
-  background: var(--surface-canvas);
-  border-top: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
-  padding: 0 var(--space-4) max(var(--space-4), env(safe-area-inset-bottom));
-  animation: expandedSheetSlideIn var(--duration-fast) var(--ease-snap);
-}
-
-@keyframes expandedSheetSlideIn {
-  from {
-    transform: translateY(14px);
-    opacity: 0.92;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.expandedHandle {
-  width: 44px;
-  height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--edge);
-  margin: var(--space-2) auto var(--space-1);
-  flex-shrink: 0;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-4) var(--space-2);
 }
 
 .expandedClose {

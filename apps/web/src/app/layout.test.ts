@@ -20,6 +20,10 @@ describe("Root layout viewport export", () => {
     expect(viewport.viewportFit).toBe("cover");
   });
 
+  it("sets interactiveWidget to resizes-content so the keyboard resizes the layout viewport", () => {
+    expect(viewport.interactiveWidget).toBe("resizes-content");
+  });
+
   it("sets standard width and initialScale", () => {
     expect(viewport.width).toBe("device-width");
     expect(viewport.initialScale).toBe(1);

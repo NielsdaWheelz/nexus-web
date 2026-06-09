@@ -2,8 +2,9 @@
  * ModelSettingsPopover - the provider / model / reasoning / "use my keys" panel.
  *
  * Renders a summary trigger button plus a settings panel that behaves as a
- * desktop popover (dismiss on outside-click or Escape) and a mobile bottom
- * sheet (backdrop dismiss, body-overflow lock, Escape; outside-click ignored).
+ * desktop popover (dismiss on outside-click or Escape) and, on mobile, as the
+ * shared MobileSheet bottom sheet (modal contract, backdrop / Escape /
+ * back-button dismissal owned by the primitive).
  */
 
 "use client";
@@ -11,14 +12,11 @@
 import { useCallback, useRef, type RefObject } from "react";
 import { ChevronDown, X } from "lucide-react";
 import Button from "@/components/ui/Button";
+import MobileSheet from "@/components/ui/MobileSheet";
 import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
-import { useFocusTrap } from "@/lib/ui/useFocusTrap";
-import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useReturnFocus } from "@/lib/ui/useReturnFocus";
 import {
   getModelSourceLabel,
   isReasoningMode,
@@ -49,25 +47,17 @@ export default function ModelSettingsPopover({
   const isMobile = useIsMobileViewport();
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const close = useCallback(() => setOpen(false), [setOpen]);
+
   const closeOnDesktop = useCallback(() => {
     if (!isMobile) setOpen(false);
   }, [isMobile, setOpen]);
 
   useDismissOnOutsideOrEscape({
-    enabled: open,
+    enabled: open && !isMobile,
     refs: [panelRef, buttonRef],
-    onDismiss: (reason) => {
-      // Mobile: full-screen panel, outside-click is impossible/unintended;
-      // Escape still closes.
-      if (reason === "outside-click" && isMobile) return;
-      setOpen(false);
-    },
+    onDismiss: close,
   });
-
-  useBodyOverflowLock(open && isMobile);
-  useFocusTrap(panelRef, open && isMobile);
-  useReturnFocus(open && isMobile);
-  useInitialFocus(panelRef, open && isMobile);
 
   const {
     availableModels,
@@ -82,6 +72,104 @@ export default function ModelSettingsPopover({
     setModel,
     setReasoning,
   } = models;
+
+  const settingsContent = (
+    <>
+      <header className={styles.settingsHeader}>
+        <h2 className={styles.settingsTitle}>Model settings</h2>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          onClick={close}
+          aria-label="Close model settings"
+        >
+          <X size={16} aria-hidden="true" />
+        </Button>
+      </header>
+
+      <label className={styles.settingsField}>
+        <span className={styles.settingsLabel}>Provider</span>
+        <Select
+          value={selectedProvider}
+          onChange={(e) => {
+            setProvider(e.target.value);
+            closeOnDesktop();
+          }}
+          disabled={disabled || providerOptions.length === 0}
+        >
+          {availableModels.length === 0 && (
+            <option value="">No providers available</option>
+          )}
+          {providerOptions.map((provider) => {
+            const model = availableModels.find(
+              (item) => item.provider === provider
+            );
+            return (
+              <option key={provider} value={provider}>
+                {model?.provider_display_name ?? provider}
+              </option>
+            );
+          })}
+        </Select>
+      </label>
+
+      <label className={styles.settingsField}>
+        <span className={styles.settingsLabel}>Model</span>
+        <Select
+          value={selectedModelId}
+          onChange={(e) => {
+            setModel(e.target.value);
+            closeOnDesktop();
+          }}
+          disabled={disabled || availableModels.length === 0}
+        >
+          {availableModels.length === 0 && (
+            <option value="">No models available</option>
+          )}
+          {availableModels
+            .filter((model) => model.provider === selectedProvider)
+            .map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.model_display_name} ({model.model_tier}) -{" "}
+                {getModelSourceLabel(model)}
+              </option>
+            ))}
+        </Select>
+      </label>
+
+      <label className={styles.settingsField}>
+        <span className={styles.settingsLabel}>Reasoning</span>
+        <Select
+          value={selectedReasoning}
+          onChange={(e) => {
+            if (isReasoningMode(e.target.value)) {
+              setReasoning(e.target.value);
+            }
+            closeOnDesktop();
+          }}
+          disabled={disabled || !selectedModel}
+        >
+          {!selectedModel && <option value="">No reasoning modes</option>}
+          {reasoningOptions.map((mode) => (
+            <option key={mode} value={mode}>
+              {REASONING_LABELS[mode]}
+            </option>
+          ))}
+        </Select>
+      </label>
+
+      <Toggle
+        checked={onlyUseMyKeys}
+        onCheckedChange={(next) => {
+          setOnlyUseMyKeys(next);
+          closeOnDesktop();
+        }}
+        disabled={disabled}
+        label="Use my keys only"
+      />
+    </>
+  );
 
   return (
     <>
@@ -100,118 +188,28 @@ export default function ModelSettingsPopover({
         <span className={styles.modelSummary}>{modelSummary}</span>
       </Button>
 
-      {open && (
-        <div className={styles.settingsLayer} data-mobile={isMobile ? "true" : "false"}>
-          {isMobile && (
-            <div
-              className={styles.settingsBackdrop}
-              onClick={() => setOpen(false)}
-            />
-          )}
-
+      {open && !isMobile && (
+        <div className={styles.settingsLayer}>
           <div
             ref={panelRef}
             className={styles.settingsPanel}
             role="dialog"
-            aria-modal={isMobile ? "true" : undefined}
             aria-label="Model settings"
           >
-            <header className={styles.settingsHeader}>
-              <h2 className={styles.settingsTitle}>Model settings</h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                onClick={() => setOpen(false)}
-                aria-label="Close model settings"
-              >
-                <X size={16} aria-hidden="true" />
-              </Button>
-            </header>
-
-            <label className={styles.settingsField}>
-              <span className={styles.settingsLabel}>Provider</span>
-              <Select
-                value={selectedProvider}
-                onChange={(e) => {
-                  setProvider(e.target.value);
-                  closeOnDesktop();
-                }}
-                disabled={disabled || providerOptions.length === 0}
-              >
-                {availableModels.length === 0 && (
-                  <option value="">No providers available</option>
-                )}
-                {providerOptions.map((provider) => {
-                  const model = availableModels.find(
-                    (item) => item.provider === provider
-                  );
-                  return (
-                    <option key={provider} value={provider}>
-                      {model?.provider_display_name ?? provider}
-                    </option>
-                  );
-                })}
-              </Select>
-            </label>
-
-            <label className={styles.settingsField}>
-              <span className={styles.settingsLabel}>Model</span>
-              <Select
-                value={selectedModelId}
-                onChange={(e) => {
-                  setModel(e.target.value);
-                  closeOnDesktop();
-                }}
-                disabled={disabled || availableModels.length === 0}
-              >
-                {availableModels.length === 0 && (
-                  <option value="">No models available</option>
-                )}
-                {availableModels
-                  .filter((model) => model.provider === selectedProvider)
-                  .map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.model_display_name} ({model.model_tier}) -{" "}
-                      {getModelSourceLabel(model)}
-                    </option>
-                  ))}
-              </Select>
-            </label>
-
-            <label className={styles.settingsField}>
-              <span className={styles.settingsLabel}>Reasoning</span>
-              <Select
-                value={selectedReasoning}
-                onChange={(e) => {
-                  if (isReasoningMode(e.target.value)) {
-                    setReasoning(e.target.value);
-                  }
-                  closeOnDesktop();
-                }}
-                disabled={disabled || !selectedModel}
-              >
-                {!selectedModel && <option value="">No reasoning modes</option>}
-                {reasoningOptions.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {REASONING_LABELS[mode]}
-                  </option>
-                ))}
-              </Select>
-            </label>
-
-            <Toggle
-              checked={onlyUseMyKeys}
-              onCheckedChange={(next) => {
-                setOnlyUseMyKeys(next);
-                closeOnDesktop();
-              }}
-              disabled={disabled}
-              label="Use my keys only"
-            />
+            {settingsContent}
           </div>
         </div>
       )}
+
+      <MobileSheet
+        active={open && isMobile}
+        onDismiss={close}
+        ariaLabel="Model settings"
+        layer="modal"
+        scrim="soft"
+      >
+        <div className={styles.sheetContent}>{settingsContent}</div>
+      </MobileSheet>
     </>
   );
 }

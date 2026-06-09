@@ -1,8 +1,9 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useId, useRef } from "react";
+import { useId } from "react";
 import Button from "@/components/ui/Button";
+import MobileSheet from "@/components/ui/MobileSheet";
 import SecondarySurfaceTabs, {
   secondarySurfacePanelId,
   secondarySurfaceTabId,
@@ -13,7 +14,6 @@ import {
   type WorkspaceSecondaryState,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import styles from "./MobileSecondaryPaneHost.module.css";
 
 interface MobileSecondaryPaneHostProps {
@@ -27,6 +27,13 @@ interface MobileSecondaryPaneHostProps {
   ) => void;
 }
 
+/**
+ * The only workspace mobile secondary presentation (docs/modules/workspace.md):
+ * surface tabs + tabpanel content hosted in the shared MobileSheet primitive.
+ * Closing collapses the secondary pane (visibility: "collapsed") without
+ * detaching it, so this component stays mounted and `active` toggles — the
+ * MobileSheet mount contract (C7 history dismissal) holds.
+ */
 export default function MobileSecondaryPaneHost({
   secondaryPaneId,
   secondary,
@@ -35,11 +42,12 @@ export default function MobileSecondaryPaneHost({
   onActiveSurfaceChange,
 }: MobileSecondaryPaneHostProps) {
   const baseId = useId();
-  const sheetRef = useRef<HTMLElement>(null);
   const activeSurface =
     publication?.surfaces.find((surface) => surface.id === secondary?.activeSurfaceId) ??
     null;
-  const activeSurfaceId = activeSurface?.id ?? null;
+  const activeSurfaceDefinition = activeSurface
+    ? getSecondarySurfaceDefinition(activeSurface.id)
+    : null;
   const active = Boolean(
     secondary?.visibility === "visible" &&
       publication &&
@@ -47,64 +55,50 @@ export default function MobileSecondaryPaneHost({
       activeSurface,
   );
 
-  useDialogOverlay({
-    ref: sheetRef,
-    active,
-    onDismiss: () => onClose(secondaryPaneId),
-    initialFocus: (c) => c.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'),
-    returnFocusFallback: () =>
-      document.querySelector<HTMLElement>('[data-active="true"] [data-pane-chrome-focus="true"]'),
-    focusKey: activeSurfaceId,
-  });
-
-  if (!active || !publication || !secondary || !activeSurface) {
-    return null;
-  }
-
-  const activeSurfaceDefinition = getSecondarySurfaceDefinition(activeSurface.id);
-
   return (
-    <div
-      className={styles.backdrop}
-      data-testid="mobile-secondary-backdrop"
-      onClick={() => onClose(secondaryPaneId)}
+    <MobileSheet
+      active={active}
+      onDismiss={() => onClose(secondaryPaneId)}
+      ariaLabel={activeSurfaceDefinition?.title ?? ""}
+      layer="overlay"
+      scrim="soft"
+      initialFocus={(c) => c.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')}
+      returnFocusFallback={() =>
+        document.querySelector<HTMLElement>('[data-active="true"] [data-pane-chrome-focus="true"]')
+      }
+      focusKey={activeSurface?.id ?? null}
+      backdropTestId="mobile-secondary-backdrop"
+      panelTestId="mobile-secondary-host"
     >
-      <aside
-        ref={sheetRef}
-        className={styles.sheet}
-        role="dialog"
-        aria-modal="true"
-        aria-label={activeSurfaceDefinition.title}
-        data-testid="mobile-secondary-host"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className={styles.header}>
-          <SecondarySurfaceTabs
-            baseId={baseId}
-            surfaces={publication.surfaces}
-            activeSurfaceId={activeSurface.id}
-            onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Close ${activeSurfaceDefinition.title}`}
-            onClick={() => onClose(secondaryPaneId)}
+      {publication && activeSurface && activeSurfaceDefinition ? (
+        <>
+          <header className={styles.header}>
+            <SecondarySurfaceTabs
+              baseId={baseId}
+              surfaces={publication.surfaces}
+              activeSurfaceId={activeSurface.id}
+              onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Close ${activeSurfaceDefinition.title}`}
+              onClick={() => onClose(secondaryPaneId)}
+            >
+              <X size={15} aria-hidden="true" />
+            </Button>
+          </header>
+          <div
+            id={secondarySurfacePanelId(baseId, activeSurface.id)}
+            role="tabpanel"
+            aria-labelledby={secondarySurfaceTabId(baseId, activeSurface.id)}
+            className={styles.body}
           >
-            <X size={15} aria-hidden="true" />
-          </Button>
-        </header>
-        <div
-          id={secondarySurfacePanelId(baseId, activeSurface.id)}
-          role="tabpanel"
-          aria-labelledby={secondarySurfaceTabId(baseId, activeSurface.id)}
-          className={styles.body}
-        >
-          {activeSurface.mobileBody ?? activeSurface.body}
-        </div>
-      </aside>
-    </div>
+            {activeSurface.body}
+          </div>
+        </>
+      ) : null}
+    </MobileSheet>
   );
 }

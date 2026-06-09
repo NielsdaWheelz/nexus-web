@@ -60,6 +60,51 @@ describe("useKeyboardInset", () => {
     expect(result.current).toBe(500);
   });
 
+  it("reports 0 for measured insets just below the threshold (browser-chrome noise)", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    // 800 - 741 - 0 = 59, one below KEYBOARD_INSET_THRESHOLD_PX
+    installFakeViewport(741, 0);
+
+    const { result } = renderHook(() => useKeyboardInset());
+
+    expect(result.current).toBe(0);
+  });
+
+  it("reports the measured inset at exactly the threshold", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    // 800 - 740 - 0 = 60 = KEYBOARD_INSET_THRESHOLD_PX
+    installFakeViewport(740, 0);
+
+    const { result } = renderHook(() => useKeyboardInset());
+
+    expect(result.current).toBe(60);
+  });
+
+  it("reports 0 for stale visualViewport residue after keyboard close (WebKit bug 297779)", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    const vv = installFakeViewport(500, 0);
+
+    const { result } = renderHook(() => useKeyboardInset());
+    expect(result.current).toBe(300);
+
+    act(() => {
+      // Keyboard closed but visualViewport.height stays ~24px stale (iOS 26.0).
+      vv.height = 776;
+      vv.dispatchEvent(new Event("resize"));
+    });
+
+    expect(result.current).toBe(0);
+  });
+
   it("clamps to 0 when the formula would go negative (keyboard inset cannot be negative)", () => {
     Object.defineProperty(window, "innerHeight", {
       value: 600,

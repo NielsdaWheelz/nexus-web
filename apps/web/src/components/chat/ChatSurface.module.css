@@ -14,6 +14,9 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   scrollbar-gutter: auto;
+  /* The chat pin (useChatScroll) self-manages anchoring; native scroll
+     anchoring can double-correct during keyboard resizes. */
+  overflow-anchor: none;
 }
 
 @media (min-width: 769px) {

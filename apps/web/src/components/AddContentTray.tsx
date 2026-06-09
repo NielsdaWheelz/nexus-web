@@ -44,13 +44,10 @@ import {
 } from "@/lib/media/sourceUrlCapture";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
-import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
-import { useFocusTrap } from "@/lib/ui/useFocusTrap";
-import { useInitialFocus } from "@/lib/ui/useInitialFocus";
-import { useReturnFocus } from "@/lib/ui/useReturnFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
+import MobileSheet from "@/components/ui/MobileSheet";
 import Textarea from "@/components/ui/Textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { createRandomId } from "@/lib/createRandomId";
@@ -92,7 +89,6 @@ export default function AddContentTray() {
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const trayRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
 
   const enqueueFiles = useCallback(
@@ -340,11 +336,9 @@ export default function AddContentTray() {
     return () => window.removeEventListener("paste", onPaste);
   }, [enqueueUrls]);
 
-  useBodyOverflowLock(isMobile && open);
-  useFocusTrap(trayRef, isMobile && open);
-  useReturnFocus(isMobile && open);
-  useInitialFocus(trayRef, isMobile && open);
-  useEscapeKey(open, () => setOpen(false));
+  // Mobile gets the full modal contract (lock/trap/focus/Escape/history) from
+  // MobileSheet; the desktop panel keeps only its own Escape dismissal.
+  useEscapeKey(open && !isMobile, () => setOpen(false));
 
   const submitUrls = useCallback(
     (event: React.FormEvent) => {
@@ -410,270 +404,275 @@ export default function AddContentTray() {
         ? "Capture a note on today's page."
       : "Upload files or paste links.";
 
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div
-      className={isMobile ? styles.mobileBackdrop : styles.desktopLayer}
-      onClick={() => setOpen(false)}
-    >
-      <section
-        ref={trayRef}
-        className={isMobile ? styles.mobileSheet : styles.panel}
-        role="dialog"
-        aria-modal={isMobile ? "true" : "false"}
-        aria-label="Add content"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {isMobile ? <div className={styles.handle} aria-hidden="true" /> : null}
-
-        <header className={styles.header}>
-          <div>
-            <h2>Add content</h2>
-            <p>{modeDescription}</p>
-          </div>
-          <Button
-            variant="secondary"
-            size="md"
-            iconOnly
-            className={styles.iconButton}
-            onClick={() => setOpen(false)}
-            aria-label="Close"
-          >
-            <X size={16} aria-hidden="true" />
-          </Button>
-        </header>
-
-        <Tabs
-          variant="tabs"
-          value={mode}
-          onValueChange={(next) => {
-            if (isAddContentMode(next)) setMode(next);
-          }}
-          className={styles.modeTabs}
+  const trayContent = (
+    <>
+      <header className={styles.header}>
+        <div>
+          <h2>Add content</h2>
+          <p>{modeDescription}</p>
+        </div>
+        <Button
+          variant="secondary"
+          size="md"
+          iconOnly
+          className={styles.iconButton}
+          onClick={() => setOpen(false)}
+          aria-label="Close"
         >
-          <TabsList aria-label="Add content mode">
-            <TabsTrigger value="content">Content</TabsTrigger>
-            <TabsTrigger value="quick-note">Quick note</TabsTrigger>
-            <TabsTrigger value="opml">OPML</TabsTrigger>
-          </TabsList>
-        </Tabs>
+          <X size={16} aria-hidden="true" />
+        </Button>
+      </header>
 
-        <div className={styles.body}>
-          {mode === "content" ? (
-            <>
-              <div className={styles.knowledgeActions} aria-label="Notes actions">
-                <Button
-                  variant="secondary"
-                  size="md"
-                  className={styles.knowledgeAction}
-                  onClick={() => void createPage()}
-                  disabled={noteBusy}
-                  leadingIcon={<Plus size={16} aria-hidden="true" />}
-                >
-                  New page
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="md"
-                  className={styles.knowledgeAction}
-                  onClick={openToday}
-                  leadingIcon={<CalendarDays size={16} aria-hidden="true" />}
-                >
-                  Today
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="md"
-                  className={styles.knowledgeAction}
-                  onClick={() => setMode("quick-note")}
-                  leadingIcon={<FileText size={16} aria-hidden="true" />}
-                >
-                  Quick note to today
-                </Button>
-              </div>
-              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
+      <Tabs
+        variant="tabs"
+        value={mode}
+        onValueChange={(next) => {
+          if (isAddContentMode(next)) setMode(next);
+        }}
+        className={styles.modeTabs}
+      >
+        <TabsList aria-label="Add content mode">
+          <TabsTrigger value="content">Content</TabsTrigger>
+          <TabsTrigger value="quick-note">Quick note</TabsTrigger>
+          <TabsTrigger value="opml">OPML</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-              <div className={styles.libraryField}>
-                <LibraryDestinationPicker
-                  selectedLibraryIds={batchLibraryIds}
-                  onChange={setBatchLibraryIds}
-                  label="Also add to"
-                />
-                <small className={styles.libraryHelp}>
-                  Add new items to one or more libraries on top of My Library.
-                </small>
-              </div>
-
+      <div className={styles.body}>
+        {mode === "content" ? (
+          <>
+            <div className={styles.knowledgeActions} aria-label="Notes actions">
               <Button
                 variant="secondary"
-                className={styles.dropzone}
-                onClick={() => fileInputRef.current?.click()}
+                size="md"
+                className={styles.knowledgeAction}
+                onClick={() => void createPage()}
+                disabled={noteBusy}
+                leadingIcon={<Plus size={16} aria-hidden="true" />}
               >
-                <span className={styles.dropzoneInner}>
-                  <Upload size={22} aria-hidden="true" />
-                  <span>Upload file</span>
-                  <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
-                </span>
+                New page
               </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.epub,application/pdf,application/epub+zip"
-                className={styles.fileInput}
-                aria-label="Upload file"
-                onChange={(event) => {
-                  enqueueFiles(Array.from(event.target.files ?? []), true);
-                  event.target.value = "";
-                }}
+              <Button
+                variant="secondary"
+                size="md"
+                className={styles.knowledgeAction}
+                onClick={openToday}
+                leadingIcon={<CalendarDays size={16} aria-hidden="true" />}
+              >
+                Today
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
+                className={styles.knowledgeAction}
+                onClick={() => setMode("quick-note")}
+                leadingIcon={<FileText size={16} aria-hidden="true" />}
+              >
+                Quick note to today
+              </Button>
+            </div>
+            {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
+
+            <div className={styles.libraryField}>
+              <LibraryDestinationPicker
+                selectedLibraryIds={batchLibraryIds}
+                onChange={setBatchLibraryIds}
+                label="Also add to"
               />
+              <small className={styles.libraryHelp}>
+                Add new items to one or more libraries on top of My Library.
+              </small>
+            </div>
 
-              <form className={styles.urlForm} onSubmit={submitUrls}>
-                <label htmlFor="ingestion-url-input">URLs</label>
-                <Textarea
-                  id="ingestion-url-input"
-                  size="sm"
-                  className={styles.urlTextarea}
-                  value={urlText}
-                  onChange={(event) => {
-                    setUrlText(event.target.value);
-                    setUrlError(null);
-                  }}
-                  placeholder="Paste a PDF, EPUB, article, or video URL..."
-                  rows={3}
-                />
-                <div className={styles.urlActions}>
-                  <span>
-                    {urlError ??
-                      "One per line, or paste a block of text containing PDF, EPUB, article, or video links."}
-                  </span>
-                  <Button type="submit" variant="primary" size="md" disabled={!urlText.trim()}>
-                    Add
-                  </Button>
-                </div>
-              </form>
+            <Button
+              variant="secondary"
+              className={styles.dropzone}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <span className={styles.dropzoneInner}>
+                <Upload size={22} aria-hidden="true" />
+                <span>Upload file</span>
+                <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
+              </span>
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.epub,application/pdf,application/epub+zip"
+              className={styles.fileInput}
+              aria-label="Upload file"
+              onChange={(event) => {
+                enqueueFiles(Array.from(event.target.files ?? []), true);
+                event.target.value = "";
+              }}
+            />
 
-              {queue.length > 0 ? (
-                <div className={styles.queue} aria-label="Ingestion queue">
-                  {queue.map((item) => {
-                    const href = item.mediaId
-                      ? item.duplicate
-                        ? `/media/${item.mediaId}?duplicate=true`
-                        : `/media/${item.mediaId}`
-                      : null;
-                    const allowRowPicker =
-                      item.status === "queued" || item.status === "error";
-                    return (
-                      <div key={item.id} className={styles.queueItem}>
-                        <div className={styles.itemIcon} aria-hidden="true">
-                          {item.source === "file" ? <FileText size={16} /> : <Link size={16} />}
-                        </div>
-                        <div className={styles.itemText}>
-                          <span title={item.label}>{item.label}</span>
-                          <small>
-                            {item.status === "queued" ? "Queued" : null}
-                            {item.status === "working"
-                              ? item.source === "file"
-                                ? "Uploading..."
-                                : "Adding..."
-                              : null}
-                            {item.status === "success"
-                              ? item.duplicate
-                                ? "Already in your library"
-                                : "Added"
-                              : null}
-                            {item.status === "saved_failure"
-                              ? item.error?.title ?? SAVED_INGEST_FAILED_STATUS
-                              : null}
-                            {item.status === "error" ? item.error?.title ?? "Failed" : null}
-                          </small>
-                          {(item.status === "error" || item.status === "saved_failure") &&
-                          item.error?.requestId ? (
-                            <small>Nexus request ID: {item.error.requestId}</small>
-                          ) : null}
-                        </div>
-                        <div className={styles.itemActions}>
-                          {allowRowPicker ? (
-                            <LibraryDestinationPicker
-                              selectedLibraryIds={item.libraryIds}
-                              onChange={(next) =>
-                                setQueue((current) =>
-                                  current.map((row) =>
-                                    row.id === item.id
-                                      ? { ...row, libraryIds: next }
-                                      : row
-                                  )
-                                )
-                              }
-                              label="Libraries"
-                            />
-                          ) : null}
-                          {(item.status === "success" ||
-                            item.status === "saved_failure" ||
-                            item.status === "error") &&
-                          href ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => requestOpenInAppPane(href)}
-                            >
-                              Open
-                            </Button>
-                          ) : null}
-                          {item.status === "error" ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              iconOnly
-                              onClick={() => retryItem(item)}
-                              aria-label={`Retry ${item.label}`}
-                            >
-                              <RotateCcw size={14} aria-hidden="true" />
-                            </Button>
-                          ) : null}
-                          {item.status === "success" ? (
-                            <CircleCheck
-                              className={styles.successIcon}
-                              size={16}
-                              aria-label="Success"
-                            />
-                          ) : null}
-                          {item.status === "error" || item.status === "saved_failure" ? (
-                            <CircleX
-                              className={styles.errorIcon}
-                              size={16}
-                              aria-label="Error"
-                            />
-                          ) : null}
-                          {item.status === "queued" ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              iconOnly
-                              onClick={() => removeItem(item.id)}
-                              aria-label={`Remove ${item.label}`}
-                            >
-                              <X size={14} aria-hidden="true" />
-                            </Button>
-                          ) : null}
-                        </div>
+            <form className={styles.urlForm} onSubmit={submitUrls}>
+              <label htmlFor="ingestion-url-input">URLs</label>
+              <Textarea
+                id="ingestion-url-input"
+                size="sm"
+                className={styles.urlTextarea}
+                value={urlText}
+                onChange={(event) => {
+                  setUrlText(event.target.value);
+                  setUrlError(null);
+                }}
+                placeholder="Paste a PDF, EPUB, article, or video URL..."
+                rows={3}
+              />
+              <div className={styles.urlActions}>
+                <span>
+                  {urlError ??
+                    "One per line, or paste a block of text containing PDF, EPUB, article, or video links."}
+                </span>
+                <Button type="submit" variant="primary" size="md" disabled={!urlText.trim()}>
+                  Add
+                </Button>
+              </div>
+            </form>
+
+            {queue.length > 0 ? (
+              <div className={styles.queue} aria-label="Ingestion queue">
+                {queue.map((item) => {
+                  const href = item.mediaId
+                    ? item.duplicate
+                      ? `/media/${item.mediaId}?duplicate=true`
+                      : `/media/${item.mediaId}`
+                    : null;
+                  const allowRowPicker =
+                    item.status === "queued" || item.status === "error";
+                  return (
+                    <div key={item.id} className={styles.queueItem}>
+                      <div className={styles.itemIcon} aria-hidden="true">
+                        {item.source === "file" ? <FileText size={16} /> : <Link size={16} />}
                       </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </>
-          ) : mode === "quick-note" ? (
-            <QuickNotePanel onClose={() => setOpen(false)} />
-          ) : (
-            <OpmlImportPanel defaultLibraryIds={batchLibraryIds} />
-          )}
+                      <div className={styles.itemText}>
+                        <span title={item.label}>{item.label}</span>
+                        <small>
+                          {item.status === "queued" ? "Queued" : null}
+                          {item.status === "working"
+                            ? item.source === "file"
+                              ? "Uploading..."
+                              : "Adding..."
+                            : null}
+                          {item.status === "success"
+                            ? item.duplicate
+                              ? "Already in your library"
+                              : "Added"
+                            : null}
+                          {item.status === "saved_failure"
+                            ? item.error?.title ?? SAVED_INGEST_FAILED_STATUS
+                            : null}
+                          {item.status === "error" ? item.error?.title ?? "Failed" : null}
+                        </small>
+                        {(item.status === "error" || item.status === "saved_failure") &&
+                        item.error?.requestId ? (
+                          <small>Nexus request ID: {item.error.requestId}</small>
+                        ) : null}
+                      </div>
+                      <div className={styles.itemActions}>
+                        {allowRowPicker ? (
+                          <LibraryDestinationPicker
+                            selectedLibraryIds={item.libraryIds}
+                            onChange={(next) =>
+                              setQueue((current) =>
+                                current.map((row) =>
+                                  row.id === item.id
+                                    ? { ...row, libraryIds: next }
+                                    : row
+                                )
+                              )
+                            }
+                            label="Libraries"
+                          />
+                        ) : null}
+                        {(item.status === "success" ||
+                          item.status === "saved_failure" ||
+                          item.status === "error") &&
+                        href ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => requestOpenInAppPane(href)}
+                          >
+                            Open
+                          </Button>
+                        ) : null}
+                        {item.status === "error" ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            iconOnly
+                            onClick={() => retryItem(item)}
+                            aria-label={`Retry ${item.label}`}
+                          >
+                            <RotateCcw size={14} aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                        {item.status === "success" ? (
+                          <CircleCheck
+                            className={styles.successIcon}
+                            size={16}
+                            aria-label="Success"
+                          />
+                        ) : null}
+                        {item.status === "error" || item.status === "saved_failure" ? (
+                          <CircleX
+                            className={styles.errorIcon}
+                            size={16}
+                            aria-label="Error"
+                          />
+                        ) : null}
+                        {item.status === "queued" ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            iconOnly
+                            onClick={() => removeItem(item.id)}
+                            aria-label={`Remove ${item.label}`}
+                          >
+                            <X size={14} aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </>
+        ) : mode === "quick-note" ? (
+          <QuickNotePanel onClose={() => setOpen(false)} />
+        ) : (
+          <OpmlImportPanel defaultLibraryIds={batchLibraryIds} />
+        )}
+      </div>
+    </>
+  );
+
+  // The sheet must stay mounted (MobileSheet mount contract); only the desktop
+  // panel may conditionally render.
+  return (
+    <>
+      <MobileSheet active={open && isMobile} onDismiss={() => setOpen(false)} ariaLabel="Add content">
+        {trayContent}
+      </MobileSheet>
+      {open && !isMobile ? (
+        <div className={styles.desktopLayer} onClick={() => setOpen(false)}>
+          <section
+            className={styles.panel}
+            role="dialog"
+            aria-modal="false"
+            aria-label="Add content"
+            tabIndex={-1}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {trayContent}
+          </section>
         </div>
-      </section>
-    </div>
+      ) : null}
+    </>
   );
 }

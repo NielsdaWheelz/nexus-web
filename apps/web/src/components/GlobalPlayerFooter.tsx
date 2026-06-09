@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
@@ -21,6 +20,7 @@ import {
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
 import MediaImage from "@/components/ui/MediaImage";
+import MobileSheet from "@/components/ui/MobileSheet";
 import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -168,7 +168,6 @@ export default function GlobalPlayerFooter() {
   const morePopoverRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const miniExpandButtonRef = useRef<HTMLButtonElement>(null);
-  const expandedSheetRef = useRef<HTMLElement>(null);
   const {
     track,
     bindAudioElement,
@@ -214,12 +213,6 @@ export default function GlobalPlayerFooter() {
     setQueueOpen(false);
     setEffectsOpen(false);
   };
-
-  useDialogOverlay({
-    ref: expandedSheetRef,
-    active: mobileExpanded && isMobile,
-    onDismiss: closeMobileExpanded,
-  });
 
   useDismissOnOutsideOrEscape({
     enabled: moreOpen,
@@ -327,192 +320,6 @@ export default function GlobalPlayerFooter() {
             </Button>
           </div>
 
-          {/* Expanded bottom sheet */}
-          {mobileExpanded && (
-            <div className={styles.expandedBackdrop} onClick={closeMobileExpanded}>
-              <section
-                ref={expandedSheetRef}
-                className={styles.expandedSheet}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Expanded player"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className={styles.expandedHandle} aria-hidden="true" />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.expandedClose}
-                  onClick={closeMobileExpanded}
-                  aria-label="Collapse player"
-                >
-                  Close
-                </Button>
-
-                {artworkUrl ? (
-                  <MediaImage
-                    kind="proxied"
-                    remoteUrl={artworkUrl}
-                    alt={track.title}
-                    width={240}
-                    height={240}
-                    className={styles.expandedArtwork}
-                  />
-                ) : (
-                  <div className={styles.expandedArtworkFallback} aria-hidden="true" />
-                )}
-
-                <div className={styles.expandedMeta}>
-                  <a href={`/media/${track.media_id}`} className={styles.trackLink}>
-                    {track.title}
-                  </a>
-                  {currentChapter && (
-                    <span className={styles.chapterLabel}>
-                      Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
-                    </span>
-                  )}
-                </div>
-
-                <div className={styles.seekArea}>
-                  <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
-                  {chapterMarkers.length > 0 && (
-                    <div className={styles.chapterTicks} aria-hidden="true">
-                      {chapterMarkers.map((chapter) => (
-                        <span
-                          key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
-                          className={styles.chapterTick}
-                          style={{ left: `${chapter.leftPercent}%` }}
-                          title={chapter.title}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <input
-                    type="range"
-                    min={0}
-                    max={durationSafe}
-                    step={1}
-                    value={seekSliderValue}
-                    onInput={(event) => onSeek(Number(event.currentTarget.value))}
-                    className={styles.seekSlider}
-                    aria-label="Seek playback position"
-                    disabled={durationSafe <= 0}
-                  />
-                </div>
-
-                <PlaybackErrorOrTimecode
-                  playbackError={playbackError}
-                  retryPlayback={retryPlayback}
-                  sourceUrl={track.source_url}
-                  isBuffering={isBuffering}
-                  currentSafe={currentSafe}
-                  durationSafe={durationSafe}
-                />
-
-                <div className={styles.expandedTransport}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.transportButton}
-                    onClick={() => void playPreviousInQueue()}
-                    aria-label="Previous in queue"
-                  >
-                    ⏮
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.transportButton}
-                    onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
-                    aria-label="Back 15 seconds"
-                  >
-                    ◄◄ 15s
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.transportButton}
-                    onClick={isPlaying ? pause : play}
-                    aria-label={isPlaying ? "Pause" : "Play"}
-                  >
-                    {isPlaying ? "Pause" : "Play"}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.transportButton}
-                    onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
-                    aria-label="Forward 30 seconds"
-                  >
-                    30s ►►
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.transportButton}
-                    onClick={() => void playNextInQueue()}
-                    aria-label="Next in queue"
-                    disabled={!hasNextInQueue}
-                  >
-                    ⏭
-                  </Button>
-                </div>
-
-                <div className={styles.expandedSecondary}>
-                  <label className={styles.speedControl}>
-                    <span className={styles.controlLabel}>Speed</span>
-                    <Select
-                      size="sm"
-                      aria-label="Playback speed"
-                      value={selectedPlaybackRateOption.toString()}
-                      onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
-                      className={styles.select}
-                    >
-                      {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
-                        <option key={option} value={option.toString()}>
-                          {formatPlaybackSpeedLabel(option)}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.effectsButton}
-                    aria-label="Audio effects"
-                    aria-expanded={effectsOpen}
-                    data-active={hasActiveAudioEffects ? "true" : "false"}
-                    onClick={() => setEffectsOpen((previous) => !previous)}
-                  >
-                    Effects
-                    <span className={styles.effectsIndicator} aria-hidden="true" />
-                  </Button>
-
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.queueButton}
-                    onClick={openQueueFromMobileExpanded}
-                    aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
-                  >
-                    Queue
-                    <span className={styles.queueBadge}>{upcomingQueueCount}</span>
-                  </Button>
-                </div>
-
-                {effectsOpen && (
-                  <EffectsPanel
-                    audioEffects={audioEffects}
-                    audioEffectsAvailable={audioEffectsAvailable}
-                    setAudioEffects={setAudioEffects}
-                    silenceTimeSavedSeconds={silenceTimeSavedSeconds}
-                    isSilenceTrimming={isSilenceTrimming}
-                  />
-                )}
-              </section>
-            </div>
-          )}
         </>
       ) : (
         <>
@@ -720,6 +527,188 @@ export default function GlobalPlayerFooter() {
           )}
         </>
       )}
+
+      {/* Expanded bottom sheet (mobile). Stays mounted; `active` gates it (MobileSheet mount contract). */}
+      <MobileSheet
+        active={isMobile && mobileExpanded}
+        onDismiss={closeMobileExpanded}
+        ariaLabel="Expanded player"
+        layer="overlay"
+      >
+        <div className={styles.expandedBody}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className={styles.expandedClose}
+            onClick={closeMobileExpanded}
+            aria-label="Collapse player"
+          >
+            Close
+          </Button>
+
+          {artworkUrl ? (
+            <MediaImage
+              kind="proxied"
+              remoteUrl={artworkUrl}
+              alt={track.title}
+              width={240}
+              height={240}
+              className={styles.expandedArtwork}
+            />
+          ) : (
+            <div className={styles.expandedArtworkFallback} aria-hidden="true" />
+          )}
+
+          <div className={styles.expandedMeta}>
+            <a href={`/media/${track.media_id}`} className={styles.trackLink}>
+              {track.title}
+            </a>
+            {currentChapter && (
+              <span className={styles.chapterLabel}>
+                Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.seekArea}>
+            <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+            {chapterMarkers.length > 0 && (
+              <div className={styles.chapterTicks} aria-hidden="true">
+                {chapterMarkers.map((chapter) => (
+                  <span
+                    key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                    className={styles.chapterTick}
+                    style={{ left: `${chapter.leftPercent}%` }}
+                    title={chapter.title}
+                  />
+                ))}
+              </div>
+            )}
+            <input
+              type="range"
+              min={0}
+              max={durationSafe}
+              step={1}
+              value={seekSliderValue}
+              onInput={(event) => onSeek(Number(event.currentTarget.value))}
+              className={styles.seekSlider}
+              aria-label="Seek playback position"
+              disabled={durationSafe <= 0}
+            />
+          </div>
+
+          <PlaybackErrorOrTimecode
+            playbackError={playbackError}
+            retryPlayback={retryPlayback}
+            sourceUrl={track.source_url}
+            isBuffering={isBuffering}
+            currentSafe={currentSafe}
+            durationSafe={durationSafe}
+          />
+
+          <div className={styles.expandedTransport}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={() => void playPreviousInQueue()}
+              aria-label="Previous in queue"
+            >
+              ⏮
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
+              aria-label="Back 15 seconds"
+            >
+              ◄◄ 15s
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={isPlaying ? pause : play}
+              aria-label={isPlaying ? "Pause" : "Play"}
+            >
+              {isPlaying ? "Pause" : "Play"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
+              aria-label="Forward 30 seconds"
+            >
+              30s ►►
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={() => void playNextInQueue()}
+              aria-label="Next in queue"
+              disabled={!hasNextInQueue}
+            >
+              ⏭
+            </Button>
+          </div>
+
+          <div className={styles.expandedSecondary}>
+            <label className={styles.speedControl}>
+              <span className={styles.controlLabel}>Speed</span>
+              <Select
+                size="sm"
+                aria-label="Playback speed"
+                value={selectedPlaybackRateOption.toString()}
+                onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                className={styles.select}
+              >
+                {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
+                  <option key={option} value={option.toString()}>
+                    {formatPlaybackSpeedLabel(option)}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.effectsButton}
+              aria-label="Audio effects"
+              aria-expanded={effectsOpen}
+              data-active={hasActiveAudioEffects ? "true" : "false"}
+              onClick={() => setEffectsOpen((previous) => !previous)}
+            >
+              Effects
+              <span className={styles.effectsIndicator} aria-hidden="true" />
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.queueButton}
+              onClick={openQueueFromMobileExpanded}
+              aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
+            >
+              Queue
+              <span className={styles.queueBadge}>{upcomingQueueCount}</span>
+            </Button>
+          </div>
+
+          {effectsOpen && (
+            <EffectsPanel
+              audioEffects={audioEffects}
+              audioEffectsAvailable={audioEffectsAvailable}
+              setAudioEffects={setAudioEffects}
+              silenceTimeSavedSeconds={silenceTimeSavedSeconds}
+              isSilenceTrimming={isSilenceTrimming}
+            />
+          )}
+        </div>
+      </MobileSheet>
 
       <audio
         ref={bindAudioElement}

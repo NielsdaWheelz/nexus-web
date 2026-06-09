@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MobileSecondaryPaneHost from "@/components/workspace/MobileSecondaryPaneHost";
 
 const publication = {
@@ -35,8 +35,27 @@ const readerSecondary = {
 };
 
 describe("MobileSecondaryPaneHost", () => {
+  // Model history locally (MobileSheet.test.tsx pattern) so the sheet's
+  // history-dismiss bookkeeping never touches the real history stack.
+  let fakeState: unknown = null;
+
+  beforeEach(() => {
+    fakeState = null;
+    vi.spyOn(history, "pushState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "replaceState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "back").mockImplementation(() => {
+      fakeState = null;
+    });
+    vi.spyOn(history, "state", "get").mockImplementation(() => fakeState);
+  });
+
   afterEach(() => {
     document.body.style.overflow = "";
+    Reflect.deleteProperty(window, "visualViewport");
   });
 
   it("locks body scroll, focuses the active tab, closes on Escape, and restores focus", async () => {
@@ -130,5 +149,54 @@ describe("MobileSecondaryPaneHost", () => {
 
     expect(screen.getByRole("tab", { name: "Contents" })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Contents" })).toBeInTheDocument();
+  });
+
+  it("browser back (popstate) closes the sheet exactly once without popping again", async () => {
+    const onClose = vi.fn();
+    render(
+      <MobileSecondaryPaneHost
+        secondaryPaneId="secondary-1"
+        secondary={secondary}
+        publication={publication}
+        onClose={onClose}
+        onActiveSurfaceChange={vi.fn()}
+      />,
+    );
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await act(async () => {
+      await Promise.resolve(); // drain the deferred-pop microtask (useHistoryDismiss)
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith("secondary-1");
+    expect(history.back).not.toHaveBeenCalled();
+  });
+
+  it("panel --keyboard-inset reflects the stubbed keyboard", () => {
+    const vv = new EventTarget() as EventTarget & { height: number; offsetTop: number };
+    vv.height = window.innerHeight - 300;
+    vv.offsetTop = 0;
+    Object.defineProperty(window, "visualViewport", { value: vv, configurable: true });
+
+    render(
+      <MobileSecondaryPaneHost
+        secondaryPaneId="secondary-1"
+        secondary={secondary}
+        publication={publication}
+        onClose={vi.fn()}
+        onActiveSurfaceChange={vi.fn()}
+      />,
+    );
+
+    const panel = screen.getByTestId("mobile-secondary-host");
+    expect(panel.style.getPropertyValue("--keyboard-inset")).toBe("300px");
+
+    act(() => {
+      vv.height = window.innerHeight;
+      vv.dispatchEvent(new Event("resize"));
+    });
+    expect(panel.style.getPropertyValue("--keyboard-inset")).toBe("0px");
   });
 });

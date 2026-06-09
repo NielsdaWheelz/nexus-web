@@ -6,6 +6,7 @@ import { LogOut, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
 import type { NavGroup, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -35,6 +36,9 @@ export default function NavSheet({
   const sheetRef = useRef<HTMLElement>(null);
 
   useDialogOverlay({ ref: sheetRef, active: open, onDismiss: onClose });
+  // Stays mounted across open/close (AppNav renders NavSheet unconditionally;
+  // the `!open` gate below is after the hooks) — required by useHistoryDismiss.
+  useHistoryDismiss(open, onClose);
 
   if (!open) return null;
 

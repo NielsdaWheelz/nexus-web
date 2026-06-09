@@ -21,49 +21,6 @@
   box-shadow: var(--shadow-4);
 }
 
-.mobileBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: flex-end;
-  justify-content: stretch;
-  background: var(--overlay-scrim);
-  backdrop-filter: blur(2px);
-}
-
-.mobileSheet {
-  width: 100%;
-  max-height: min(82dvh, 680px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--surface-canvas);
-  border-top: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
-  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
-  animation: mobileSheetSlideIn var(--duration-fast) var(--ease-snap);
-}
-
-@keyframes mobileSheetSlideIn {
-  from {
-    transform: translateY(14px);
-    opacity: 0.92;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.handle {
-  width: 44px;
-  height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--edge);
-  margin: var(--space-2) auto var(--space-1);
-}
-
 .header {
   display: flex;
   align-items: flex-start;
@@ -332,12 +289,6 @@
 
 @media (max-width: 768px) {
   .desktopLayer {
-    display: none;
-  }
-}
-
-@media (min-width: 769px) {
-  .mobileBackdrop {
     display: none;
   }
 }

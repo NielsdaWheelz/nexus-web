@@ -42,6 +42,10 @@ keeps that policy local to its scrollport.
 `ChatComposer` owns user input, model controls, key-mode selection, and send action wiring.
 It does not construct API branch semantics directly.
 
+`ModelSettingsPopover` owns model-settings presentation. Desktop is an anchored
+popover; the mobile path presents through the shared `MobileSheet` primitive
+(see `docs/modules/overlays.md`).
+
 `buildChatRunBody` is the single frontend request-body assembler. It decides:
 
 - `parent_message_id`
@@ -113,6 +117,10 @@ line-rect placement, Escape/outside-pointer dismissal, scroll dismissal/repositi
 
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
 menu roles, focus restoration, and menuitem rendering.
+
+`FloatingActionSurface` is the documented non-modal action-surface owner. It
+keeps its own visual-viewport handling and must not migrate to `MobileSheet`
+(`docs/modules/overlays.md`).
 
 ## Reader Quote-To-Chat Separation
 

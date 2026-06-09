@@ -14,6 +14,12 @@ const NEXT_IMAGE_BAN = {
     "Use <MediaImage> (src/components/ui/MediaImage.tsx); bare next/image is forbidden so the proxied-vs-owned/unoptimized invariant is enforced in one place.",
 };
 
+const KEYBOARD_INSET_BAN = {
+  name: "@/lib/ui/useKeyboardInset",
+  message:
+    "Keyboard geometry has one owner: <MobileSheet> (src/components/ui/MobileSheet.tsx). Compose MobileSheet instead of reading the inset directly (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md).",
+};
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -56,8 +62,36 @@ const eslintConfig = [
     // R1 (docs/cutovers/oracle-plate-owned-asset-cutover.md): MediaImage is the
     // sole sanctioned importer of next/image. Banning the bare import everywhere
     // else keeps the proxied-vs-owned + `unoptimized` decision in one place.
+    // AC-10 (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md):
+    // MobileSheet is likewise the sole sanctioned importer of useKeyboardInset.
+    // no-restricted-imports replaces (not merges) per file, so each sanctioned
+    // importer gets a follow-up block restating the ban that still applies to it.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/components/ui/MediaImage.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [NEXT_IMAGE_BAN, KEYBOARD_INSET_BAN],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/components/ui/MediaImage.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [KEYBOARD_INSET_BAN],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      "src/components/ui/MobileSheet.tsx",
+      "src/lib/ui/useKeyboardInset.test.tsx",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -85,7 +119,7 @@ const eslintConfig = [
       "no-restricted-imports": [
         "error",
         {
-          paths: [NEXT_IMAGE_BAN],
+          paths: [NEXT_IMAGE_BAN, KEYBOARD_INSET_BAN],
           patterns: [
             {
               group: ["@/app/**/*PaneBody", "@/components/chat/Conversation"],

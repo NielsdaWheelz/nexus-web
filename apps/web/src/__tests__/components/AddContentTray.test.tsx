@@ -39,8 +39,24 @@ function dispatchPaste(target: EventTarget, text: string) {
 }
 
 describe("AddContentTray", () => {
+  // The mobile sheet pushes/pops a synthetic history entry (useHistoryDismiss);
+  // real history.back() is async and would race close-then-reopen flows. Model
+  // history.state locally instead (MobileSheet.test.tsx pattern).
+  let fakeState: unknown = null;
+
   beforeEach(() => {
     document.body.style.overflow = "";
+    fakeState = null;
+    vi.spyOn(history, "pushState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "replaceState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "back").mockImplementation(() => {
+      fakeState = null;
+    });
+    vi.spyOn(history, "state", "get").mockImplementation(() => fakeState);
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -132,6 +148,26 @@ describe("AddContentTray", () => {
     });
   });
 
+  it("back button (popstate) dismisses the mobile sheet without popping again", async () => {
+    vi.stubGlobal("innerWidth", 390); // mobile viewport → MobileSheet path
+
+    render(<AddContentTray />);
+    openTray();
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
+    expect(history.pushState).toHaveBeenCalledTimes(1);
+
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
+    });
+    // The browser already removed the entry; the close must not pop again.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(history.back).not.toHaveBeenCalled();
+  });
+
   it("pastes multiple URLs outside inputs and shows both completed adds", async () => {
     render(
       <>
@@ -150,7 +186,6 @@ describe("AddContentTray", () => {
   });
 
   it("shows URL capture provider failures with the backend request id", async () => {
-    vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -180,7 +215,6 @@ describe("AddContentTray", () => {
   });
 
   it("keeps accepted source failures saved and does not show local retry", async () => {
-    vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -254,7 +288,6 @@ describe("AddContentTray", () => {
     type FromUrlCall = { url: string; library_ids: string[] };
 
     function setupFetchWithLibraries(calls: FromUrlCall[]) {
-      vi.restoreAllMocks();
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
         if (url.pathname === "/api/libraries/writable-destinations") {
@@ -338,7 +371,6 @@ describe("AddContentTray", () => {
     it("lets a per-row override change library_ids independently of the batch", async () => {
       const calls: FromUrlCall[] = [];
       const heldResponses: Array<() => void> = [];
-      vi.restoreAllMocks();
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
         if (url.pathname === "/api/libraries/writable-destinations") {

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BookOpen, Settings } from "lucide-react";
 import NavSheet from "@/components/appnav/NavSheet";
 import type { NavGroup, NavItem } from "@/components/appnav/navModel";
@@ -80,6 +80,65 @@ describe("NavSheet", () => {
 
     fireEvent.click(screen.getByRole("presentation"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe("history dismissal", () => {
+    // history spy pattern from MobileSheet.test.tsx: model history.state locally
+    // so the synthetic-entry marker is observable; `back` clears it like a real pop.
+    let fakeState: unknown = null;
+
+    beforeEach(() => {
+      fakeState = null;
+      vi.spyOn(history, "pushState").mockImplementation((state) => {
+        fakeState = state;
+      });
+      vi.spyOn(history, "back").mockImplementation(() => {
+        fakeState = null;
+      });
+      vi.spyOn(history, "state", "get").mockImplementation(() => fakeState);
+    });
+
+    // The synthetic-entry pop is deferred to a microtask (useHistoryDismiss); flush it.
+    const flushMicrotasks = async () => {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+
+    it("back button (popstate) dismisses exactly once and does not pop again", async () => {
+      const { onClose } = renderSheet({ open: true });
+      expect(history.pushState).toHaveBeenCalledTimes(1);
+
+      act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+      await flushMicrotasks();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(history.back).not.toHaveBeenCalled(); // the browser already removed the entry
+    });
+
+    it("UI close pops the synthetic entry", async () => {
+      const { rerender, onClose } = renderSheet({ open: true });
+      expect(history.pushState).toHaveBeenCalledTimes(1);
+
+      rerender(
+        <NavSheet
+          open={false}
+          onClose={onClose}
+          groups={groups}
+          account={account}
+          activeId="libraries"
+          settingsActive={false}
+          commandHint="⌘K"
+          onOpenCommand={vi.fn()}
+          onOpenAdd={vi.fn()}
+          onNavigate={vi.fn()}
+        />,
+      );
+      await flushMicrotasks();
+
+      expect(history.back).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
+    });
   });
 
   it("restores focus to the opener on close", async () => {

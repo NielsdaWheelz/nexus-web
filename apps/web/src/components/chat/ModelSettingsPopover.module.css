@@ -24,8 +24,6 @@
 }
 
 .settingsPanel {
-  position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -64,34 +62,18 @@
   font-weight: var(--weight-semibold);
 }
 
+/* Mobile bottom-sheet content; geometry lives in MobileSheet.module.css. */
+.sheetContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 @media (max-width: 640px) {
   .modelSummaryButton {
     flex-basis: 140px;
-  }
-}
-
-@media (max-width: 768px) {
-  .settingsLayer[data-mobile="true"] {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    align-items: flex-end;
-    justify-content: center;
-    padding: var(--space-3);
-    pointer-events: auto;
-  }
-
-  .settingsBackdrop {
-    position: absolute;
-    inset: 0;
-    background: var(--overlay-scrim-soft);
-  }
-
-  .settingsPanel {
-    width: 100%;
-    max-width: 480px;
-    max-height: min(560px, calc(100dvh - var(--space-6)));
-    overflow-y: auto;
-    border-radius: var(--radius-xl);
   }
 }

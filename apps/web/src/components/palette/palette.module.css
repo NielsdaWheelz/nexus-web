@@ -14,11 +14,6 @@
   animation: paletteScrimIn var(--duration-fast) var(--ease-glide);
 }
 
-.backdrop[data-variant="sheet"] {
-  align-items: flex-end;
-  padding: 0;
-}
-
 /* === Desktop luminous-glass surface (D-2 / §8.1) === */
 .surface {
   display: flex;
@@ -37,32 +32,14 @@
   animation: paletteSurfaceIn var(--duration-base) var(--ease-bloom);
 }
 
-/* === Mobile bottom sheet (D-4 / §5.7) === */
-.sheet {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-height: min(85dvh, 720px);
-  overflow: hidden;
-  border-top: 1px solid var(--palette-glass-ring);
-  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+/* === Mobile bottom-sheet skin (D-4 / §5.7) — geometry lives in
+   ui/MobileSheet.module.css. Class doubled so the skin beats MobileSheet's
+   .panel regardless of CSS-module emission order (equal specificity ties). */
+.sheetSkin.sheetSkin {
+  border-top-color: var(--palette-glass-ring);
   color: var(--ink);
   background: var(--surface-1);
   box-shadow: var(--shadow-5);
-  padding-bottom: env(safe-area-inset-bottom);
-  animation: paletteSheetIn var(--duration-base) var(--ease-snap);
-}
-
-.grabber {
-  flex: 0 0 auto;
-  align-self: center;
-  width: 36px;
-  height: 4px;
-  margin: var(--space-2) 0;
-  border-radius: var(--radius-full);
-  background: var(--edge-strong);
-  touch-action: none;
 }
 
 /* === Input === */
@@ -74,7 +51,7 @@
   border-bottom: 1px solid var(--edge-subtle);
 }
 
-.sheet .inputRow {
+.sheetSkin .inputRow {
   border-top: 1px solid var(--edge-subtle);
   border-bottom: 0;
 }
@@ -333,19 +310,9 @@
   }
 }
 
-@keyframes paletteSheetIn {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .backdrop,
-  .surface,
-  .sheet {
+  .surface {
     animation: none;
   }
 }

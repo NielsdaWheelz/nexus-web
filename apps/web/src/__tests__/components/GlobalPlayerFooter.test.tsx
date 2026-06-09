@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { setAudioMetrics, setViewportWidth } from "../helpers/audio";
@@ -283,11 +283,30 @@ describe("GlobalPlayerFooter", () => {
 });
 
 describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
+  // The sheet owns back-button dismissal now (MobileSheet), so stub history for
+  // the whole describe (MobileSheet.test.tsx pattern): a real history.back()
+  // from one test's close fires an async popstate that would dismiss the next
+  // test's open sheet. Model history.state locally so the synthetic-entry
+  // bookkeeping stays observable.
+  let fakeState: unknown = null;
+
   beforeEach(() => {
     window.localStorage.clear();
+    fakeState = null;
+    vi.spyOn(history, "pushState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "replaceState").mockImplementation((state) => {
+      fakeState = state;
+    });
+    vi.spyOn(history, "back").mockImplementation(() => {
+      fakeState = null;
+    });
+    vi.spyOn(history, "state", "get").mockImplementation(() => fakeState);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.style.overflow = "";
   });
 
@@ -318,6 +337,18 @@ describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Expanded player" })).toBeNull(),
     );
+  });
+
+  it("closes the expanded sheet on back button (popstate) without popping history again", async () => {
+    const opener = mountMobileFooter();
+    expandSheet(opener);
+    expect(history.pushState, "expanding the player must push one synthetic history entry").toHaveBeenCalledTimes(1);
+
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Expanded player" })).toBeNull(),
+    );
+    expect(history.back, "back-button dismissal must not pop the already-consumed entry").not.toHaveBeenCalled();
   });
 
   it("restores focus to the opener after the sheet closes", async () => {

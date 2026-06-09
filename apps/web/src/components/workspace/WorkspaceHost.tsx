@@ -395,11 +395,7 @@ function arePaneSecondaryPublicationsEqual(
   }
   return left.surfaces.every((surface, index) => {
     const other = right.surfaces[index];
-    return (
-      other?.id === surface.id &&
-      other.body === surface.body &&
-      other.mobileBody === surface.mobileBody
-    );
+    return other?.id === surface.id && other.body === surface.body;
   });
 }
 

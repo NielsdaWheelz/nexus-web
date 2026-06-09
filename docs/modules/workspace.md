@@ -58,8 +58,12 @@ and renders edge fades only in desktop mode.
 ## Mobile Secondary Panes
 
 `MobileSecondaryPaneHost` is the only workspace mobile secondary presentation.
-It is modal sheet chrome, not a workspace column. It uses `useDialogOverlay` for
-focus trap, focus restore, Escape handling, and body scroll lock.
+It is modal sheet chrome, not a workspace column. It presents through the shared
+`MobileSheet` primitive (`scrim="soft"`, `layer="overlay"`), which owns the
+portal, scrim, grabber, keyboard avoidance, back-button dismissal, and the
+`useDialogOverlay` modal contract. See `docs/modules/overlays.md`.
+`MobileSecondaryPaneHost` owns only its header chrome, tab state, and surface
+bodies.
 
 Workspace secondary content can share the same surface bodies across desktop
 and mobile, but the chrome owner differs:
